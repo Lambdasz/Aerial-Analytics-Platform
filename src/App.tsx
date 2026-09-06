@@ -33,7 +33,7 @@ function App() {
         className="row"
         onSubmit={(e) => {
           e.preventDefault();
-          greet();
+          void greet();
         }}
       >
         <input
