@@ -1,3 +1,4 @@
 npm run lint
 npm run lint:rust
 npm run format:check
+npm run format:rust:check
