@@ -127,6 +127,13 @@ cargo update
 
 ```bash
 .
+├── .github/                      # GitHub community health files
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   └── pull_request_template.md
+├── CONTRIBUTING.md               # Contribution guidelines
 ├── eslint.config.js              # JavaScript/TypeScript linting rules
 ├── index.html                    # HTML entry point for the web app
 ├── LICENSE                       # MIT License
@@ -136,6 +143,7 @@ cargo update
 │   ├── tauri.svg
 │   └── vite.svg
 ├── README.md                     # Project documentation
+├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── App.css                   # Main component styling
 │   ├── App.tsx                   # Main React component
@@ -171,15 +179,12 @@ cargo update
 
 ## Contributing
 
-<!-- TODO: link to real CONTRIBUTING.md file -->
-
-See CONTRIBUTING.md before you working on development.
+See [CONTRIBUTING.md](CONTRIBUTING.md) before working on development. Use the
+[issue templates](.github/ISSUE_TEMPLATE) to report bugs or request features.
 
 ## Security
 
-<!-- TODO: link to real SECURITY.md file -->
-
-See SECURITY.md for how to report vulnerabilities.
+See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 ## License
 
