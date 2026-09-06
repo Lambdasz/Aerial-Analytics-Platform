@@ -1,0 +1,60 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for the Aerial Analytics Platform
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement! Please fill out the sections below to help us
+        understand the request.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I've searched existing issues and this hasn't already been requested.
+          required: true
+
+  - type: dropdown
+    id: module
+    attributes:
+      label: Target module
+      description: Which part of the project does this relate to?
+      options:
+        - "Foundation (image management / projects / plugin architecture)"
+        - "Analysis (vegetation, land cover, tree counting, coverage, condition, temporal)"
+        - "Visualization & reporting"
+        - "Tooling / DX"
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem does this solve, or what need does it address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or enhancement you'd like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you've considered.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other context, mockups, or references.

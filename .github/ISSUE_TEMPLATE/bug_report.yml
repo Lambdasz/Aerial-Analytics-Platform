@@ -1,0 +1,104 @@
+name: Bug Report
+description: Report a defect in the Aerial Analytics Platform
+title: "fix: <short description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the sections below as completely
+        as you can — it helps us reproduce and fix the issue faster.
+
+        **Found a security vulnerability?** Please don't file it here — see
+        [SECURITY.md](https://github.com/Lambdasz/Aerial-Analytics-Platform/blob/main/SECURITY.md)
+        for how to report it privately instead.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I've searched existing issues and this hasn't already been reported.
+          required: true
+        - label: This is not a security vulnerability (see SECURITY.md if it is).
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Frontend (React/Blueprint)
+        - Backend (Rust/Tauri)
+        - Plugin system
+        - Build/tooling
+        - Documentation
+        - Other/unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Step-by-step instructions to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened instead?
+
+  - type: input
+    id: version
+    attributes:
+      label: App version / commit SHA
+      placeholder: e.g. 0.1.0 or ac3a768
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Node / Rust / npm versions
+      placeholder: e.g. Node 22, npm 10, rustc 1.82
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste any relevant console output, terminal logs, or screenshots.
+      render: shell
