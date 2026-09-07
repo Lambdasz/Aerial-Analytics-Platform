@@ -27,6 +27,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
     * [2. Install project dependencies](#2-install-project-dependencies)
     * [3. Development](#3-development)
   * [Available Scripts](#available-scripts)
+  * [Continuous Integration](#continuous-integration)
   * [Project Structure](#project-structure)
   * [Contributing](#contributing)
   * [Security](#security)
@@ -128,6 +129,17 @@ cargo update
 | Check Rust formatting (rustfmt) | `npm run format:rust:check` |
 | Fix Prettier formatting issues  | `npm run format`            |
 | Fix Rust formatting issues      | `npm run format:rust`       |
+
+## Continuous Integration
+
+Every push and pull request targeting `main` runs the [CI workflow](.github/workflows/ci.yml) via GitHub Actions:
+
+- **Lint & format (JS/TS)**: ESLint (`npm run lint`) and Prettier (`npm run format:check`).
+- **Lint & format (Rust)**: rustfmt (`npm run format:rust:check`) and Clippy (`npm run lint:rust`).
+- **Build**: verifies the Vite build (`npm run build`) and a Tauri build without bundling
+  (`npm run tauri build -- --no-bundle`) succeed on `macos-latest`, `ubuntu-24.04`, and `windows-latest`.
+
+The build matrix only runs once both lint jobs pass. The workflow does not publish or deploy anything.
 
 ## Project Structure
 
