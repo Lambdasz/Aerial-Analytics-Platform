@@ -3,13 +3,17 @@
 The Aerial Analytics Platform is designed to process and analyze RGB aerial imagery captured using standard drones. The platform uses a plugin-based architecture so that analytical capabilities can be added independently without modifying the core system.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Rust](https://img.shields.io/badge/Rust-latest-CE422B?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![Blueprint](https://img.shields.io/badge/Blueprint.js-6-2d72d2?style=flat&logo=blueprint&logoColor=white)](https://blueprintjs.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app/)
 [![ESLint](https://img.shields.io/badge/ESLint-9-4B3BDB?logo=eslint&logoColor=white)](https://eslint.org/)
 [![Prettier](https://img.shields.io/badge/Prettier-3-F7B93E?logo=prettier&logoColor=white)](https://prettier.io/)
+[![commitlint](https://img.shields.io/badge/commitlint-21-a8b1ff?style=flat&logo=commitlint&logoColor=white)](https://commitlint.js.org/)
 [![Husky](https://img.shields.io/badge/Husky-9-000?logo=husky&logoColor=white)](https://typicode.github.io/husky/)
+[![Node](https://img.shields.io/badge/Node.js-%3E%3D24-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Table of Contents
 
@@ -38,8 +42,10 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 - **UI Component Library**: [Blueprint.js](https://blueprintjs.com/)
 - **Build Tool & Web Server**: [Vite 8](https://vite.dev/)
 - **Desktop App Framework**: [Tauri 2](https://v2.tauri.app/)
+- **Node**: [Node.js 24](https://nodejs.org/en)
 - **Development & Tooling**:
-  - Linting: [ESLint 9](https://eslint.org/), [Clippy](https://github.com/rust-lang/rust-clippy)
+  - Code Linting: [ESLint 9](https://eslint.org/), [Clippy](https://github.com/rust-lang/rust-clippy)
+  - Commit Message Linting: [commitlint 21](https://commitlint.js.org/)
   - Formatting: [Prettier 3](https://prettier.io/), [rustfmt](https://github.com/rust-lang/rustfmt)
   - Git Hooks: [Husky 9](https://typicode.github.io/husky/)
 
@@ -186,6 +192,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before working on development. Use the
 
 See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
-## License
+## Copyright & License
+
+Copyright © 2026 Lambdaz.
 
 This software project is licensed under the MIT License. See [LICENSE](LICENSE).
