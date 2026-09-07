@@ -88,6 +88,10 @@ npm run format:rust
 There is no test runner configured yet in this repo — don't reference one in your changes or PR
 description.
 
+These same four checks — plus a Vite/Tauri build check on macOS, Ubuntu, and Windows — are enforced in
+CI (`.github/workflows/ci.yml`) on every push and pull request to `main`. Bypassing the pre-commit hook
+(e.g. with `--no-verify`) only skips the local check; the PR will still fail CI if the gates don't pass.
+
 ## Architecture Notes
 
 - `src/` is the React frontend (entry: `src/main.tsx`, root component: `src/App.tsx`). It talks to the
