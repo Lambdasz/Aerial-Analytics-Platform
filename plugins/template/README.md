@@ -11,6 +11,115 @@ Copy this folder (`plugins/template/`) to create a new plugin for:
 
 ---
 
+## Validating Your Manifest
+
+All plugin manifests must conform to the platform schema defined in [`schemas/plugin.schema.json`](../../schemas/plugin.schema.json). Manifest validation is enforced using [`check-jsonschema`](https://check-jsonschema.readthedocs.io/).
+
+Before submitting or testing your plugin, validate your `manifest.json`.
+
+---
+
+### 1. Installation
+
+#### On Linux (Ubuntu / Debian)
+
+**Recommended (via `pipx` to avoid PATH conflicts):**
+
+```bash
+# 1. Install pipx if not already installed:
+sudo apt install pipx
+
+# 2. Install check-jsonschema globally:
+pipx install check-jsonschema
+
+# 3. Ensure ~/.local/bin is added to your PATH:
+pipx ensurepath
+source ~/.bashrc
+```
+
+**Alternative (via `pip` / Conda):**
+
+```bash
+pip install check-jsonschema
+```
+
+---
+
+#### On Windows (PowerShell / Command Prompt)
+
+**Recommended (via `pip`):**
+
+```powershell
+# In PowerShell or Command Prompt:
+pip install check-jsonschema
+```
+
+**Alternative (via `pipx`):**
+
+```powershell
+# 1. Install pipx:
+pip install pipx
+
+# 2. Install check-jsonschema:
+pipx install check-jsonschema
+
+# 3. Ensure PATH is configured and restart your terminal:
+pipx ensurepath
+```
+
+> **Note for Windows:** If `check-jsonschema` is not recognized after installing with pip, you can invoke it directly through Python:
+>
+> ```powershell
+> python -m check_jsonschema --schemafile schemas\plugin.schema.json plugins\<your_plugin_folder>\manifest.json
+> ```
+
+---
+
+### 2. Running Validation
+
+Run the validator from the root of the repository:
+
+#### Linux / macOS:
+
+```bash
+# Validate your plugin manifest:
+check-jsonschema --schemafile schemas/plugin.schema.json plugins/<your_plugin_folder>/manifest.json
+
+# Example: Validate mock manifest
+check-jsonschema --schemafile schemas/plugin.schema.json plugins/mock/manifest.json
+```
+
+#### Windows (PowerShell):
+
+```powershell
+# Validate your plugin manifest:
+check-jsonschema --schemafile schemas\plugin.schema.json plugins\<your_plugin_folder>\manifest.json
+
+# Example: Validate mock manifest
+check-jsonschema --schemafile schemas\plugin.schema.json plugins\mock\manifest.json
+```
+
+---
+
+### 3. Understanding the Output
+
+- **Success:**
+
+  ```text
+  ok -- validation done
+  ```
+
+  _(Exits with status code `0`)_
+
+- **Failure:**
+  ```text
+  Schema validation errors were encountered.
+    plugins/my_plugin/manifest.json::$: 'runtime' is a required property
+  ```
+  _(Exits with status code `1` and details the exact key, expected format, or missing property)_
+
+---
+
 ## Field Reference & Allowed Values
 
 ### 0. Root Fields
