@@ -1,0 +1,13 @@
+{
+  "status": "success",
+  "execution_time_ms": 1240,
+  "metrics": {
+    "primary_metric": 68.4,
+    "count_metric": 42
+  },
+  "artifacts": {
+    "mask_raster": "/absolute/path/to/run_artifacts_dir/mask_raster.png",
+    "boundary_vector": "/absolute/path/to/run_artifacts_dir/boundary_vector.geojson"
+  },
+  "error": null
+}

@@ -1,0 +1,246 @@
+{
+  // JSON Schema URI used by IDEs and validators to verify manifest structure
+  "$schema": "https://aerial-analytics.local/schemas/plugin.v1.json",
+
+  // Manifest specification version (integer, incremented when schema breaking changes occur)
+  "manifest_version": 1,
+
+  // Plugin metadata used for display in the Extension Manager UI and cataloging
+  "metadata": {
+    // Unique identifier in kebab-case format. Pattern: ^[a-z0-9-]+$
+    "id": "<plugin-unique-kebab-case-id>",
+
+    // Human-readable plugin name displayed in UI headers and cards
+    "name": "<Human Readable Plugin Name>",
+
+    // Semantic Versioning string (SemVer: MAJOR.MINOR.PATCH)
+    "version": "1.0.0",
+
+    // Author or team name responsible for maintaining this plugin
+    "author": "<Author or Team Name>",
+
+    // Open-source software license
+    // Possible values: "MIT" | "Apache-2.0" | "GPL-3.0" | "BSD-3-Clause" | "Proprietary"
+    "license": "MIT",
+
+    // Brief description of the analytical capability provided by this plugin
+    "description": "<Concise description of what this analytical plugin accomplishes.>",
+
+    // Functional domain category for grouping and filtering plugins in UI
+    // Possible values: "vegetation" | "tree_detection" | "tree_counting" | "land_cover" | "temporal" | "elevation" | "analytics" | "utility" | "general"
+    "category": "vegetation",
+
+    // Search keywords and taxonomy tags
+    "tags": ["rgb", "vegetation", "indices"],
+
+    // Minimum core Aerial Analytics Platform version required to run this plugin
+    "min_core_version": "0.1.0"
+  },
+
+  // Execution environment and runtime specification
+  "runtime": {
+    // Execution engine type
+    // Possible values: "python" | "binary" | "wasm"
+    "type": "python",
+
+    // Minimum Python version required (applicable when type is "python")
+    "min_python_version": "3.10",
+
+    // Relative path to the executable entrypoint script within the plugin folder
+    "entrypoint": "main.py",
+
+    // Relative path to Python dependency manifest (null if no external pip packages needed)
+    "dependencies_file": "requirements.txt",
+
+    // Optional CLI flag used by the host to test if the plugin environment is healthy without running analysis
+    "healthcheck_flag": "--healthcheck"
+  },
+
+  // Input contract and data requirements
+  "inputs": {
+    // Scope of analysis executed per single invocation
+    // Possible values: "single_image" | "image_pair" | "batch" | "session"
+    "granularity": "single_image",
+
+    // MIME types supported by the plugin decoder
+    // Possible items: "image/jpeg" | "image/png" | "image/tiff"
+    "supported_mime_types": ["image/jpeg", "image/png", "image/tiff"],
+
+    // EXIF or project metadata keys strictly required to run (fails validation if missing)
+    // Possible items: "resolution" | "gps" | "altitude" | "timestamp"
+    "requires_metadata": ["resolution"],
+
+    // EXIF or project metadata keys consumed if present, but graceful fallback if omitted
+    // Possible items: "resolution" | "gps" | "altitude" | "timestamp"
+    "optional_metadata": ["gps", "altitude", "timestamp"],
+
+    // Whether the plugin supports clipping computation to a user-drawn Area of Interest (AOI)
+    "supports_aoi": true,
+
+    // Geometry format of the AOI passed in the input JSON (applicable when supports_aoi is true)
+    // Possible values: "geojson_polygon" | "geojson_bbox" | null
+    "aoi_format": "geojson_polygon"
+  },
+
+  // Configurable parameters exposed to the user in Blueprint.js settings dialog
+  // Parameter types supported: "select" | "number" | "boolean" | "string"
+  "parameters": [
+    {
+      // Parameter variable key passed inside the "parameters" object of input.json
+      "name": "example_select",
+
+      // UI form label displayed next to control
+      "label": "Example Algorithm Select",
+
+      // Control type
+      // Possible values: "select" | "number" | "boolean" | "string"
+      "type": "select",
+
+      // Available choices for select dropdown (applicable when type is "select")
+      "options": ["OPTION_A", "OPTION_B"],
+
+      // Default selected option
+      "default": "OPTION_A",
+
+      // Helper tooltip explaining what this setting influences
+      "description": "Select from available algorithms or mathematical modes."
+    },
+    {
+      "name": "example_number",
+      "label": "Example Numeric Threshold",
+      "type": "number",
+
+      // Default value (float or integer)
+      "default": 0.5,
+
+      // Minimum allowable value
+      "min": 0.0,
+
+      // Maximum allowable value
+      "max": 1.0,
+
+      // Step increment for slider / numeric input spinner
+      "step": 0.05,
+
+      "description": "Adjust detection sensitivity or classification cutoff threshold."
+    },
+    {
+      "name": "example_boolean",
+      "label": "Example Boolean Flag",
+      "type": "boolean",
+
+      // Default toggle state (true or false)
+      "default": true,
+
+      "description": "Toggle export of full-resolution binary mask artifact."
+    }
+  ],
+
+  // Structured outputs guaranteed by the plugin upon successful exit
+  "outputs": {
+    // Scalar metrics and summary statistics returned for dashboard cards and reporting
+    "metrics": [
+      {
+        // JSON key matching the output dictionary under "metrics"
+        "key": "primary_metric",
+
+        // Human-readable title in summary cards and tables
+        "label": "Primary Coverage",
+
+        // Data type for formatting and aggregation
+        // Possible values: "float" | "integer" | "string" | "boolean"
+        "type": "float",
+
+        // Unit of measurement displayed next to value (e.g., "%", "px", "m²", "ha", "count")
+        "unit": "%",
+
+        "description": "Calculated coverage percentage over analyzed region."
+      },
+      {
+        "key": "count_metric",
+        "label": "Detected Count",
+        "type": "integer",
+        "unit": "items",
+        "description": "Total discrete entities detected."
+      }
+    ],
+
+    // File artifacts produced on disk (raster masks, vector geometries, tables)
+    "artifacts": [
+      {
+        // JSON key matching the output dictionary under "artifacts"
+        "key": "mask_raster",
+
+        // Display name in layer switcher
+        "label": "Classification Raster Mask",
+
+        // High-level artifact data category
+        // Possible values: "raster" | "vector" | "table"
+        "type": "raster",
+
+        // File format MIME type
+        // Possible values: "image/png" | "image/tiff" | "application/geo+json" | "text/csv"
+        "format": "image/png",
+
+        // Whether this artifact is always created (false) or conditional upon user parameter (true)
+        "optional": false,
+
+        // Spatial reference coordinate frame
+        // Possible values: "pixel" (image plane 0..W, 0..H) | "crs" (georeferenced WGS84/EPSG)
+        "coordinate_system": "pixel",
+
+        // Visual rendering recommendations for Module 3 (Map Explorer) & Module 11 (Reporting)
+        "layer_hint": {
+          // Layer visualization style
+          // Possible values: "raster_overlay" | "polygon_boundary" | "point_marker" | "heatmap"
+          "layer_type": "raster_overlay",
+
+          // Initial overlay transparency (0.0 = fully transparent, 1.0 = fully opaque)
+          "default_opacity": 0.6,
+
+          // Color ramp or color map for raster classification
+          // Possible values: "Greens" | "Reds" | "Blues" | "Viridis" | "Jet"
+          "color_palette": "Greens"
+        }
+      },
+      {
+        "key": "boundary_vector",
+        "label": "Vector Detections / Boundaries",
+        "type": "vector",
+        "format": "application/geo+json",
+        "optional": true,
+        "coordinate_system": "crs",
+        "layer_hint": {
+          "layer_type": "polygon_boundary",
+
+          // Hex color code for polygon boundaries or marker outlines
+          "stroke_color": "#2185d0",
+
+          // Fill opacity for polygons
+          "fill_opacity": 0.2
+        }
+      }
+    ]
+  },
+
+  // Process isolation and resource constraints enforced by Rust host supervisor
+  "execution": {
+    // Maximum execution wall-clock time in seconds before process is automatically killed
+    "timeout_seconds": 120,
+
+    // Execution concurrency mode
+    // Possible values: "sequential" (one image at a time) | "parallel" (multi-threaded workers)
+    "concurrency": "sequential",
+
+    // Hardware accelerator requirements
+    "gpu": {
+      // GPU utilization flag
+      // Possible values: "none" | "optional" | "required"
+      "support": "none",
+
+      // Target driver / runtime
+      // Possible values: "cuda" | "rocm" | "metal" | null
+      "driver": null
+    }
+  }
+}

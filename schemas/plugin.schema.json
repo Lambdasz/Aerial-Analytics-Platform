@@ -1,0 +1,329 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aerial-analytics.local/schemas/plugin.v1.json",
+  "title": "Aerial Analytics Plugin Manifest",
+  "description": "JSON Schema for validating Aerial Analytics Platform plugin manifests (Module 2)",
+  "type": "object",
+  "required": ["manifest_version", "metadata", "runtime", "inputs", "parameters", "outputs"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["id", "name", "version", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-_]+$",
+          "description": "Unique identifier for the plugin (kebab-case or snake_case)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable plugin name"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semantic versioning (e.g., 1.0.0)"
+        },
+        "author": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string",
+          "description": "Software license identifier (e.g., MIT, Apache-2.0, Proprietary)"
+        },
+        "description": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "vegetation",
+            "tree_detection",
+            "tree_counting",
+            "land_cover",
+            "temporal",
+            "elevation",
+            "analytics",
+            "utility",
+            "general"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "min_core_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Minimum compatible core platform version"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["type", "entrypoint"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["python", "binary", "wasm"]
+        },
+        "entrypoint": {
+          "type": "string",
+          "description": "Relative path to entrypoint file (e.g., main.py or bin/detector)"
+        },
+        "min_python_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        },
+        "dependencies_file": {
+          "type": "string",
+          "description": "Relative path to requirements.txt or dependency declaration"
+        },
+        "healthcheck_flag": {
+          "type": "string",
+          "description": "CLI flag used to verify environment and dependencies without full execution"
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["granularity", "supported_mime_types"],
+      "additionalProperties": false,
+      "properties": {
+        "granularity": {
+          "type": "string",
+          "enum": [
+            "single_image",
+            "image_pair",
+            "batch",
+            "session",
+            "flight_session",
+            "multi_image"
+          ]
+        },
+        "supported_mime_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["image/jpeg", "image/png", "image/tiff", "application/x-geotiff"]
+          }
+        },
+        "requires_metadata": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["resolution", "gps", "altitude", "timestamp", "camera_model"]
+          }
+        },
+        "optional_metadata": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["resolution", "gps", "altitude", "timestamp", "camera_model"]
+          }
+        },
+        "supports_aoi": {
+          "type": "boolean",
+          "default": false
+        },
+        "aoi_format": {
+          "type": "string",
+          "enum": ["geojson_polygon", "geojson_bbox", "pixel_bbox", "binary_mask"]
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "label", "type", "default"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["number", "boolean", "select", "string"]
+          },
+          "default": {},
+          "options": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Options list if type is 'select'"
+          },
+          "min": {
+            "type": "number",
+            "description": "Minimum limit if type is 'number'"
+          },
+          "max": {
+            "type": "number",
+            "description": "Maximum limit if type is 'number'"
+          },
+          "step": {
+            "type": "number",
+            "description": "Slider/counter step if type is 'number'"
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "label", "type"],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["float", "integer", "string", "boolean"]
+              },
+              "unit": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "label", "type", "format"],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "label": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["raster", "vector", "table", "document"]
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "image/png",
+                  "image/tiff",
+                  "application/geo+json",
+                  "text/csv",
+                  "application/json"
+                ]
+              },
+              "coordinate_system": {
+                "type": "string",
+                "enum": ["pixel", "crs"],
+                "description": "Spatial reference coordinate frame"
+              },
+              "optional": {
+                "type": "boolean",
+                "default": false
+              },
+              "layer_hint": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "layer_type": {
+                    "type": "string",
+                    "enum": [
+                      "raster_overlay",
+                      "polygon_boundary",
+                      "point_marker",
+                      "point_markers",
+                      "heatmap"
+                    ]
+                  },
+                  "default_opacity": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                  },
+                  "color_palette": {
+                    "type": "string"
+                  },
+                  "stroke_color": {
+                    "type": "string"
+                  },
+                  "fill_opacity": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        },
+        "provides_output_dir_arg": {
+          "type": "boolean",
+          "default": true
+        },
+        "concurrency": {
+          "type": "string",
+          "enum": ["sequential", "parallel"],
+          "default": "sequential"
+        },
+        "gpu": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "support": {
+              "type": "string",
+              "enum": ["none", "optional", "required"],
+              "default": "none"
+            },
+            "driver": {
+              "type": ["string", "null"],
+              "enum": ["cuda", "rocm", "metal", null]
+            }
+          }
+        }
+      }
+    }
+  }
+}

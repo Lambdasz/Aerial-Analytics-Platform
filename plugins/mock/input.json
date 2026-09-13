@@ -1,0 +1,11 @@
+{
+  "sessionId": "mock-session-001",
+  "imagePath": "/path/to/mock/image.jpg",
+  "metadata": {
+    "resolution": [4000, 3000],
+    "altitude": 120.5,
+    "gps": { "lat": -7.25, "lon": 112.75 }
+  },
+  "parameters": { "threshold": 0.45 },
+  "aoi": null
+}
