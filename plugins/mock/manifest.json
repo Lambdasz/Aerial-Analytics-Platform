@@ -7,99 +7,31 @@
     "name": "RGB Vegetation Detection",
     "version": "1.0.0",
     "author": "PBL Team 2026",
+    "license": "MIT",
     "description": "Extracts vegetation masks and calculates coverage using RGB Excess Green (ExG) index.",
     "category": "vegetation",
-    "tags": ["rgb", "vegetation", "indices", "exg"]
+    "tags": ["rgb", "vegetation", "indices", "exg"],
+    "min_core_version": "0.1.0"
   },
 
   "runtime": {
     "type": "python",
     "min_python_version": "3.10",
     "entrypoint": "main.py",
-    "dependencies_file": "requirements.txt"
+    "dependencies_file": "requirements.txt",
+    "healthcheck_flag": "--healthcheck"
   },
 
-  "inputs": {
-    "granularity": "single_image",
-    "supported_mime_types": ["image/jpeg", "image/png", "image/tiff"],
-    "requires_metadata": ["resolution"],
-    "optional_metadata": ["gps", "altitude", "timestamp"],
-    "supports_aoi": true,
-    "aoi_format": "geojson_polygon"
-  },
-
-  "parameters": [
-    {
-      "name": "index_type",
-      "label": "Vegetation Index",
-      "type": "select",
-      "options": ["ExG", "VARI", "GLI"],
-      "default": "ExG",
-      "description": "RGB-based mathematical index for vegetation separation."
-    },
-    {
-      "name": "threshold",
-      "label": "Threshold Value",
-      "type": "number",
-      "default": 0.35,
-      "min": 0.0,
-      "max": 1.0,
-      "step": 0.01,
-      "description": "Pixels with index higher than this are classified as vegetation."
-    },
-    {
-      "name": "export_mask",
-      "label": "Generate Binary Mask",
-      "type": "boolean",
-      "default": true,
-      "description": "Saves a high-resolution binary mask file of detected vegetation."
-    }
-  ],
-
-  "outputs": {
-    "metrics": [
-      {
-        "key": "vegetation_coverage_pct",
-        "label": "Vegetation Coverage",
-        "type": "float",
-        "unit": "%",
-        "description": "Percentage of analyzed area covered by vegetation."
-      },
-      {
-        "key": "total_pixels_analyzed",
-        "label": "Pixels Analyzed",
-        "type": "integer",
-        "unit": "px"
-      }
-    ],
-    "artifacts": [
-      {
-        "key": "mask_image",
-        "label": "Vegetation Mask",
-        "type": "raster",
-        "format": "image/png",
-        "layer_hint": {
-          "layer_type": "raster_overlay",
-          "default_opacity": 0.6,
-          "color_palette": "Greens"
-        }
-      },
-      {
-        "key": "geojson_boundary",
-        "label": "Vegetation Polygons",
-        "type": "vector",
-        "format": "application/geo+json",
-        "optional": true,
-        "layer_hint": {
-          "layer_type": "polygon_boundary",
-          "stroke_color": "#2185d0",
-          "fill_opacity": 0.2
-        }
-      }
-    ]
-  },
+  "parameters": "parameters.json",
+  "inputs": "inputs.json",
+  "outputs": "outputs.json",
 
   "execution": {
-    "timeout_seconds": 120
+    "timeout_seconds": 120,
+    "concurrency": "sequential",
+    "gpu": {
+      "support": "none",
+      "driver": null
+    }
   }
 }

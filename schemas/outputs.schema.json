@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "title": "Plugin Outputs Specification",
+  "description": "JSON Schema for validating plugin output metrics and artifacts (Module 2)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$",
+            "description": "JSON key in output dictionary under metrics"
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for dashboard cards"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["float", "integer", "string", "boolean"]
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit of measurement (e.g. %, px, m², ha, items)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Explanatory note or tooltip"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "type", "format"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$",
+            "description": "JSON key in output dictionary under artifacts"
+          },
+          "label": {
+            "type": "string",
+            "description": "Layer or artifact title displayed in UI"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["raster", "vector", "table", "document"]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/tiff",
+              "application/geo+json",
+              "text/csv",
+              "application/json"
+            ]
+          },
+          "coordinate_system": {
+            "type": "string",
+            "enum": ["pixel", "crs"],
+            "description": "Spatial reference coordinate frame"
+          },
+          "optional": {
+            "type": "boolean",
+            "default": false
+          },
+          "layer_hint": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "layer_type": {
+                "type": "string",
+                "enum": [
+                  "raster_overlay",
+                  "polygon_boundary",
+                  "point_marker",
+                  "point_markers",
+                  "heatmap"
+                ]
+              },
+              "default_opacity": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+              },
+              "color_palette": {
+                "type": "string"
+              },
+              "stroke_color": {
+                "type": "string"
+              },
+              "fill_opacity": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

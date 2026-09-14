@@ -2,9 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://aerial-analytics.local/schemas/plugin.v1.json",
   "title": "Aerial Analytics Plugin Manifest",
-  "description": "JSON Schema for validating Aerial Analytics Platform plugin manifests (Module 2)",
+  "description": "JSON Schema for validating core Aerial Analytics Platform plugin manifests (Module 2)",
   "type": "object",
-  "required": ["manifest_version", "metadata", "runtime", "inputs", "parameters", "outputs"],
+  "required": ["manifest_version", "metadata", "runtime", "parameters", "inputs", "outputs"],
   "additionalProperties": false,
   "properties": {
     "$schema": {
@@ -59,7 +59,9 @@
         },
         "tags": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "min_core_version": {
           "type": "string",
@@ -86,7 +88,7 @@
           "pattern": "^\\d+\\.\\d+$"
         },
         "dependencies_file": {
-          "type": "string",
+          "type": ["string", "null"],
           "description": "Relative path to requirements.txt or dependency declaration"
         },
         "healthcheck_flag": {
@@ -95,200 +97,17 @@
         }
       }
     },
-    "inputs": {
-      "type": "object",
-      "required": ["granularity", "supported_mime_types"],
-      "additionalProperties": false,
-      "properties": {
-        "granularity": {
-          "type": "string",
-          "enum": [
-            "single_image",
-            "image_pair",
-            "batch",
-            "session",
-            "flight_session",
-            "multi_image"
-          ]
-        },
-        "supported_mime_types": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "enum": ["image/jpeg", "image/png", "image/tiff", "application/x-geotiff"]
-          }
-        },
-        "requires_metadata": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["resolution", "gps", "altitude", "timestamp", "camera_model"]
-          }
-        },
-        "optional_metadata": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": ["resolution", "gps", "altitude", "timestamp", "camera_model"]
-          }
-        },
-        "supports_aoi": {
-          "type": "boolean",
-          "default": false
-        },
-        "aoi_format": {
-          "type": "string",
-          "enum": ["geojson_polygon", "geojson_bbox", "pixel_bbox", "binary_mask"]
-        }
-      }
-    },
     "parameters": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["name", "label", "type", "default"],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[a-z0-9_]+$"
-          },
-          "label": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": ["number", "boolean", "select", "string"]
-          },
-          "default": {},
-          "options": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Options list if type is 'select'"
-          },
-          "min": {
-            "type": "number",
-            "description": "Minimum limit if type is 'number'"
-          },
-          "max": {
-            "type": "number",
-            "description": "Maximum limit if type is 'number'"
-          },
-          "step": {
-            "type": "number",
-            "description": "Slider/counter step if type is 'number'"
-          }
-        }
-      }
+      "type": "string",
+      "description": "Relative path to the parameters specification file (e.g., parameters.json)"
+    },
+    "inputs": {
+      "type": "string",
+      "description": "Relative path to the inputs specification file (e.g., inputs.json)"
     },
     "outputs": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "metrics": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["key", "label", "type"],
-            "additionalProperties": false,
-            "properties": {
-              "key": {
-                "type": "string",
-                "pattern": "^[a-z0-9_]+$"
-              },
-              "label": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": ["float", "integer", "string", "boolean"]
-              },
-              "unit": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "artifacts": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["key", "label", "type", "format"],
-            "additionalProperties": false,
-            "properties": {
-              "key": {
-                "type": "string",
-                "pattern": "^[a-z0-9_]+$"
-              },
-              "label": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": ["raster", "vector", "table", "document"]
-              },
-              "format": {
-                "type": "string",
-                "enum": [
-                  "image/png",
-                  "image/tiff",
-                  "application/geo+json",
-                  "text/csv",
-                  "application/json"
-                ]
-              },
-              "coordinate_system": {
-                "type": "string",
-                "enum": ["pixel", "crs"],
-                "description": "Spatial reference coordinate frame"
-              },
-              "optional": {
-                "type": "boolean",
-                "default": false
-              },
-              "layer_hint": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                  "layer_type": {
-                    "type": "string",
-                    "enum": [
-                      "raster_overlay",
-                      "polygon_boundary",
-                      "point_marker",
-                      "point_markers",
-                      "heatmap"
-                    ]
-                  },
-                  "default_opacity": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0
-                  },
-                  "color_palette": {
-                    "type": "string"
-                  },
-                  "stroke_color": {
-                    "type": "string"
-                  },
-                  "fill_opacity": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      "type": "string",
+      "description": "Relative path to the outputs specification file (e.g., outputs.json)"
     },
     "execution": {
       "type": "object",
