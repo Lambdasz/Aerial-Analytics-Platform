@@ -33,3 +33,8 @@ dist-ssr
 target/
 **/target/
 plugins/**/bin/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class

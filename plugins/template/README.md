@@ -288,3 +288,132 @@ This file models the structured response written by the plugin upon execution co
 | `artifacts.<key>.format`    | `string`         | **Yes**  | `"image/png"`, `"image/tiff"`, `"application/geo+json"`, `"text/csv"` | File format MIME type.                                                    |
 | `artifacts.<key>.bounds`    | `number[]`       | No       | `[min_lon, min_lat, max_lon, max_lat]`                                | Georeferenced bounding box (RFC 7946) for Map Explorer raster projection. |
 | `error`                     | `string \| null` | No       | Diagnostic error string or `null`                                     | Diagnostic details if status is `failure` or `warning`.                   |
+
+---
+
+## Python Entrypoint Implementation (`main.py`)
+
+The platform invokes your analytical plugin as an isolated child subprocess. The entrypoint script (`main.py`) MUST implement two standard operating modes exposed via CLI flags:
+
+```text
+Host / Tauri Supervisor
+  │
+  ├─ Discovery / Pre-flight ──────> python main.py --healthcheck
+  │                                   └─> Exits 0: environment ready
+  │                                   └─> Exits 1: missing deps / GPU / weights
+  │
+  └─ Analytical Job Run ──────────> python main.py --input <payload.json> --output <result.json>
+                                      └─> Ingests image & parameters
+                                      └─> Writes artifacts into output_dir
+                                      └─> Emits structured execution_result.json
+```
+
+---
+
+### 1. The Healthcheck Mode (`--healthcheck`)
+
+Before scheduling analysis workloads or displaying plugins as active in the Extension Manager UI, the platform supervisor executes:
+
+```bash
+python main.py --healthcheck
+```
+
+#### Why Healthcheck Must Be Customized:
+
+The template's default `handle_healthcheck()` is a foundation that **MUST be tailored to your plugin's specific requirements**:
+
+- **Do Not Use a Static Dummy**: A hardcoded status prevents the platform from detecting missing packages, wrong Python environments, or missing model files before running heavy processing jobs.
+- **Dynamic Identity**: The template dynamically reads `id` and `version` from `manifest.json`. When you change `metadata.id` or `metadata.version`, the healthcheck reflects this automatically.
+- **Dependency Verification**: In `check_dependencies()`, list all required third-party Python modules (e.g., `["numpy", "cv2", "rasterio", "torch"]`). The script attempts to import each one.
+- **Hardware Acceleration Check**: If your plugin requires CUDA/ROCm (declared in `manifest.json` under `execution.gpu.support`), check device availability (e.g., `torch.cuda.is_available()`).
+- **Model Weights Verification**: If your plugin relies on deep learning model weights (`.onnx`, `.pt`), verify that the model files exist on disk and are readable.
+
+#### Expected Healthcheck Output:
+
+- **Healthy (Status Code `0`):**
+  Write JSON to `stdout` and exit with code `0`:
+
+  ```json
+  {
+    "status": "healthy",
+    "plugin_id": "rgb-vegetation-exg",
+    "version": "1.0.0",
+    "python_version": "3.11.8",
+    "dependencies": {
+      "numpy": "available",
+      "cv2": "available"
+    }
+  }
+  ```
+
+- **Unhealthy (Status Code `1`):**
+  Write diagnostic JSON to `stderr` and exit with code `1`:
+  ```json
+  {
+    "status": "unhealthy",
+    "plugin_id": "rgb-vegetation-exg",
+    "version": "1.0.0",
+    "python_version": "3.11.8",
+    "dependencies": {
+      "torch": "missing: No module named 'torch'"
+    },
+    "error": "One or more required dependencies failed to import. Run pip install -r requirements.txt"
+  }
+  ```
+
+---
+
+### 2. The Analysis Mode (`--input` and `--output`)
+
+When a user requests analysis in the platform UI, the supervisor delivers an input payload file and expects a structured result file:
+
+```bash
+python main.py --input <path/to/execution_payload.json> --output <path/to/execution_result.json>
+```
+
+#### Step-by-Step Implementation Workflow:
+
+1. **Parse Input Payload**:
+   - Extract `target.image_path` (absolute path to the source drone image).
+   - Extract `parameters` (user-configured values matching `parameters.json`).
+   - Extract `output_dir` (the sandboxed workspace directory for output files).
+   - If present, extract `aoi.geometry` (GeoJSON polygon coordinates for spatial clipping).
+
+2. **Process Imagery & AOI**:
+   - Read image with your preferred analytical library (OpenCV, Pillow, Rasterio).
+   - If an AOI polygon is provided, convert coordinates to pixel space or spatial mask and clip analysis.
+   - Run classification, segmentation, or feature detection.
+
+3. **Generate Artifact Files in `output_dir`**:
+   - Save raster masks as PNG or GeoTIFF (e.g., `f"{exec_id}_mask.png"`).
+   - Save vector detections/boundaries as GeoJSON (e.g., `f"{exec_id}_features.geojson"`).
+   - Compute georeferenced bounding box `[min_lon, min_lat, max_lon, max_lat]` for map layer projection.
+
+4. **Construct and Write `execution_result.json`**:
+   - `status`: Set to `"success"`.
+   - `metrics`: Populate scalar values matching the keys declared in `outputs.json`.
+   - `artifacts`: Populate descriptors matching the keys declared in `outputs.json`.
+   - Write JSON to the path given by `--output` and exit with status code `0`.
+
+5. **Fault Isolation & Error Safety**:
+   > [!CAUTION]
+   > A failing plugin **MUST NEVER crash unhandled**. Wrap the analysis pipeline in a `try...except Exception` block. If an error occurs (e.g., corrupted image, out of memory, invalid parameters), catch it, write a result with `"status": "failure"` and diagnostic `"error": str(exc)` to the `--output` path, and exit with status code `1`.
+
+---
+
+### 3. Testing Your Plugin Locally
+
+Run these terminal commands from the workspace root to verify your implementation before deploying:
+
+```bash
+# 1. Test healthcheck (verify environment & dependencies)
+python plugins/template/main.py --healthcheck
+
+# 2. Test analysis execution with test fixtures
+python plugins/template/main.py \
+  --input plugins/template/execution_payload.json \
+  --output /tmp/test_result.json
+
+# 3. Validate generated output against schema
+check-jsonschema --schemafile schemas/execution_result.schema.json /tmp/test_result.json
+```
