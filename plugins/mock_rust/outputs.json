@@ -1,0 +1,54 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "canopy_density_pct",
+      "label": "Canopy Density",
+      "type": "float",
+      "unit": "%",
+      "description": "Estimated canopy crown cover percentage."
+    },
+    {
+      "key": "canopy_area_sqm",
+      "label": "Canopy Area",
+      "type": "float",
+      "unit": "m²",
+      "description": "Estimated physical canopy area in square meters."
+    },
+    {
+      "key": "tree_cluster_count",
+      "label": "Canopy Clusters",
+      "type": "integer",
+      "unit": "items",
+      "description": "Number of discrete canopy patches identified."
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "canopy_mask",
+      "label": "Canopy Raster Mask",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "optional": false,
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.65,
+        "color_palette": "Greens"
+      }
+    },
+    {
+      "key": "canopy_polygons",
+      "label": "Canopy Cluster Boundaries",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "polygon_boundary",
+        "stroke_color": "#1070ca",
+        "fill_opacity": 0.25
+      }
+    }
+  ]
+}

@@ -28,3 +28,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Cargo & Build artifacts
+target/
+**/target/
+plugins/**/bin/
