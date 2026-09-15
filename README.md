@@ -123,3 +123,9 @@ Belum ada test runner terkonfigurasi di repo. Untuk modul ini:
 - [`AGENTS.md`](./AGENTS.md) — konvensi proyek secara keseluruhan.
 - [`Proyek.md`](./Proyek.md) — deskripsi lengkap 11 modul Aerial Analytics Platform.
 - [`RULES_MAP_FR.md`](./src/map/RULES_MAP_FR.md) / [`RULES_MAP_CONTROLLER.md`](./src-tauri/src/map_controller/RULES_MAP_CONTROLLER.md) — aturan detail per sisi.
+
+## APL Reference Dev Singkat
+
+- Website : http://prototype-lab-bice.vercel.app/
+
+
