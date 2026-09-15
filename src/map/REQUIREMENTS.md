@@ -6,21 +6,21 @@
 
 ## Frontend (npm — `package.json`, root repo)
 
-| Package | Versi | Fungsi |
-|---|---|---|
-| `react` | `^19.1.0` | UI framework |
-| `react-dom` | `^19.1.0` | React renderer |
-| `react-leaflet` | `^5.0.0` | Binding React untuk Leaflet |
-| `leaflet` | `^1.9.4` | Engine peta |
-| `@geoman-io/leaflet-geoman-free` | `^2.20.1` | Drawing/editing AOI (polygon, dsb) |
-| `@blueprintjs/core` | `^6.18.0` | Komponen UI (panel, toolbar map, dll) |
-| `@tauri-apps/api` | `^2` | `invoke()` ke backend Rust (dipakai lewat wrapper `invokeMap()`) |
-| `@tauri-apps/plugin-opener` | `^2` | Plugin bawaan scaffold Tauri (bukan spesifik map) |
+| Package                          | Versi     | Fungsi                                                           |
+| -------------------------------- | --------- | ---------------------------------------------------------------- |
+| `react`                          | `^19.1.0` | UI framework                                                     |
+| `react-dom`                      | `^19.1.0` | React renderer                                                   |
+| `react-leaflet`                  | `^5.0.0`  | Binding React untuk Leaflet                                      |
+| `leaflet`                        | `^1.9.4`  | Engine peta                                                      |
+| `@geoman-io/leaflet-geoman-free` | `^2.20.1` | Drawing/editing AOI (polygon, dsb)                               |
+| `@blueprintjs/core`              | `^6.18.0` | Komponen UI (panel, toolbar map, dll)                            |
+| `@tauri-apps/api`                | `^2`      | `invoke()` ke backend Rust (dipakai lewat wrapper `invokeMap()`) |
+| `@tauri-apps/plugin-opener`      | `^2`      | Plugin bawaan scaffold Tauri (bukan spesifik map)                |
 
 Dev-only:
 
-| Package | Versi | Fungsi |
-|---|---|---|
+| Package          | Versi     | Fungsi                  |
+| ---------------- | --------- | ----------------------- |
 | `@types/leaflet` | `^1.9.22` | Type definition Leaflet |
 
 > `react-leaflet-draw` **tidak** dipakai (deprecated, dilarang di `RULES_MAP_FR.md`).
@@ -29,18 +29,18 @@ Dev-only:
 
 Sudah dipakai (scaffold Tauri default):
 
-| Crate | Fungsi |
-|---|---|
-| `serde` | Serialisasi struct (AOI, ImageMarker, LayerConfig, `CommandError`) ke/dari frontend |
-| `serde_json` | Pendukung serde untuk payload JSON/GeoJSON |
+| Crate        | Fungsi                                                                              |
+| ------------ | ----------------------------------------------------------------------------------- |
+| `serde`      | Serialisasi struct (AOI, ImageMarker, LayerConfig, `CommandError`) ke/dari frontend |
+| `serde_json` | Pendukung serde untuk payload JSON/GeoJSON                                          |
 
 Direncanakan / perlu ditambahkan seiring implementasi `map_controller` (**belum dikonfirmasi ada di `Cargo.toml` saat ini** — cek dan tambahkan saat mulai coding):
 
-| Crate | Fungsi |
-|---|---|
-| `geo` | Validasi & operasi geometri (polygon closed-check, self-intersection, luas/perimeter) |
-| `thiserror` | Definisi `MapControllerError` (enum error internal) |
-| `log` | Logging terpusat di titik konversi `MapControllerError` → `CommandError` |
+| Crate       | Fungsi                                                                                |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `geo`       | Validasi & operasi geometri (polygon closed-check, self-intersection, luas/perimeter) |
+| `thiserror` | Definisi `MapControllerError` (enum error internal)                                   |
+| `log`       | Logging terpusat di titik konversi `MapControllerError` → `CommandError`              |
 
 ## Di luar scope Module 3
 
@@ -49,4 +49,4 @@ Direncanakan / perlu ditambahkan seiring implementasi `map_controller` (**belum 
 ## Kontrak yang perlu diketahui Module 2
 
 - AOI yang dihasilkan Module 3 berformat `GeoJSON.Feature<Polygon>` (RFC 7946), CRS **WGS84 (EPSG:4326)**.
-- Error dari command `map_controller` berbentuk `CommandError { code, message }` — pola ini dirancang supaya bisa dipakai ulang untuk kebutuhan *"Plugin Error Isolation"* di Module 2. Lihat `RULES_MAP_CONTROLLER.md` bagian "Error Handling" untuk detail struct-nya.
+- Error dari command `map_controller` berbentuk `CommandError { code, message }` — pola ini dirancang supaya bisa dipakai ulang untuk kebutuhan _"Plugin Error Isolation"_ di Module 2. Lihat `RULES_MAP_CONTROLLER.md` bagian "Error Handling" untuk detail struct-nya.

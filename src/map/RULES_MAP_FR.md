@@ -63,10 +63,7 @@ export interface CommandError {
   message: string;
 }
 
-export async function invokeMap<T>(
-  cmd: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
+export async function invokeMap<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
   } catch (err) {

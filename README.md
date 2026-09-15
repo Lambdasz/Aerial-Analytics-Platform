@@ -3,6 +3,7 @@
 Modul ini mengembangkan lingkungan geospasial interaktif untuk menjelajahi citra udara (aerial imagery) beserta lokasinya. Modul ini menjadi **fondasi input spasial** bagi seluruh modul analitik lain (Module 4–10): Area of Interest (AOI) yang dibuat di sini adalah kontrak data yang dikonsumsi oleh plugin vegetasi, tree counting, land cover, plot analytics, hingga temporal change analysis.
 
 > Aturan pengembangan detail (do's/don'ts) ada di dua dokumen terpisah:
+>
 > - [`RULES_MAP_FR.md`](./src/map/RULES_MAP_FR.md) — untuk frontend (`src/map/`)
 > - [`RULES_MAP_CONTROLLER.md`](./src-tauri/src/map_controller/RULES_MAP_CONTROLLER.md) — untuk backend (`src-tauri/src/map_controller/`)
 >
@@ -39,13 +40,13 @@ Komunikasi frontend ⟷ backend selalu lewat Tauri `invoke`, dibungkus `invokeMa
 
 ## Tech Stack Modul
 
-| Layer | Teknologi |
-|---|---|
-| Peta | Leaflet + `react-leaflet` |
+| Layer               | Teknologi                                                                       |
+| ------------------- | ------------------------------------------------------------------------------- |
+| Peta                | Leaflet + `react-leaflet`                                                       |
 | Drawing/Editing AOI | `@geoman-io/leaflet-geoman-free` (bukan `react-leaflet-draw`, sudah deprecated) |
-| Tile default | OpenStreetMap (OSM) |
-| Backend command | Rust + Tauri 2, Serde untuk serialisasi |
-| Validasi geometri | crate `geo` |
+| Tile default        | OpenStreetMap (OSM)                                                             |
+| Backend command     | Rust + Tauri 2, Serde untuk serialisasi                                         |
+| Validasi geometri   | crate `geo`                                                                     |
 
 ## Kontrak Data Spasial (AOI / GeoJSON)
 
@@ -72,6 +73,7 @@ Implementasi lengkap kedua sisi ada di `RULES_MAP_CONTROLLER.md` (bagian "Error 
 ## Registrasi Command & Capabilities
 
 Setiap command Tauri baru di `map_controller` **wajib**:
+
 1. Didaftarkan di `invoke_handler` pada `src-tauri/src/lib.rs`.
 2. Diberi izin eksplisit di `src-tauri/capabilities/default.json`.
 
@@ -105,7 +107,7 @@ File-file ini **canonical**, artinya jadi acuan bersama supaya Module 2 dan Modu
 
 - **`aoi.example.geojson`** — bentuk AOI valid yang dikirim Module 3 ke plugin manapun. Format `GeoJSON.Feature<Polygon>`, WGS84.
 - **`aoi.invalid.example.geojson`** — AOI tidak valid, untuk test negatif di sisi manapun yang mengonsumsi AOI.
-- **`spatial-result.example.json`** — kontrak arah sebaliknya: hasil dari plugin (Module 4/7/8) yang dikonsumsi Module 3 untuk fitur *Spatial Result Visualization*. Berguna buat tim Module 4/7/8 supaya tahu bentuk output yang Module 3 harapkan, tanpa perlu nunggu UI-nya jadi.
+- **`spatial-result.example.json`** — kontrak arah sebaliknya: hasil dari plugin (Module 4/7/8) yang dikonsumsi Module 3 untuk fitur _Spatial Result Visualization_. Berguna buat tim Module 4/7/8 supaya tahu bentuk output yang Module 3 harapkan, tanpa perlu nunggu UI-nya jadi.
 - **`plugin-execution-payload.example.json`** — salinan lokal contoh dari template Module 2 (`plugins/template`), disertakan supaya jelas bagaimana `aoi.geometry` dari Module 3 dipakai sebagai parameter eksekusi plugin. **Bukan sumber kebenaran** — kalau template Module 2 berubah, update fixture ini menyusul, jangan sebaliknya.
 
 ## Catatan
@@ -115,6 +117,7 @@ Semua fixture ini murni untuk development/testing (mock data & regression check)
 ## Testing
 
 Belum ada test runner terkonfigurasi di repo. Untuk modul ini:
+
 - Backend: fungsi komputasi spasial murni (luas, perimeter, validasi polygon) wajib punya unit test (`cargo test`), dipisah dari `#[tauri::command]`.
 - Frontend: custom hooks (`useAOI`, `useLayerManager`, dst.) disarankan diuji dengan Vitest + React Testing Library.
 
@@ -127,5 +130,3 @@ Belum ada test runner terkonfigurasi di repo. Untuk modul ini:
 ## APL Reference Dev Singkat
 
 - Website : http://prototype-lab-bice.vercel.app/
-
-

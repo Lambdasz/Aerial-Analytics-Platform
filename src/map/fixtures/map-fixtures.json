@@ -6,10 +6,10 @@
       "image_id": "img_101",
       "image_url": "/assets/flights/img_101.png",
       "spatial_bounds": {
-        "north": -1.268000,
-        "south": -1.269000,
-        "east": 116.832000,
-        "west": 116.831000
+        "north": -1.268,
+        "south": -1.269,
+        "east": 116.832,
+        "west": 116.831
       }
     },
     "output": {
@@ -17,7 +17,7 @@
       "image_id": "img_101",
       "current_viewport": {
         "zoom_level": 18,
-        "center": [-1.268500, 116.831500]
+        "center": [-1.2685, 116.8315]
       }
     }
   },
@@ -28,8 +28,8 @@
       "markers": [
         {
           "image_id": "img_001",
-          "latitude": -1.269160,
-          "longitude": 116.831200,
+          "latitude": -1.26916,
+          "longitude": 116.8312,
           "altitude_m": 120.0,
           "timestamp": "2026-09-14T10:15:00Z",
           "resolution": { "width": 5472, "height": 3648, "megapixels": 20.0 },
@@ -50,7 +50,7 @@
       "event": "marker_clicked",
       "selected_marker": {
         "image_id": "img_001",
-        "coordinates": { "latitude": -1.269160, "longitude": 116.831200 },
+        "coordinates": { "latitude": -1.26916, "longitude": 116.8312 },
         "display_info": {
           "captured_at": "2026-09-14T10:15:00Z",
           "altitude": "120 m",
@@ -69,7 +69,7 @@
         "image_id": "img_001",
         "thumbnail_path": "/storage/projects/prj_01/thumbnails/img_001_thumb.jpg",
         "full_image_path": "/storage/projects/prj_01/raw/img_001.jpg",
-        "location": { "latitude": -1.269160, "longitude": 116.831200 },
+        "location": { "latitude": -1.26916, "longitude": 116.8312 },
         "info_panel": {
           "datetime": "14 Sep 2026, 10:15 WITA",
           "altitude": "120 m",
@@ -102,13 +102,15 @@
             "name": "Blok Sawit Utara (Plot A)",
             "geometry": {
               "type": "Polygon",
-              "coordinates": [[
-                [116.831000, -1.269000],
-                [116.832000, -1.269000],
-                [116.832000, -1.269500],
-                [116.831000, -1.269500],
-                [116.831000, -1.269000]
-              ]]
+              "coordinates": [
+                [
+                  [116.831, -1.269],
+                  [116.832, -1.269],
+                  [116.832, -1.2695],
+                  [116.831, -1.2695],
+                  [116.831, -1.269]
+                ]
+              ]
             },
             "display_style": {
               "fill_color": "#00FF00",
@@ -128,15 +130,21 @@
         "name": "Area Analisis Modul 4",
         "geometry": {
           "type": "Polygon",
-          "coordinates": [[
-            [116.833000, -1.270000],
-            [116.834000, -1.270000],
-            [116.834000, -1.271000],
-            [116.833000, -1.271000],
-            [116.833000, -1.270000]
-          ]]
+          "coordinates": [
+            [
+              [116.833, -1.27],
+              [116.834, -1.27],
+              [116.834, -1.271],
+              [116.833, -1.271],
+              [116.833, -1.27]
+            ]
+          ]
         },
-        "properties": { "calculated_area_sq_m": 12500.5, "perimeter_m": 500.0, "created_at": "2026-09-14T19:00:15Z" }
+        "properties": {
+          "calculated_area_sq_m": 12500.5,
+          "perimeter_m": 500.0,
+          "created_at": "2026-09-14T19:00:15Z"
+        }
       }
     },
     "output_invalid": {
@@ -148,10 +156,12 @@
         "name": "AOI Tidak Valid (uji validasi)",
         "geometry": {
           "type": "Polygon",
-          "coordinates": [[
-            [116.833000, -1.270000],
-            [116.834000, -1.270000]
-          ]]
+          "coordinates": [
+            [
+              [116.833, -1.27],
+              [116.834, -1.27]
+            ]
+          ]
         }
       }
     }
@@ -165,20 +175,48 @@
           {
             "group_name": "Base Maps",
             "layers": [
-              { "layer_id": "base_osm", "name": "OpenStreetMap (Standard)", "type": "raster_tile", "is_visible": true, "opacity": 1.0, "z_index": 0 }
+              {
+                "layer_id": "base_osm",
+                "name": "OpenStreetMap (Standard)",
+                "type": "raster_tile",
+                "is_visible": true,
+                "opacity": 1.0,
+                "z_index": 0
+              }
             ]
           },
           {
             "group_name": "Drone Imagery",
             "layers": [
-              { "layer_id": "flight_session_01", "name": "Orthomosaic Kebun Sektor A", "type": "raster_image", "is_visible": true, "opacity": 1.0, "z_index": 10 }
+              {
+                "layer_id": "flight_session_01",
+                "name": "Orthomosaic Kebun Sektor A",
+                "type": "raster_image",
+                "is_visible": true,
+                "opacity": 1.0,
+                "z_index": 10
+              }
             ]
           },
           {
             "group_name": "Analysis Results (Plugins)",
             "layers": [
-              { "layer_id": "plugin_veg_mask_01", "name": "Vegetation Mask (Modul 4)", "type": "raster_mask", "is_visible": true, "opacity": 0.5, "z_index": 20 },
-              { "layer_id": "plugin_tree_detect_01", "name": "Tree Detection (Modul 7)", "type": "vector_points", "is_visible": false, "opacity": 1.0, "z_index": 25 }
+              {
+                "layer_id": "plugin_veg_mask_01",
+                "name": "Vegetation Mask (Modul 4)",
+                "type": "raster_mask",
+                "is_visible": true,
+                "opacity": 0.5,
+                "z_index": 20
+              },
+              {
+                "layer_id": "plugin_tree_detect_01",
+                "name": "Tree Detection (Modul 7)",
+                "type": "vector_points",
+                "is_visible": false,
+                "opacity": 1.0,
+                "z_index": 25
+              }
             ]
           }
         ]
@@ -187,12 +225,22 @@
     "output_opacity_change": {
       "event": "layer_state_changed",
       "source_ui": "layer_manager_panel",
-      "data": { "layer_id": "plugin_veg_mask_01", "change_type": "update_opacity", "new_value": 0.3, "timestamp": "2026-09-14T19:05:22Z" }
+      "data": {
+        "layer_id": "plugin_veg_mask_01",
+        "change_type": "update_opacity",
+        "new_value": 0.3,
+        "timestamp": "2026-09-14T19:05:22Z"
+      }
     },
     "output_toggle_visibility": {
       "event": "layer_state_changed",
       "source_ui": "layer_manager_panel",
-      "data": { "layer_id": "plugin_tree_detect_01", "change_type": "toggle_visibility", "new_value": true, "timestamp": "2026-09-14T19:05:30Z" }
+      "data": {
+        "layer_id": "plugin_tree_detect_01",
+        "change_type": "toggle_visibility",
+        "new_value": true,
+        "timestamp": "2026-09-14T19:05:30Z"
+      }
     }
   },
 
@@ -200,16 +248,16 @@
     "input": {
       "measurement_type": "area",
       "points": [
-        [116.8310, -1.2690],
-        [116.8320, -1.2690],
-        [116.8320, -1.2695],
-        [116.8310, -1.2690]
+        [116.831, -1.269],
+        [116.832, -1.269],
+        [116.832, -1.2695],
+        [116.831, -1.269]
       ]
     },
     "output": {
       "measurement_id": "meas_55",
       "type": "area",
-      "results": { "area_sq_m": 5550.75, "perimeter_m": 310.20 }
+      "results": { "area_sq_m": 5550.75, "perimeter_m": 310.2 }
     }
   },
 
@@ -237,7 +285,7 @@
         "action": "focus_map_on_image",
         "payload": {
           "image_id": "drone_001",
-          "target_coordinate": { "latitude": -1.2340, "longitude": 116.4560 },
+          "target_coordinate": { "latitude": -1.234, "longitude": 116.456 },
           "animation": "fly_to",
           "target_zoom_level": 20
         }
@@ -245,13 +293,20 @@
       "output": {
         "event": "map_view_updated",
         "source_ui": "leaflet_map_engine",
-        "state": { "current_center": [-1.2340, 116.4560], "current_zoom": 20, "highlighted_marker": "drone_001" }
+        "state": {
+          "current_center": [-1.234, 116.456],
+          "current_zoom": 20,
+          "highlighted_marker": "drone_001"
+        }
       }
     },
     "scenario_map_to_list": {
       "input": {
         "action": "click_image_marker",
-        "payload": { "clicked_image_id": "drone_001", "coordinate": { "latitude": -1.2340, "longitude": 116.4560 } }
+        "payload": {
+          "clicked_image_id": "drone_001",
+          "coordinate": { "latitude": -1.234, "longitude": 116.456 }
+        }
       },
       "output": {
         "event": "image_activated_from_map",
@@ -266,7 +321,10 @@
       "action": "map_view_control",
       "command": "fitBounds",
       "payload": {
-        "bounds": [[-1.2300, 116.4500], [-1.2450, 116.4700]],
+        "bounds": [
+          [-1.23, 116.45],
+          [-1.245, 116.47]
+        ],
         "options": { "padding": [50, 50], "animate": true, "duration": 1.5 }
       }
     },
@@ -279,9 +337,9 @@
       "event": "map_view_changed",
       "source_ui": "leaflet_map_engine",
       "state": {
-        "current_center": [-1.2375, 116.4600],
+        "current_center": [-1.2375, 116.46],
         "current_zoom": 16,
-        "current_bounds": { "north": -1.2300, "south": -1.2450, "east": 116.4700, "west": 116.4500 },
+        "current_bounds": { "north": -1.23, "south": -1.245, "east": 116.47, "west": 116.45 },
         "timestamp": "2026-09-14T19:10:00Z"
       }
     }
