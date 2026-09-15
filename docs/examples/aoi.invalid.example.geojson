@@ -1,0 +1,289 @@
+{
+  "_note": "Dummy data per fitur Module 3. Dipakai frontend (komponen React / dev tanpa backend hidup) dan sebagai contoh kontrak untuk unit test. Semua koordinat konsisten di sekitar area sampel yang sama (Balikpapan) supaya bisa dites bareng di satu viewport peta.",
+
+  "geo_referenced_image_explorer": {
+    "input": {
+      "image_id": "img_101",
+      "image_url": "/assets/flights/img_101.png",
+      "spatial_bounds": {
+        "north": -1.268000,
+        "south": -1.269000,
+        "east": 116.832000,
+        "west": 116.831000
+      }
+    },
+    "output": {
+      "status": "rendered",
+      "image_id": "img_101",
+      "current_viewport": {
+        "zoom_level": 18,
+        "center": [-1.268500, 116.831500]
+      }
+    }
+  },
+
+  "image_location_marker": {
+    "input": {
+      "action": "render_markers",
+      "markers": [
+        {
+          "image_id": "img_001",
+          "latitude": -1.269160,
+          "longitude": 116.831200,
+          "altitude_m": 120.0,
+          "timestamp": "2026-09-14T10:15:00Z",
+          "resolution": { "width": 5472, "height": 3648, "megapixels": 20.0 },
+          "metadata": {
+            "camera_make": "DJI",
+            "camera_model": "Phantom 4 Pro",
+            "focal_length_mm": 8.8,
+            "iso": 100,
+            "shutter_speed": "1/240",
+            "aperture": "f/2.8",
+            "gimbal_yaw_degree": 45.2,
+            "gimbal_pitch_degree": -90.0
+          }
+        }
+      ]
+    },
+    "output": {
+      "event": "marker_clicked",
+      "selected_marker": {
+        "image_id": "img_001",
+        "coordinates": { "latitude": -1.269160, "longitude": 116.831200 },
+        "display_info": {
+          "captured_at": "2026-09-14T10:15:00Z",
+          "altitude": "120 m",
+          "resolution": "5472 x 3648 px (20 MP)",
+          "camera": "DJI Phantom 4 Pro",
+          "exposure": "ISO 100, 1/240s, f/2.8"
+        }
+      }
+    }
+  },
+
+  "image_preview_popup": {
+    "input": {
+      "action": "display_image_popup",
+      "payload": {
+        "image_id": "img_001",
+        "thumbnail_path": "/storage/projects/prj_01/thumbnails/img_001_thumb.jpg",
+        "full_image_path": "/storage/projects/prj_01/raw/img_001.jpg",
+        "location": { "latitude": -1.269160, "longitude": 116.831200 },
+        "info_panel": {
+          "datetime": "14 Sep 2026, 10:15 WITA",
+          "altitude": "120 m",
+          "camera": "DJI Phantom 4 Pro",
+          "resolution": "5472 x 3648 px"
+        },
+        "available_actions": ["view_full_image", "run_vegetation_plugin", "flag_bad_quality"]
+      }
+    },
+    "output": {
+      "event": "popup_action_triggered",
+      "source_ui": "map_image_popup",
+      "data": {
+        "image_id": "img_001",
+        "selected_action": "run_vegetation_plugin",
+        "action_params": { "plugin_target": "module_4_rgb_vegetation", "bypass_cache": false },
+        "timestamp": "2026-09-14T18:55:10Z"
+      }
+    }
+  },
+
+  "aoi_selection": {
+    "input_start_drawing": { "action": "start_drawing", "tool_type": "polygon" },
+    "input_load_existing": {
+      "action": "load_aoi_data",
+      "payload": {
+        "aoi_list": [
+          {
+            "aoi_id": "aoi_plot_A",
+            "name": "Blok Sawit Utara (Plot A)",
+            "geometry": {
+              "type": "Polygon",
+              "coordinates": [[
+                [116.831000, -1.269000],
+                [116.832000, -1.269000],
+                [116.832000, -1.269500],
+                [116.831000, -1.269500],
+                [116.831000, -1.269000]
+              ]]
+            },
+            "display_style": {
+              "fill_color": "#00FF00",
+              "fill_opacity": 0.2,
+              "border_color": "#008000",
+              "border_weight": 2
+            }
+          }
+        ]
+      }
+    },
+    "output_valid": {
+      "event": "aoi_created",
+      "source_ui": "map_draw_tool",
+      "data": {
+        "aoi_id": "aoi_new_8899",
+        "name": "Area Analisis Modul 4",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[
+            [116.833000, -1.270000],
+            [116.834000, -1.270000],
+            [116.834000, -1.271000],
+            [116.833000, -1.271000],
+            [116.833000, -1.270000]
+          ]]
+        },
+        "properties": { "calculated_area_sq_m": 12500.5, "perimeter_m": 500.0, "created_at": "2026-09-14T19:00:15Z" }
+      }
+    },
+    "output_invalid": {
+      "_note": "Test case untuk validasi backend (RULES_MAP_CONTROLLER.md): titik awal-akhir tidak sama & kurang dari 3 titik unik -> harus ditolak dengan CommandError code INVALID_GEOMETRY",
+      "event": "aoi_created",
+      "source_ui": "map_draw_tool",
+      "data": {
+        "aoi_id": "aoi_invalid_001",
+        "name": "AOI Tidak Valid (uji validasi)",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[
+            [116.833000, -1.270000],
+            [116.834000, -1.270000]
+          ]]
+        }
+      }
+    }
+  },
+
+  "layer_management": {
+    "input_init": {
+      "action": "initialize_layer_panel",
+      "payload": {
+        "layer_groups": [
+          {
+            "group_name": "Base Maps",
+            "layers": [
+              { "layer_id": "base_osm", "name": "OpenStreetMap (Standard)", "type": "raster_tile", "is_visible": true, "opacity": 1.0, "z_index": 0 }
+            ]
+          },
+          {
+            "group_name": "Drone Imagery",
+            "layers": [
+              { "layer_id": "flight_session_01", "name": "Orthomosaic Kebun Sektor A", "type": "raster_image", "is_visible": true, "opacity": 1.0, "z_index": 10 }
+            ]
+          },
+          {
+            "group_name": "Analysis Results (Plugins)",
+            "layers": [
+              { "layer_id": "plugin_veg_mask_01", "name": "Vegetation Mask (Modul 4)", "type": "raster_mask", "is_visible": true, "opacity": 0.5, "z_index": 20 },
+              { "layer_id": "plugin_tree_detect_01", "name": "Tree Detection (Modul 7)", "type": "vector_points", "is_visible": false, "opacity": 1.0, "z_index": 25 }
+            ]
+          }
+        ]
+      }
+    },
+    "output_opacity_change": {
+      "event": "layer_state_changed",
+      "source_ui": "layer_manager_panel",
+      "data": { "layer_id": "plugin_veg_mask_01", "change_type": "update_opacity", "new_value": 0.3, "timestamp": "2026-09-14T19:05:22Z" }
+    },
+    "output_toggle_visibility": {
+      "event": "layer_state_changed",
+      "source_ui": "layer_manager_panel",
+      "data": { "layer_id": "plugin_tree_detect_01", "change_type": "toggle_visibility", "new_value": true, "timestamp": "2026-09-14T19:05:30Z" }
+    }
+  },
+
+  "spatial_measurement": {
+    "input": {
+      "measurement_type": "area",
+      "points": [
+        [116.8310, -1.2690],
+        [116.8320, -1.2690],
+        [116.8320, -1.2695],
+        [116.8310, -1.2690]
+      ]
+    },
+    "output": {
+      "measurement_id": "meas_55",
+      "type": "area",
+      "results": { "area_sq_m": 5550.75, "perimeter_m": 310.20 }
+    }
+  },
+
+  "spatial_annotation": {
+    "input": {
+      "target_location": { "type": "Point", "coordinates": [116.8315, -1.2693] },
+      "user_note": "Pohon terindikasi penyakit menguning",
+      "author": "Inspector_01"
+    },
+    "output": {
+      "annotation_id": "anno_99",
+      "created_at": "2026-09-14T18:31:52Z",
+      "saved_annotation": {
+        "type": "Point",
+        "coordinates": [116.8315, -1.2693],
+        "note": "Pohon terindikasi penyakit menguning",
+        "author": "Inspector_01"
+      }
+    }
+  },
+
+  "map_image_interaction": {
+    "scenario_list_to_map": {
+      "input": {
+        "action": "focus_map_on_image",
+        "payload": {
+          "image_id": "drone_001",
+          "target_coordinate": { "latitude": -1.2340, "longitude": 116.4560 },
+          "animation": "fly_to",
+          "target_zoom_level": 20
+        }
+      },
+      "output": {
+        "event": "map_view_updated",
+        "source_ui": "leaflet_map_engine",
+        "state": { "current_center": [-1.2340, 116.4560], "current_zoom": 20, "highlighted_marker": "drone_001" }
+      }
+    },
+    "scenario_map_to_list": {
+      "input": {
+        "action": "click_image_marker",
+        "payload": { "clicked_image_id": "drone_001", "coordinate": { "latitude": -1.2340, "longitude": 116.4560 } }
+      },
+      "output": {
+        "event": "image_activated_from_map",
+        "source_ui": "leaflet_marker",
+        "data": { "active_image_id": "drone_001", "trigger_preview": true }
+      }
+    }
+  },
+
+  "map_view_control": {
+    "input_fit_bounds": {
+      "action": "map_view_control",
+      "command": "fitBounds",
+      "payload": {
+        "bounds": [[-1.2300, 116.4500], [-1.2450, 116.4700]],
+        "options": { "padding": [50, 50], "animate": true, "duration": 1.5 }
+      }
+    },
+    "input_zoom_to_layer": {
+      "action": "map_view_control",
+      "command": "zoomToLayer",
+      "payload": { "target_layer_id": "aoi_plot_A", "target_zoom_level": 18 }
+    },
+    "output": {
+      "event": "map_view_changed",
+      "source_ui": "leaflet_map_engine",
+      "state": {
+        "current_center": [-1.2375, 116.4600],
+        "current_zoom": 16,
+        "current_bounds": { "north": -1.2300, "south": -1.2450, "east": 116.4700, "west": 116.4500 },
+        "timestamp": "2026-09-14T19:10:00Z"
+      }
+    }
+  }
+}

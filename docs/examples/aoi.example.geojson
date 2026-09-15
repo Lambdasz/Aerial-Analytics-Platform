@@ -1,0 +1,22 @@
+{
+  "type": "Feature",
+  "properties": {
+    "aoi_id": "aoi_new_8899",
+    "name": "Area Analisis Modul 4",
+    "calculated_area_sq_m": 12500.5,
+    "perimeter_m": 500.0,
+    "created_at": "2026-09-14T19:00:15Z"
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [116.833000, -1.270000],
+        [116.834000, -1.270000],
+        [116.834000, -1.271000],
+        [116.833000, -1.271000],
+        [116.833000, -1.270000]
+      ]
+    ]
+  }
+}
