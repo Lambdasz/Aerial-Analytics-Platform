@@ -1,0 +1,25 @@
+{
+  "_note": "Kontrak SpatialResult (Bagian 8.6 dokumen desain) — dikirim dari plugin analitik (Module 4/7/8, Tauri/Python) ke Module 3 (fitur Spatial Result Visualization / Person 4). Module 3 tidak perlu tahu bagaimana hasil ini dihitung, hanya perlu source, geometry, dan properties.",
+  "action": "load_spatial_result",
+  "payload": {
+    "layer_id": "result_tree_001",
+    "layer_name": "Deteksi Pohon - Sektor A",
+    "display_preference": {
+      "type": "point",
+      "color": "#FF0000",
+      "icon": "tree_marker"
+    },
+    "spatial_results": [
+      {
+        "source": "tree_detection_v1",
+        "geometry": { "type": "Point", "coordinates": [116.4567, -1.2345] },
+        "properties": { "tree_id": "T-001", "confidence": 0.93, "height_est_m": 12.5 }
+      },
+      {
+        "source": "tree_detection_v1",
+        "geometry": { "type": "Point", "coordinates": [116.4568, -1.2346] },
+        "properties": { "tree_id": "T-002", "confidence": 0.88, "height_est_m": 10.2 }
+      }
+    ]
+  }
+}
