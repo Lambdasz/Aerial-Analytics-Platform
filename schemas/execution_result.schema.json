@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aerial-analytics.local/schemas/execution_result.v1.json",
+  "title": "Aerial Analytics Execution Result",
+  "description": "JSON Schema for output execution results returned by analytical plugins",
+  "type": "object",
+  "required": ["execution_id", "status", "execution_time_ms", "metrics", "artifacts"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "execution_id": {
+      "type": "string",
+      "description": "Matching execution identifier from input payload"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "failure", "warning"],
+      "description": "Overall status of the plugin execution"
+    },
+    "execution_time_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total processing time in milliseconds measured by plugin"
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Scalar metric values keyed by output metric identifiers",
+      "additionalProperties": {
+        "type": ["number", "string", "boolean", "null"]
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Artifact files generated on disk keyed by output artifact identifiers",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file_path", "format"],
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Absolute path to output artifact file on disk"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/tiff",
+              "application/geo+json",
+              "text/csv",
+              "application/json"
+            ]
+          },
+          "bounds": {
+            "type": "array",
+            "description": "Georeferenced bounding box [min_lon, min_lat, max_lon, max_lat] for raster overlay projection",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4
+          }
+        }
+      }
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Human-readable error diagnostic message if status is failure or warning"
+    }
+  }
+}

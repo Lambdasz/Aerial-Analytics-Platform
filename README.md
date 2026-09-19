@@ -72,24 +72,90 @@ Implementasi lengkap kedua sisi ada di `RULES_MAP_CONTROLLER.md` (bagian "Error 
 
 ## Registrasi Command & Capabilities
 
-Setiap command Tauri baru di `map_controller` **wajib**:
+## Available Scripts
 
-1. Didaftarkan di `invoke_handler` pada `src-tauri/src/lib.rs`.
-2. Diberi izin eksplisit di `src-tauri/capabilities/default.json`.
+| Task                            | Command                     |
+| ------------------------------- | --------------------------- |
+| Start dev server                | `npm run dev`               |
+| Run Tauri desktop app           | `npm run tauri dev`         |
+| Build the Vite app              | `npm run build`             |
+| Build the Tauri app             | `npm run tauri build`       |
+| Run ESLint                      | `npm run lint`              |
+| Run Rust linting (clippy)       | `npm run lint:rust`         |
+| Fix ESLint issues               | `npm run lint:fix`          |
+| Check Prettier formatting       | `npm run format:check`      |
+| Check Rust formatting (rustfmt) | `npm run format:rust:check` |
+| Fix Prettier formatting issues  | `npm run format`            |
+| Fix Rust formatting issues      | `npm run format:rust`       |
 
-# Dummy Data — Module 3
+## Continuous Integration
 
-Struktur ini dibagi dua, sesuai audiens dan tujuan tiap fixture:
+Every push and pull request targeting `main` runs the [CI workflow](.github/workflows/ci.yml) via GitHub Actions:
 
-```text
-fixtures/
-├── map/
-│   └── map-fixtures.json          -> taruh di: src/map/fixtures/map-fixtures.json
-└── shared/
-    ├── aoi.example.geojson              -> taruh di: docs/examples/aoi.example.geojson
-    ├── aoi.invalid.example.geojson      -> taruh di: docs/examples/aoi.invalid.example.geojson
-    ├── spatial-result.example.json      -> taruh di: docs/examples/spatial-result.example.json
-    └── plugin-execution-payload.example.json -> taruh di: docs/examples/plugin-execution-payload.example.json
+- **Lint & format (JS/TS)**: ESLint (`npm run lint`) and Prettier (`npm run format:check`).
+- **Lint & format (Rust)**: rustfmt (`npm run format:rust:check`) and Clippy (`npm run lint:rust`).
+- **Build**: verifies the Vite build (`npm run build`) and a Tauri build without bundling
+  (`npm run tauri build -- --no-bundle`) succeed on `macos-latest`, `ubuntu-24.04`, and `windows-latest`.
+
+The build matrix only runs once both lint jobs pass. The workflow does not publish or deploy anything.
+
+## Project Structure
+
+```bash
+.
+├── .github/                      # GitHub community health files
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   └── pull_request_template.md
+├── CONTRIBUTING.md               # Contribution guidelines
+├── eslint.config.js              # JavaScript/TypeScript linting rules
+├── index.html                    # HTML entry point for the web app
+├── LICENSE                       # MIT License
+├── package.json                  # Node.js dependencies and scripts
+├── package-lock.json             # Locked versions of npm dependencies
+├── plugins/                      # Analytical plugins (Module 2: Extension System)
+│   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
+│   ├── mock_rust/                # Native binary mock plugin (tree-canopy-density)
+│   └── template/                 # Starter template and specification guide
+├── public/                       # Static assets served directly
+│   ├── tauri.svg
+│   └── vite.svg
+├── README.md                     # Project documentation
+├── schemas/                      # Canonical JSON Schemas for plugin contracts
+├── SECURITY.md                   # Vulnerability reporting policy
+├── src/                          # React frontend application source
+│   ├── App.css                   # Main component styling
+│   ├── App.tsx                   # Main React component
+│   ├── assets/                   # Application assets
+│   │   └── react.svg
+│   ├── main.tsx                  # Application entry point
+│   └── vite-env.d.ts             # Vite type definitions
+├── src-tauri/                    # Rust backend and Tauri desktop configuration
+│   ├── build.rs                  # Rust build script
+│   ├── capabilities/             # ACL capability definitions
+│   │   └── default.json
+│   ├── Cargo.lock                # Locked versions of Rust dependencies
+│   ├── Cargo.toml                # Rust project manifest
+│   ├── gen/                      # Generated JSON schemas
+│   │   └── schemas/
+│   │       ├── acl-manifests.json
+│   │       ├── capabilities.json
+│   │       ├── desktop-schema.json
+│   │       └── linux-schema.json
+│   ├── icons/                    # App icons for different platforms
+│   │   ├── icon.icns             # macOS icon
+│   │   ├── icon.ico              # Windows icon
+│   │   └── icon.png              # Linux icon
+│   ├── rustfmt.toml              # Rust code formatting rules
+│   ├── src/                      # Rust application source code
+│   │   ├── lib.rs
+│   │   └── main.rs
+│   └── tauri.conf.json           # Tauri app configuration
+├── tsconfig.json                 # TypeScript configuration
+├── tsconfig.node.json            # TypeScript configuration for Vite
+└── vite.config.ts                # Vite bundler and dev server configuration
 ```
 
 ## `map/map-fixtures.json`
