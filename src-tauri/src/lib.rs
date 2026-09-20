@@ -14,9 +14,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet,
-            plugin_manager::commands::validate_and_create_payload, 
+            plugin_manager::commands::validate_and_create_payload,
             plugin_manager::commands::process_execution_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}   
+}

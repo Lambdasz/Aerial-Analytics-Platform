@@ -57,10 +57,7 @@ pub fn preflight_check(
     Ok(())
 }
 
-pub fn assemble_payload(
-    payload: &ExecutionPayload,
-    output_dir: &Path,
-) -> Result<PathBuf, String> {
+pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result<PathBuf, String> {
     if !output_dir.exists() {
         fs::create_dir_all(output_dir)
             .map_err(|e| format!("Gagal membuat folder output: {}", e))?;
