@@ -24,8 +24,9 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
   * [Tech Stack](#tech-stack)
   * [Getting Started](#getting-started)
     * [1. Clone the repo](#1-clone-the-repo)
-    * [2. Install project dependencies](#2-install-project-dependencies)
+    * [2. Install current project dependencies](#2-install-current-project-dependencies)
     * [3. Development](#3-development)
+  * [Dealing with Dependencies](#dealing-with-dependencies)
   * [Available Scripts](#available-scripts)
   * [Continuous Integration](#continuous-integration)
   * [Project Structure](#project-structure)
@@ -72,7 +73,7 @@ git clone git@github.com:Lambdasz/Aerial-Analytics-Platform.git
 cd Aerial-Analytics-Platform
 ```
 
-### 2. Install project dependencies
+### 2. Install current project dependencies
 
 ```bash
 npm ci
@@ -104,7 +105,33 @@ To build the Tauri app for distribution, run:
 npm run tauri build
 ```
 
-To manually update dependencies, run:
+## Dealing with Dependencies
+
+> [!WARNING]
+> **STOP!** If you do really want to do something with this project dependencies, you MUST:
+>
+> 1. Identify what dependencies you want to add. Check if they are compatible with current tech stack.
+> 2. Notify [Project Lead](https://github.com/muhammadzaini213) or [Module 1 Lead](https://github.com/andinaufal120) that you want to add dependencies.
+> 3. `git pull`, and create a new branch (e.g. `chore/add-react-router`, `chore/bump-eslint`) from `main`.
+> 4. Update/add dependencies (steps described below), commit, push, and open a Pull Request (PR) against `main` immediately.
+> 5. Notify [Project Lead](https://github.com/muhammadzaini213) or [Module 1 Lead](https://github.com/andinaufal120) that you have completed your work and one of them will merge your PR onto main.
+> 6. Checkout to another local branch (such as `main`), and run `git pull` immediately.
+>
+> Dependency-related branches are intended to be **very short-lived** (i.e. must be merged and deleted under 1 day after creating the branch). Chaos forces us to put dependencies guideline under the root README instead on CONTRIBUTING.md.
+
+To **ADD NEW** Node dependencies, run:
+
+```bash
+npm install package-1 package-2 ... package-n
+```
+
+For Rust dependencies (crates), run:
+
+```bash
+cargo add --manifest-path src-tauri/Cargo.toml package-1 package-2 ... package-n
+```
+
+To bump dependency versions (i.e. manually update dependencies), run:
 
 ```bash
 # For Node.js dependencies:
@@ -113,6 +140,9 @@ npm update
 # And for Rust dependencies:
 cargo update
 ```
+
+> [!TIP]
+> Dependencies update is usually handled by bot or the Module 1 as repository maintainers, so you as developers don't have to.
 
 ## Available Scripts
 
