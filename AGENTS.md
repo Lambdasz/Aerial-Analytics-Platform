@@ -71,7 +71,9 @@ A blank line is REQUIRED before the body (if present) and before the footer(s) (
 ## Architecture
 
 - `src/` — React frontend (entry: `src/main.tsx`, root component: `src/App.tsx`). Communicates with the Rust backend via Tauri's `invoke` (`@tauri-apps/api`) calling `#[tauri::command]` functions.
+  - `src/map/` — Module 3 frontend: Leaflet map explorer, AOI drawing, and layer management.
 - `src-tauri/src/lib.rs` — Rust backend entry point (`run()`), where Tauri commands are registered via `invoke_handler(tauri::generate_handler![...])` and plugins are registered via `.plugin(...)`.
+  - `src-tauri/src/map_controller/` — Module 3 backend: Map data provider and AOI storage endpoints.
 - `src-tauri/capabilities/default.json` — Tauri's permission/ACL system: any new Tauri command or plugin capability used from the frontend MUST be explicitly allowed here for the `main` window.
 - `src-tauri/tauri.conf.json` — app identifier, window config, dev server URL (fixed at `http://localhost:1420`, MUST match `vite.config.ts`), and bundling config.
 - Vite dev server port is fixed to `1420` (`strictPort: true`) because Tauri's `devUrl` expects it; `src-tauri/**` is excluded from Vite's file watcher.
