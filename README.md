@@ -31,7 +31,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
   * [Project Structure](#project-structure)
   * [Contributing](#contributing)
   * [Security](#security)
-  * [License](#license)
+  * [Copyright & License](#copyright--license)
 <!-- TOC -->
 <!-- prettier-ignore-end -->
 
