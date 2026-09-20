@@ -1,0 +1,24 @@
+{
+  "execution_id": "exec_20260914_001",
+  "status": "success",
+  "execution_time_ms": 840,
+
+  "metrics": {
+    "vegetation_coverage_pct": 68.4,
+    "total_pixels_analyzed": 12000000
+  },
+
+  "artifacts": {
+    "mask_image": {
+      "file_path": "/app_storage/runs/001/output_mask_01.png",
+      "format": "image/png",
+      "bounds": [116.8523, -1.246, 116.855, -1.2435]
+    },
+    "geojson_boundary": {
+      "file_path": "/app_storage/runs/001/polygons_01.geojson",
+      "format": "application/geo+json"
+    }
+  },
+
+  "error": null
+}

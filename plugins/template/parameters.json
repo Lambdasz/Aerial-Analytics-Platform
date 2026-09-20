@@ -1,0 +1,30 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "example_select",
+      "label": "Example Algorithm Select",
+      "type": "select",
+      "options": ["OPTION_A", "OPTION_B"],
+      "default": "OPTION_A",
+      "description": "Select from available algorithms or mathematical modes."
+    },
+    {
+      "name": "example_number",
+      "label": "Example Numeric Threshold",
+      "type": "number",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "description": "Adjust detection sensitivity or classification cutoff threshold."
+    },
+    {
+      "name": "example_boolean",
+      "label": "Example Boolean Flag",
+      "type": "boolean",
+      "default": true,
+      "description": "Toggle export of full-resolution binary mask artifact."
+    }
+  ]
+}

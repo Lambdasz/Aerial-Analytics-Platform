@@ -1,0 +1,32 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/plugin.v1.json",
+  "manifest_version": 1,
+  "metadata": {
+    "id": "tree-canopy-density",
+    "name": "Tree Canopy Density (Rust)",
+    "version": "1.0.0",
+    "author": "PBL Team 2026",
+    "license": "MIT",
+    "description": "High-performance tree canopy coverage and density analysis compiled to native machine code.",
+    "category": "tree_detection",
+    "tags": ["canopy", "vegetation", "rust", "native"],
+    "min_core_version": "0.1.0"
+  },
+  "runtime": {
+    "type": "binary",
+    "entrypoint": "bin/mock_rust",
+    "dependencies_file": null,
+    "healthcheck_flag": "--healthcheck"
+  },
+  "parameters": "parameters.json",
+  "inputs": "inputs.json",
+  "outputs": "outputs.json",
+  "execution": {
+    "timeout_seconds": 60,
+    "concurrency": "parallel",
+    "gpu": {
+      "support": "none",
+      "driver": null
+    }
+  }
+}

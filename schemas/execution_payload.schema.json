@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aerial-analytics.local/schemas/execution_payload.v1.json",
+  "title": "Aerial Analytics Execution Payload",
+  "description": "JSON Schema for input execution payload delivered to analytical plugins",
+  "type": "object",
+  "required": ["execution_id", "output_dir", "target", "parameters"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "execution_id": {
+      "type": "string",
+      "description": "Unique identifier for this specific analysis run"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Optional parent project or flight session identifier"
+    },
+    "output_dir": {
+      "type": "string",
+      "description": "Sandboxed directory where generated artifact files must be written"
+    },
+    "target": {
+      "type": "object",
+      "required": ["granularity", "image_path", "mime_type"],
+      "additionalProperties": false,
+      "properties": {
+        "granularity": {
+          "type": "string",
+          "enum": ["single_image", "image_pair", "batch", "session"]
+        },
+        "image_path": {
+          "type": "string",
+          "description": "Absolute filesystem path to the source image"
+        },
+        "mime_type": {
+          "type": "string",
+          "enum": ["image/jpeg", "image/png", "image/tiff"]
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "resolution": {
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "gps": {
+              "type": "object",
+              "required": ["lat", "lon"],
+              "additionalProperties": false,
+              "properties": {
+                "lat": { "type": "number", "minimum": -90.0, "maximum": 90.0 },
+                "lon": { "type": "number", "minimum": -180.0, "maximum": 180.0 }
+              }
+            },
+            "altitude": { "type": "number" },
+            "timestamp": { "type": "string" }
+          }
+        }
+      }
+    },
+    "aoi": {
+      "type": "object",
+      "required": ["type", "geometry"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["geojson_polygon", "geojson_bbox"]
+        },
+        "geometry": {
+          "type": "object",
+          "required": ["type", "coordinates"],
+          "additionalProperties": true,
+          "properties": {
+            "type": { "type": "string" },
+            "coordinates": { "type": "array" }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Key-value dictionary of runtime arguments configured by user",
+      "additionalProperties": true
+    }
+  }
+}

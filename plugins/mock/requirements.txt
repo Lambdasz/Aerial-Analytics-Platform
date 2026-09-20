@@ -1,0 +1,2 @@
+# Analytical dependencies for RGB Vegetation Detection mock plugin
+# Note: The mock reference implementation runs on Python 3 standard library
