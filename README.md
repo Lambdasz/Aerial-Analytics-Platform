@@ -193,37 +193,47 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 ├── README.md                     # Project documentation
 ├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
-│   ├── App.css                   # Main component styling
-│   ├── App.tsx                   # Main React component
-│   ├── assets/                   # Application assets
-│   │   └── react.svg
 │   ├── main.tsx                  # Application entry point
+│   ├── App.tsx                   # Root React component
+│   ├── App.css                   # Root component styling
+│   ├── assets/                   # Bundled app assets (imported from code)
+│   │   └── react.svg
+│   ├── features/                 # One folder per domain feature — most new UI goes here
+│   │   └── <feature>/            #   e.g. projects/, imagery/, analysis/, reporting/
+│   │       ├── components/       #   React components used only by this feature
+│   │       ├── hooks/            #   React hooks used only by this feature
+│   │       ├── api.ts            #   invoke() wrappers for this feature's Tauri commands
+│   │       └── types.ts          #   TS types mirroring this feature's Rust models
+│   ├── components/               # Shared UI — only for components used by 2+ features
+│   ├── hooks/                    # Shared React hooks
+│   ├── lib/                      # Pure helper functions (no React, no Tauri)
+│   ├── types/                    # Types shared across features
 │   └── vite-env.d.ts             # Vite type definitions
 ├── src-tauri/                    # Rust backend and Tauri desktop configuration
 │   ├── build.rs                  # Rust build script
-│   ├── capabilities/             # ACL capability definitions
+│   ├── capabilities/             # ACL capability definitions (allow new commands here)
 │   │   └── default.json
 │   ├── Cargo.lock                # Locked versions of Rust dependencies
 │   ├── Cargo.toml                # Rust project manifest
-│   ├── gen/                      # Generated JSON schemas
-│   │   └── schemas/
-│   │       ├── acl-manifests.json
-│   │       ├── capabilities.json
-│   │       ├── desktop-schema.json
-│   │       └── linux-schema.json
-│   ├── icons/                    # App icons for different platforms
-│   │   ├── icon.icns             # macOS icon
-│   │   ├── icon.ico              # Windows icon
-│   │   └── icon.png              # Linux icon
+│   ├── gen/schemas/              # Generated JSON schemas (do not edit by hand)
+│   ├── icons/                    # App icons for each platform
 │   ├── rustfmt.toml              # Rust code formatting rules
 │   ├── src/                      # Rust application source code
-│   │   ├── lib.rs
-│   │   └── main.rs
+│   │   ├── main.rs               # Binary entry point (calls lib::run())
+│   │   ├── lib.rs                # run(): registers commands + Tauri plugins
+│   │   ├── error.rs              # thiserror error types returned to the frontend
+│   │   ├── commands/             # #[tauri::command] fns only — thin, no business logic
+│   │   ├── models/               # serde structs/enums shared with the frontend
+│   │   ├── services/             # Domain logic — pure functions where practical
+│   │   └── plugins/              # Plugin manager: discovery, loading, isolation, I/O contract
 │   └── tauri.conf.json           # Tauri app configuration
 ├── tsconfig.json                 # TypeScript configuration
 ├── tsconfig.node.json            # TypeScript configuration for Vite
 └── vite.config.ts                # Vite bundler and dev server configuration
 ```
+
+See [CONTRIBUTING.md § Architecture Notes](CONTRIBUTING.md#architecture-notes) for rules on where new
+commands, models, helpers, and UI belong within this layout.
 
 ## Contributing
 
