@@ -6,15 +6,15 @@ real ExG/VARI/GLI pipeline replaces `simulate_detection()` in `main.py`.
 
 ## Files
 
-| File | Purpose |
-| :-- | :-- |
-| `manifest.json` | Plugin identity, runtime, timeout |
-| `parameters.json` | User-configurable parameters (`index_type`, `threshold`, `export_mask`) |
-| `inputs.json` | Input requirements (single image, JPEG/PNG/TIFF, optional AOI) |
-| `outputs.json` | Metrics (`vegetation_coverage_pct`, `total_pixels_analyzed`) and artifacts (`mask_image`, `geojson_boundary`) |
-| `execution_payload.json` | Sample payload delivered by Module 2 |
-| `execution_result.json` | Sample result written by the plugin |
-| `main.py` | Entrypoint (`--healthcheck`, `--input`/`--output`) |
+| File                     | Purpose                                                                                                       |
+| :----------------------- | :------------------------------------------------------------------------------------------------------------ |
+| `manifest.json`          | Plugin identity, runtime, timeout                                                                             |
+| `parameters.json`        | User-configurable parameters (`index_type`, `threshold`, `export_mask`)                                       |
+| `inputs.json`            | Input requirements (single image, JPEG/PNG/TIFF, optional AOI)                                                |
+| `outputs.json`           | Metrics (`vegetation_coverage_pct`, `total_pixels_analyzed`) and artifacts (`mask_image`, `geojson_boundary`) |
+| `execution_payload.json` | Sample payload delivered by Module 2                                                                          |
+| `execution_result.json`  | Sample result written by the plugin                                                                           |
+| `main.py`                | Entrypoint (`--healthcheck`, `--input`/`--output`)                                                            |
 
 ## Public functions (Module 2 interface)
 
