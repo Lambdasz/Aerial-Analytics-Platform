@@ -1,0 +1,30 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "index_type",
+      "label": "Vegetation Index",
+      "type": "select",
+      "options": ["ExG", "VARI", "GLI"],
+      "default": "ExG",
+      "description": "RGB-based mathematical index for vegetation separation."
+    },
+    {
+      "name": "threshold",
+      "label": "Threshold Value",
+      "type": "number",
+      "default": 0.35,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Pixels with index higher than this are classified as vegetation."
+    },
+    {
+      "name": "export_mask",
+      "label": "Generate Binary Mask",
+      "type": "boolean",
+      "default": true,
+      "description": "Saves a high-resolution binary mask file of detected vegetation."
+    }
+  ]
+}
