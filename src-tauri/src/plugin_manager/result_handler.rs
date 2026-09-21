@@ -41,10 +41,7 @@ pub fn parse_execution_result(output_dir: &Path) -> Result<ExecutionResult, Stri
     Ok(result)
 }
 
-pub fn record_run_history(
-    history_file_path: &Path,
-    entry: RunHistoryEntry,
-) -> Result<(), String> {
+pub fn record_run_history(history_file_path: &Path, entry: RunHistoryEntry) -> Result<(), String> {
     let mut history: Vec<RunHistoryEntry> = if history_file_path.exists() {
         let content = fs::read_to_string(history_file_path)
             .map_err(|e| format!("Gagal membaca riwayat: {}", e))?;
@@ -62,4 +59,4 @@ pub fn record_run_history(
         .map_err(|e| format!("Gagal menulis berkas riwayat eksekusi: {}", e))?;
 
     Ok(())
-}   
+}
