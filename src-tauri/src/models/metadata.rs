@@ -10,16 +10,16 @@ pub enum ImageFormat {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct ImageMetadata {
     // --- geolocation ---
-    pub gps_latitude: Option<f64>,      // decimal degrees, S → negative
-    pub gps_longitude: Option<f64>,     // decimal degrees, W → negative
-    pub gps_altitude_m: Option<f64>,    // EXIF; ref 1 → negative, ref missing → positive
+    pub gps_latitude: Option<f64>,   // decimal degrees, S → negative
+    pub gps_longitude: Option<f64>,  // decimal degrees, W → negative
+    pub gps_altitude_m: Option<f64>, // EXIF; ref 1 → negative, ref missing → positive
     pub absolute_altitude_m: Option<f64>, // XMP DJI (barometer or ellipsoid RTK)
 
     // --- timestamp ---
-    pub date_time_original: Option<NaiveDateTime>, 
+    pub date_time_original: Option<NaiveDateTime>,
 
     // --- dimensions ---
-    pub width: Option<u32>,             // header file (JPEG) / tag IFD0 (DNG)
+    pub width: Option<u32>, // header file (JPEG) / tag IFD0 (DNG)
     pub height: Option<u32>,
 
     // --- imagery ---
@@ -31,13 +31,13 @@ pub struct ImageMetadata {
     pub iso: Option<u16>,
     pub focal_length_mm: Option<f32>,
     pub focal_length_35mm: Option<u16>,
-    pub flash: Option<u16>,             // raw code (bitfield)
-    pub white_balance: Option<u16>,     // raw code
-    pub metering_mode: Option<u16>,     // raw code
-    pub exposure_mode: Option<u16>,     // raw code
+    pub flash: Option<u16>,         // raw code (bitfield)
+    pub white_balance: Option<u16>, // raw code
+    pub metering_mode: Option<u16>, // raw code
+    pub exposure_mode: Option<u16>, // raw code
     pub digital_zoom_ratio: Option<f32>,
-    pub color_space: Option<u16>,       // raw code
-    pub orientation: Option<u16>,       // raw code
+    pub color_space: Option<u16>, // raw code
+    pub orientation: Option<u16>, // raw code
 
     // --- flight (XMP DJI) ---
     pub relative_altitude_m: Option<f64>,
