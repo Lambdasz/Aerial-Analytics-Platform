@@ -25,8 +25,29 @@ pub struct SpatialResultItem {
     pub properties: serde_json::Value,
 }
 
-/// Menyediakan hasil Change Area Detection (M10.7)
-/// dengan format yang dapat dikonsumsi Module 3.
+/// Provides the spatial result of Change Area Detection from Module 10.7
+/// for consumption by Module 3.4.
+///
+/// This function packages the detected change areas into the
+/// `SpatialResultPayload` contract expected by the spatial visualization
+/// layer of Module 3.
+///
+/// # Arguments
+///
+/// * `layer_id` - Unique identifier of the temporal change result layer.
+/// * `layer_name` - Display name of the temporal change result layer.
+/// * `spatial_results` - Spatial change results containing source,
+///   geometry, and additional properties.
+///
+/// # Returns
+///
+/// Returns a [`SpatialResultPayload`] containing the layer metadata,
+/// display preference, and spatial change results.
+///
+/// # Module Contract
+///
+/// This function represents the cross-module contract:
+/// **Module 10.7 → Module 3.4**.
 pub fn get_change_area_result(
     layer_id: String,
     layer_name: String,
@@ -51,8 +72,35 @@ pub struct TemporalChangeResult {
     pub tree_count_delta: i32,
 }
 
-/// Menyediakan hasil Simple Temporal Change Analysis (M10.8)
-/// dengan data yang dapat dikonsumsi Module 11.
+/// Provides temporal change analysis results from Module 10.8
+/// for consumption by Module 11.
+///
+/// The result contains the temporal analysis data required by Module 11,
+/// including vegetation coverage change, land-cover transition data,
+/// and the change in detected tree count.
+///
+/// # Arguments
+///
+/// * `vegetation_coverage_change` - Data describing the change in
+///   vegetation coverage between observation periods.
+/// * `land_cover_transition` - Data describing transitions between
+///   land-cover classes across observation periods.
+/// * `tree_count_delta` - Difference in detected tree count between
+///   observation periods.
+///
+/// # Returns
+///
+/// Returns a [`TemporalChangeResult`] containing the temporal change
+/// analysis results.
+///
+/// # Module Contract
+///
+/// This function represents the cross-module contract:
+/// **Module 10.8 → Module 11.5**.
+///
+/// The data fields follow the Module 11 contract for Module 10:
+/// vegetation coverage change, land-cover transition matrix,
+/// and tree count delta.
 pub fn get_temporal_change_result(
     vegetation_coverage_change: serde_json::Value,
     land_cover_transition: serde_json::Value,
