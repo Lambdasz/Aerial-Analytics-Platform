@@ -28,6 +28,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.vs/
 
 # Cargo & Build artifacts
 target/
