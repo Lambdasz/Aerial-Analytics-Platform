@@ -3,7 +3,7 @@
   "manifest_version": 1,
 
   "metadata": {
-    "id": "rgb-vegetation-exg",
+    "id": "rgb-vegetation-detection",
     "name": "RGB Vegetation Detection",
     "version": "1.0.0",
     "author": "PBL Team 2026",

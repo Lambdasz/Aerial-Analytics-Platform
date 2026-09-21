@@ -28,16 +28,16 @@ real ExG/VARI/GLI pipeline replaces `simulate_detection()` in `main.py`.
 Run from the repository root:
 
 ```bash
-python plugins/rgb-vegetation-exg/main.py --healthcheck
+python plugins/rgb-vegetation-detection/main.py --healthcheck
 
-python plugins/rgb-vegetation-exg/main.py \
-  --input plugins/rgb-vegetation-exg/execution_payload.json \
+python plugins/rgb-vegetation-detection/main.py \
+  --input plugins/rgb-vegetation-detection/execution_payload.json \
   --output /tmp/test_result.json
 
-check-jsonschema --schemafile schemas/plugin.schema.json plugins/rgb-vegetation-exg/manifest.json
-check-jsonschema --schemafile schemas/parameters.schema.json plugins/rgb-vegetation-exg/parameters.json
-check-jsonschema --schemafile schemas/inputs.schema.json plugins/rgb-vegetation-exg/inputs.json
-check-jsonschema --schemafile schemas/outputs.schema.json plugins/rgb-vegetation-exg/outputs.json
-check-jsonschema --schemafile schemas/execution_payload.schema.json plugins/rgb-vegetation-exg/execution_payload.json
+check-jsonschema --schemafile schemas/plugin.schema.json plugins/rgb-vegetation-detection/manifest.json
+check-jsonschema --schemafile schemas/parameters.schema.json plugins/rgb-vegetation-detection/parameters.json
+check-jsonschema --schemafile schemas/inputs.schema.json plugins/rgb-vegetation-detection/inputs.json
+check-jsonschema --schemafile schemas/outputs.schema.json plugins/rgb-vegetation-detection/outputs.json
+check-jsonschema --schemafile schemas/execution_payload.schema.json plugins/rgb-vegetation-detection/execution_payload.json
 check-jsonschema --schemafile schemas/execution_result.schema.json /tmp/test_result.json
 ```

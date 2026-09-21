@@ -20,7 +20,7 @@ import sys
 import time
 import zlib
 
-PLUGIN_ID = "rgb-vegetation-exg"
+PLUGIN_ID = "rgb-vegetation-detection"
 VERSION = "1.0.0"
 VALID_INDEXES = ("ExG", "VARI", "GLI")
 
