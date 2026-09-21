@@ -1,17 +1,19 @@
 //! # Plugin Discovery, Registry & Health Check
 //!
+//! **Role**: Plugin Lifecycle & Package Manager (Discovery & Registry)
+//! **Deliverable**: `plugin_manager/registry.rs`
+//!
 //! Discovers plugins on disk, validates their manifests and sub-contracts,
 //! indexes them in an in-memory registry, and exposes queries for
 //! compatibility checking and health verification.
 //!
 //! ## Responsibilities
 //!
-//! - **Discovery** — scan the `plugins/` directory for valid plugin bundles.
-//! - **Registration** — validate `manifest.json` and index plugins by ID.
-//! - **Compatibility queries** — filter plugins by image MIME type, granularity,
-//!   AOI support, and GPS requirements.
-//! - **Health checks** — run `<entrypoint> --healthcheck` to verify runtime
-//!   dependencies.
+//! - **M2.2**: Plugin registration and indexing.
+//! - **M2.3**: Plugin discovery (scan directory, validate manifest &
+//!   sub-contracts).
+//! - Querying compatible plugins based on image/AOI target.
+//! - Running fast environment/dependency healthcheck.
 //!
 //! For the full specification see
 //! `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`.

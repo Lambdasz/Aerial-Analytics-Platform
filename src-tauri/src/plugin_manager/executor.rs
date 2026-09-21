@@ -1,16 +1,22 @@
 //! # Async Execution, Progress & Output Resolution
 //!
+//! **Role**: Subprocess Supervisor & Isolation Engineer
+//! **Deliverable**: `plugin_manager/executor.rs`
+//!
 //! Spawns plugin subprocesses, streams progress to the frontend, enforces
 //! timeouts, and validates analytical output.
 //!
 //! ## Responsibilities
 //!
-//! - **Job execution** — spawn a Tokio child process for the plugin entrypoint.
-//! - **Timeout enforcement** — kill processes that exceed their time budget.
-//! - **Progress streaming** — parse `PROGRESS:` lines from stdout and emit
-//!   `plugin://progress` events to the Tauri frontend.
-//! - **Error isolation** — a crashing or hanging plugin must never bring down
-//!   the host application.
+//! - **M2.7**: Plugin job execution (spawn subprocess, enforce timeout).
+//! - **M2.9**: Error isolation (a crashing plugin must not crash the host).
+//!
+//! ## Architectural Mandate
+//!
+//! All subprocess operations **must** be async (Tokio). The Tauri main thread
+//! must never block. A plugin that hangs, panics, or exhausts memory **must**
+//! be killed and its failure surfaced as a `JobStatusDto::Failed` — never a
+//! host panic.
 //!
 //! ## Key Types
 //!

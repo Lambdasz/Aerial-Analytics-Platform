@@ -1,16 +1,19 @@
 //! # Plugin Lifecycle & State Persistence
 //!
+//! **Role**: Plugin Lifecycle & Package Manager (Lifecycle & State)
+//! **Deliverable**: `plugin_manager/lifecycle.rs`
+//!
 //! Manages the full lifecycle of user-installed plugins: installation from
 //! ZIP archives, enable/disable toggling, removal, and atomic state
 //! persistence to `plugin_state.json`.
 //!
 //! ## Responsibilities
 //!
-//! - **Safe installation** — extract ZIP archives with Zip-Slip path traversal
+//! - **M2.4**: Safe ZIP archive installation with Zip-Slip path traversal
 //!   defence.
-//! - **Enable / disable** — toggle plugin status without deleting files.
-//! - **Uninstallation** — remove plugin directories and purge state records.
-//! - **State persistence** — atomic writes via temp-file + rename.
+//! - **M2.5**: Enable/disable plugin status toggling.
+//! - Uninstallation and removal of user-installed plugins.
+//! - Atomic persistence of mutable state (`plugin_state.json`).
 //!
 //! ## Security
 //!
