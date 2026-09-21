@@ -33,3 +33,4 @@ pub fn run() {
 }
 
 pub mod models;
+pub mod plot_api;
