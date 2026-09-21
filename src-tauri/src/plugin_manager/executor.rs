@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::error::CommandError;
+
 // ---------------------------------------------------------------------------
 // 1. ERROR TYPE
 // ---------------------------------------------------------------------------
@@ -53,6 +55,31 @@ pub enum ExecutorError {
 
     #[error("Process spawn failed: {0}")]
     SpawnFailed(String),
+}
+
+impl ExecutorError {
+    /// String error code for client-side programmatic matching in TypeScript
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::JobNotFound(_) => "JOB_NOT_FOUND",
+            Self::PluginUnavailable(_) => "PLUGIN_UNAVAILABLE",
+            Self::Timeout(_) => "EXECUTION_TIMEOUT",
+            Self::Io(_) => "IO_ERROR",
+            Self::Serde(_) => "SERIALIZATION_ERROR",
+            Self::NotCompleted(_) => "JOB_NOT_COMPLETED",
+            Self::ArtifactMissing(_) => "ARTIFACT_MISSING",
+            Self::SpawnFailed(_) => "SPAWN_FAILED",
+        }
+    }
+}
+
+impl From<ExecutorError> for CommandError {
+    fn from(err: ExecutorError) -> Self {
+        CommandError {
+            code: err.code().to_string(),
+            message: err.to_string(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +261,7 @@ pub async fn start_plugin_job(
     _request: StartJobRequestDto,
     _app: tauri::AppHandle,
     _state: tauri::State<'_, crate::AppState>,
-) -> Result<JobHandleDto, String> {
+) -> Result<JobHandleDto, CommandError> {
     // TODO(Role-1): Implement job spawning
     // 1. Validate plugin exists & enabled:
     //    state.plugins.read().await.get(&request.plugin_id).ok_or("not found")?
@@ -262,7 +289,7 @@ pub async fn start_plugin_job(
 pub async fn abort_plugin_job(
     _job_id: String,
     _state: tauri::State<'_, crate::AppState>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     // TODO(Role-1): Implement job abort
     // 1. state.jobs.read().await.jobs.get(&job_id) -> check exists & running
     // 2. Retrieve the stored abort channel or Arc<Mutex<Option<Child>>> and call kill()
@@ -285,10 +312,10 @@ pub async fn abort_plugin_job(
 pub async fn get_job_status(
     _job_id: String,
     _state: tauri::State<'_, crate::AppState>,
-) -> Result<JobStatusDto, String> {
+) -> Result<JobStatusDto, CommandError> {
     // TODO(Role-1): Implement status query
     // 1. state.jobs.read().await.jobs.get(&job_id)
-    //    .ok_or(ExecutorError::JobNotFound(job_id).to_string())?
+    //    .ok_or_else(|| ExecutorError::JobNotFound(job_id))?
     // 2. Ok(record.status.clone())
     todo!("get_job_status: read job status from ActiveJobTracker")
 }
@@ -308,12 +335,12 @@ pub async fn get_job_status(
 pub async fn get_job_result(
     _job_id: String,
     _state: tauri::State<'_, crate::AppState>,
-) -> Result<StandardJobResultDto, String> {
+) -> Result<StandardJobResultDto, CommandError> {
     // TODO(Role-1): Implement result retrieval
     // 1. state.jobs.read().await.jobs.get(&job_id)
-    //    .ok_or(ExecutorError::JobNotFound(job_id).to_string())?
+    //    .ok_or_else(|| ExecutorError::JobNotFound(job_id.clone()))?
     // 2. if !matches!(record.status, JobStatusDto::Completed { .. }) {
-    //        return Err(ExecutorError::NotCompleted(job_id).to_string())
+    //        return Err(ExecutorError::NotCompleted(job_id).into())
     //    }
     // 3. Ok(record.result.clone().unwrap())
     todo!("get_job_result: return StandardJobResultDto from completed job tracker entry")
