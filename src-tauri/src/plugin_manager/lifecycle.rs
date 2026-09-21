@@ -62,7 +62,7 @@ pub async fn remove_plugin(
 /// - Updates the in-memory `enabled` flag of the specified plugin and atomically flushes the updated `PluginStateStore` to `plugin_state.json` via a temporary file write and atomic rename.
 ///
 /// # Errors
-/// - Returns `CommandError` if `_plugin_id` is not found in the registry or state, or if serializing and atomically persisting to `plugin_state.json` fails.
+/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found in the registry or state, or `STATE_ERROR` if serializing and atomically persisting to `plugin_state.json` fails.
 ///
 /// # Panics
 /// - This function does not panic.

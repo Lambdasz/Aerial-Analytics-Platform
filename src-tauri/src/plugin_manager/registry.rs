@@ -86,7 +86,7 @@ pub async fn get_installed_plugins(
 /// - Delivers the complete, resolved `PluginDetailsDto` containing the manifest, `parameters.json`, `inputs.json`, and `outputs.json` schemas, physical installation directory path, and enabled status without altering registry state.
 ///
 /// # Errors
-/// - Returns `CommandError` with error code `NotFound` if `_plugin_id` does not exist in the registry, or if reading the registry state fails.
+/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` does not exist in the registry, or if reading the registry state fails.
 ///
 /// # Panics
 /// - This function does not panic.
@@ -145,7 +145,7 @@ pub async fn query_compatible_plugins(
 /// - Spawns `<entrypoint> --healthcheck` with a 10-second Tokio timeout and returns a parsed `HealthStatusDto` without crashing, hanging, or blocking the Tauri async runtime.
 ///
 /// # Errors
-/// - Returns `CommandError` if `_plugin_id` is not found, if subprocess spawning fails, or if execution exceeds the 10-second timeout deadline.
+/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found, `HEALTHCHECK_FAILED` if subprocess execution fails or exits with a non-zero status, or on 10-second timeout.
 ///
 /// # Panics
 /// - This function does not panic.

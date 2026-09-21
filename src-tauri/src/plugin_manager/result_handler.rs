@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// Analytical execution result parsed from `result.json` written by the plugin.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutionResult {
     pub status: String,
@@ -10,6 +11,7 @@ pub struct ExecutionResult {
     pub error_message: Option<String>,
 }
 
+/// Historical record entry capturing execution outcome and output file paths.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunHistoryEntry {
     pub timestamp: String,

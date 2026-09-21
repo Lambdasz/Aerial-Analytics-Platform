@@ -6,6 +6,9 @@ use std::path::PathBuf;
 // Plugin Manifest Definition (Conforms to schemas/plugin.schema.json)
 // ---------------------------------------------------------------------------
 
+/// Metadata describing plugin identity, author, version, and categorization.
+///
+/// Corresponds to the `metadata` block in `manifest.json` conforming to `plugin.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginMetadata {
     pub id: String,
@@ -24,6 +27,9 @@ pub struct PluginMetadata {
     pub min_core_version: Option<String>,
 }
 
+/// Runtime execution environment configuration for the plugin.
+///
+/// Declares whether the plugin executes via Python virtualenv, native compiled binary, or WebAssembly.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginRuntime {
     #[serde(rename = "type")]
@@ -37,6 +43,7 @@ pub struct PluginRuntime {
     pub healthcheck_flag: Option<String>,
 }
 
+/// Hardware GPU acceleration configuration and requirements for the plugin.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginGpuConfig {
     #[serde(default = "default_gpu_support")]
@@ -49,6 +56,7 @@ fn default_gpu_support() -> String {
     "none".to_string()
 }
 
+/// Subprocess execution constraints including timeouts and concurrency limits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginExecutionConfig {
     #[serde(default = "default_timeout")]
@@ -73,6 +81,7 @@ fn default_concurrency() -> String {
     "sequential".to_string()
 }
 
+/// Canonical plugin manifest model strictly validated against `plugin.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginManifest {
     #[serde(default, rename = "$schema")]
@@ -91,6 +100,7 @@ pub struct PluginManifest {
 // Inputs Specification (Conforms to schemas/inputs.schema.json)
 // ---------------------------------------------------------------------------
 
+/// Input data constraints and metadata requirements validated against `inputs.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InputsSpec {
     pub granularity: String,
@@ -109,13 +119,17 @@ pub struct InputsSpec {
 // Plugin State Persistence Models (plugin_state.json)
 // ---------------------------------------------------------------------------
 
+/// Origin source classification of an installed plugin.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginSource {
+    /// Shipped with core platform (cannot be uninstalled).
     Builtin,
+    /// Uploaded as a `.zip` archive by the user.
     User,
 }
 
+/// Cached result of the most recent pre-flight dependency health check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedHealthcheck {
     pub status: String,     // "healthy" | "unhealthy"
@@ -124,6 +138,7 @@ pub struct CachedHealthcheck {
     pub message: Option<String>,
 }
 
+/// Cumulative execution metrics and last-run timestamp tracked per plugin.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginStats {
     #[serde(default)]
@@ -132,6 +147,7 @@ pub struct PluginStats {
     pub last_executed_at: Option<String>,
 }
 
+/// Operational state record stored per plugin in `plugin_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginStateRecord {
     pub version: String,
@@ -146,6 +162,7 @@ pub struct PluginStateRecord {
     pub stats: PluginStats,
 }
 
+/// Canonical root state store atomically persisted to `plugin_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginStateStore {
     pub schema_version: u32,
@@ -167,6 +184,7 @@ impl Default for PluginStateStore {
 // In-Memory Plugin Bundle & DTOs for IPC and Cross-Module Usage
 // ---------------------------------------------------------------------------
 
+/// In-memory bundle aggregating manifest, sub-contracts, and physical installation path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginBundle {
     pub install_path: PathBuf,
@@ -176,6 +194,7 @@ pub struct PluginBundle {
     pub outputs_raw: serde_json::Value,
 }
 
+/// Lightweight summary DTO for UI lists, dropdowns, and cards (Modules 1, 3, 11).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginSummaryDto {
     pub id: String,
@@ -191,6 +210,7 @@ pub struct PluginSummaryDto {
     pub health_status: String,
 }
 
+/// Target descriptor specifying image characteristics for compatibility filtering.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TargetDescriptorDto {
     pub granularity: String,
@@ -200,6 +220,7 @@ pub struct TargetDescriptorDto {
     pub has_aoi: bool,
 }
 
+/// Fully resolved plugin bundle DTO delivered to frontend forms and modals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginDetailsDto {
     pub manifest: PluginManifest,
@@ -210,6 +231,7 @@ pub struct PluginDetailsDto {
     pub enabled: bool,
 }
 
+/// Diagnostic health status response emitted by plugin entrypoint pre-flight checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatusDto {
     pub status: String,

@@ -270,7 +270,7 @@ impl ActiveJobTracker {
 /// - Generates a unique `job_id`, initializes a sandboxed output directory, writes `payload.json`, registers the job as `JobStatusDto::Queued` in `ActiveJobTracker`, spawns a detached Tokio background supervisor task, and returns `JobHandleDto` immediately.
 ///
 /// # Errors
-/// - Returns `CommandError` if the plugin does not exist or is disabled (`PLUGIN_UNAVAILABLE`), if input parameters are invalid, or if filesystem sandbox initialization fails.
+/// - Returns `CommandError` with error code `PLUGIN_UNAVAILABLE` if the plugin does not exist or is disabled, `IO_ERROR` if creating the output sandbox or writing `payload.json` fails, or `SERIALIZATION_ERROR` if payload formatting fails.
 ///
 /// # Panics
 /// - This function does not panic.
@@ -316,7 +316,7 @@ pub async fn start_plugin_job(
 /// - The child subprocess is forcibly terminated (SIGKILL), partial files in the sandboxed output directory are purged, and the job status is updated to `JobStatusDto::Aborted` in `ActiveJobTracker`.
 ///
 /// # Errors
-/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from `ActiveJobTracker`, or if terminating the child process encounters an OS error.
+/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from `ActiveJobTracker`, or `IO_ERROR` if terminating the child process encounters an OS error.
 ///
 /// # Panics
 /// - This function does not panic.
