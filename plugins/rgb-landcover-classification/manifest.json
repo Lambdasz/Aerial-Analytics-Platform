@@ -7,12 +7,7 @@
     "author": "Kelompok ...",
     "description": "Classify visible land-cover types from RGB aerial imagery.",
     "category": "land_cover",
-    "tags": [
-      "rgb",
-      "land-cover",
-      "classification",
-      "segmentation"
-    ],
+    "tags": ["rgb", "land-cover", "classification", "segmentation"],
     "min_core_version": "0.1.0"
   },
   "runtime": {

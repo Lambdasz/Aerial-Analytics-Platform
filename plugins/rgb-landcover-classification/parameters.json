@@ -5,10 +5,7 @@
       "name": "model_id",
       "label": "Model",
       "type": "select",
-      "options": [
-        "rf_superpixel_v1",
-        "deeplab_resnet101_v1"
-      ],
+      "options": ["rf_superpixel_v1", "deeplab_resnet101_v1"],
       "default": "rf_superpixel_v1",
       "description": "Model klasifikasi yang dipakai."
     },
@@ -44,11 +41,7 @@
       "name": "device",
       "label": "Device",
       "type": "select",
-      "options": [
-        "auto",
-        "cpu",
-        "cuda"
-      ],
+      "options": ["auto", "cpu", "cuda"],
       "default": "auto",
       "description": "Perangkat inferensi."
     },
