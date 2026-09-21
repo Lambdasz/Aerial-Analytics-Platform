@@ -28,7 +28,7 @@ pub struct ImageMetadata {
     pub camera_model_name: Option<String>,
     pub exposure_time_s: Option<f64>,
     pub f_number: Option<f32>,
-    pub iso: Option<u16>,
+    pub iso: Option<u32>,
     pub focal_length_mm: Option<f32>,
     pub focal_length_35mm: Option<u16>,
     pub flash: Option<u16>,         // raw code (bitfield)
