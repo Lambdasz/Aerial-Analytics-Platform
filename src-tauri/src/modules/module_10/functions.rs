@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -39,5 +41,24 @@ pub fn get_change_area_result(
             icon: None,
         },
         spatial_results,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_change_area_result() {
+        let result = get_change_area_result(
+            "temporal_change_001".to_string(),
+            "Temporal Change Area".to_string(),
+            Vec::new(),
+        );
+
+        assert_eq!(result.layer_id, "temporal_change_001");
+        assert_eq!(result.layer_name, "Temporal Change Area");
+        assert_eq!(result.display_preference.display_type, "polygon");
+        assert!(result.spatial_results.is_empty());
     }
 }
