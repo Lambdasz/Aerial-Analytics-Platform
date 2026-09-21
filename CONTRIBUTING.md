@@ -94,6 +94,10 @@ CI (`.github/workflows/ci.yml`) on every push and pull request to `main`. Bypass
 
 ## Architecture Notes
 
+See [README.md § Project Structure](README.md#project-structure) for the full annotated directory
+tree, including planned-but-not-yet-created directories. The notes below cover where new code
+belongs within that layout — keep both docs up to date as the layout evolves.
+
 - `src/` is the React frontend (entry: `src/main.tsx`, root component: `src/App.tsx`). It talks to the
   Rust backend via Tauri's `invoke` (`@tauri-apps/api`), which calls `#[tauri::command]` functions.
 - `src-tauri/src/lib.rs` is the Rust backend entry point (`run()`), where commands are registered via
@@ -107,6 +111,25 @@ CI (`.github/workflows/ci.yml`) on every push and pull request to `main`. Bypass
 - This project uses a plugin-based architecture for analytical capabilities. A failing plugin
   (including one that shells out to or embeds Python) **MUST NOT** crash the core app — keep that
   boundary in mind when touching plugin-related code.
+
+**Where new code goes:**
+
+- **New Tauri command** → a module in `src-tauri/src/commands/`, registered in the
+  `invoke_handler(tauri::generate_handler![...])` list in `src-tauri/src/lib.rs`, **and** allowed for
+  the `main` window in `src-tauri/capabilities/default.json`. All three steps are REQUIRED.
+- **Command bodies MUST stay thin** — parse/validate input, call into `services/`, map errors. Logic
+  that could be unit-tested belongs in `services/`, not in a `#[tauri::command]` function.
+- **New data model (struct/enum)** → `src-tauri/src/models/`. If it crosses the IPC boundary, derive
+  `Serialize`/`Deserialize` and add the matching TS type next to the caller
+  (`src/features/<feature>/types.ts`, or `src/types/` once 2+ features need it).
+- **New helper function** → `src-tauri/src/services/` (Rust) or `src/lib/` (TypeScript). Prefer pure
+  functions and immutable data — functional programming is a stated project goal.
+- **New UI** → start inside `src/features/<feature>/`. Promote a component/hook to the shared
+  `src/components/`, `src/hooks/`, `src/lib/`, or `src/types/` only once a second feature needs it.
+- **Analysis plugins live in their own, separate repositories** — this repo is the platform core, not
+  a home for plugin implementations. `src-tauri/src/plugins/` is the plugin _manager_: discovery,
+  loading, and process isolation for externally developed plugins. A failing plugin MUST NOT crash
+  the core app, so all plugin execution MUST stay behind that boundary.
 
 ## Keeping Docs in Sync
 
