@@ -1,0 +1,7 @@
+numpy>=1.26
+pydantic>=2.5
+Pillow>=10.0
+scikit-learn>=1.3
+scikit-image>=0.22
+joblib>=1.3
+rasterio>=1.3
