@@ -1,4 +1,5 @@
 mod plugin_manager;
+mod modules;
 
 use plugin_manager::executor::ActiveJobTracker;
 use std::sync::Arc;
@@ -31,6 +32,8 @@ async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
 
 pub mod models;
 
+pub mod plot_api;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -58,5 +61,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-pub mod plot_api;
