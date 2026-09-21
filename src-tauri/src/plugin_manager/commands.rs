@@ -1,8 +1,10 @@
-use super::payload::{assemble_payload, preflight_check, ExecutionPayload, InputsRequirement};
+use std::path::PathBuf;
+use super::payload::{
+    assemble_payload, preflight_check, ExecutionPayload, InputsRequirement,
+};
 use super::result_handler::{
     parse_execution_result, record_run_history, ExecutionResult, RunHistoryEntry,
 };
-use std::path::PathBuf;
 
 #[tauri::command]
 pub fn validate_and_create_payload(
@@ -24,7 +26,7 @@ pub fn process_execution_result(
     plugin_id: String,
 ) -> Result<ExecutionResult, String> {
     let output_path = PathBuf::from(&output_dir);
-
+    
     let result = parse_execution_result(&output_path)?;
 
     let history_entry = RunHistoryEntry {
