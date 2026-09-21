@@ -1,0 +1,62 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    { "key": "vegetation_pct", "label": "Vegetation Coverage", "type": "float", "unit": "%" },
+    { "key": "vegetation_area_m2", "label": "Vegetation Area", "type": "float", "unit": "m2" },
+    { "key": "bare_soil_pct", "label": "Bare Soil Coverage", "type": "float", "unit": "%" },
+    { "key": "bare_soil_area_m2", "label": "Bare Soil Area", "type": "float", "unit": "m2" },
+    { "key": "water_pct", "label": "Water Coverage", "type": "float", "unit": "%" },
+    { "key": "water_area_m2", "label": "Water Area", "type": "float", "unit": "m2" },
+    { "key": "built_up_pct", "label": "Built-up Coverage", "type": "float", "unit": "%" },
+    { "key": "built_up_area_m2", "label": "Built-up Area", "type": "float", "unit": "m2" },
+    { "key": "other_pct", "label": "Other Coverage", "type": "float", "unit": "%" },
+    { "key": "other_area_m2", "label": "Other Area", "type": "float", "unit": "m2" },
+    { "key": "unclassified_pct", "label": "Unclassified", "type": "float", "unit": "%" },
+    {
+      "key": "total_pixels_analyzed",
+      "label": "Pixels Analyzed",
+      "type": "integer",
+      "unit": "px"
+    },
+    {
+      "key": "gsd_m_per_px",
+      "label": "Ground Sampling Distance",
+      "type": "float",
+      "unit": "m/px"
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "mask_raster",
+      "label": "Land-Cover Mask",
+      "type": "raster",
+      "format": "image/png",
+      "optional": false,
+      "coordinate_system": "pixel",
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6
+      }
+    },
+    {
+      "key": "boundary_vector",
+      "label": "Class Boundaries",
+      "type": "vector",
+      "format": "application/geo+json",
+      "optional": true,
+      "coordinate_system": "crs",
+      "layer_hint": {
+        "layer_type": "polygon_boundary",
+        "stroke_color": "#2185d0",
+        "fill_opacity": 0.2
+      }
+    },
+    {
+      "key": "class_statistics",
+      "label": "Per-Class Statistics",
+      "type": "table",
+      "format": "application/json",
+      "optional": false
+    }
+  ]
+}
