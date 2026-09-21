@@ -1,3 +1,5 @@
+mod commands;
+mod models;
 mod plugin_manager;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -27,6 +29,14 @@ pub fn run() {
             plugin_manager::commands::validate_and_create_payload,
             plugin_manager::commands::process_execution_result,
             import_plots,
+            commands::session::create_session,
+            commands::session::get_session,
+            commands::session::get_sessions_by_project,
+            commands::session::update_session_name,
+            commands::session::update_session_status,
+            commands::session::assign_image_to_session,
+            commands::session::recalculate_session_date_range,
+            commands::session::delete_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
