@@ -11,8 +11,10 @@
 //!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::error::{CommandError, PluginError};
 use super::models::{
