@@ -1,5 +1,5 @@
-mod plugin_manager;
 mod modules;
+mod plugin_manager;
 
 use plugin_manager::executor::ActiveJobTracker;
 use std::sync::Arc;
@@ -44,17 +44,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-
             // Role 3 — Data Bridge
             plugin_manager::commands::validate_and_create_payload,
             plugin_manager::commands::process_execution_result,
-
             // Role 1 — Subprocess Supervisor & Isolation Engineer
             plugin_manager::executor::start_plugin_job,
             plugin_manager::executor::abort_plugin_job,
             plugin_manager::executor::get_job_status,
             plugin_manager::executor::get_job_result,
-
             // Plot import
             import_plots,
         ])

@@ -11,6 +11,8 @@
 //!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/02_DOMAIN_2_LIFECYCLE_STATE.md`
 
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};

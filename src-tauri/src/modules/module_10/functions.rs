@@ -144,11 +144,8 @@ mod tests {
             "bare_land_to_vegetation": 80.2
         });
 
-        let result = get_temporal_change_result(
-            vegetation_coverage_change,
-            land_cover_transition,
-            15,
-        );
+        let result =
+            get_temporal_change_result(vegetation_coverage_change, land_cover_transition, 15);
 
         assert_eq!(result.tree_count_delta, 15);
         assert_eq!(
