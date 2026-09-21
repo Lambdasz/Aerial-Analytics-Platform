@@ -28,6 +28,17 @@
 //! - `plugin_manager` — discovery, lifecycle, execution, and error isolation.
 //!   See `plugin_manager` for the full submodule map.
 //!
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
+//! | `process_execution_result` | Parse `result.json` and record run history |
+//! | `start_plugin_job` | Launch an async plugin subprocess |
+//! | `abort_plugin_job` | Kill a running plugin subprocess |
+//! | `get_job_status` | Poll the lifecycle state of a job |
+//! | `get_job_result` | Retrieve the full result of a completed job |
+//!
 //! **Status**: Models, error types, payload assembly, and result handling are
 //! implemented. Registry discovery, lifecycle management, and async execution
 //! are designed but contain `todo!()` stubs.
@@ -108,6 +119,12 @@
 //!   and statistics ([`plot_api::define_plot`], [`plot_api::analyze_plot`],
 //!   [`plot_api::get_plot_statistics`]).
 //!
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `import_plots` | Parse a GeoJSON file into plot boundaries |
+//!
 //! **Status**: GeoJSON parser fully implemented with unit tests. Plot API
 //! functions are `todo!()` stubs.
 //!
@@ -134,24 +151,6 @@
 //! export, and GIS data export.
 //!
 //! **Status**: Not yet implemented.
-//!
-//! ---
-//!
-//! ## Tauri Commands
-//!
-//! The following commands are registered in [`run`] and callable from the
-//! frontend via `invoke()`:
-//!
-//! | Command | Module | Description |
-//! |---------|--------|-------------|
-//! | `greet` | — | Hello-world demo command |
-//! | `import_plots` | 9 | Parse a GeoJSON file into plot boundaries |
-//! | `validate_and_create_payload` | 2 | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | 2 | Parse `result.json` and record run history |
-//! | `start_plugin_job` | 2 | Launch an async plugin subprocess |
-//! | `abort_plugin_job` | 2 | Kill a running plugin subprocess |
-//! | `get_job_status` | 2 | Poll the lifecycle state of a job |
-//! | `get_job_result` | 2 | Retrieve the full result of a completed job |
 
 mod modules;
 mod plugin_manager;
