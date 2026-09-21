@@ -12,11 +12,11 @@ use thiserror::Error;
 pub enum MapControllerError {
     /// The provided geometry failed validation (e.g. self-intersecting ring,
     /// invalid coordinate bounds).
-    #[error("geometri tidak valid: {0}")]
+    #[error("invalid geometry: {0}")]
     InvalidGeometry(String),
 
     /// An I/O operation failed while reading or writing map data.
-    #[error("gagal I/O: {0}")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
 

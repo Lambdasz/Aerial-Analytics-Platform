@@ -1,18 +1,29 @@
-//! # Domain 3: Async Execution, Progress & Output Resolution
+//! # Async Execution, Progress & Output Resolution
 //!
-//! **Role**: Subprocess Supervisor & Isolation Engineer
-//! **Deliverable**: `plugin_manager/executor.rs`
+//! Spawns plugin subprocesses, streams progress to the frontend, enforces
+//! timeouts, and validates analytical output.
 //!
-//! Responsible for:
-//! - M2.7: Plugin job execution (spawn subprocess, enforce timeout)
-//! - M2.9: Error isolation (a crashing plugin MUST NOT crash the host)
+//! ## Responsibilities
 //!
-//! ## Architectural Mandate
-//! All subprocess operations MUST be async (Tokio). The Tauri main thread must
-//! never block. A plugin that hangs, panics, or exhausts memory MUST be killed
-//! and its failure surfaced as a `JobStatusDto::Failed` — never a host panic.
+//! - **Job execution** — spawn a Tokio child process for the plugin entrypoint.
+//! - **Timeout enforcement** — kill processes that exceed their time budget.
+//! - **Progress streaming** — parse `PROGRESS:` lines from stdout and emit
+//!   `plugin://progress` events to the Tauri frontend.
+//! - **Error isolation** — a crashing or hanging plugin must never bring down
+//!   the host application.
 //!
-//! Refer to: `src-tauri/src/plugin_manager/DOCS/03_DOMAIN_3_EXECUTION_SUPERVISOR.md`
+//! ## Key Types
+//!
+//! | Type | Purpose |
+//! |------|---------|
+//! | [`StartJobRequestDto`] | Incoming request from the frontend to launch a plugin |
+//! | [`JobHandleDto`] | Immediate return handle with `job_id` |
+//! | [`JobStatusDto`] | Lifecycle state (`Queued`, `Running`, `Completed`, `Failed`, `Aborted`) |
+//! | [`StandardJobResultDto`] | Full analytical result delivered to downstream modules |
+//! | [`ActiveJobTracker`] | Shared in-memory store of all active and recent jobs |
+//!
+//! For the full specification see
+//! `src-tauri/src/plugin_manager/DOCS/03_DOMAIN_3_EXECUTION_SUPERVISOR.md`.
 
 #![allow(dead_code)]
 

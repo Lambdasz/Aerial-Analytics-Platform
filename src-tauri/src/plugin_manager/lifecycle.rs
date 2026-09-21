@@ -1,15 +1,24 @@
-//! # Domain 2: Lifecycle & State Persistence
+//! # Plugin Lifecycle & State Persistence
 //!
-//! **Role**: Plugin Lifecycle & Package Manager (Lifecycle & State)
-//! **Deliverable**: `plugin_manager/lifecycle.rs`
+//! Manages the full lifecycle of user-installed plugins: installation from
+//! ZIP archives, enable/disable toggling, removal, and atomic state
+//! persistence to `plugin_state.json`.
 //!
-//! Responsible for:
-//! - M2.4: Safe ZIP archive installation with Zip-Slip path traversal defense
-//! - M2.5: Enable/disable plugin status toggling
-//! - Uninstallation and removal of user-installed plugins
-//! - Atomic persistence of mutable state (`plugin_state.json`)
+//! ## Responsibilities
 //!
-//! Refer to: `src-tauri/src/plugin_manager/DOCS/02_DOMAIN_2_LIFECYCLE_STATE.md`
+//! - **Safe installation** — extract ZIP archives with Zip-Slip path traversal
+//!   defence.
+//! - **Enable / disable** — toggle plugin status without deleting files.
+//! - **Uninstallation** — remove plugin directories and purge state records.
+//! - **State persistence** — atomic writes via temp-file + rename.
+//!
+//! ## Security
+//!
+//! Every ZIP entry is validated by [`verify_and_extract_entry`] to prevent
+//! path traversal attacks (Zip-Slip vulnerability).
+//!
+//! For the full specification see
+//! `src-tauri/src/plugin_manager/DOCS/02_DOMAIN_2_LIFECYCLE_STATE.md`.
 
 #![allow(dead_code)]
 

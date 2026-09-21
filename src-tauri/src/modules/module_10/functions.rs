@@ -1,5 +1,16 @@
 #![allow(dead_code)]
 
+//! Cross-module data contracts for temporal change analysis.
+//!
+//! Provides pure data-construction functions that package temporal
+//! change results into the DTOs consumed by Module 3 (spatial
+//! visualization) and Module 11 (dashboard).
+//!
+//! | Function | Producer | Consumer | Purpose |
+//! |----------|----------|----------|---------|
+//! | [`get_change_area_result`] | Module 10.7 | Module 3.4 | Spatial change area layer |
+//! | [`get_temporal_change_result`] | Module 10.8 | Module 11.5 | Vegetation, land-cover & tree-count deltas |
+
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

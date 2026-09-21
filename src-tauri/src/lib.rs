@@ -1,3 +1,35 @@
+//! # Aerial Analytics Platform
+//!
+//! Desktop application for processing and analysing RGB aerial imagery
+//! captured by standard drones. Built with [Tauri](https://tauri.app) and
+//! React, the platform uses a **plugin-based architecture** so analytical
+//! capabilities can be added independently without modifying the core system.
+//!
+//! ## Crate Layout
+//!
+//! | Module | Description |
+//! |--------|-------------|
+//! | `plugin_manager` | Plugin discovery, lifecycle, execution, and error isolation (Module 2) |
+//! | `models` | Shared aerial image metadata types extracted from EXIF / XMP DJI (Module 1) |
+//! | `plot` | GeoJSON plot import and validation (Module 9) |
+//! | `plot_api` | Cross-module plot analytics API — plot definition, per-plot analysis, statistics (Module 9) |
+//! | `modules` | Analytical module implementations (Module 10+) |
+//! | `map_controller` | Interactive geospatial map explorer backend (Module 3) |
+//!
+//! ## Tauri Commands
+//!
+//! The following commands are registered in [`run`] and callable from the
+//! frontend via `invoke()`:
+//!
+//! - `greet` — hello-world demo command.
+//! - `import_plots` — parse a GeoJSON file into plot boundaries.
+//! - `validate_and_create_payload` — pre-flight check and write `payload.json`.
+//! - `process_execution_result` — parse `result.json` and record run history.
+//! - `start_plugin_job` — launch an async plugin subprocess.
+//! - `abort_plugin_job` — kill a running plugin subprocess.
+//! - `get_job_status` — poll the lifecycle state of a job.
+//! - `get_job_result` — retrieve the full result of a completed job.
+
 mod modules;
 mod plugin_manager;
 
@@ -25,7 +57,7 @@ mod plot;
 async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
     let text = tokio::fs::read_to_string(&path)
         .await
-        .map_err(|e| format!("Gagal membaca berkas '{path}': {e}"))?;
+        .map_err(|e| format!("Failed to read file '{path}': {e}"))?;
 
     plot::parse_plots(&text)
 }
