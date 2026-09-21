@@ -1,0 +1,4 @@
+# Skeleton runs on the Python 3 standard library only.
+# Add these when the real detection pipeline replaces simulate_detection():
+# numpy>=1.24.0
+# Pillow>=10.0.0
