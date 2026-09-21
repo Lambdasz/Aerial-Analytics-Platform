@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Source image properties and metadata for pre-flight checking and execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageMetadata {
     pub path: String,
@@ -11,11 +12,13 @@ pub struct ImageMetadata {
     pub format: String,
 }
 
+/// Area of Interest (AOI) geospatial geometry definition (RFC 7946 GeoJSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Aoi {
     pub geojson: serde_json::Value,
 }
 
+/// Execution input payload written to `payload.json` for plugin execution.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutionPayload {
     pub plugin_id: String,
@@ -25,6 +28,7 @@ pub struct ExecutionPayload {
     pub output_dir: String,
 }
 
+/// Input constraints and requirements defined by the plugin for pre-flight verification.
 #[derive(Debug, Deserialize)]
 pub struct InputsRequirement {
     pub require_gps: Option<bool>,
@@ -57,10 +61,7 @@ pub fn preflight_check(
     Ok(())
 }
 
-pub fn assemble_payload(
-    payload: &ExecutionPayload,
-    output_dir: &Path,
-) -> Result<PathBuf, String> {
+pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result<PathBuf, String> {
     if !output_dir.exists() {
         fs::create_dir_all(output_dir)
             .map_err(|e| format!("Gagal membuat folder output: {}", e))?;
