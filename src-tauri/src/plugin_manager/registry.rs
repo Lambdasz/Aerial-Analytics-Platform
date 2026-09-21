@@ -1,15 +1,22 @@
-//! # Domain 1: Discovery, Registry & Health Check
+//! # Plugin Discovery, Registry & Health Check
 //!
 //! **Role**: Plugin Lifecycle & Package Manager (Discovery & Registry)
 //! **Deliverable**: `plugin_manager/registry.rs`
 //!
-//! Responsible for:
-//! - M2.2: Plugin Registration & indexing
-//! - M2.3: Plugin Discovery (scan directory, validate manifest & sub-contracts)
-//! - Querying compatible plugins based on image/AOI target
-//! - Running fast environment/dependency healthcheck
+//! Discovers plugins on disk, validates their manifests and sub-contracts,
+//! indexes them in an in-memory registry, and exposes queries for
+//! compatibility checking and health verification.
 //!
-//! Refer to: `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`
+//! ## Responsibilities
+//!
+//! - **M2.2**: Plugin registration and indexing.
+//! - **M2.3**: Plugin discovery (scan directory, validate manifest &
+//!   sub-contracts).
+//! - Querying compatible plugins based on image/AOI target.
+//! - Running fast environment/dependency healthcheck.
+//!
+//! For the full specification see
+//! `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`.
 
 #![allow(dead_code)]
 

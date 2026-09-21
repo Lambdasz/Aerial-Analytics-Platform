@@ -1,3 +1,11 @@
+//! Execution payload assembly and pre-flight validation.
+//!
+//! Before a plugin subprocess is spawned, the frontend sends an
+//! [`ExecutionPayload`] together with the plugin's [`InputsRequirement`].
+//! The [`preflight_check`] function verifies that the image satisfies the
+//! plugin's constraints (GPS availability, allowed formats), and
+//! [`assemble_payload`] writes the validated payload to `payload.json` on disk.
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +50,7 @@ pub fn preflight_check(
     if let Some(true) = inputs_req.require_gps {
         if !image_meta.has_gps {
             return Err(
-                "Plugin ini membutuhkan data GPS pada gambar, tetapi gambar yang diunggah tidak memiliki data GPS."
+                "Plugin requires GPS data on the image, but the uploaded image has no GPS data."
                     .to_string(),
             );
         }
@@ -52,7 +60,7 @@ pub fn preflight_check(
         let ext = image_meta.format.to_lowercase();
         if !formats.iter().any(|f| f.to_lowercase() == ext) {
             return Err(format!(
-                "Format gambar '{}' tidak didukung oleh plugin ini. Format yang diterima: {:?}",
+                "Image format '{}' is not supported by this plugin. Accepted formats: {:?}",
                 image_meta.format, formats
             ));
         }
@@ -64,15 +72,15 @@ pub fn preflight_check(
 pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result<PathBuf, String> {
     if !output_dir.exists() {
         fs::create_dir_all(output_dir)
-            .map_err(|e| format!("Gagal membuat folder output: {}", e))?;
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
     let payload_file_path = output_dir.join("payload.json");
     let json_data = serde_json::to_string_pretty(payload)
-        .map_err(|e| format!("Gagal memformat JSON payload: {}", e))?;
+        .map_err(|e| format!("Failed to serialise payload JSON: {}", e))?;
 
     fs::write(&payload_file_path, json_data)
-        .map_err(|e| format!("Gagal menulis berkas payload.json: {}", e))?;
+        .map_err(|e| format!("Failed to write payload.json: {}", e))?;
 
     Ok(payload_file_path)
 }

@@ -1,5 +1,25 @@
 #![allow(dead_code)]
 
+//! Data models and DTOs for the Plugin Manager.
+//!
+//! Contains the canonical types for plugin manifests, runtime configuration,
+//! input specifications, state persistence, and the IPC transfer objects
+//! exchanged between the Rust backend and the TypeScript frontend.
+//!
+//! ## Key Types
+//!
+//! | Type | Purpose |
+//! |------|---------|
+//! | [`PluginManifest`] | Parsed `manifest.json` — identity, runtime, sub-contract paths |
+//! | [`PluginMetadata`] | Name, version, author, category, and tags |
+//! | [`PluginRuntime`] | Runtime environment (Python / binary / WASM) and entrypoint |
+//! | [`InputsSpec`] | Input constraints from `inputs.json` |
+//! | [`PluginStateStore`] | Root state persisted to `plugin_state.json` |
+//! | [`PluginBundle`] | In-memory aggregate of manifest + sub-contracts + install path |
+//! | [`PluginSummaryDto`] | Lightweight DTO for UI lists and cards |
+//! | [`PluginDetailsDto`] | Fully resolved DTO for detail modals and parameter forms |
+//! | [`HealthStatusDto`] | Health check result emitted by plugin entrypoint |
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

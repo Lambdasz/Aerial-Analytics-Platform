@@ -1,234 +1,191 @@
-//! API publik Modul 9 (Area & Plot Analytics) untuk komunikasi antar modul.
+//! # Plot Analytics API (Module 9)
 //!
-//! Modul 9 mengelola plot (poligon batas area analisis) dan menjadi
-//! penghubung antara peta (Modul 3), plugin manager (Modul 2), dan dashboard
-//! (Modul 11). Berkas ini merujuk sequence diagram "Analisis Per Plot":
+//! Cross-module API for defining plots, running plugins per-plot, and
+//! delivering aggregated statistics to the dashboard.
 //!
-//! 1. User menggambar plot di peta (Modul 3).
-//! 2. Modul 3 -> Modul 9: data pembatas plot.
-//! 3. Modul 9 -> Modul 2: menjalankan plugin per plot.
-//! 4. Modul 2 -> Modul 9: hasil per plot (balasan langkah 3).
-//! 5. Modul 9 -> Modul 3: layer plot (balasan langkah 2).
-//! 6. Modul 9 -> Modul 11: hasil plugin dan statistik.
+//! ## Integration Flow
 //!
-//! Modul 4-8 tidak berkomunikasi langsung dengan Modul 9; semuanya lewat
-//! Modul 2. Modul 10 tidak berhubungan dengan Modul 9.
+//! ```text
+//!   ┌──────────┐     ┌──────────┐     ┌──────────────┐
+//!   │ Module 3 │────▶│ Module 9 │────▶│  Module 2    │
+//!   │ (Map)    │◀────│ (Plots)  │◀────│ (Plugin Mgr) │
+//!   └──────────┘     └────┬─────┘     └──────────────┘
+//!                         │
+//!                         ▼
+//!                  ┌──────────────┐
+//!                  │  Module 11   │
+//!                  │ (Dashboard)  │
+//!                  └──────────────┘
+//! ```
 //!
-//! Fungsi yang tersedia (semuanya masih kerangka, isinya `todo!`):
+//! ## Functions
 //!
-//! | Fungsi                 | Modul | Langkah |
-//! |------------------------|-------|---------|
-//! | [`define_plot`]        | 3     | 2 dan 5 |
-//! | [`analyze_plot`]       | 2     | 3 dan 4 |
-//! | [`get_plot_statistics`]| 11    | 6       |
+//! | Function | Direction | Description |
+//! |----------|-----------|-------------|
+//! | [`define_plot`] | Module 3 → 9 → 3 | Validate and store a plot boundary |
+//! | [`analyze_plot`] | Module 9 → 2 → 9 | Run selected plugins within a plot |
+//! | [`get_plot_statistics`] | Module 9 → 11 | Deliver per-plot statistics for the dashboard |
 //!
-//! Konvensi geometri: GeoJSON `Feature<Polygon>` RFC 7946, WGS84 (EPSG:4326),
-//! urutan `[lon, lat]`. Penyimpanan plot belum diputuskan; API ini tidak
-//! mengasumsikan SQLite maupun file system.
+//! ## Geometry Conventions
+//!
+//! - Format: GeoJSON `Feature<Polygon>` (RFC 7946).
+//! - CRS: WGS 84 (`EPSG:4326`).
+//! - Coordinate order: `[longitude, latitude]`.
 
 use crate::plugin_manager::result_handler::ExecutionResult;
 use geojson::Feature;
 use serde::{Deserialize, Serialize};
 
-/// Layer plot yang dikembalikan ke Modul 3 untuk ditampilkan di peta.
+/// Plot layer returned to Module 3 for map display.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlotLayer {
-    /// ID unik plot (UUID dalam bentuk string).
+    /// Unique plot identifier (UUID string).
     pub plot_id: String,
-    /// Nama plot yang ditampilkan ke pengguna.
+    /// Display name shown to the user.
     pub plot_name: String,
-    /// Geometri plot: `Feature<Polygon>` WGS84 persis seperti
-    /// `docs/examples/aoi.example.geojson`. Di `properties` dipakai nama field
-    /// Modul 3: `aoi_id` (= `plot_id`) dan `name` (= `plot_name`).
+    /// Plot geometry: `Feature<Polygon>` WGS 84, identical to
+    /// `docs/examples/aoi.example.geojson`. Properties use Module 3 field
+    /// names: `aoi_id` (= `plot_id`) and `name` (= `plot_name`).
     pub geometry: Feature,
 }
 
-/// Hasil analisis satu plugin pada satu plot.
+/// Analysis result of a single plugin on a single plot.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PluginRunResult {
-    /// ID plugin yang dijalankan.
+    /// Plugin identifier that was executed.
     pub plugin_id: String,
-    /// Hasil eksekusi dari Modul 2 (`ExecutionResult` milik plugin_manager).
+    /// Execution result from Module 2 (`plugin_manager::result_handler::ExecutionResult`).
     pub result: ExecutionResult,
 }
 
-/// Hasil analisis satu plot untuk semua plugin yang dijalankan.
+/// Combined analysis result for a plot across all executed plugins.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PlotAnalysisResult {
-    /// ID plot yang dianalisis.
+    /// Plot identifier that was analysed.
     pub plot_id: String,
-    /// Hasil per plugin, sesuai urutan `plugin_ids` pada permintaan.
+    /// Per-plugin results, in the same order as the `plugin_ids` request.
     pub results: Vec<PluginRunResult>,
 }
 
-/// Statistik ringkas sebuah indikator pada satu plot.
+/// Summary statistics for a single indicator on a plot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IndicatorStats {
-    /// Rata-rata nilai.
+    /// Mean value.
     pub mean: Option<f64>,
-    /// Nilai minimum.
+    /// Minimum value.
     pub min: Option<f64>,
-    /// Nilai maksimum.
+    /// Maximum value.
     pub max: Option<f64>,
-    /// Simpangan baku.
+    /// Standard deviation.
     pub stddev: Option<f64>,
 }
 
-/// Satu indikator hasil plugin pada sebuah plot.
+/// A single plugin indicator on a plot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlotIndicator {
-    /// Nama indikator, misalnya `"vegetation_cover"`.
+    /// Indicator name, e.g. `"vegetation_cover"`.
     pub name: String,
-    /// Satuan nilai, misalnya `"%"` atau `"pohon"`.
+    /// Unit of measurement, e.g. `"%"` or `"trees"`.
     pub unit: String,
-    /// Plugin atau modul sumber indikator.
+    /// Plugin or module that produced this indicator.
     pub source: String,
-    /// Nilai utama indikator.
+    /// Primary indicator value.
     pub value: f64,
-    /// Statistik tambahan, kosong bila plugin tidak menyediakannya.
+    /// Additional statistics; `None` when the plugin does not provide them.
     pub stats: Option<IndicatorStats>,
 }
 
-/// Statistik satu plot untuk dashboard Modul 11.
+/// Aggregated plot statistics for the Module 11 dashboard.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PlotStatistics {
-    /// ID plot.
+    /// Plot identifier.
     pub plot_id: String,
-    /// Nama plot.
+    /// Plot display name.
     pub plot_name: String,
-    /// Luas dalam meter persegi (dari Spatial Measurement Modul 3).
+    /// Area in square metres (from Module 3 Spatial Measurement).
     pub area_m2: f64,
-    /// Luas dalam hektare (dari Spatial Measurement Modul 3).
+    /// Area in hectares (from Module 3 Spatial Measurement).
     pub area_ha: f64,
-    /// Keliling dalam meter (dari Spatial Measurement Modul 3).
+    /// Perimeter in metres (from Module 3 Spatial Measurement).
     pub perimeter_m: f64,
-    /// Daftar indikator hasil plugin pada plot ini.
+    /// List of plugin indicators for this plot.
     pub indicators: Vec<PlotIndicator>,
 }
 
-/// Mendefinisikan plot dari data pembatas yang digambar di Modul 3.
+/// Defines a plot from an AOI drawn in Module 3.
 ///
-/// Modul integrasi: Modul 3
+/// # Integration
 ///
-/// Arah: Modul 3 -> Modul 9 -> Modul 3
+/// - **Direction**: Module 3 → Module 9 → Module 3
+/// - **Diagram steps**: 2 and 5
 ///
-/// Langkah diagram: 2 dan 5
+/// # Description
 ///
-/// Deskripsi: Menerima AOI dari Modul 3, memvalidasi geometrinya dengan
-/// aturan Modul 3 (poligon tertutup, minimal 3 titik, tidak
-/// self-intersecting; lihat `RULES_MAP_CONTROLLER.md`), menyimpannya sebagai
-/// plot, lalu mengembalikan layer plot untuk ditampilkan Modul 3. Nama plot
-/// diambil dari `properties.name`.
+/// Receives an AOI from Module 3, validates its geometry (closed polygon,
+/// minimum 3 vertices, no self-intersection — see `RULES_MAP_CONTROLLER.md`),
+/// stores it as a plot, and returns a [`PlotLayer`] for Module 3 to display.
+/// The plot name is taken from `properties.name`.
 ///
-/// Pemetaan field: geometri yang dikirim ke atau diterima dari Modul 3
-/// memakai nama field Modul 3 di `properties`, sedangkan struct internal
-/// Modul 9 tetap memakai nama sendiri: `aoi_id` = `plot_id`, `name` =
-/// `plot_name`.
+/// # Arguments
 ///
-/// Modul 3 belum memiliki tipe layer
-/// (`LayerConfig` belum ada di `map_controller/type.rs` maupun `src/map/types`),
-/// sehingga [`PlotLayer`] dibuat sementara dan perlu diselaraskan nanti.
-/// Cara penyimpanan belum diputuskan.
+/// * `aoi` — `Feature<Polygon>` RFC 7946, WGS 84, `[longitude, latitude]`
+///   order, matching `docs/examples/aoi.example.geojson`.
 ///
-/// Argumen:
-/// - `aoi`: `Feature<Polygon>` RFC 7946, WGS84, urutan `[lon, lat]`, seperti
-///   `docs/examples/aoi.example.geojson`.
+/// # Returns
 ///
-/// Output: `Result<PlotLayer, String>`. `Err` berisi pesan bila geometri
-/// tidak valid.
+/// `Ok(PlotLayer)` on success. `Err` with a descriptive message if the
+/// geometry is invalid.
 ///
-/// Example Uses:
+/// # Example
+///
 /// ```json
 /// {
 ///   "type": "Feature",
-///   "properties": {
-///     "aoi_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
-///     "name": "Plot A"
-///   },
+///   "properties": { "name": "Plot A" },
 ///   "geometry": {
 ///     "type": "Polygon",
-///     "coordinates": [[[116.833, -1.27], [116.834, -1.27], [116.834, -1.271],
-///                      [116.833, -1.271], [116.833, -1.27]]]
-///   }
-/// }
-/// ```
-///
-/// Example Output:
-/// ```json
-/// {
-///   "plot_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
-///   "plot_name": "Plot A",
-///   "geometry": {
-///     "type": "Feature",
-///     "properties": {
-///       "aoi_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
-///       "name": "Plot A"
-///     },
-///     "geometry": {
-///       "type": "Polygon",
-///       "coordinates": [[[116.833, -1.27], [116.834, -1.27], [116.834, -1.271],
-///                        [116.833, -1.271], [116.833, -1.27]]]
-///     }
+///     "coordinates": [[[116.833,-1.27],[116.834,-1.27],[116.834,-1.271],[116.833,-1.271],[116.833,-1.27]]]
 ///   }
 /// }
 /// ```
 pub fn define_plot(aoi: Feature) -> Result<PlotLayer, String> {
     let _ = aoi;
-    todo!("M9.1 belum diimplementasikan")
+    todo!("M9.1 not yet implemented")
 }
 
-/// Menjalankan plugin terpilih di dalam batas satu plot lewat Modul 2.
+/// Runs selected plugins within a single plot via Module 2.
 ///
-/// Modul integrasi: Modul 2
+/// # Integration
 ///
-/// Arah: Modul 9 -> Modul 2 -> Modul 9
+/// - **Direction**: Module 9 → Module 2 → Module 9
+/// - **Diagram steps**: 3 and 4
 ///
-/// Langkah diagram: 3 dan 4
+/// # Description
 ///
-/// Deskripsi: Untuk setiap plugin, Modul 9 menyusun `ExecutionPayload`
-/// (`plugin_manager::payload`) dengan geometri plot sebagai AOI, memanggil
-/// `plugin_manager::commands::validate_and_create_payload`, lalu setelah
-/// plugin selesai membaca hasilnya lewat
-/// `plugin_manager::commands::process_execution_result`. Geometri plot
-/// dikirim sebagai AOI di execution payload Modul 2 (`aoi`; pada
-/// `schemas/execution_payload.schema.json` bentuknya
-/// `{ "type": "geojson_polygon", "geometry": ... }`). Modul 4-8 tidak
-/// dipanggil langsung; semuanya lewat Modul 2. Kegagalan satu plugin tidak
-/// boleh menghentikan aplikasi.
+/// For each plugin, Module 9 assembles an execution payload
+/// with the plot geometry as AOI, calls
+/// `validate_and_create_payload`,
+/// then after execution reads the result via
+/// `process_execution_result`.
+/// Plugins are never called directly — Module 2 always mediates.
 ///
-/// Argumen:
-/// - `plot_id`: ID plot (UUID string) yang sudah didefinisikan.
-/// - `plugin_ids`: daftar ID plugin yang dijalankan pada plot ini.
-/// - `image_path`: path absolut citra sumber (`target.image_path` pada
-///   payload Modul 2). Kontrak Modul 1 belum menyediakan `image_id`.
+/// # Arguments
 ///
-/// Output: `Result<PlotAnalysisResult, String>`; hasil tiap plugin berupa
-/// `ExecutionResult` milik Modul 2.
+/// * `plot_id` — UUID string of an already-defined plot.
+/// * `plugin_ids` — list of plugin IDs to execute on this plot.
+/// * `image_path` — absolute path to the source aerial image.
 ///
-/// Example Uses:
+/// # Returns
+///
+/// `Ok(PlotAnalysisResult)` with per-plugin execution results.
+///
+/// # Example
+///
 /// ```json
 /// {
 ///   "plot_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
 ///   "plugin_ids": ["vegetation_index_v1"],
-///   "image_path": "C:/data/DJI_0042.JPG"
-/// }
-/// ```
-///
-/// Example Output:
-/// ```json
-/// {
-///   "plot_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
-///   "results": [
-///     {
-///       "plugin_id": "vegetation_index_v1",
-///       "result": {
-///         "status": "success",
-///         "metrics": { "primary_metric": 68.45 },
-///         "output_files": ["C:/cache/mask_dji_0042.png"],
-///         "error_message": null
-///       }
-///     }
-///   ]
+///   "image_path": "/data/DJI_0042.JPG"
 /// }
 /// ```
 pub fn analyze_plot(
@@ -237,55 +194,31 @@ pub fn analyze_plot(
     image_path: String,
 ) -> Result<PlotAnalysisResult, String> {
     let _ = (plot_id, plugin_ids, image_path);
-    todo!("M9.2 belum diimplementasikan")
+    todo!("M9.2 not yet implemented")
 }
 
-/// Memberikan hasil plugin dan statistik per plot untuk dashboard.
+/// Delivers per-plot statistics to the Module 11 dashboard.
 ///
-/// Modul integrasi: Modul 11
+/// # Integration
 ///
-/// Arah: Modul 9 -> Modul 11
+/// - **Direction**: Module 9 → Module 11
+/// - **Diagram step**: 6
 ///
-/// Langkah diagram: 6
+/// # Description
 ///
-/// Deskripsi: Mengumpulkan semua plot dalam satu proyek beserta luas,
-/// keliling, dan indikator hasil plugin. Luas dan keliling dihitung memakai
-/// Spatial Measurement milik Modul 3 (fungsinya belum ada di
-/// `map_controller`), bukan perhitungan sendiri. Modul 11 membandingkan dan
-/// mengurutkan plot sendiri dari hasil ini. Cara penyimpanan belum diputuskan.
+/// Collects all plots in a project with their area, perimeter, and plugin
+/// indicators. Area and perimeter are computed by Module 3 Spatial
+/// Measurement (not yet available). Module 11 uses the returned data for
+/// comparison and ranking.
 ///
-/// Argumen:
-/// - `project_id`: ID proyek yang plotnya diminta.
+/// # Arguments
 ///
-/// Output: `Result<Vec<PlotStatistics>, String>`.
+/// * `project_id` — identifier of the project whose plots are requested.
 ///
-/// Example Uses:
-/// ```json
-/// { "project_id": "proj_001" }
-/// ```
+/// # Returns
 ///
-/// Example Output:
-/// ```json
-/// [
-///   {
-///     "plot_id": "3f2b8c1e-5a7d-4e2f-9c1a-0b6d4e8f1a23",
-///     "plot_name": "Plot A",
-///     "area_m2": 12500.5,
-///     "area_ha": 1.25005,
-///     "perimeter_m": 500.0,
-///     "indicators": [
-///       {
-///         "name": "vegetation_cover",
-///         "unit": "%",
-///         "source": "vegetation_index_v1",
-///         "value": 68.45,
-///         "stats": { "mean": 0.61, "min": 0.12, "max": 0.93, "stddev": 0.08 }
-///       }
-///     ]
-///   }
-/// ]
-/// ```
+/// `Ok(Vec<PlotStatistics>)` — one entry per plot.
 pub fn get_plot_statistics(project_id: String) -> Result<Vec<PlotStatistics>, String> {
     let _ = project_id;
-    todo!("M9.7 belum diimplementasikan")
+    todo!("M9.7 not yet implemented")
 }
