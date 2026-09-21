@@ -243,6 +243,10 @@ impl ActiveJobTracker {
 
 /// Initiates an asynchronous plugin analysis job.
 ///
+/// Serves as the primary execution launcher exposed to the frontend via Tauri IPC (`invoke("start_plugin_job", { request })`).
+/// Invoked by Module 1 (Image Management), Module 3 (Geospatial Map Explorer), and Module 10 (Temporal Change Analysis)
+/// to kick off compute-intensive analysis workflows in an isolated child process without blocking the main Tauri desktop runtime.
+///
 /// **Behaviour (to implement):**
 /// 1. Validate that the plugin exists and is enabled.
 /// 2. Generate a unique `job_id` via `generate_job_id()`.
@@ -254,8 +258,22 @@ impl ActiveJobTracker {
 /// 6. Register the job in `ActiveJobTracker` as `JobStatusDto::Queued`.
 /// 7. **Return `JobHandleDto` immediately** — this command MUST be non-blocking.
 ///
-/// **Pre-condition**: Plugin is registered and `enabled = true`; `target_image_path` exists.  
-/// **Post-condition**: Job is tracked in `ActiveJobTracker`; background worker is running.
+/// # Arguments
+/// * `_request` - Execution request struct containing `plugin_id`, optional `session_id`, `target_image_path`, `mime_type`, optional GeoJSON `aoi`, and user-defined `parameters`.
+/// * `_app` - Tauri application handle used to stream real-time progress events (`"plugin://progress"`) to frontend webviews.
+/// * `_state` - Injected Tauri application state managing the thread-safe `ActiveJobTracker` and plugin registry.
+///
+/// # Pre-condition
+/// - Plugin is registered in memory with `enabled == true`, input parameters satisfy `parameters.json`, and `target_image_path` physically exists on disk.
+///
+/// # Post-condition
+/// - Generates a unique `job_id`, initializes a sandboxed output directory, writes `payload.json`, registers the job as `JobStatusDto::Queued` in `ActiveJobTracker`, spawns a detached Tokio background supervisor task, and returns `JobHandleDto` immediately.
+///
+/// # Errors
+/// - Returns `CommandError` if the plugin does not exist or is disabled (`PLUGIN_UNAVAILABLE`), if input parameters are invalid, or if filesystem sandbox initialization fails.
+///
+/// # Panics
+/// - This function does not panic.
 #[tauri::command]
 pub async fn start_plugin_job(
     _request: StartJobRequestDto,
@@ -277,14 +295,31 @@ pub async fn start_plugin_job(
 
 /// Forcibly terminates an in-flight plugin job.
 ///
+/// Provides user-cancellation capabilities exposed to the frontend via Tauri IPC (`invoke("abort_plugin_job", { jobId })`).
+/// Invoked by Module 3 (Map Explorer task drawer) and Module 11 (Task Monitor) when a user cancels an active analysis,
+/// ensuring runaway or stalled subprocesses are cleanly killed.
+///
 /// **Behaviour (to implement):**
 /// 1. Look up `job_id` in `ActiveJobTracker`.
 /// 2. If status is `Running`, send SIGKILL to the child process.
 /// 3. Clean up partial files in the sandboxed `output_dir`.
 /// 4. Mark the job as `JobStatusDto::Aborted` in the tracker.
 ///
-/// **Pre-condition**: `job_id` refers to a job in `Queued` or `Running` state.  
-/// **Post-condition**: Process is dead; job status is `Aborted`.
+/// # Arguments
+/// * `_job_id` - Unique execution identifier of the job to terminate.
+/// * `_state` - Injected Tauri application state containing `ActiveJobTracker`.
+///
+/// # Pre-condition
+/// - `_job_id` matches an existing job in `ActiveJobTracker` in `Queued` or `Running` state.
+///
+/// # Post-condition
+/// - The child subprocess is forcibly terminated (SIGKILL), partial files in the sandboxed output directory are purged, and the job status is updated to `JobStatusDto::Aborted` in `ActiveJobTracker`.
+///
+/// # Errors
+/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from `ActiveJobTracker`, or if terminating the child process encounters an OS error.
+///
+/// # Panics
+/// - This function does not panic.
 #[tauri::command]
 pub async fn abort_plugin_job(
     _job_id: String,
@@ -300,14 +335,30 @@ pub async fn abort_plugin_job(
 
 /// Polls the current lifecycle state of a job.
 ///
+/// Exposes read-only job status polling to the frontend via Tauri IPC (`invoke("get_job_status", { jobId })`).
+/// Consumed by Module 1 (Image Management), Module 3 (Map Explorer), and Module 11 (Task Monitor) to query
+/// job states (`Queued`, `Running`, `Completed`, `Failed`, `Aborted`) when re-attaching to ongoing tasks
+/// after frontend route changes or page refreshes.
+///
 /// **Behaviour (to implement):**
 /// 1. Look up `job_id` in `ActiveJobTracker`.
 /// 2. Return the current `JobStatusDto` snapshot.
 ///
-/// Used by the UI when navigating between pages or re-attaching to an ongoing job.
+/// # Arguments
+/// * `_job_id` - Unique execution identifier of the queried job.
+/// * `_state` - Injected Tauri application state holding `ActiveJobTracker`.
 ///
-/// **Pre-condition**: `job_id` exists in tracker.  
-/// **Post-condition**: Immutable read — no state mutation.
+/// # Pre-condition
+/// - `_job_id` exists in `ActiveJobTracker`.
+///
+/// # Post-condition
+/// - Returns an immutable snapshot of the current `JobStatusDto` for the specified job without mutating tracker state.
+///
+/// # Errors
+/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` does not match any entry in `ActiveJobTracker`.
+///
+/// # Panics
+/// - This function does not panic.
 #[tauri::command]
 pub async fn get_job_status(
     _job_id: String,
@@ -322,15 +373,31 @@ pub async fn get_job_status(
 
 /// Delivers the full analytical result to downstream modules.
 ///
+/// Exposes validated execution outputs to downstream modules via Tauri IPC (`invoke("get_job_result", { jobId })`).
+/// Consumed by Module 3 (Map Explorer for layer overlays), Modules 5, 6, 7 (Vegetation Condition, Tree Counting,
+/// Coverage Measurement dashboards), Module 9 (Reporting), and Module 10 (Temporal Change) to retrieve
+/// scalar metrics and verified filesystem artifact paths.
+///
 /// **Behaviour (to implement):**
 /// 1. Look up `job_id` in `ActiveJobTracker`.
 /// 2. Assert status is `Completed`; return `Err` otherwise.
 /// 3. Return the cached `StandardJobResultDto`.
 ///
-/// Consumed by Modules 3, 5, 6, 7, 9, 10, 11.
+/// # Arguments
+/// * `_job_id` - Unique execution identifier of the completed job.
+/// * `_state` - Injected Tauri application state holding `ActiveJobTracker`.
 ///
-/// **Pre-condition**: Job status is `Completed`.  
-/// **Post-condition**: Returns validated metrics + artifact descriptors.
+/// # Pre-condition
+/// - `_job_id` exists in `ActiveJobTracker` and its lifecycle state is `JobStatusDto::Completed`.
+///
+/// # Post-condition
+/// - Returns the cached, validated `StandardJobResultDto` containing execution runtime duration, exit status, scalar metrics map, and verified artifact descriptors without mutating state.
+///
+/// # Errors
+/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from tracker, or `JOB_NOT_COMPLETED` if the job has not completed successfully.
+///
+/// # Panics
+/// - This function does not panic.
 #[tauri::command]
 pub async fn get_job_result(
     _job_id: String,
@@ -344,6 +411,34 @@ pub async fn get_job_result(
     //    }
     // 3. Ok(record.result.clone().unwrap())
     todo!("get_job_result: return StandardJobResultDto from completed job tracker entry")
+}
+
+/// Emits a real-time job progress event to the frontend over Tauri IPC.
+///
+/// Streams progress payloads emitted by child subprocesses to listening UI components (Modules 3 and 11 Task Monitor)
+/// via Tauri's event bus under the `"plugin://progress"` topic. Invoked internally by the subprocess supervisor
+/// when stdout emits a valid `PROGRESS:` token during execution.
+///
+/// # Arguments
+/// * `_app` - Handle to the Tauri application used to dispatch IPC events to frontend webviews.
+/// * `_progress` - Structured progress payload containing the active `job_id`, percentage completed (`0..=100`), and descriptive `stage`.
+///
+/// # Pre-condition
+/// - Tauri runtime is active and initialized, and `_progress.percent` is in the range 0–100.
+///
+/// # Post-condition
+/// - Dispatches the `"plugin://progress"` event containing the serialized `JobProgress` payload to all listening frontend webviews.
+///
+/// # Errors
+/// - Returns `CommandError` if serializing the progress payload fails or if Tauri IPC event emission encounters an internal error.
+///
+/// # Panics
+/// - This function does not panic.
+pub fn emit_job_progress(
+    _app: &tauri::AppHandle,
+    _progress: &JobProgress,
+) -> Result<(), CommandError> {
+    todo!("emit_job_progress: stream JobProgress event to frontend via app.emit")
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +543,11 @@ pub(crate) async fn resolve_executable(
     todo!("resolve_executable: build tokio::process::Command for python or native binary")
 }
 
-/// Supervises an already-spawned child process to completion.
+/// Supervises an already-spawned child process to completion while streaming progress events.
+///
+/// Coordinates child process lifecycle asynchronously, streaming stdout lines in real time,
+/// parsing progress tokens to emit `"plugin://progress"` IPC events to the frontend, enforcing execution
+/// timeout deadlines, and validating final analytical output files.
 ///
 /// **Behaviour (to implement):**
 /// 1. Wrap in `tokio::time::timeout(Duration::from_secs(timeout_secs), ...)`.
@@ -459,8 +558,25 @@ pub(crate) async fn resolve_executable(
 ///
 /// **MUST NEVER PANIC** — wrap all error paths in `Result` combinators.
 ///
-/// **Pre-condition**: `child` is a live subprocess with `stdout: Stdio::piped()`.  
-/// **Post-condition**: Returns `StandardJobResultDto` on success, or `ExecutorError`.
+/// # Arguments
+/// * `_child` - Active Tokio asynchronous child process handle with piped stdout.
+/// * `_job_id` - Unique execution ID identifying this job in the active tracker and event stream.
+/// * `_result_path` - Path where the plugin is expected to write its final execution result JSON.
+/// * `_output_dir` - Sandboxed directory path for plugin scratch files and artifact outputs.
+/// * `_timeout_secs` - Maximum allowed execution wall-clock time in seconds before SIGKILL is dispatched.
+/// * `_app` - Tauri application handle used to emit `"plugin://progress"` real-time events.
+///
+/// # Pre-condition
+/// - `_child` is a live subprocess with `stdout: Stdio::piped()`.
+///
+/// # Post-condition
+/// - Returns `Ok(StandardJobResultDto)` on success, or kills the process and returns `Err(ExecutorError)` on timeout or failure.
+///
+/// # Errors
+/// - Returns `ExecutorError::Timeout` if execution exceeds timeout, `ExecutorError::SpawnFailed` on non-zero exit or missing pipe, `ExecutorError::Io` on I/O error, or `ExecutorError::ArtifactMissing` if declared output files are missing.
+///
+/// # Panics
+/// - This function does not panic.
 pub(crate) async fn supervise_execution(
     _child: tokio::process::Child,
     _job_id: String,
