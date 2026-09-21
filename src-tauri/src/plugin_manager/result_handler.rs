@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// Analytical execution result parsed from `result.json` written by the plugin.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutionResult {
     pub status: String,
@@ -10,6 +11,7 @@ pub struct ExecutionResult {
     pub error_message: Option<String>,
 }
 
+/// Historical record entry capturing execution outcome and output file paths.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunHistoryEntry {
     pub timestamp: String,
@@ -41,10 +43,7 @@ pub fn parse_execution_result(output_dir: &Path) -> Result<ExecutionResult, Stri
     Ok(result)
 }
 
-pub fn record_run_history(
-    history_file_path: &Path,
-    entry: RunHistoryEntry,
-) -> Result<(), String> {
+pub fn record_run_history(history_file_path: &Path, entry: RunHistoryEntry) -> Result<(), String> {
     let mut history: Vec<RunHistoryEntry> = if history_file_path.exists() {
         let content = fs::read_to_string(history_file_path)
             .map_err(|e| format!("Gagal membaca riwayat: {}", e))?;
@@ -62,4 +61,4 @@ pub fn record_run_history(
         .map_err(|e| format!("Gagal menulis berkas riwayat eksekusi: {}", e))?;
 
     Ok(())
-}   
+}
