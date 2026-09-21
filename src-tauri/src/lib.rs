@@ -26,7 +26,6 @@
 //! core platform.
 //!
 //! - `plugin_manager` — discovery, lifecycle, execution, and error isolation.
-//!   See `plugin_manager` for the full submodule map.
 //!
 //! ### Tauri Commands
 //!
