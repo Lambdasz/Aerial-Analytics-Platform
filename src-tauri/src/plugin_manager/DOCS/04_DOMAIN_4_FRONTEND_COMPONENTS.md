@@ -1,4 +1,5 @@
 # Domain 4: Dynamic UI & Form Validation (TypeScript / Blueprint.js Frontend)
+
 > **Module 2: Plugin Architecture & Extension Manager**  
 > **Parent Guide**: [README.md](README.md)
 
@@ -7,6 +8,7 @@
 ## 1. Domain Purpose & Overview
 
 Domain 4 bridges the Rust backend with the user interface. It provides:
+
 1. The **Plugin Manager UI** for browsing, enabling, configuring, and installing plugins.
 2. The dynamic **Schema-Driven Parameter Form Generator** mapping `parameters.json` to Blueprint.js 6 controls.
 3. The self-contained **`<PluginExecutionModal />`**, allowing Modules 1 & 3 to launch analyses and stream progress without writing duplicate dialog or validation code.
@@ -15,15 +17,15 @@ Domain 4 bridges the Rust backend with the user interface. It provides:
 
 ## 2. Component & Helper Matrix
 
-| Component / Function | Scope | Props / Input Parameters | Return / Output Type | Purity / Category | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`PluginManagerView`** | `export (React Component)` | `None` (Fetches via Tauri IPC) | `React.ReactElement` | **Stateful Container Component** | Full Extension Manager page: search bar, category filters, "Install Plugin" button, and responsive grid of `PluginCard`s. |
-| **`PluginCard`** | `export (React Component)` | `plugin: PluginSummary, onToggle, onConfigure, onHealthcheck, onUninstall` | `React.ReactElement` | **Pure Presentation Component** | Blueprint.js `<Card>` displaying metadata, health badge, toggle switch, and action buttons. |
-| **`DynamicParamForm`** | `export (React Component)` | `parameters: ParameterDefinition[], values: Record<string, unknown>, errors?: Record<string, string>, onChange` | `React.ReactElement` | **Pure Presentation Component** | Iterates over `parameters.json` definitions and renders corresponding Blueprint.js form controls (`number`, `select`, `boolean`, `string`). |
-| **`renderDynamicInput`** | `export (Helper Component)` | `param: ParameterDefinition, value: unknown, error?: string, onChange` | `React.ReactElement` | **Pure Sub-Component** | Pure pattern-matcher mapping a single `ParameterDefinition` to `<NumericInput>`, `<HTMLSelect>`, `<Switch>`, or `<InputGroup>`. |
-| **`validateParams`** | `export (Helper Function)` | `defs: ParameterDefinition[], values: Record<string, unknown>` | `ValidationResult<Record<string, unknown>>` | **Pure Function** | Validates user input values against schema rules (`min`, `max`, `step`, allowed `options`). Returns sanitized values or error messages. |
-| **`PluginExecutionModal`**| `export (React Component)` | `isOpen: boolean, pluginId: string, target: TargetDescriptor, onClose, onSuccess` | `React.ReactElement` | **Stateful Modal Controller** | Standardized launch dialog managed by Module 2. Handles parameter tweaks, validation, job submission, progress bar, and error display. |
-| **`PluginInstallDialog`** | `export (React Component)` | `isOpen: boolean, onClose: () => void, onInstalled` | `React.ReactElement` | **Stateful Modal Component** | File picker dialog for `.zip` upload with installation progress and validation feedback callouts. |
+| Component / Function       | Scope                       | Props / Input Parameters                                                                                        | Return / Output Type                        | Purity / Category                | Description                                                                                                                                 |
+| :------------------------- | :-------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------ | :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| **`PluginManagerView`**    | `export (React Component)`  | `None` (Fetches via Tauri IPC)                                                                                  | `React.ReactElement`                        | **Stateful Container Component** | Full Extension Manager page: search bar, category filters, "Install Plugin" button, and responsive grid of `PluginCard`s.                   |
+| **`PluginCard`**           | `export (React Component)`  | `plugin: PluginSummary, onToggle, onConfigure, onHealthcheck, onUninstall`                                      | `React.ReactElement`                        | **Pure Presentation Component**  | Blueprint.js `<Card>` displaying metadata, health badge, toggle switch, and action buttons.                                                 |
+| **`DynamicParamForm`**     | `export (React Component)`  | `parameters: ParameterDefinition[], values: Record<string, unknown>, errors?: Record<string, string>, onChange` | `React.ReactElement`                        | **Pure Presentation Component**  | Iterates over `parameters.json` definitions and renders corresponding Blueprint.js form controls (`number`, `select`, `boolean`, `string`). |
+| **`renderDynamicInput`**   | `export (Helper Component)` | `param: ParameterDefinition, value: unknown, error?: string, onChange`                                          | `React.ReactElement`                        | **Pure Sub-Component**           | Pure pattern-matcher mapping a single `ParameterDefinition` to `<NumericInput>`, `<HTMLSelect>`, `<Switch>`, or `<InputGroup>`.             |
+| **`validateParams`**       | `export (Helper Function)`  | `defs: ParameterDefinition[], values: Record<string, unknown>`                                                  | `ValidationResult<Record<string, unknown>>` | **Pure Function**                | Validates user input values against schema rules (`min`, `max`, `step`, allowed `options`). Returns sanitized values or error messages.     |
+| **`PluginExecutionModal`** | `export (React Component)`  | `isOpen: boolean, pluginId: string, target: TargetDescriptor, onClose, onSuccess`                               | `React.ReactElement`                        | **Stateful Modal Controller**    | Standardized launch dialog managed by Module 2. Handles parameter tweaks, validation, job submission, progress bar, and error display.      |
+| **`PluginInstallDialog`**  | `export (React Component)`  | `isOpen: boolean, onClose: () => void, onInstalled`                                                             | `React.ReactElement`                        | **Stateful Modal Component**     | File picker dialog for `.zip` upload with installation progress and validation feedback callouts.                                           |
 
 ---
 
@@ -72,8 +74,7 @@ export interface StandardJobResult {
 }
 
 export type ValidationResult<T> =
-  | { isValid: true; data: T }
-  | { isValid: false; errors: Record<string, string> };
+  { isValid: true; data: T } | { isValid: false; errors: Record<string, string> };
 ```
 
 ---
@@ -141,7 +142,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
         if (event.payload.job_id === activeJobId) {
           setProgress({ percent: event.payload.percent, stage: event.payload.stage });
         }
-      }
+      },
     );
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
@@ -200,7 +201,9 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
           />
         ) : (
           <div style={{ padding: "16px 0" }}>
-            <p><strong>Stage:</strong> {progress?.stage ?? "Initializing..."}</p>
+            <p>
+              <strong>Stage:</strong> {progress?.stage ?? "Initializing..."}
+            </p>
             <ProgressBar
               value={progress ? progress.percent / 100 : undefined}
               intent={Intent.PRIMARY}
@@ -211,9 +214,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
       <div className="bp6-dialog-footer">
         <div className="bp6-dialog-footer-actions">
           <Button onClick={onClose} text="Cancel" />
-          {!activeJobId && (
-            <Button intent={Intent.PRIMARY} text="Execute" onClick={handleLaunch} />
-          )}
+          {!activeJobId && <Button intent={Intent.PRIMARY} text="Execute" onClick={handleLaunch} />}
         </div>
       </div>
     </Dialog>
@@ -230,7 +231,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
 ```typescript
 export function validateParams(
   defs: ParameterDefinition[],
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
 ): ValidationResult<Record<string, unknown>> {
   const errors: Record<string, string> = {};
   const sanitized: Record<string, unknown> = {};

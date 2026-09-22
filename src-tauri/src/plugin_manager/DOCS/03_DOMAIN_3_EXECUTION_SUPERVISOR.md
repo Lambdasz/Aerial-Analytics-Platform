@@ -1,4 +1,5 @@
 # Domain 3: Async Execution, Progress & Output Resolution (Rust Core)
+
 > **Module 2: Plugin Architecture & Extension Manager**  
 > **Parent Guide**: [README.md](README.md)
 
@@ -12,16 +13,16 @@ Domain 3 is the execution engine of Module 2. It supervises asynchronous child s
 
 ## 2. Function Specification Matrix
 
-| Function Name | Scope | Input Parameters | Output Type | Purity / Category | Pre-condition | Post-condition | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`start_plugin_job`** | `pub (IPC Tauri)` | `request: StartJobRequestDto, state: State<'_, AppState>` | `Result<JobHandleDto, String>` | **Async Subprocess Spawn** | Plugin exists and is `enabled`. Source image path exists. | Generates unique `job_id`, creates workspace, writes `payload.json`, spawns background process, and registers job in active tracker. Non-blocking. | Initiates asynchronous plugin analysis on a single image, pair, or AOI. |
-| **`abort_plugin_job`** | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>` | `Result<(), String>` | **OS Signal (Kill Process)** | `job_id` matches an active running job. | Child process killed immediately; temporary partial files cleaned up; job marked as `Aborted`. | Forcibly terminates an in-flight plugin job upon user cancellation. |
-| **`get_job_status`** | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>` | `Result<JobStatusDto, String>` | **I/O (Read Memory State)** | `job_id` exists in tracker. | Returns current lifecycle state (`Queued`, `Running`, `Completed`, `Failed`, `Aborted`) and progress percentage. | Polled by UI when navigating between pages or re-attaching to ongoing jobs. |
-| **`get_job_result`** | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>` | `Result<StandardJobResultDto, String>` | **I/O (Read Memory / Disk)** | Job is in `Completed` state. | Returns complete validated metrics and artifact descriptors with georeferenced bounds. | Delivers full analytical outputs to Modules 3, 5, 6, 7, 9, 10, and 11. |
-| **`build_execution_payload`**| `pub(crate)` | `job_id: &str, output_dir: &Path, req: &StartJobRequestDto` | `Result<ExecutionPayload, PluginError>` | **Pure Function** | Parameters conform to `parameters.json`. | Generates in-memory JSON payload matching `execution_payload.schema.json`. | Pure constructor for the plugin input payload. |
-| **`parse_progress_line`** | `pub(crate)` | `line: &str` | `Option<JobProgress>` | **Pure Function** | Single line from plugin stdout. | Returns structured progress (`percent`, `stage`) if line matches progress token; otherwise `None`. | Extracts real-time progress percentages without crashing on regular log text. |
-| **`read_and_validate_result`**| `pub(crate)` | `result_path: &Path, output_dir: &Path, spec: &OutputsSpec` | `Result<StandardJobResultDto, PluginError>` | **I/O (Read FS) + Pure Validation**| `--output` file exists and is valid JSON. | Result conforms to `execution_result.schema.json`; declared artifact files are verified on disk. | Ingests output JSON, validates metrics, and verifies generated files. |
-| **`resolve_executable`** | `pub(crate)` | `plugin_dir: &Path, runtime: &RuntimeDef` | `Result<tokio::process::Command, PluginError>` | **I/O (Check Executable & Permissions)** | Target script or binary exists in plugin folder. | Returns configured command with `--input` and `--output` flags attached. | Prepares cross-platform process command (virtualenv Python or native binary). |
+| Function Name                  | Scope             | Input Parameters                                            | Output Type                                    | Purity / Category                        | Pre-condition                                             | Post-condition                                                                                                                                     | Description                                                                   |
+| :----------------------------- | :---------------- | :---------------------------------------------------------- | :--------------------------------------------- | :--------------------------------------- | :-------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- |
+| **`start_plugin_job`**         | `pub (IPC Tauri)` | `request: StartJobRequestDto, state: State<'_, AppState>`   | `Result<JobHandleDto, String>`                 | **Async Subprocess Spawn**               | Plugin exists and is `enabled`. Source image path exists. | Generates unique `job_id`, creates workspace, writes `payload.json`, spawns background process, and registers job in active tracker. Non-blocking. | Initiates asynchronous plugin analysis on a single image, pair, or AOI.       |
+| **`abort_plugin_job`**         | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>`                | `Result<(), String>`                           | **OS Signal (Kill Process)**             | `job_id` matches an active running job.                   | Child process killed immediately; temporary partial files cleaned up; job marked as `Aborted`.                                                     | Forcibly terminates an in-flight plugin job upon user cancellation.           |
+| **`get_job_status`**           | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>`                | `Result<JobStatusDto, String>`                 | **I/O (Read Memory State)**              | `job_id` exists in tracker.                               | Returns current lifecycle state (`Queued`, `Running`, `Completed`, `Failed`, `Aborted`) and progress percentage.                                   | Polled by UI when navigating between pages or re-attaching to ongoing jobs.   |
+| **`get_job_result`**           | `pub (IPC Tauri)` | `job_id: String, state: State<'_, AppState>`                | `Result<StandardJobResultDto, String>`         | **I/O (Read Memory / Disk)**             | Job is in `Completed` state.                              | Returns complete validated metrics and artifact descriptors with georeferenced bounds.                                                             | Delivers full analytical outputs to Modules 3, 5, 6, 7, 9, 10, and 11.        |
+| **`build_execution_payload`**  | `pub(crate)`      | `job_id: &str, output_dir: &Path, req: &StartJobRequestDto` | `Result<ExecutionPayload, PluginError>`        | **Pure Function**                        | Parameters conform to `parameters.json`.                  | Generates in-memory JSON payload matching `execution_payload.schema.json`.                                                                         | Pure constructor for the plugin input payload.                                |
+| **`parse_progress_line`**      | `pub(crate)`      | `line: &str`                                                | `Option<JobProgress>`                          | **Pure Function**                        | Single line from plugin stdout.                           | Returns structured progress (`percent`, `stage`) if line matches progress token; otherwise `None`.                                                 | Extracts real-time progress percentages without crashing on regular log text. |
+| **`read_and_validate_result`** | `pub(crate)`      | `result_path: &Path, output_dir: &Path, spec: &OutputsSpec` | `Result<StandardJobResultDto, PluginError>`    | **I/O (Read FS) + Pure Validation**      | `--output` file exists and is valid JSON.                 | Result conforms to `execution_result.schema.json`; declared artifact files are verified on disk.                                                   | Ingests output JSON, validates metrics, and verifies generated files.         |
+| **`resolve_executable`**       | `pub(crate)`      | `plugin_dir: &Path, runtime: &RuntimeDef`                   | `Result<tokio::process::Command, PluginError>` | **I/O (Check Executable & Permissions)** | Target script or binary exists in plugin folder.          | Returns configured command with `--input` and `--output` flags attached.                                                                           | Prepares cross-platform process command (virtualenv Python or native binary). |
 
 ---
 
@@ -110,7 +111,7 @@ sequenceDiagram
     IPC-->>UI: Return JobHandleDto (job_id) immediately
 
     Sup->>Sub: Spawns process: <entrypoint> --input payload.json --output result.json
-    
+
     loop Stream Stdout Lines
         Sub-->>Sup: "PROGRESS: 45% (Extracting ExG)"
         Sup->>Sup: parse_progress_line("...")
@@ -134,12 +135,15 @@ sequenceDiagram
 ## 5. Subprocess Execution & Isolation Protocols
 
 ### 5.1 The CLI Contract
+
 Plugins are executed directly without shell wrappers:
+
 ```bash
 <plugin_entrypoint> --input <path_to_payload.json> --output <path_to_result.json>
 ```
 
 ### 5.2 Stdout vs Output Ingestion Protocol
+
 > [!IMPORTANT]
 > Plugins write their final output to the file path specified by `--output`. `stdout` is streamed line-by-line solely for progress updates and logs.
 
@@ -155,6 +159,7 @@ pub fn parse_progress_line(line: &str) -> Option<JobProgress> {
 ```
 
 ### 5.3 Timeout Enforcement & Process Tree Termination
+
 Subprocess execution is wrapped in a strict timeout. If the deadline expires, the process is killed to prevent runaway computation:
 
 ```rust
