@@ -1,0 +1,33 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/plugin.v1.json",
+  "manifest_version": 1,
+  "metadata": {
+    "id": "tree-detection-counting",
+    "name": "Tree Detection & Counting",
+    "version": "0.1.0",
+    "author": "PBL Team 2026 - Modul 7",
+    "license": "MIT",
+    "description": "Detects individual tree crowns in RGB aerial imagery, filters them by confidence, maps them to WGS84 coordinates, and reports tree counts and density.",
+    "category": "tree_detection",
+    "tags": ["rgb", "tree", "crown", "counting", "density"],
+    "min_core_version": "0.1.0"
+  },
+  "runtime": {
+    "type": "python",
+    "min_python_version": "3.10",
+    "entrypoint": "main.py",
+    "dependencies_file": "requirements.txt",
+    "healthcheck_flag": "--healthcheck"
+  },
+  "parameters": "parameters.json",
+  "inputs": "inputs.json",
+  "outputs": "outputs.json",
+  "execution": {
+    "timeout_seconds": 300,
+    "concurrency": "sequential",
+    "gpu": {
+      "support": "optional",
+      "driver": "cuda"
+    }
+  }
+}
