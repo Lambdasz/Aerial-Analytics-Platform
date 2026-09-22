@@ -12,6 +12,20 @@
 //! Core system for organising aerial imagery, projects, acquisition sessions,
 //! and associated metadata (EXIF, XMP DJI).
 //!
+//! ```text
+//! Project
+//! ├── Session 1
+//! │   ├── Image 1
+//! │   ├── Image 2
+//! │   ├── ...
+//! │   └── Image n
+//! └── Session 2
+//!     ├── Image 1
+//!     ├── Image 2
+//!     ├── ...
+//!     └── Image n
+//! ```
+//!
 //! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
 //! - `modules::module_01` — image metadata extraction API
 //!   (`modules::module_01::extract_metadata`).

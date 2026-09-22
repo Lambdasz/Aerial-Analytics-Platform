@@ -1,3 +1,20 @@
+//! Data model definitions for the Module 1 image import pipeline and
+//! extracted image metadata.
+//!
+//! This file holds two related but distinct families of types:
+//! - **Import pipeline types** ([`ContentHash`], [`SessionTarget`],
+//!   [`ImportRequest`], [`ImportCandidate`], [`NameConflict`],
+//!   [`DuplicateFlag`], [`RejectedFile`], [`ImportReport`],
+//!   [`ImportError`]) — describe an in-flight import operation, before any
+//!   image has become a persisted record.
+//! - **Format/metadata types** ([`ImageFormat`], [`ImageMetadata`]) — the
+//!   EXIF/XMP-derived data extracted from a source file during import.
+//!
+//! Neither family is the canonical persisted image record; that's
+//! [`crate::models::session::Image`]. Once an [`ImportCandidate`] is
+//! successfully imported, its extracted [`ImageMetadata`] is folded into a
+//! `models::session::Image` for storage.
+
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
@@ -5,9 +22,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentHash(pub String);
 
+/// Which session an [`ImportRequest`] should import into.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionTarget {
+    /// Import into a session that already exists.
     Existing { id: String },
+    /// Create a new session with `label` as part of this import.
     New { id: String, label: String },
 }
 
@@ -16,20 +36,30 @@ pub enum SessionTarget {
 pub struct ImportRequest {
     /// `true` = user picked a folder (I/O scans jpeg/dng). `false` = user picked image files.
     pub from_folder: bool,
+    /// Session this import will land in.
     pub session: SessionTarget,
+    /// Files picked (or discovered, if `from_folder`) for this import.
     pub candidates: Vec<ImportCandidate>,
 }
 
+/// One file offered for import, with enough pre-read data to classify it
+/// without further disk access.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportCandidate {
+    /// Client-generated id used to correlate this candidate with its result.
     pub id: String,
+    /// Absolute path to the source file on disk.
     pub source_path: String,
+    /// File name as it will appear in the destination session folder.
     pub file_name: String,
     /// First ≥16 bytes of the file. Used only for JPEG/DNG magic sniff, not EXIF.
     pub header: Vec<u8>,
+    /// SHA-256 of the full file, used for duplicate detection.
     pub content_hash: ContentHash,
 }
 
+/// A destination-basename collision found among incoming candidates or
+/// against files already in the session folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NameConflict {
     pub dest_name: String,
@@ -39,6 +69,7 @@ pub struct NameConflict {
     pub existing_path: Option<String>,
 }
 
+/// A candidate whose content hash matches an image already in the project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateFlag {
     pub source_path: String,
@@ -46,36 +77,39 @@ pub struct DuplicateFlag {
     pub content_hash: ContentHash,
 }
 
+/// A candidate that could not be imported, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RejectedFile {
     pub source_path: String,
     pub reason: ImportError,
 }
 
+/// Outcome of one [`ImportRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportReport {
+    /// Session the import landed in (created or existing, per [`SessionTarget`]).
     pub session_id: String,
+    /// Ids of images successfully imported.
     pub imported_image_ids: Vec<String>,
+    /// Candidates skipped because they duplicate an existing project image.
     pub duplicates: Vec<DuplicateFlag>,
+    /// Candidates that failed to import, with reasons.
     pub rejected: Vec<RejectedFile>,
+    /// Destination-basename collisions found during the import.
     pub name_conflicts: Vec<NameConflict>,
 }
 
+/// Reasons an import operation or a single candidate within it can fail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImportError {
+    /// The request contained no candidates.
     NoImagesFound,
-    SessionNotFound {
-        session_id: String,
-    },
+    /// `session_id` does not reference an existing session.
+    SessionNotFound { session_id: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
-    UnsupportedFormat {
-        path: String,
-        extension: String,
-    },
+    UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
-    MagicMismatch {
-        path: String,
-    },
+    MagicMismatch { path: String },
 }
 
 /// Supported image file formats.

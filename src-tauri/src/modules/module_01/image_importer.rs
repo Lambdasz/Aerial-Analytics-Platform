@@ -38,12 +38,12 @@ pub fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportE
         Err(MetadataError::MagicMismatch { .. }) => Err(ImportError::MagicMismatch {
             path: candidate.source_path.clone(),
         }),
+        // detect_format's contract (see its `# Errors` doc) guarantees it never
+        // returns these variants; classify_file only ever sees a format/magic
+        // mismatch from it.
         Err(
             MetadataError::Io(_) | MetadataError::MalformedExif(_) | MetadataError::MalformedXmp(_),
-        ) => Err(ImportError::UnsupportedFormat {
-            path: candidate.source_path.clone(),
-            extension,
-        }),
+        ) => unreachable!("detect_format only returns UnsupportedFormat or MagicMismatch"),
     }
 }
 

@@ -1,24 +1,19 @@
 //! Data model definitions for `Session`, `Project`, and `Image`.
 //!
 //! # A Note on Temporal Representation
-//! The structures defined herein deliberately employ two distinct categories of
-//! datetime types; these categories must not be conflated:
-//! - `NaiveDateTime` (timezone-naive; i.e., devoid of associated timezone
-//!   information) is employed for fields whose values are derived from the EXIF
-//!   metadata embedded by the drone's onboard camera (namely, `date_start`,
-//!   `date_end`, and `captured_at`). The majority of camera systems record EXIF
-//!   timestamps as local time relative to the location at which the photograph
-//!   was captured, without encoding a corresponding UTC offset. Accordingly,
-//!   `NaiveDateTime`—rather than `DateTime<Utc>`—constitutes the appropriate
-//!   representation in this context. These values MUST NOT be assumed to
-//!   represent Coordinated Universal Time (UTC), nor should they be directly
-//!   compared against the `DateTime<Utc>` fields described below without
-//!   explicit and deliberate timezone conversion.
-//! - `DateTime<Utc>` (timezone-aware, invariably expressed in Coordinated
-//!   Universal Time) is employed for fields that are generated programmatically
-//!   by the system at the moment a given record is created or subsequently
-//!   modified (namely, `created_at` and `updated_at`), as opposed to values
-//!   derived from EXIF metadata.
+//!
+//! These structs use two different datetime types on purpose — don't mix
+//! them up:
+//! - `NaiveDateTime` (no timezone attached) is used for fields sourced from
+//!   the drone camera's EXIF metadata (`date_start`, `date_end`,
+//!   `captured_at`). Most cameras write EXIF timestamps as local time at the
+//!   capture location, with no UTC offset recorded, so `NaiveDateTime` is
+//!   the honest representation here. Don't assume these values are UTC, and
+//!   don't compare them directly against the `DateTime<Utc>` fields below
+//!   without an explicit timezone conversion.
+//! - `DateTime<Utc>` (always UTC) is used for fields the system generates
+//!   itself when a record is created or modified (`created_at`,
+//!   `updated_at`) — these have nothing to do with EXIF data.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -61,6 +56,11 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A persisted image record belonging to a session.
+///
+/// This is the canonical stored record. For the richer EXIF/XMP-derived
+/// metadata captured during import (dimensions, camera settings, flight
+/// telemetry, etc.), see [`crate::models::image::ImageMetadata`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {
