@@ -24,10 +24,11 @@ npm run format            # Prettier write
 npm run format:rust:check # cargo fmt --check (manifest: src-tauri/Cargo.toml)
 npm run format:rust       # cargo fmt
 
+cargo test --manifest-path src-tauri/Cargo.toml                               # Rust unit + doc tests
 cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  # generate rustdoc
 ```
 
-**There is no test runner configured yet.** Do not reference one in changes or PR descriptions.
+**No JS/TS test runner** (no `test` script in `package.json`) — don't mention one in changes or PRs. Rust tests exist (`cargo test`, see above). Plugin tests: `python -m unittest discover -s tests -v` from inside the plugin dir (e.g. `plugins/rgb-landcover-classification/`; needs the plugin's Python deps).
 
 ### Pre-commit gates (all four MUST pass)
 
@@ -68,24 +69,37 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
 - `src/` — React frontend. Entry: `src/main.tsx`, root: `src/App.tsx` → `src/shell/AppShell.tsx`.
   - `src/shell/` — App shell, sidebar, module routing.
   - `src/map/` — Leaflet map explorer, AOI drawing, layer management.
-  - `src/features/` — Feature modules (mostly scaffolding).
+  - `src/modules/module-NN/` — module pages (placeholder shells for most).
+  - `src/features/`, `src/component_plugin_manager/` — feature code (mostly scaffolding).
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
-- `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`.
-  - `plugin_manager/` — Plugin discovery, lifecycle, async execution, error isolation.
+- `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).
+  - `plugin_manager.rs` + `plugin_manager/` — plugin discovery, lifecycle, async execution, error isolation. The entry is the file `plugin_manager.rs`; never reintroduce `plugin_manager/mod.rs` alongside it (Rust rejects both existing).
   - `commands/` — Tauri IPC commands (thin handlers).
   - `models/` — Shared Rust types (must derive `Serialize`/`Deserialize` if crossing IPC boundary).
   - `services/` — Business logic (commands delegate here).
   - `modules/` — Module-specific logic (module_01 metadata, module_10 temporal).
-  - `map_controller/` — Map data provider and AOI storage.
+  - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
   - `reporting/` — Reporting module.
 - `plugins/` — Plugin implementations (mock, mock_rust, rgb-vegetation-detection, rgb-landcover-classification, template).
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
 
-### Adding new Tauri commands (3 required steps)
+### Adding new Tauri commands (2 required steps)
 
 1. Implement the `#[tauri::command]` function (thin — parse/validate, delegate to `services/`, map errors).
 2. Register it in `invoke_handler(tauri::generate_handler![...])` in `src-tauri/src/lib.rs`.
-3. Add the permission to `src-tauri/capabilities/default.json` for the `main` window.
+
+**Do NOT add capability entries for custom commands.** They are auto-allowed; an unknown `allow-*` entry in `src-tauri/capabilities/default.json` breaks the Tauri build script ("Permission ... not found"). That file is only for plugin/core permissions (e.g. `opener:default`, `dialog:default`). (CONTRIBUTING.md still claims otherwise — the build script is the source of truth.)
+
+### Rustdoc: module entries in `lib.rs`
+
+Each module gets a `## Module N — Name` section in the crate docs at the top of `src-tauri/src/lib.rs`, separated by `//! ---`. Follow the Module 1/2/3 shape:
+
+1. One-paragraph description.
+2. Component bullets — backticked module paths. If the module has deep docs, put them in the submodule's own rustdoc and link to it (e.g. ``[`map_controller`]``) instead of inlining detail; keep the `lib.rs` entry short. The linked module must be `pub` or the intra-doc link warns.
+3. `### Tauri Commands` table (`| Command | Description |`) listing that module's registered commands. Plugin modules (4/7/8) instead use a `### Plugin Contract` table (Architecture/Interface/Entrypoint/CLI/Execution/Progress) plus a `main()` code block — `python` fences for `main.py`, `rust,ignore` for binary entrypoints (a bare `rust` `fn main` doctest fails clippy's `needless_doctest_main`). Escape `|` inside table cells as `\|`.
+4. A `**Status**:` paragraph — what's implemented vs `todo!()` stubs.
+
+There is also a `## Development Priorities` table right after the intro; keep it in sync when module scope changes.
 
 ### Plugin contract
 
@@ -102,16 +116,17 @@ Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payl
 
 ### Where new code goes
 
-- New Tauri command → `src-tauri/src/commands/` + register in `lib.rs` + add capability in `default.json`.
+- New Tauri command → `src-tauri/src/commands/` + register in `lib.rs` (no capability entry — see above).
 - Command bodies MUST stay thin — logic belongs in `services/`.
 - New Rust data model → `src-tauri/src/models/`.
 - New TypeScript helper → `src/lib/`.
-- New UI → `src/features/<feature>/`. Promote to shared `src/components/` only when 2+ features need it.
+- New UI → `src/features/<feature>/` (note: pages currently live in `src/modules/module-NN/`). Promote to shared `src/components/` only when 2+ features need it.
 - New plugin → its own directory under `plugins/` following the template structure.
+- Module docs → update that module's `## Module N` entry in `lib.rs` (rustdoc convention above) in the same change.
 
 ## Reference files
 
-- `docs/Proyek.md` — full project brief (11 modules, feature lists).
+- `src-tauri/src/lib.rs` crate docs — full project brief (11 modules, possible features) + module index/status (see rustdoc convention above).
 - `CONTRIBUTING.md` — full development workflow, branching, PR process.
 - `README.md` — project overview and getting started.
 - `src-tauri/src/plugin_manager/DOCS/` — detailed plugin system design docs (6 files).
