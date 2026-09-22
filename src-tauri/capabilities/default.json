@@ -8,14 +8,6 @@
     "opener:default",
     "dialog:default",
     "core:window:default",
-    "core:path:default",
-    "allow-create-session",
-    "allow-get-session",
-    "allow-get-sessions-by-project",
-    "allow-update-session-name",
-    "allow-update-session-status",
-    "allow-assign-image-to-session",
-    "allow-recalculate-session-date-range",
-    "allow-delete-session"
+    "core:path:default"
   ]
 }
