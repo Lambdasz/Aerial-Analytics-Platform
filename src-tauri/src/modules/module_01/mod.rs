@@ -5,21 +5,21 @@
 //! Re-exports the metadata extraction API so consumers can write
 //! `use crate::modules::module_01::{extract_metadata, MetadataError};`.
 //!
-//! RGB import stubs are re-exported from [`image_import`]
+//! RGB import stubs are re-exported from [`image_importer`]
 //! (`classify_file`, `import_images`).
 //!
 //! `unused_imports` is allowed at module level because these re-exports are
 //! not yet consumed anywhere — the functions behind them are `unimplemented!()`
-//! stubs (see [`functions`] and [`image_import`]).
+//! stubs (see [`metadata_extractor`] and [`image_importer`]).
 
 pub mod error;
-pub mod functions;
-pub mod image_import;
+pub mod image_importer;
+pub mod metadata_extractor;
 
 pub use error::MetadataError;
-pub use functions::{
+pub use image_importer::{classify_file, find_duplicate, find_name_conflicts, import_images};
+pub use metadata_extractor::{
     describe_completeness, detect_format, dms_to_decimal, extract_metadata, merge_tags, parse_exif,
     parse_exif_datetime, parse_xmp_dji, read_dimensions, to_plugin_metadata, GpsCoordinate,
     MetadataCompleteness, PixelDimensions, RawExifTags, RawXmpTags,
 };
-pub use image_import::{classify_file, find_duplicate, find_name_conflicts, import_images};

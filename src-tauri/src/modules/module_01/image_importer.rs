@@ -12,7 +12,7 @@ use crate::models::image::{
     NameConflict,
 };
 use crate::modules::module_01::error::MetadataError;
-use crate::modules::module_01::functions::detect_format;
+use crate::modules::module_01::metadata_extractor::detect_format;
 
 /// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
