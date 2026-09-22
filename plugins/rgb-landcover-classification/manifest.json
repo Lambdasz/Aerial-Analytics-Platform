@@ -1,0 +1,32 @@
+{
+  "manifest_version": 1,
+  "metadata": {
+    "id": "rgb-landcover-classification",
+    "name": "RGB Land-Cover Classification",
+    "version": "0.1.0",
+    "author": "Kelompok ...",
+    "description": "Classify visible land-cover types from RGB aerial imagery.",
+    "category": "land_cover",
+    "tags": ["rgb", "land-cover", "classification", "segmentation"],
+    "min_core_version": "0.1.0"
+  },
+  "runtime": {
+    "type": "python",
+    "entrypoint": "main.py",
+    "min_python_version": "3.10",
+    "dependencies_file": "requirements.txt",
+    "healthcheck_flag": "--healthcheck"
+  },
+  "parameters": "parameters.json",
+  "inputs": "inputs.json",
+  "outputs": "outputs.json",
+  "execution": {
+    "timeout_seconds": 300,
+    "provides_output_dir_arg": true,
+    "concurrency": "sequential",
+    "gpu": {
+      "support": "optional",
+      "driver": "cuda"
+    }
+  }
+}

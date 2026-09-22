@@ -187,10 +187,15 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 ├── LICENSE                       # MIT License
 ├── package.json                  # Node.js dependencies and scripts
 ├── package-lock.json             # Locked versions of npm dependencies
+├── plugins/                      # Analytical plugins (Module 2: Extension System)
+│   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
+│   ├── mock_rust/                # Native binary mock plugin (tree-canopy-density)
+│   └── template/                 # Starter template and specification guide
 ├── public/                       # Static assets served directly
 │   ├── tauri.svg
 │   └── vite.svg
 ├── README.md                     # Project documentation
+├── schemas/                      # Canonical JSON Schemas for plugin contracts
 ├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── main.tsx                  # Application entry point
