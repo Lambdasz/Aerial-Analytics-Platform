@@ -80,10 +80,12 @@ export function useSpatialResultLayers() {
       })
       .catch((err) => console.error("Gagal memuat dummy spatial layers:", err));
 
+    const currentLayers = layersRef.current;
+
     return () => {
       cancelled = true;
-      layersRef.current.forEach((group) => map.removeLayer(group));
-      layersRef.current.clear();
+      currentLayers.forEach((group) => map.removeLayer(group));
+      currentLayers.clear();
     };
   }, [map]);
 }
