@@ -48,7 +48,7 @@ npm run format:rust       # cargo fmt
 
 There is no test runner configured yet.
 
-Pre-commit hook (`.husky/pre-commit`) runs, in order: `lint`, `lint:rust`, `format:check`, `format:rust:check`. All MUST pass to commit. Commit messages are validated by commitlint against Conventional Commits (`.husky/commit-msg`, `commitlint.config.js`).
+Pre-commit hook (`.husky/pre-commit`) is intentionally empty — no lint or format checks run on commit. Commit messages are validated by commitlint against Conventional Commits (`.husky/commit-msg`, `commitlint.config.js`). Lint and format checks should run in CI (PR checks).
 
 ## Git Conventions
 
