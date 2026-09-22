@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    aerial_analytics_platform_lib::run()
+    aerial_analytics_platform_lib::run();
 }

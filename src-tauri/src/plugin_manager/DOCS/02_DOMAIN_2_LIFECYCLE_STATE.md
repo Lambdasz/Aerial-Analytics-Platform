@@ -1,4 +1,5 @@
 # Domain 2: Lifecycle & State Persistence (Rust Core)
+
 > **Module 2: Plugin Architecture & Extension Manager**  
 > **Parent Guide**: [README.md](README.md)
 
@@ -12,14 +13,14 @@ Domain 2 manages the physical lifecycle of plugins (safe extraction of `.zip` pa
 
 ## 2. Function Specification Matrix
 
-| Function Name | Scope | Input Parameters | Output Type | Purity / Category | Pre-condition | Post-condition | Description |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`install_plugin`** | `pub (IPC Tauri)` | `archive_path: String, state: State<'_, AppState>` | `Result<PluginSummaryDto, String>` | **I/O (Extract, Validate, Atomic Move)** | `archive_path` points to a valid `.zip` file. | Safe extraction into `plugins/<id>/`; validated against schemas; registered in state. Corrupt archives leave zero disk remnants. | Installs a new plugin from a `.zip` file with Zip-Slip protection and schema verification. |
-| **`remove_plugin`** | `pub (IPC Tauri)` | `plugin_id: String, state: State<'_, AppState>` | `Result<(), String>` | **I/O (Delete FS & Update State)** | Plugin exists; plugin source is `user` (not `builtin`); plugin is not running. | Plugin directory deleted; entry purged from `plugin_state.json`. | Permanently uninstalls an existing plugin and cleans up its stored configuration. |
-| **`load_plugin_state`** | `pub(crate)` | `state_path: &Path` | `Result<PluginStateStore, PluginError>` | **I/O (Read FS)** | `state_path` is accessible (returns empty default if file missing). | Returns strongly-typed `PluginStateStore` loaded into memory. | Reads and parses `plugin_state.json` from OS AppData directory on startup. |
-| **`save_plugin_state`** | `pub(crate)` | `state_path: &Path, state: &PluginStateStore` | `Result<(), PluginError>` | **I/O (Atomic Write FS)** | Parent directory exists and is writable. | Serializes state to `.tmp` file and atomically renames to `plugin_state.json`. | Safely persists current plugin states and custom parameters to disk. |
-| **`set_plugin_status`** | `pub (IPC Tauri)` | `plugin_id: String, enabled: bool, state: State<'_, AppState>` | `Result<(), String>` | **I/O (Update Memory & Write FS)** | `plugin_id` is registered in memory. | In-memory state updated; changes flushed to `plugin_state.json`. | Enables or disables a plugin for UI selection and job execution. |
-| **`update_plugin_config`**| `pub (IPC Tauri)` | `plugin_id: String, custom_params: Value, state: State<'_, AppState>` | `Result<(), String>` | **Pure Validation + I/O (Write FS)** | `plugin_id` exists; parameters match `parameters.json` constraints. | Validated parameters stored in state and written to disk. | Saves user-configured default parameter overrides for a specific plugin. |
+| Function Name              | Scope             | Input Parameters                                                      | Output Type                             | Purity / Category                        | Pre-condition                                                                  | Post-condition                                                                                                                   | Description                                                                                |
+| :------------------------- | :---------------- | :-------------------------------------------------------------------- | :-------------------------------------- | :--------------------------------------- | :----------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------- |
+| **`install_plugin`**       | `pub (IPC Tauri)` | `archive_path: String, state: State<'_, AppState>`                    | `Result<PluginSummaryDto, String>`      | **I/O (Extract, Validate, Atomic Move)** | `archive_path` points to a valid `.zip` file.                                  | Safe extraction into `plugins/<id>/`; validated against schemas; registered in state. Corrupt archives leave zero disk remnants. | Installs a new plugin from a `.zip` file with Zip-Slip protection and schema verification. |
+| **`remove_plugin`**        | `pub (IPC Tauri)` | `plugin_id: String, state: State<'_, AppState>`                       | `Result<(), String>`                    | **I/O (Delete FS & Update State)**       | Plugin exists; plugin source is `user` (not `builtin`); plugin is not running. | Plugin directory deleted; entry purged from `plugin_state.json`.                                                                 | Permanently uninstalls an existing plugin and cleans up its stored configuration.          |
+| **`load_plugin_state`**    | `pub(crate)`      | `state_path: &Path`                                                   | `Result<PluginStateStore, PluginError>` | **I/O (Read FS)**                        | `state_path` is accessible (returns empty default if file missing).            | Returns strongly-typed `PluginStateStore` loaded into memory.                                                                    | Reads and parses `plugin_state.json` from OS AppData directory on startup.                 |
+| **`save_plugin_state`**    | `pub(crate)`      | `state_path: &Path, state: &PluginStateStore`                         | `Result<(), PluginError>`               | **I/O (Atomic Write FS)**                | Parent directory exists and is writable.                                       | Serializes state to `.tmp` file and atomically renames to `plugin_state.json`.                                                   | Safely persists current plugin states and custom parameters to disk.                       |
+| **`set_plugin_status`**    | `pub (IPC Tauri)` | `plugin_id: String, enabled: bool, state: State<'_, AppState>`        | `Result<(), String>`                    | **I/O (Update Memory & Write FS)**       | `plugin_id` is registered in memory.                                           | In-memory state updated; changes flushed to `plugin_state.json`.                                                                 | Enables or disables a plugin for UI selection and job execution.                           |
+| **`update_plugin_config`** | `pub (IPC Tauri)` | `plugin_id: String, custom_params: Value, state: State<'_, AppState>` | `Result<(), String>`                    | **Pure Validation + I/O (Write FS)**     | `plugin_id` exists; parameters match `parameters.json` constraints.            | Validated parameters stored in state and written to disk.                                                                        | Saves user-configured default parameter overrides for a specific plugin.                   |
 
 ---
 
@@ -107,6 +108,7 @@ pub struct PluginStateStore {
 ## 4. Security & Safety Protocols
 
 ### 4.1 Zip-Slip Path Traversal Defense (`installer.rs`)
+
 When decompressing user-provided archives, all entry names are checked to ensure they cannot escape the target directory:
 
 ```rust
@@ -131,6 +133,7 @@ pub fn verify_and_extract_entry(
 ```
 
 ### 4.2 Staging & Atomic Rollback Protocol
+
 1. **Extract**: ZIP archive is unpacked into a temporary folder (`tempfile::tempdir_in(plugins_dir)?`).
 2. **Validate**:
    - Manifest is parsed and validated against `plugin.schema.json`.
@@ -140,6 +143,7 @@ pub fn verify_and_extract_entry(
 4. **Rollback**: If validation fails at any point, the `TempDir` handle is dropped, automatically wiping all temporary files from disk.
 
 ### 4.3 Atomic State File Persistence (`save_plugin_state`)
+
 To protect `plugin_state.json` from corruption during power cuts or crashes:
 
 ```rust

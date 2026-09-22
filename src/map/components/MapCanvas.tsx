@@ -6,7 +6,13 @@ import { useImageMarkers } from "./useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
+import { useSpatialResultLayers } from "./useSpatialResultLayers";
 import "./MapCanvas.css";
+
+const SpatialResultLayer: React.FC = () => {
+  useSpatialResultLayers();
+  return null;
+};
 
 // Basemap definitions based on the specification
 const BASEMAPS = {
@@ -64,6 +70,7 @@ export const MapCanvas: React.FC = () => {
         zoomControl={false} // Zoom control default digantikan oleh MapViewControlBar
       >
         <MapSyncHandler />
+        <SpatialResultLayer />
         <MapViewControlBar />
         <ScaleControl position="bottomright" imperial={false} />
 

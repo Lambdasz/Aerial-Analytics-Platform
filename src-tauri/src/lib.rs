@@ -1,5 +1,7 @@
 mod plugin_manager;
 
+use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -27,6 +29,7 @@ pub fn run() {
             plugin_manager::commands::validate_and_create_payload,
             plugin_manager::commands::process_execution_result,
             import_plots,
+            get_dummy_spatial_layers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
