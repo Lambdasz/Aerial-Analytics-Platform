@@ -13,9 +13,12 @@
 //! and associated metadata (EXIF, XMP DJI).
 //!
 //! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
+//! - `modules::module_01` — image metadata extraction API
+//!   (`modules::module_01::extract_metadata`).
 //!
-//! **Status**: Metadata struct defined. EXIF parsing, project management, and
-//! flight session management are not yet implemented.
+//! **Status**: Metadata struct defined; extraction API signatures defined
+//! (`unimplemented!()` stubs). Parsing, project management, and flight
+//! session management are not yet implemented.
 //!
 //! ---
 //!
