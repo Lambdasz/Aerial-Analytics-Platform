@@ -13,9 +13,22 @@
 //! and associated metadata (EXIF, XMP DJI).
 //!
 //! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
+//! - `modules::module_01` — image metadata extraction API
+//!   (`modules::module_01::extract_metadata`).
+//! - `commands::session` — flight session command stubs.
 //!
-//! **Status**: Metadata struct defined. EXIF parsing, project management, and
-//! flight session management are not yet implemented.
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `create_session` | Create a new flight session |
+//! | `get_session` | Fetch a session by id |
+//! | `get_sessions_by_project` | List sessions for a project |
+//! | `update_session_name` | Rename a session |
+//! | `update_session_status` | Update a session's status |
+//! | `assign_image_to_session` | Associate an image with a session |
+//! | `recalculate_session_date_range` | Recompute a session's date range from its images |
+//! | `delete_session` | Delete a session |
 //!
 //! ---
 //!
@@ -350,7 +363,10 @@
 //!
 //! **Status**: Not yet implemented.
 
+mod commands;
+mod map_controller;
 mod modules;
+mod plot;
 mod plugin_manager;
 
 use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
@@ -372,9 +388,6 @@ pub struct AppState {
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
-
-mod map_controller;
-mod plot;
 
 #[tauri::command]
 async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
@@ -410,6 +423,15 @@ pub fn run() {
             // Plot import
             import_plots,
             get_dummy_spatial_layers,
+            // Flight session
+            commands::session::create_session,
+            commands::session::get_session,
+            commands::session::get_sessions_by_project,
+            commands::session::update_session_name,
+            commands::session::update_session_status,
+            commands::session::assign_image_to_session,
+            commands::session::recalculate_session_date_range,
+            commands::session::delete_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
