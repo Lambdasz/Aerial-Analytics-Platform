@@ -6,6 +6,12 @@ pub enum ImageFormat {
     Dng,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImportMode {
+    Singular,
+    Batch,
+}
+
 /// SHA-256 of the raw file bytes, lowercase hex.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentHash(pub String);
@@ -16,9 +22,10 @@ pub enum SessionTarget {
     New { id: String, label: String },
 }
 
-/// One import operation over a set of picked files.
+/// One import operation. `mode` is how the user picked files, not a per-file property.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportRequest {
+    pub mode: ImportMode,
     pub session: SessionTarget,
     pub candidates: Vec<ImportCandidate>,
 }
