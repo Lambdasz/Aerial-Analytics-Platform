@@ -13,9 +13,24 @@
 //! and associated metadata (EXIF, XMP DJI).
 //!
 //! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
+//! - `commands::session` — flight session command stubs.
 //!
-//! **Status**: Metadata struct defined. EXIF parsing, project management, and
-//! flight session management are not yet implemented.
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `create_session` | Create a new flight session |
+//! | `get_session` | Fetch a session by id |
+//! | `get_sessions_by_project` | List sessions for a project |
+//! | `update_session_name` | Rename a session |
+//! | `update_session_status` | Update a session's status |
+//! | `assign_image_to_session` | Associate an image with a session |
+//! | `recalculate_session_date_range` | Recompute a session's date range from its images |
+//! | `delete_session` | Delete a session |
+//!
+//! **Status**: Metadata struct defined. Flight session command stubs are
+//! registered but return `Err("... not implemented")`; EXIF parsing, project
+//! management, and flight session persistence logic are not yet implemented.
 //!
 //! ---
 //!
