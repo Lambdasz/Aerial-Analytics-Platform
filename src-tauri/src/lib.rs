@@ -103,6 +103,28 @@
 //! indices such as ExG, ExR, or VARI. Generates vegetation masks and
 //! statistics.
 //!
+//! ### Plugin Contract
+//!
+//! Uses the Module 2 plugin template architecture (`plugins/template/`).
+//! No Rust backend code — the platform side is entirely Module 2.
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Module 2 plugin template (`plugins/template/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `plugins/rgb-vegetation-detection/main.py` — `def main() -> None` (Python) |
+//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
+//! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
+//!
+//! Entrypoint (`main.py`, Python):
+//!
+//! ```python
+//! def main() -> None:
+//!     # --healthcheck
+//!     # --input <execution_payload.json> --output <execution_result.json>
+//! ```
+//!
 //! **Status**: Python plugin skeleton at `plugins/rgb-vegetation-detection/`
 //! (simulated detection). No Rust backend code.
 //!
@@ -133,6 +155,30 @@
 //! crowns from aerial RGB imagery. Returns spatial locations, confidence
 //! values, and density metrics.
 //!
+//! ### Plugin Contract
+//!
+//! Uses the Module 2 plugin template architecture (`plugins/template/`) —
+//! identical contract, runtime type is `binary` instead of `python`.
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Module 2 plugin template (`plugins/template/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `plugins/mock_rust/src/main.rs` — `fn main()` (Rust binary) |
+//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
+//! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
+//! | Runtime | `binary` (`manifest.json` → `runtime.entrypoint = "bin/mock_rust"`) |
+//!
+//! Entrypoint (`src/main.rs`, Rust binary):
+//!
+//! ```rust,ignore
+//! fn main() {
+//!     // --healthcheck
+//!     // --input <payload.json> --output <result.json>
+//! }
+//! ```
+//!
 //! **Status**: Mock Rust plugin at `plugins/mock_rust/` (tree-canopy-density).
 //! No real CV model integrated.
 //!
@@ -143,6 +189,28 @@
 //! Plugin for classifying visible land-cover types (vegetation, bare soil,
 //! water, built areas) from RGB aerial imagery. Produces classified masks,
 //! per-class statistics, and boundary vectors.
+//!
+//! ### Plugin Contract
+//!
+//! Uses the Module 2 plugin template architecture (`plugins/template/`).
+//! No Rust backend code — the platform side is entirely Module 2.
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Module 2 plugin template (`plugins/template/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `plugins/rgb-landcover-classification/main.py` — `def main() -> None` (Python) |
+//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
+//! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
+//!
+//! Entrypoint (`main.py`, Python):
+//!
+//! ```python
+//! def main() -> None:
+//!     # --healthcheck
+//!     # --input <payload.json> --output <result.json>
+//! ```
 //!
 //! **Status**: Python plugin at `plugins/rgb-landcover-classification/` with
 //! Random Forest classifier. Model weights not yet trained.
