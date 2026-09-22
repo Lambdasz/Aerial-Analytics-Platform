@@ -4,4 +4,5 @@
 //! comparison of vegetation coverage, land-cover transitions,
 //! and tree-count deltas between observation periods.
 
+pub mod commands;
 pub mod functions;
