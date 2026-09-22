@@ -3,8 +3,8 @@
 //! Re-exports the most commonly used types so consumers can write
 //! `use crate::models::{ImageFormat, ImageMetadata}`.
 
-pub mod session;
 pub mod metadata;
+pub mod session;
 
 #[allow(unused_imports)]
 pub use session::{Image, Project, Session, SessionStatus};
