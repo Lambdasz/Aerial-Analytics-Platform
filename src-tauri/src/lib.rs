@@ -2,8 +2,22 @@
 //!
 //! Desktop application for processing and analysing RGB aerial imagery
 //! captured by standard drones. Built with [Tauri](https://tauri.app) and
-//! React, the platform uses a **plugin-based architecture** so analytical
+//! Blueprint.js, the platform uses a **plugin-based architecture** so analytical
 //! capabilities can be added independently without modifying the core system.
+//!
+//! ---
+//!
+//! ## Development Priorities
+//!
+//! Modules are prioritised by their role in the upcoming presentation and
+//! the demo itself:
+//!
+//! | Priority | Modules | Rationale |
+//! |----------|---------|-----------|
+//! | **Critical** | 1, 2, 3 | The application does not run without these. |
+//! | **High** | 4 + 5 + 6 (single plugin), 7, 8 | Proves the plugin architecture — without them the demo is just a map. Implementation details still subject to paper review. |
+//! | **Medium** | 9, 10 | Simplify plugin usage and analysis; the app works without them, but with more friction. |
+//! | **Low** | 11 | Only fully functional once all other modules are complete. |
 //!
 //! ---
 //!
@@ -348,10 +362,20 @@
 //! deltas between observation periods.
 //!
 //! - `modules::module_10` — cross-module data contracts for change area
-//!   detection and temporal results.
+//!   detection and temporal results (`modules::module_10::functions`).
 //!
-//! **Status**: Cross-module contract types and constructors implemented with
-//! unit tests. Multi-date management and comparison logic not yet implemented.
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `compare_sessions` | Run a comparison between two sessions' analysis results (vegetation coverage, land-cover, tree count) and produce a temporal result |
+//! | `get_change_summary` | Return the latest computed temporal summary for a project, for Module 11 to consume |
+//!
+//! **Status**: Cross-module contract types (`ChangeArea`, temporal result
+//! structs) and constructors implemented with unit tests. No command exists
+//! yet to actually run a comparison or expose a result — `compare_sessions`
+//! and `get_change_summary` are `todo!()` stubs so Module 10 has a minimal
+//! contract, matching the Module 9 (`plot_api`) pattern.
 //!
 //! ---
 //!
@@ -432,6 +456,9 @@ pub fn run() {
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
+            // Temporal change analysis (Module 10)
+            modules::module_10::commands::compare_sessions,
+            modules::module_10::commands::get_change_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
