@@ -199,13 +199,8 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── config.yml
 │   │   └── feature_request.yml
 │   ├── pull_request_template.md
-│   └── workflows/
-│       └── ci.yml                # CI pipeline: lint + format + cross-platform build
-├── docs/                         # Project documentation
-│   ├── examples/                 # Canonical JSON/GeoJSON fixtures for cross-module contracts
-│   ├── Proyek.md                 # Full project brief (11 modules)
-│   ├── README_modul3.md          # Module 3 (Map Explorer) design doc
-│   └── README_UMUM.md            # General README (alternate version)
+│       └── workflows/
+│           └── ci.yml                # CI pipeline: lint + format + cross-platform build
 ├── plugins/                      # Analytical plugins (Module 2: Extension System)
 │   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
 │   ├── mock_rust/                # Native Rust mock plugin (tree-canopy-density)
@@ -235,6 +230,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── components/
 │   │   ├── types/
 │   │   ├── fixtures/
+│   │   ├── docs/                 # Module docs: examples/, README_modul3.md, README_UMUM.md
 │   │   └── error.ts
 │   ├── features/                 # Feature modules (mostly scaffolding)
 │   ├── component_plugin_manager/ # Plugin manager UI components
@@ -247,7 +243,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── build.rs                  # Rust build script
 │   ├── Cargo.toml                # Rust project manifest
 │   ├── Cargo.lock                # Locked Rust dependency versions
-│   ├── capabilities/             # ACL capability definitions (allow new commands here)
+│   ├── capabilities/             # ACL permissions — plugin/core only (custom commands are auto-allowed)
 │   │   └── default.json
 │   ├── rustfmt.toml              # Rust code formatting rules
 │   ├── tauri.conf.json           # Tauri app config (devUrl: localhost:1420)
