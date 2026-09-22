@@ -7,11 +7,14 @@
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
 use crate::models::image_import::{
-    ContentHash, DuplicateFlag, ImageFormat, ImportCandidate, ImportError, ImportReport,
-    ImportRequest, NameConflict,
+    ContentHash, DuplicateFlag, ImportCandidate, ImportError, ImportReport, ImportRequest,
+    NameConflict,
 };
+use crate::models::ImageFormat;
+use crate::modules::module_01::error::MetadataError;
+use crate::modules::module_01::functions::detect_format;
 
-/// Classifies one candidate from its extension and header magic.
+/// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
 /// # Purity
 ///
@@ -21,10 +24,34 @@ use crate::models::image_import::{
 ///
 /// [`ImportError::UnsupportedFormat`] if the extension is missing or not
 /// jpeg/jpg/dng. [`ImportError::MagicMismatch`] if the extension is supported
-/// but `header` does not match.
+/// but `header` does not match. `path` is `candidate.source_path`.
 pub fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
-    let _ = candidate;
-    unimplemented!("classify_file: not implemented")
+    let extension = extension_of(&candidate.file_name);
+    match detect_format(&candidate.header, &extension) {
+        Ok(format) => Ok(format),
+        Err(MetadataError::UnsupportedFormat { extension, .. }) => {
+            Err(ImportError::UnsupportedFormat {
+                path: candidate.source_path.clone(),
+                extension,
+            })
+        }
+        Err(MetadataError::MagicMismatch { .. }) => Err(ImportError::MagicMismatch {
+            path: candidate.source_path.clone(),
+        }),
+        Err(
+            MetadataError::Io(_) | MetadataError::MalformedExif(_) | MetadataError::MalformedXmp(_),
+        ) => Err(ImportError::UnsupportedFormat {
+            path: candidate.source_path.clone(),
+            extension,
+        }),
+    }
+}
+
+fn extension_of(file_name: &str) -> String {
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
+    base.rsplit_once('.')
+        .map(|(_, ext)| ext.trim_start_matches('.').to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// Finds destination-basename collisions.

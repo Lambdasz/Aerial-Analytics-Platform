@@ -1,11 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ImageFormat {
-    Jpeg,
-    Dng,
-}
-
 /// SHA-256 of the raw file bytes, lowercase hex.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentHash(pub String);
