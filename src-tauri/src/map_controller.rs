@@ -9,5 +9,11 @@
 //! This module is currently a placeholder. The submodule declarations
 //! below will be enabled as the Module 3 backend is implemented.
 
+// Anda dapat mendeklarasikan submodule di sini, contoh:
+// pub mod commands;
+// pub mod types;
+
 pub mod error;
+pub mod sp_measurement;
 pub mod r#type;
+pub mod types;
