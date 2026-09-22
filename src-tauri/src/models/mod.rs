@@ -3,6 +3,7 @@
 //! Re-exports the most commonly used types so consumers can write
 //! `use crate::models::{ImageFormat, ImageMetadata}`.
 
+pub mod image_import;
 pub mod metadata;
 pub mod session;
 
