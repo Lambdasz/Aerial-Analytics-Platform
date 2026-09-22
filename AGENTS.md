@@ -23,6 +23,8 @@ npm run format:check      # Prettier check
 npm run format            # Prettier write
 npm run format:rust:check # cargo fmt --check (manifest: src-tauri/Cargo.toml)
 npm run format:rust       # cargo fmt
+
+cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  # generate rustdoc
 ```
 
 **There is no test runner configured yet.** Do not reference one in changes or PR descriptions.

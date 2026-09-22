@@ -160,9 +160,22 @@ cargo update
 | Check Rust formatting (rustfmt) | `npm run format:rust:check` |
 | Fix Prettier formatting issues  | `npm run format`            |
 | Fix Rust formatting issues      | `npm run format:rust`       |
+| Generate Rust docs              | `cargo doc --open`          |
 
 > [!NOTE]
 > There is no test runner configured yet. Do not reference one in changes or PR descriptions.
+
+### Generating Rust Documentation
+
+The backend uses rustdoc for API documentation. To generate and open the docs locally:
+
+```bash
+cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open
+```
+
+- `--document-private-items` includes private functions, structs, and modules (useful during development).
+- Output is written to `src-tauri/target/doc/aerial_analytics_platform_lib/index.html`.
+- CI does not build or publish rustdoc — this is a local-only tool.
 
 ## Continuous Integration
 
