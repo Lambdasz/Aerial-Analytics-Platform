@@ -2,15 +2,15 @@
 
 //! RGB image import (Module 1).
 //!
-//! Public stubs over the types in [`crate::models::image_import`].
+//! Public stubs over the types in [`crate::models::image`].
 //! None of these functions read the disk. I/O fills [`ImportCandidate`]
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
-use crate::models::image_import::{
+use crate::models::image::ImageFormat;
+use crate::models::image::{
     ContentHash, DuplicateFlag, ImportCandidate, ImportError, ImportReport, ImportRequest,
     NameConflict,
 };
-use crate::models::ImageFormat;
 use crate::modules::module_01::error::MetadataError;
 use crate::modules::module_01::functions::detect_format;
 

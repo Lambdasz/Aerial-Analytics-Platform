@@ -35,7 +35,7 @@
 //! | [`to_plugin_metadata`] | Module 1 → Module 2 | Pre-flight image metadata for `plugin_manager::payload::preflight_check` |
 //! | [`describe_completeness`] | Module 1 → Module 1.5 | Missing-tag report feeding Image Quality Checking |
 
-use crate::models::{ImageFormat, ImageMetadata};
+use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};

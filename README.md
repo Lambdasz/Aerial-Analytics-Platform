@@ -260,9 +260,8 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   ├── session.rs        # Flight session CRUD commands
 │       │   └── mod.rs
 │       ├── models/               # Serde structs/enums shared with the frontend
-│       │   ├── metadata.rs       # Image metadata types
 │       │   ├── session.rs        # Flight session types
-│       │   ├── image_import.rs   # Image import types
+│       │   ├── image.rs   # Image import types
 │       │   └── mod.rs
 │       ├── services/             # Domain logic — pure functions where practical
 │       ├── modules/
