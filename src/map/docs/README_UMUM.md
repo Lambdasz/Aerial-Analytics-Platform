@@ -13,7 +13,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 [![commitlint](https://img.shields.io/badge/commitlint-21-a8b1ff?style=flat&logo=commitlint&logoColor=white)](https://commitlint.js.org/)
 [![Husky](https://img.shields.io/badge/Husky-9-000?logo=husky&logoColor=white)](https://typicode.github.io/husky/)
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D24-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE.md)
 
 ## Table of Contents
 
@@ -154,7 +154,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 ├── CONTRIBUTING.md               # Contribution guidelines
 ├── eslint.config.js              # JavaScript/TypeScript linting rules
 ├── index.html                    # HTML entry point for the web app
-├── LICENSE                       # MIT License
+├── LICENSE.md                    # MIT License
 ├── package.json                  # Node.js dependencies and scripts
 ├── package-lock.json             # Locked versions of npm dependencies
 ├── public/                       # Static assets served directly
@@ -208,4 +208,4 @@ See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.
 
 Copyright © 2026 Lambdaz.
 
-This software project is licensed under the MIT License. See [LICENSE](LICENSE).
+This software project is licensed under the MIT License. See [LICENSE.md](../LICENSE.md).
