@@ -15,26 +15,37 @@ Everything except ``detect_trees`` is a pure function: same input, same
 output, no I/O. ``detect_trees`` reads the image through the chosen detector.
 """
 
-from .area import count_trees_in_area, polygon_area_m2
+from .models import (
+    TreeDetection,
+    BBox,
+    ImageGeoreference,
+    PluginOutput,
+    ReviewCorrections,
+)
+from .errors import PluginExecutionError, InvalidGeometryError, ZeroAreaError
+
+# Public Feature Functions (Sesuai Kontrak)
+from .detection import detect_trees, deduplicate
 from .counting import count_trees
-from .density import calculate_tree_density
-from .detection import deduplicate, detect_trees
 from .filtering import filter_by_confidence
 from .location import locate_detections, map_tree_locations
-from .output import build_plugin_output, to_execution_result
+from .area import count_trees_in_area, polygon_area_m2
+from .density import calculate_tree_density
 from .review import apply_review
+from .output import build_plugin_output
+
+# Pipeline Orchestrator
+from .pipeline import parse_payload, analyze
 
 __all__ = [
-    "apply_review",
-    "build_plugin_output",
-    "calculate_tree_density",
-    "count_trees",
-    "count_trees_in_area",
-    "deduplicate",
-    "detect_trees",
-    "filter_by_confidence",
-    "locate_detections",
-    "map_tree_locations",
-    "polygon_area_m2",
-    "to_execution_result",
+    # Models
+    "TreeDetection", "BBox", "ImageGeoreference", "PluginOutput", "ReviewCorrections",
+    # Errors
+    "PluginExecutionError", "InvalidGeometryError", "ZeroAreaError",
+    # Features
+    "detect_trees", "deduplicate", "count_trees", "filter_by_confidence",
+    "locate_detections", "map_tree_locations", "count_trees_in_area", 
+    "polygon_area_m2", "calculate_tree_density", "apply_review", "build_plugin_output",
+    # Pipeline
+    "parse_payload", "analyze",
 ]
