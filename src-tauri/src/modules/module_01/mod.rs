@@ -13,10 +13,15 @@
 //! stubs (see [`functions`] and [`image_import`]).
 
 pub mod error;
+pub mod flight_session;
 pub mod functions;
 pub mod image_import;
 
-pub use error::MetadataError;
+pub use error::{MetadataError, SessionError};
+pub use flight_session::{
+    assign_image_to_session, create_session, delete_session, get_session, get_sessions_by_project,
+    init_schema, recalculate_session_date_range, update_session_name, update_session_status,
+};
 pub use functions::{
     describe_completeness, detect_format, dms_to_decimal, extract_metadata, merge_tags, parse_exif,
     parse_exif_datetime, parse_xmp_dji, read_dimensions, to_plugin_metadata, GpsCoordinate,
