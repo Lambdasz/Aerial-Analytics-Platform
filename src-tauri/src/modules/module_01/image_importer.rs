@@ -2,7 +2,8 @@
 
 //! RGB image import (Module 1).
 //!
-//! Public stubs over the types in [`crate::models::image`].
+//! [`import_images`] is the only entry point. The other functions are private
+//! helpers.
 //! None of these functions read the disk. I/O fills [`ImportCandidate`]
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
@@ -25,7 +26,7 @@ use crate::modules::module_01::metadata_extractor::detect_format;
 /// [`ImportError::UnsupportedFormat`] if the extension is missing or not
 /// jpeg/jpg/dng. [`ImportError::MagicMismatch`] if the extension is supported
 /// but `header` does not match. `path` is `candidate.source_path`.
-pub fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
+fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
     let extension = extension_of(&candidate.file_name);
     match detect_format(&candidate.header, &extension) {
         Ok(format) => Ok(format),
@@ -66,7 +67,7 @@ fn extension_of(file_name: &str) -> String {
 /// # Purity
 ///
 /// Pure.
-pub fn find_name_conflicts(
+fn find_name_conflicts(
     candidates: &[ImportCandidate],
     existing_dest_names: &[String],
 ) -> Vec<NameConflict> {
@@ -82,7 +83,7 @@ pub fn find_name_conflicts(
 /// # Purity
 ///
 /// Pure.
-pub fn find_duplicate(
+fn find_duplicate(
     candidate: &ImportCandidate,
     known: &[(String, ContentHash)],
 ) -> Option<DuplicateFlag> {
@@ -99,7 +100,7 @@ pub fn find_duplicate(
 /// [`ImportError::NoImagesFound`] or [`ImportError::SessionNotFound`] when
 /// the request cannot be applied. Per-file format failures belong in
 /// `rejected`, not this `Err`.
-pub fn import_images(
+pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
     existing_dest_names: &[String],
