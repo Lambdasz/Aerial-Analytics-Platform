@@ -39,6 +39,7 @@ use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Raw EXIF tags read from a JPEG APP1 segment or DNG IFD0, prior to being
@@ -397,6 +398,39 @@ pub(crate) fn to_plugin_metadata(
 ) -> crate::plugin_manager::payload::ImageMetadata {
     let _ = (metadata, path);
     unimplemented!("M1.3: project ImageMetadata into the plugin_manager pre-flight shape")
+}
+
+/// Resolves a provider-specific metadata field name to this module's
+/// canonical field name using a user-supplied alias table.
+///
+/// Different image/drone providers label the same logical field with
+/// different strings (e.g. `"Tinggi_meter"` vs. this module's canonical
+/// `"height_meter"`). The platform does not guess at such matches; the user
+/// supplies the alias table explicitly, so a wrong or missing mapping is the
+/// user's responsibility, not an inference the platform performed for them.
+///
+/// # Purity
+///
+/// Pure, total (never fails).
+///
+/// # Arguments
+///
+/// * `aliases` — user-supplied mapping from a provider's raw field name to
+///   this module's canonical field name. Keys are matched case-insensitively.
+/// * `raw_key` — the field name as it appears in the provider's metadata.
+///
+/// # Returns
+///
+/// `Some(canonical_name)` if `raw_key` case-insensitively matches a key in
+/// `aliases`, otherwise `None`.
+pub(crate) fn resolve_field_alias(
+    aliases: &HashMap<String, String>,
+    raw_key: &str,
+) -> Option<String> {
+    let _ = (aliases, raw_key);
+    unimplemented!(
+        "M1.3: user-provided provider-field-name -> canonical-field-name lookup, case-insensitive"
+    )
 }
 
 #[cfg(test)]
