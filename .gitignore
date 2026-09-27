@@ -43,3 +43,9 @@ __pycache__/
 # Ngeblok hasil run, soale isinya cmn temporary
 runs/*
 !runs/.gitkeep
+
+# Local SQLite DB (dev-only, created by `run()` in src-tauri/src/lib.rs)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
