@@ -35,7 +35,7 @@
 //! | [`to_plugin_metadata`] | Module 1 → Module 2 | Pre-flight image metadata for `plugin_manager::payload::preflight_check` |
 //! | [`describe_completeness`] | Module 1 → Module 1.5 | Missing-tag report feeding Image Quality Checking |
 
-use crate::models::{ImageFormat, ImageMetadata};
+use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ use std::path::Path;
 /// Field presence mirrors [`ImageMetadata`]'s EXIF-sourced fields; a `None`
 /// means the tag was absent from the file, not that parsing failed.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RawExifTags {
+struct RawExifTags {
     /// Raw `GPSLatitude` + `GPSLatitudeRef` as a signed decimal-degree value.
     pub gps_latitude: Option<f64>,
     /// Raw `GPSLongitude` + `GPSLongitudeRef` as a signed decimal-degree value.
@@ -91,7 +91,7 @@ pub struct RawExifTags {
 /// `None` for any tag when the file has no DJI XMP packet (e.g. non-DJI
 /// drones) or the specific tag is absent.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct RawXmpTags {
+struct RawXmpTags {
     /// `drone-dji:AbsoluteAltitude`.
     pub absolute_altitude_m: Option<f64>,
     /// `drone-dji:RelativeAltitude`.
@@ -118,7 +118,7 @@ pub struct RawXmpTags {
 
 /// Pixel dimensions read from a JPEG SOF0 segment or DNG IFD0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PixelDimensions {
+struct PixelDimensions {
     /// Image width in pixels.
     pub width: u32,
     /// Image height in pixels.
@@ -128,7 +128,7 @@ pub struct PixelDimensions {
 /// A GPS coordinate expressed as degrees/minutes/seconds with a
 /// hemisphere reference, as stored in EXIF `GPSLatitude`/`GPSLongitude`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct GpsCoordinate {
+struct GpsCoordinate {
     /// Whole degrees component.
     pub degrees: f64,
     /// Minutes component.
@@ -142,7 +142,7 @@ pub struct GpsCoordinate {
 /// Report of which [`ImageMetadata`] fields could and could not be
 /// populated from a source image, consumed by Image Quality Checking (M1.5).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct MetadataCompleteness {
+pub(crate) struct MetadataCompleteness {
     /// Names of fields that were successfully populated.
     pub present: Vec<String>,
     /// Names of fields that are `None` in the extracted metadata.
@@ -174,7 +174,7 @@ pub struct MetadataCompleteness {
 /// ([`MetadataError::UnsupportedFormat`], [`MetadataError::MagicMismatch`]),
 /// or has a present-but-corrupt EXIF/XMP segment
 /// ([`MetadataError::MalformedExif`], [`MetadataError::MalformedXmp`]).
-pub fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
+pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
     let _ = path;
     unimplemented!("M1.3: read file bytes and compose the extraction pipeline")
 }
@@ -199,7 +199,7 @@ pub fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
 /// [`MetadataError::UnsupportedFormat`] if the extension is not `jpg`/`jpeg`/`dng`.
 /// [`MetadataError::MagicMismatch`] if the extension is supported but `header`
 /// does not match its magic number.
-pub fn detect_format(header: &[u8], extension: &str) -> Result<ImageFormat, MetadataError> {
+pub(super) fn detect_format(header: &[u8], extension: &str) -> Result<ImageFormat, MetadataError> {
     let _ = (header, extension);
     unimplemented!("M1.3: sniff magic bytes against the claimed extension")
 }
@@ -223,7 +223,7 @@ pub fn detect_format(header: &[u8], extension: &str) -> Result<ImageFormat, Meta
 ///
 /// [`MetadataError::MalformedExif`] if an EXIF segment is present but its
 /// structure cannot be parsed.
-pub fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
+fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
     let _ = bytes;
     unimplemented!("M1.3: parse EXIF IFD0/GPS/SubIFD tags")
 }
@@ -247,7 +247,7 @@ pub fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
 ///
 /// [`MetadataError::MalformedXmp`] if an XMP packet is present but is not
 /// well-formed XML, or the DJI namespace is present but malformed.
-pub fn parse_xmp_dji(bytes: &[u8]) -> Result<RawXmpTags, MetadataError> {
+fn parse_xmp_dji(bytes: &[u8]) -> Result<RawXmpTags, MetadataError> {
     let _ = bytes;
     unimplemented!("M1.3: parse the drone-dji XMP namespace")
 }
@@ -271,10 +271,7 @@ pub fn parse_xmp_dji(bytes: &[u8]) -> Result<RawXmpTags, MetadataError> {
 ///
 /// [`MetadataError::MalformedExif`] if the relevant header cannot be located
 /// or parsed for the given `format`.
-pub fn read_dimensions(
-    bytes: &[u8],
-    format: ImageFormat,
-) -> Result<PixelDimensions, MetadataError> {
+fn read_dimensions(bytes: &[u8], format: ImageFormat) -> Result<PixelDimensions, MetadataError> {
     let _ = (bytes, format);
     unimplemented!("M1.3: read width/height from the format-specific header")
 }
@@ -292,7 +289,7 @@ pub fn read_dimensions(
 /// # Returns
 ///
 /// Decimal degrees, negative when `reference` is `'S'` or `'W'`.
-pub fn dms_to_decimal(coord: GpsCoordinate) -> f64 {
+fn dms_to_decimal(coord: GpsCoordinate) -> f64 {
     let _ = coord;
     unimplemented!("M1.3: combine D/M/S and apply hemisphere sign")
 }
@@ -312,7 +309,7 @@ pub fn dms_to_decimal(coord: GpsCoordinate) -> f64 {
 /// `Some(NaiveDateTime)` if `raw` matches the expected EXIF format,
 /// otherwise `None` (not an error — malformed or missing timestamps are
 /// tolerated).
-pub fn parse_exif_datetime(raw: &str) -> Option<NaiveDateTime> {
+fn parse_exif_datetime(raw: &str) -> Option<NaiveDateTime> {
     let _ = raw;
     unimplemented!("M1.3: parse the EXIF DateTimeOriginal format")
 }
@@ -334,7 +331,7 @@ pub fn parse_exif_datetime(raw: &str) -> Option<NaiveDateTime> {
 /// # Returns
 ///
 /// A fully assembled [`ImageMetadata`] combining all inputs.
-pub fn merge_tags(
+fn merge_tags(
     exif: RawExifTags,
     xmp: RawXmpTags,
     dimensions: PixelDimensions,
@@ -362,7 +359,7 @@ pub fn merge_tags(
 ///
 /// A [`MetadataCompleteness`] listing present and missing field names, used
 /// by Image Quality Checking to flag images with missing metadata.
-pub fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
+pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
     let _ = metadata;
     unimplemented!("M1.3: walk ImageMetadata's Option fields and bucket by presence")
 }
@@ -394,7 +391,7 @@ pub fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
 ///
 /// This function represents the cross-module contract:
 /// **Module 1.3 → Module 2 (pre-flight check)**.
-pub fn to_plugin_metadata(
+pub(crate) fn to_plugin_metadata(
     metadata: &ImageMetadata,
     path: &Path,
 ) -> crate::plugin_manager::payload::ImageMetadata {
