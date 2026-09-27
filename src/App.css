@@ -5,11 +5,63 @@ body,
   padding: 0;
   width: 100vw;
   height: 100vh;
-  overflow: hidden; /* Prevent scrolling when map is full screen */
+  overflow: hidden;
 }
 
-.app-container {
+/* Shell */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+}
+
+.app-shell__navbar {
+  flex: 0 0 auto;
+}
+
+.app-shell__body {
+  flex: 1 1 auto;
   display: flex;
+  min-height: 0;
+}
+
+/* Sidebar */
+
+.app-shell__sidebar {
+  flex: 0 0 288px;
+  width: 288px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(17, 20, 24, 0.15);
+  background-color: #f6f7f9;
+}
+
+.app-shell__menu {
+  min-width: 0;
+  background: transparent;
+}
+
+/* Content */
+
+.app-shell__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  padding: 20px 24px 48px;
+}
+
+.app-shell__content > * {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.app-shell__content:has(> .app-container) {
+  padding: 0;
 }
