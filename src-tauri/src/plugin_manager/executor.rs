@@ -55,6 +55,9 @@ pub enum ExecutorError {
 
     #[error("Process spawn failed: {0}")]
     SpawnFailed(String),
+
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
 }
 
 impl ExecutorError {
@@ -69,6 +72,7 @@ impl ExecutorError {
             Self::NotCompleted(_) => "JOB_NOT_COMPLETED",
             Self::ArtifactMissing(_) => "ARTIFACT_MISSING",
             Self::SpawnFailed(_) => "SPAWN_FAILED",
+            Self::SecurityViolation(_) => "SECURITY_VIOLATION",
         }
     }
 }
@@ -153,18 +157,19 @@ pub enum JobStatusDto {
 }
 
 /// A single verified artifact produced by the plugin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct VerifiedArtifactDto {
     /// Absolute path to the file on physical disk (already verified to exist).
     pub file_path: String,
     /// MIME type: `"image/png"`, `"application/geo+json"`, `"image/tiff"`, `"text/csv"`.
     pub format: String,
     /// Georeferenced bounding box `[min_lon, min_lat, max_lon, max_lat]` for GIS projection.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bounds: Option<Vec<f64>>,
 }
 
 /// Full analytical output — delivered to Modules 3, 5, 6, 7, 9, 10, 11.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StandardJobResultDto {
     /// Matches the `job_id` of the originating request.
     pub job_id: String,
@@ -177,25 +182,28 @@ pub struct StandardJobResultDto {
     /// Verified artifact descriptors with layer visualization hints.
     pub artifacts: HashMap<String, VerifiedArtifactDto>,
     /// Diagnostic message if `status` is `"failure"` or `"warning"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 /// Internal payload written to disk and passed to the plugin via `--input`.
 ///
 /// Matches the `execution_payload.schema.json` canonical schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionPayload {
     pub execution_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// Absolute path to the sandboxed output directory.
     pub output_dir: String,
     pub target: ExecutionTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub aoi: Option<serde_json::Value>,
     pub parameters: HashMap<String, serde_json::Value>,
 }
 
 /// Target image descriptor within an `ExecutionPayload`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionTarget {
     /// Matches `inputs.json` granularity: `"single_image"`, `"batch"`, etc.
     pub granularity: String,
@@ -203,7 +211,8 @@ pub struct ExecutionTarget {
     pub image_path: String,
     /// MIME type of the image.
     pub mime_type: String,
-    /// Optional decoded GPS coordinates.
+    /// Optional decoded metadata (resolution, GPS, altitude, timestamp).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -220,6 +229,12 @@ pub struct JobRecord {
     /// Populated once job reaches `Completed` state.
     pub result: Option<StandardJobResultDto>,
     pub started_at: String,
+    /// Async abort handle to cancel Tokio supervisor task.
+    pub abort_handle: Option<tokio::task::AbortHandle>,
+    /// Child process ID (for process tree termination).
+    pub child_pid: Option<u32>,
+    /// Sandboxed output directory for cleanup on abort.
+    pub output_dir: Option<PathBuf>,
 }
 
 /// Shared state managed by Tauri's `.manage()` via `Arc<RwLock<ActiveJobTracker>>`.
@@ -246,51 +261,157 @@ impl ActiveJobTracker {
 /// Serves as the primary execution launcher exposed to the frontend via Tauri IPC (`invoke("start_plugin_job", { request })`).
 /// Invoked by Module 1 (Image Management), Module 3 (Geospatial Map Explorer), and Module 10 (Temporal Change Analysis)
 /// to kick off compute-intensive analysis workflows in an isolated child process without blocking the main Tauri desktop runtime.
-///
-/// **Behaviour (to implement):**
-/// 1. Validate that the plugin exists and is enabled.
-/// 2. Generate a unique `job_id` via `generate_job_id()`.
-/// 3. Create a sandboxed `output_dir` under the OS temp/app-data directory.
-/// 4. Call `build_execution_payload(...)` (pure) and write `payload.json` to disk.
-/// 5. Spawn a Tokio background task that calls `resolve_executable` then
-///    `supervise_execution`, streaming stdout lines through `parse_progress_line`
-///    and emitting `"plugin://progress"` events via `app.emit(...)`.
-/// 6. Register the job in `ActiveJobTracker` as `JobStatusDto::Queued`.
-/// 7. **Return `JobHandleDto` immediately** — this command MUST be non-blocking.
-///
-/// # Arguments
-/// * `_request` - Execution request struct containing `plugin_id`, optional `session_id`, `target_image_path`, `mime_type`, optional GeoJSON `aoi`, and user-defined `parameters`.
-/// * `_app` - Tauri application handle used to stream real-time progress events (`"plugin://progress"`) to frontend webviews.
-/// * `_state` - Injected Tauri application state managing the thread-safe `ActiveJobTracker` and plugin registry.
-///
-/// # Pre-condition
-/// - Plugin is registered in memory with `enabled == true`, input parameters satisfy `parameters.json`, and `target_image_path` physically exists on disk.
-///
-/// # Post-condition
-/// - Generates a unique `job_id`, initializes a sandboxed output directory, writes `payload.json`, registers the job as `JobStatusDto::Queued` in `ActiveJobTracker`, spawns a detached Tokio background supervisor task, and returns `JobHandleDto` immediately.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `PLUGIN_UNAVAILABLE` if the plugin does not exist or is disabled, `IO_ERROR` if creating the output sandbox or writing `payload.json` fails, or `SERIALIZATION_ERROR` if payload formatting fails.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn start_plugin_job(
-    _request: StartJobRequestDto,
-    _app: tauri::AppHandle,
-    _state: tauri::State<'_, crate::AppState>,
+    request: StartJobRequestDto,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
-    // TODO(Role-1): Implement job spawning
-    // 1. Validate plugin exists & enabled:
-    //    state.plugins.read().await.get(&request.plugin_id).ok_or("not found")?
-    // 2. Generate job_id = generate_job_id()
-    // 3. Create sandboxed output_dir (tempfile::tempdir_in or tauri app data path)
-    // 4. let payload = build_execution_payload(&job_id, &output_dir, &request)?
-    // 5. fs::write(output_dir.join("payload.json"), serde_json::to_string_pretty(&payload)?)?
-    // 6. Insert job into tracker: state.jobs.write().await.jobs.insert(job_id, JobRecord { Queued })
-    // 7. tokio::spawn(async move { supervise_execution(child, job_id, ...).await })
-    // 8. Return Ok(JobHandleDto { job_id, plugin_id, status: "queued" })
-    todo!("start_plugin_job: spawn async job, register in tracker, return handle immediately")
+    // 1. Verify target image exists on physical disk
+    let target_img = PathBuf::from(&request.target_image_path);
+    if !target_img.exists() {
+        return Err(CommandError {
+            code: "IMAGE_NOT_FOUND".to_string(),
+            message: format!("Target image file not found: {:?}", target_img),
+        });
+    }
+
+    // 2. Locate plugin entrypoint and execution configuration
+    let target = find_plugin_info(&request.plugin_id)?;
+
+    // 3. Generate unique execution ID
+    let job_id = generate_job_id();
+
+    // 4. Create sandboxed output directory
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("{}_", job_id))
+        .tempdir()
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: format!("Failed to create sandboxed output directory: {}", e),
+        })?;
+    let output_dir = temp_dir.into_path();
+
+    // 5. Build canonical execution payload and write to payload.json
+    let payload = build_execution_payload(&job_id, &output_dir, &request)?;
+    let payload_path = output_dir.join("payload.json");
+    let result_path = output_dir.join("result.json");
+
+    let payload_str = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
+        code: "SERIALIZATION_ERROR".to_string(),
+        message: format!("Failed to serialize execution payload: {}", e),
+    })?;
+
+    tokio::fs::write(&payload_path, payload_str)
+        .await
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: format!("Failed to write payload.json: {}", e),
+        })?;
+
+    // 6. Resolve executable and command configuration
+    let mut cmd = resolve_executable(
+        &target.plugin_dir,
+        &target.entrypoint,
+        &target.runtime_type,
+        &payload_path,
+        &result_path,
+    )
+    .await?;
+
+    let child = cmd.spawn().map_err(|e| CommandError {
+        code: "SPAWN_FAILED".to_string(),
+        message: format!("Failed to spawn plugin subprocess: {}", e),
+    })?;
+
+    let child_pid = child.id();
+
+    // 7. Spawn async supervisor background task
+    let tracker_arc = state.jobs.clone();
+    let app_handle = app.clone();
+    let job_id_clone = job_id.clone();
+    let timeout_secs = target.timeout_seconds;
+    let result_path_clone = result_path.clone();
+    let output_dir_clone = output_dir.clone();
+
+    let supervisor_task = tokio::spawn(async move {
+        let res = supervise_execution(
+            child,
+            job_id_clone.clone(),
+            result_path_clone,
+            output_dir_clone,
+            timeout_secs,
+            app_handle.clone(),
+            tracker_arc.clone(),
+        )
+        .await;
+
+        let mut tracker = tracker_arc.write().await;
+        if let Some(record) = tracker.jobs.get_mut(&job_id_clone) {
+            match res {
+                Ok(dto) => {
+                    if dto.status == "failure" {
+                        record.status = JobStatusDto::Failed {
+                            error: dto
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "Plugin reported execution failure".to_string()),
+                        };
+                    } else {
+                        record.status = JobStatusDto::Completed {
+                            execution_time_ms: dto.execution_time_ms,
+                        };
+                    }
+                    record.result = Some(dto.clone());
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("plugin://completed", &dto);
+                }
+                Err(err) => {
+                    let err_msg = err.to_string();
+                    record.status = JobStatusDto::Failed {
+                        error: err_msg.clone(),
+                    };
+                    use tauri::Emitter;
+                    let _ = app_handle.emit(
+                        "plugin://completed",
+                        serde_json::json!({
+                            "job_id": job_id_clone,
+                            "status": "failure",
+                            "error": err_msg,
+                        }),
+                    );
+                }
+            }
+        }
+    });
+
+    // 8. Register job in ActiveJobTracker
+    {
+        let mut tracker = state.jobs.write().await;
+        tracker.jobs.insert(
+            job_id.clone(),
+            JobRecord {
+                job_id: job_id.clone(),
+                plugin_id: request.plugin_id.clone(),
+                status: JobStatusDto::Running {
+                    progress_pct: 0,
+                    stage: "spawning".to_string(),
+                },
+                result: None,
+                started_at: Utc::now().to_rfc3339(),
+                abort_handle: Some(supervisor_task.abort_handle()),
+                child_pid,
+                output_dir: Some(output_dir),
+            },
+        );
+    }
+
+    // 9. Return JobHandleDto immediately (non-blocking)
+    Ok(JobHandleDto {
+        job_id,
+        plugin_id: request.plugin_id,
+        status: "running".to_string(),
+    })
 }
 
 /// Forcibly terminates an in-flight plugin job.
@@ -298,147 +419,102 @@ pub async fn start_plugin_job(
 /// Provides user-cancellation capabilities exposed to the frontend via Tauri IPC (`invoke("abort_plugin_job", { jobId })`).
 /// Invoked by Module 3 (Map Explorer task drawer) and Module 11 (Task Monitor) when a user cancels an active analysis,
 /// ensuring runaway or stalled subprocesses are cleanly killed.
-///
-/// **Behaviour (to implement):**
-/// 1. Look up `job_id` in `ActiveJobTracker`.
-/// 2. If status is `Running`, send SIGKILL to the child process.
-/// 3. Clean up partial files in the sandboxed `output_dir`.
-/// 4. Mark the job as `JobStatusDto::Aborted` in the tracker.
-///
-/// # Arguments
-/// * `_job_id` - Unique execution identifier of the job to terminate.
-/// * `_state` - Injected Tauri application state containing `ActiveJobTracker`.
-///
-/// # Pre-condition
-/// - `_job_id` matches an existing job in `ActiveJobTracker` in `Queued` or `Running` state.
-///
-/// # Post-condition
-/// - The child subprocess is forcibly terminated (SIGKILL), partial files in the sandboxed output directory are purged, and the job status is updated to `JobStatusDto::Aborted` in `ActiveJobTracker`.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from `ActiveJobTracker`, or `IO_ERROR` if terminating the child process encounters an OS error.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn abort_plugin_job(
-    _job_id: String,
-    _state: tauri::State<'_, crate::AppState>,
+    job_id: String,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CommandError> {
-    // TODO(Role-1): Implement job abort
-    // 1. state.jobs.read().await.jobs.get(&job_id) -> check exists & running
-    // 2. Retrieve the stored abort channel or Arc<Mutex<Option<Child>>> and call kill()
-    // 3. Cleanup partial output_dir files (std::fs::remove_dir_all if needed)
-    // 4. state.jobs.write().await.jobs.get_mut(&job_id).status = Aborted
-    todo!("abort_plugin_job: kill child process, cleanup output_dir, mark Aborted")
+    let mut tracker = state.jobs.write().await;
+    let record = tracker.jobs.get_mut(&job_id).ok_or_else(|| CommandError {
+        code: "JOB_NOT_FOUND".to_string(),
+        message: format!("Job '{}' not found in active tracker", job_id),
+    })?;
+
+    // Abort async supervisor task
+    if let Some(ref handle) = record.abort_handle {
+        handle.abort();
+    }
+
+    // Forcibly terminate child OS process tree
+    if let Some(pid) = record.child_pid {
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
+        }
+    }
+
+    // Clean up partial sandboxed output files
+    if let Some(ref dir) = record.output_dir {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    record.status = JobStatusDto::Aborted;
+    Ok(())
 }
 
 /// Polls the current lifecycle state of a job.
 ///
 /// Exposes read-only job status polling to the frontend via Tauri IPC (`invoke("get_job_status", { jobId })`).
-/// Consumed by Module 1 (Image Management), Module 3 (Map Explorer), and Module 11 (Task Monitor) to query
-/// job states (`Queued`, `Running`, `Completed`, `Failed`, `Aborted`) when re-attaching to ongoing tasks
-/// after frontend route changes or page refreshes.
-///
-/// **Behaviour (to implement):**
-/// 1. Look up `job_id` in `ActiveJobTracker`.
-/// 2. Return the current `JobStatusDto` snapshot.
-///
-/// # Arguments
-/// * `_job_id` - Unique execution identifier of the queried job.
-/// * `_state` - Injected Tauri application state holding `ActiveJobTracker`.
-///
-/// # Pre-condition
-/// - `_job_id` exists in `ActiveJobTracker`.
-///
-/// # Post-condition
-/// - Returns an immutable snapshot of the current `JobStatusDto` for the specified job without mutating tracker state.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` does not match any entry in `ActiveJobTracker`.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn get_job_status(
-    _job_id: String,
-    _state: tauri::State<'_, crate::AppState>,
+    job_id: String,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobStatusDto, CommandError> {
-    // TODO(Role-1): Implement status query
-    // 1. state.jobs.read().await.jobs.get(&job_id)
-    //    .ok_or_else(|| ExecutorError::JobNotFound(job_id))?
-    // 2. Ok(record.status.clone())
-    todo!("get_job_status: read job status from ActiveJobTracker")
+    let tracker = state.jobs.read().await;
+    let record = tracker.jobs.get(&job_id).ok_or_else(|| CommandError {
+        code: "JOB_NOT_FOUND".to_string(),
+        message: format!("Job '{}' not found in active tracker", job_id),
+    })?;
+    Ok(record.status.clone())
 }
 
 /// Delivers the full analytical result to downstream modules.
 ///
 /// Exposes validated execution outputs to downstream modules via Tauri IPC (`invoke("get_job_result", { jobId })`).
-/// Consumed by Module 3 (Map Explorer for layer overlays), Modules 5, 6, 7 (Vegetation Condition, Tree Counting,
-/// Coverage Measurement dashboards), Module 9 (Reporting), and Module 10 (Temporal Change) to retrieve
-/// scalar metrics and verified filesystem artifact paths.
-///
-/// **Behaviour (to implement):**
-/// 1. Look up `job_id` in `ActiveJobTracker`.
-/// 2. Assert status is `Completed`; return `Err` otherwise.
-/// 3. Return the cached `StandardJobResultDto`.
-///
-/// # Arguments
-/// * `_job_id` - Unique execution identifier of the completed job.
-/// * `_state` - Injected Tauri application state holding `ActiveJobTracker`.
-///
-/// # Pre-condition
-/// - `_job_id` exists in `ActiveJobTracker` and its lifecycle state is `JobStatusDto::Completed`.
-///
-/// # Post-condition
-/// - Returns the cached, validated `StandardJobResultDto` containing execution runtime duration, exit status, scalar metrics map, and verified artifact descriptors without mutating state.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `JOB_NOT_FOUND` if `_job_id` is missing from tracker, or `JOB_NOT_COMPLETED` if the job has not completed successfully.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn get_job_result(
-    _job_id: String,
-    _state: tauri::State<'_, crate::AppState>,
+    job_id: String,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<StandardJobResultDto, CommandError> {
-    // TODO(Role-1): Implement result retrieval
-    // 1. state.jobs.read().await.jobs.get(&job_id)
-    //    .ok_or_else(|| ExecutorError::JobNotFound(job_id.clone()))?
-    // 2. if !matches!(record.status, JobStatusDto::Completed { .. }) {
-    //        return Err(ExecutorError::NotCompleted(job_id).into())
-    //    }
-    // 3. Ok(record.result.clone().unwrap())
-    todo!("get_job_result: return StandardJobResultDto from completed job tracker entry")
+    let tracker = state.jobs.read().await;
+    let record = tracker.jobs.get(&job_id).ok_or_else(|| CommandError {
+        code: "JOB_NOT_FOUND".to_string(),
+        message: format!("Job '{}' not found in active tracker", job_id),
+    })?;
+
+    match &record.status {
+        JobStatusDto::Completed { .. } => record.result.clone().ok_or_else(|| CommandError {
+            code: "RESULT_MISSING".to_string(),
+            message: format!("Job '{}' is completed but result is missing", job_id),
+        }),
+        _ => Err(CommandError {
+            code: "JOB_NOT_COMPLETED".to_string(),
+            message: format!("Job '{}' has not completed successfully", job_id),
+        }),
+    }
 }
 
 /// Emits a real-time job progress event to the frontend over Tauri IPC.
 ///
-/// Streams progress payloads emitted by child subprocesses to listening UI components (Modules 3 and 11 Task Monitor)
-/// via Tauri's event bus under the `"plugin://progress"` topic. Invoked internally by the subprocess supervisor
-/// when stdout emits a valid `PROGRESS:` token during execution.
-///
-/// # Arguments
-/// * `_app` - Handle to the Tauri application used to dispatch IPC events to frontend webviews.
-/// * `_progress` - Structured progress payload containing the active `job_id`, percentage completed (`0..=100`), and descriptive `stage`.
-///
-/// # Pre-condition
-/// - Tauri runtime is active and initialized, and `_progress.percent` is in the range 0–100.
-///
-/// # Post-condition
-/// - Dispatches the `"plugin://progress"` event containing the serialized `JobProgress` payload to all listening frontend webviews.
-///
-/// # Errors
-/// - Returns `CommandError` if serializing the progress payload fails or if Tauri IPC event emission encounters an internal error.
-///
-/// # Panics
-/// - This function does not panic.
+/// Streams progress payloads emitted by child subprocesses to listening UI components via Tauri's event bus.
 pub fn emit_job_progress(
-    _app: &tauri::AppHandle,
-    _progress: &JobProgress,
+    app: &tauri::AppHandle,
+    progress: &JobProgress,
 ) -> Result<(), CommandError> {
-    todo!("emit_job_progress: stream JobProgress event to frontend via app.emit")
+    use tauri::Emitter;
+    app.emit("plugin://progress", progress)
+        .map_err(|e| CommandError {
+            code: "IPC_EMIT_FAILED".to_string(),
+            message: format!("Failed to emit progress event: {}", e),
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -449,32 +525,26 @@ pub fn emit_job_progress(
 ///
 /// **Pure function** — no filesystem I/O, no subprocess interaction.
 /// Caller is responsible for serializing and writing the result to disk.
-///
-/// **Pre-condition**: `parameters` conform to the plugin's `parameters.json` schema.  
-/// **Post-condition**: Returns a fully populated, in-memory `ExecutionPayload`
-/// matching `execution_payload.schema.json`. Zero side effects.
 pub(crate) fn build_execution_payload(
     job_id: &str,
     output_dir: &Path,
     req: &StartJobRequestDto,
 ) -> Result<ExecutionPayload, ExecutorError> {
-    // TODO(Role-1): Implement pure payload construction
-    // let target = ExecutionTarget {
-    //     granularity: "single_image".to_string(),
-    //     image_path: req.target_image_path.clone(),
-    //     mime_type: req.mime_type.clone(),
-    //     metadata: None,
-    // };
-    // Ok(ExecutionPayload {
-    //     execution_id: job_id.to_string(),
-    //     session_id: req.session_id.clone(),
-    //     output_dir: output_dir.to_string_lossy().into_owned(),
-    //     target,
-    //     aoi: req.aoi.clone(),
-    //     parameters: req.parameters.clone(),
-    // })
-    let _ = (job_id, output_dir, req);
-    todo!("build_execution_payload: pure constructor, no I/O, returns ExecutionPayload")
+    let target = ExecutionTarget {
+        granularity: "single_image".to_string(),
+        image_path: req.target_image_path.clone(),
+        mime_type: req.mime_type.clone(),
+        metadata: None,
+    };
+
+    Ok(ExecutionPayload {
+        execution_id: job_id.to_string(),
+        session_id: req.session_id.clone(),
+        output_dir: output_dir.to_string_lossy().into_owned(),
+        target,
+        aoi: req.aoi.clone(),
+        parameters: req.parameters.clone(),
+    })
 }
 
 /// Extracts a `JobProgress` update from a single line of plugin stdout.
@@ -485,181 +555,374 @@ pub(crate) fn build_execution_payload(
 /// ```text
 /// PROGRESS: {"job_id":"exec_...", "percent": 45, "stage": "evaluating_index"}
 /// ```
-/// Any other stdout line (logs, debug output) returns `None` without error.
-///
-/// **Pre-condition**: `line` is a single UTF-8 line from the subprocess stdout.  
-/// **Post-condition**: `Some(JobProgress)` if line matches the protocol; `None` otherwise.
 pub(crate) fn parse_progress_line(line: &str) -> Option<JobProgress> {
-    // TODO(Role-1): Implement progress line parser
-    // let trimmed = line.trim();
-    // let json_slice = trimmed.strip_prefix("PROGRESS:")?;
-    // serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
-    let _ = line;
-    todo!("parse_progress_line: pure parser, returns Some(JobProgress) or None")
+    let trimmed = line.trim();
+    let json_slice = if let Some(rest) = trimmed.strip_prefix("PROGRESS:") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("progress:") {
+        rest
+    } else {
+        return None;
+    };
+    serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
 }
 
 // ---------------------------------------------------------------------------
 // 6. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
 // ---------------------------------------------------------------------------
 
+/// Resolved plugin execution metadata discovered from manifest.
+#[derive(Debug, Clone)]
+pub(crate) struct PluginExecutionTarget {
+    pub plugin_dir: PathBuf,
+    pub entrypoint: String,
+    pub runtime_type: String,
+    pub timeout_seconds: u64,
+}
+
+/// Locates a plugin's directory and manifest by `plugin_id`.
+pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget, ExecutorError> {
+    let possible_roots = [
+        PathBuf::from("plugins"),
+        PathBuf::from("../plugins"),
+        PathBuf::from("../../plugins"),
+    ];
+
+    for root in &possible_roots {
+        if !root.exists() {
+            continue;
+        }
+
+        // Direct directory name check: plugins/<plugin_id>/manifest.json
+        let direct_dir = root.join(plugin_id);
+        if direct_dir.is_dir() {
+            let manifest_path = direct_dir.join("manifest.json");
+            if manifest_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let id = val["metadata"]["id"].as_str().unwrap_or_default();
+                        if id == plugin_id {
+                            let entrypoint = val["runtime"]["entrypoint"]
+                                .as_str()
+                                .unwrap_or("main.py")
+                                .to_string();
+                            let runtime_type = val["runtime"]["type"]
+                                .as_str()
+                                .unwrap_or("python")
+                                .to_string();
+                            let timeout_seconds =
+                                val["execution"]["timeout_seconds"].as_u64().unwrap_or(60);
+
+                            return Ok(PluginExecutionTarget {
+                                plugin_dir: direct_dir,
+                                entrypoint,
+                                runtime_type,
+                                timeout_seconds,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Search subdirectories for matching manifest ID
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let manifest_path = path.join("manifest.json");
+                    if manifest_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                let id = val["metadata"]["id"].as_str().unwrap_or_default();
+                                if id == plugin_id {
+                                    let entrypoint = val["runtime"]["entrypoint"]
+                                        .as_str()
+                                        .unwrap_or("main.py")
+                                        .to_string();
+                                    let runtime_type = val["runtime"]["type"]
+                                        .as_str()
+                                        .unwrap_or("python")
+                                        .to_string();
+                                    let timeout_seconds =
+                                        val["execution"]["timeout_seconds"].as_u64().unwrap_or(60);
+
+                                    return Ok(PluginExecutionTarget {
+                                        plugin_dir: path,
+                                        entrypoint,
+                                        runtime_type,
+                                        timeout_seconds,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err(ExecutorError::PluginUnavailable(plugin_id.to_string()))
+}
+
 /// Prepares the cross-platform Tokio process command for the plugin entrypoint.
-///
-/// **Behaviour (to implement):**
-/// - `"python"`: resolve the interpreter (virtualenv or PATH), set `main.py` as arg.
-/// - `"binary"`: resolve compiled binary path under `plugin_dir/bin/<entrypoint>`.
-/// - Attach `--input <payload_path>` and `--output <result_path>` to the command.
-/// - Return `Err(ExecutorError::SpawnFailed)` if the executable does not exist.
-///
-/// **Pre-condition**: `plugin_dir` is a valid plugin directory.  
-/// **Post-condition**: Returns a configured `tokio::process::Command` ready to `.spawn()`.
 pub(crate) async fn resolve_executable(
-    _plugin_dir: &Path,
-    _entrypoint: &str,
-    _runtime_type: &str,
-    _payload_path: &Path,
-    _result_path: &Path,
+    plugin_dir: &Path,
+    entrypoint: &str,
+    runtime_type: &str,
+    payload_path: &Path,
+    result_path: &Path,
 ) -> Result<tokio::process::Command, ExecutorError> {
-    // TODO(Role-1): Implement cross-platform executable resolution
-    // match runtime_type {
-    //     "python" => {
-    //         let mut cmd = tokio::process::Command::new("python");
-    //         cmd.arg(plugin_dir.join(entrypoint))
-    //            .arg("--input").arg(payload_path)
-    //            .arg("--output").arg(result_path);
-    //         Ok(cmd)
-    //     }
-    //     "binary" => {
-    //         let bin_path = plugin_dir.join("bin").join(entrypoint);
-    //         if !bin_path.exists() {
-    //             return Err(ExecutorError::SpawnFailed(format!("binary not found: {:?}", bin_path)));
-    //         }
-    //         let mut cmd = tokio::process::Command::new(&bin_path);
-    //         cmd.arg("--input").arg(payload_path)
-    //            .arg("--output").arg(result_path);
-    //         Ok(cmd)
-    //     }
-    //     other => Err(ExecutorError::SpawnFailed(format!("unknown runtime: {}", other))),
-    // }
-    todo!("resolve_executable: build tokio::process::Command for python or native binary")
+    match runtime_type {
+        "python" => {
+            // Check for local virtual environment Python
+            let venv_python = if cfg!(windows) {
+                plugin_dir.join(".venv").join("Scripts").join("python.exe")
+            } else {
+                plugin_dir.join(".venv").join("bin").join("python")
+            };
+
+            let interpreter = if venv_python.exists() {
+                venv_python
+            } else if cfg!(windows) {
+                PathBuf::from("python")
+            } else {
+                PathBuf::from("python3")
+            };
+
+            let script_path = plugin_dir.join(entrypoint);
+            if !script_path.exists() {
+                return Err(ExecutorError::SpawnFailed(format!(
+                    "Plugin Python entrypoint script not found: {:?}",
+                    script_path
+                )));
+            }
+
+            let mut cmd = tokio::process::Command::new(interpreter);
+            cmd.arg(&script_path)
+                .arg("--input")
+                .arg(payload_path)
+                .arg("--output")
+                .arg(result_path)
+                .current_dir(plugin_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            Ok(cmd)
+        }
+        "binary" => {
+            let mut bin_path = plugin_dir.join(entrypoint);
+            if cfg!(windows) && !entrypoint.ends_with(".exe") {
+                let exe_candidate = plugin_dir.join(format!("{}.exe", entrypoint));
+                if exe_candidate.exists() {
+                    bin_path = exe_candidate;
+                }
+            }
+
+            if !bin_path.exists() {
+                return Err(ExecutorError::SpawnFailed(format!(
+                    "Plugin binary entrypoint not found: {:?}",
+                    bin_path
+                )));
+            }
+
+            let mut cmd = tokio::process::Command::new(&bin_path);
+            cmd.arg("--input")
+                .arg(payload_path)
+                .arg("--output")
+                .arg(result_path)
+                .current_dir(plugin_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            Ok(cmd)
+        }
+        other => Err(ExecutorError::SpawnFailed(format!(
+            "Unsupported runtime type: '{}'",
+            other
+        ))),
+    }
 }
 
 /// Supervises an already-spawned child process to completion while streaming progress events.
-///
-/// Coordinates child process lifecycle asynchronously, streaming stdout lines in real time,
-/// parsing progress tokens to emit `"plugin://progress"` IPC events to the frontend, enforcing execution
-/// timeout deadlines, and validating final analytical output files.
-///
-/// **Behaviour (to implement):**
-/// 1. Wrap in `tokio::time::timeout(Duration::from_secs(timeout_secs), ...)`.
-/// 2. Stream stdout lines; call `parse_progress_line` on each; emit `"plugin://progress"`.
-/// 3. On success (exit 0): call `read_and_validate_result(...)`.
-/// 4. On timeout: `child.kill().await` → `Err(ExecutorError::Timeout(...))`.
-/// 5. On non-zero exit: read stderr → `Err(ExecutorError::SpawnFailed(...))`.
-///
-/// **MUST NEVER PANIC** — wrap all error paths in `Result` combinators.
-///
-/// # Arguments
-/// * `_child` - Active Tokio asynchronous child process handle with piped stdout.
-/// * `_job_id` - Unique execution ID identifying this job in the active tracker and event stream.
-/// * `_result_path` - Path where the plugin is expected to write its final execution result JSON.
-/// * `_output_dir` - Sandboxed directory path for plugin scratch files and artifact outputs.
-/// * `_timeout_secs` - Maximum allowed execution wall-clock time in seconds before SIGKILL is dispatched.
-/// * `_app` - Tauri application handle used to emit `"plugin://progress"` real-time events.
-///
-/// # Pre-condition
-/// - `_child` is a live subprocess with `stdout: Stdio::piped()`.
-///
-/// # Post-condition
-/// - Returns `Ok(StandardJobResultDto)` on success, or kills the process and returns `Err(ExecutorError)` on timeout or failure.
-///
-/// # Errors
-/// - Returns `ExecutorError::Timeout` if execution exceeds timeout, `ExecutorError::SpawnFailed` on non-zero exit or missing pipe, `ExecutorError::Io` on I/O error, or `ExecutorError::ArtifactMissing` if declared output files are missing.
-///
-/// # Panics
-/// - This function does not panic.
 pub(crate) async fn supervise_execution(
-    _child: tokio::process::Child,
-    _job_id: String,
-    _result_path: PathBuf,
-    _output_dir: PathBuf,
-    _timeout_secs: u64,
-    _app: tauri::AppHandle,
+    mut child: tokio::process::Child,
+    job_id: String,
+    result_path: PathBuf,
+    output_dir: PathBuf,
+    timeout_secs: u64,
+    app: tauri::AppHandle,
+    jobs_tracker: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
 ) -> Result<StandardJobResultDto, ExecutorError> {
-    // TODO(Role-1): Implement full async supervision loop
-    //
-    // use tokio::io::{AsyncBufReadExt, BufReader};
-    // use tokio::time::{timeout, Duration};
-    //
-    // let stdout = _child.stdout.take()
-    //     .ok_or_else(|| ExecutorError::SpawnFailed("no stdout pipe".into()))?;
-    // let mut lines = BufReader::new(stdout).lines();
-    //
-    // let result = timeout(Duration::from_secs(_timeout_secs), async {
-    //     while let Ok(Some(line)) = lines.next_line().await {
-    //         if let Some(progress) = parse_progress_line(&line) {
-    //             _app.emit("plugin://progress", &progress).ok();
-    //         }
-    //     }
-    //     _child.wait().await
-    // }).await;
-    //
-    // match result {
-    //     Err(_) => {
-    //         // Timeout — kill to prevent orphan
-    //         let _ = _child.kill().await;
-    //         Err(ExecutorError::Timeout(_timeout_secs))
-    //     }
-    //     Ok(Err(e)) => Err(ExecutorError::Io(e)),
-    //     Ok(Ok(status)) if status.success() => {
-    //         read_and_validate_result(&_result_path, &_output_dir)
-    //     }
-    //     Ok(Ok(_)) => Err(ExecutorError::SpawnFailed("plugin exited with non-zero code".into())),
-    // }
-    todo!("supervise_execution: async stdout streaming, timeout guard, result validation")
+    use tokio::io::AsyncBufReadExt;
+    use tokio::time::{timeout, Duration};
+
+    let child_pid = child.id();
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ExecutorError::SpawnFailed("Failed to capture stdout pipe".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ExecutorError::SpawnFailed("Failed to capture stderr pipe".into()))?;
+
+    // Drain stderr in background to prevent buffer deadlock
+    let stderr_handle = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut reader = tokio::io::BufReader::new(stderr);
+        let mut buf = Vec::new();
+        let _ = reader.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).into_owned()
+    });
+
+    let supervise_fut = async {
+        let mut lines = tokio::io::BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(progress) = parse_progress_line(&line) {
+                // Update tracker status in memory
+                {
+                    let mut tracker = jobs_tracker.write().await;
+                    if let Some(record) = tracker.jobs.get_mut(&job_id) {
+                        record.status = JobStatusDto::Running {
+                            progress_pct: progress.percent,
+                            stage: progress.stage.clone(),
+                        };
+                    }
+                }
+                // Emit to Tauri IPC event stream
+                emit_job_progress(&app, &progress).ok();
+            }
+        }
+        child.wait().await
+    };
+
+    let execution_result = timeout(Duration::from_secs(timeout_secs), supervise_fut).await;
+
+    match execution_result {
+        Err(_) => {
+            // Execution timed out: forcibly kill child process
+            let _ = child.kill().await;
+            if let Some(pid) = child_pid {
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/T", "/PID", &pid.to_string()])
+                        .output();
+                }
+                #[cfg(unix)]
+                {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .output();
+                }
+            }
+            Err(ExecutorError::Timeout(timeout_secs))
+        }
+        Ok(Err(io_err)) => Err(ExecutorError::Io(io_err)),
+        Ok(Ok(status)) => {
+            let stderr_output = stderr_handle.await.unwrap_or_default();
+            if status.success() {
+                read_and_validate_result(&result_path, &output_dir)
+            } else if result_path.exists() {
+                // Plugin may have written a structured failure execution_result.json before exit 1
+                read_and_validate_result(&result_path, &output_dir)
+            } else {
+                Err(ExecutorError::SpawnFailed(format!(
+                    "Plugin process failed with status {}. Stderr: {}",
+                    status,
+                    stderr_output.trim()
+                )))
+            }
+        }
+    }
 }
 
 /// Reads the plugin output file and validates it against the execution result schema.
-///
-/// **Behaviour (to implement):**
-/// 1. Read and deserialize `result_path` as JSON.
-/// 2. Validate `status`, `execution_time_ms`, `metrics`, `artifacts` fields are present.
-/// 3. For each artifact, verify the file physically exists on disk.
-/// 4. Construct and return a `StandardJobResultDto`.
-///
-/// **Pre-condition**: `result_path` exists and contains valid JSON.  
-/// **Post-condition**: All declared artifact files verified on disk.
 pub(crate) fn read_and_validate_result(
-    _result_path: &Path,
-    _output_dir: &Path,
+    result_path: &Path,
+    output_dir: &Path,
 ) -> Result<StandardJobResultDto, ExecutorError> {
-    // TODO(Role-1): Implement result file ingestion and artifact verification
-    // let raw = std::fs::read_to_string(_result_path)?;
-    // let json: serde_json::Value = serde_json::from_str(&raw)?;
-    // let job_id = json["execution_id"].as_str().unwrap_or("").to_string();
-    // let status = json["status"].as_str().unwrap_or("failure").to_string();
-    // let execution_time_ms = json["execution_time_ms"].as_u64().unwrap_or(0);
-    // let metrics = json["metrics"].as_object()
-    //     .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-    //     .unwrap_or_default();
-    //
-    // // Verify artifact files exist on disk
-    // let mut artifacts: HashMap<String, VerifiedArtifactDto> = HashMap::new();
-    // if let Some(arts) = json["artifacts"].as_object() {
-    //     for (key, art) in arts {
-    //         let fp = art["file_path"].as_str().unwrap_or("");
-    //         if !PathBuf::from(fp).exists() {
-    //             return Err(ExecutorError::ArtifactMissing(fp.to_string()));
-    //         }
-    //         artifacts.insert(key.clone(), VerifiedArtifactDto {
-    //             file_path: fp.to_string(),
-    //             format: art["format"].as_str().unwrap_or("").to_string(),
-    //             bounds: None,
-    //         });
-    //     }
-    // }
-    //
-    // Ok(StandardJobResultDto { job_id, execution_time_ms, status, metrics, artifacts, error: None })
-    todo!("read_and_validate_result: deserialize result JSON, verify artifact files on disk")
+    if !result_path.exists() {
+        return Err(ExecutorError::ArtifactMissing(format!(
+            "Result file not found: {:?}",
+            result_path
+        )));
+    }
+
+    let raw = std::fs::read_to_string(result_path)?;
+    let val: serde_json::Value = serde_json::from_str(&raw)?;
+
+    let job_id = val["execution_id"].as_str().unwrap_or_default().to_string();
+    let status = val["status"].as_str().unwrap_or("failure").to_string();
+    let execution_time_ms = val["execution_time_ms"].as_u64().unwrap_or(0);
+
+    let metrics = val["metrics"]
+        .as_object()
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+
+    let mut artifacts: HashMap<String, VerifiedArtifactDto> = HashMap::new();
+    if let Some(arts) = val["artifacts"].as_object() {
+        for (key, art) in arts {
+            let fp_str = art["file_path"].as_str().unwrap_or_default();
+            let fp = if Path::new(fp_str).is_absolute() {
+                PathBuf::from(fp_str)
+            } else {
+                output_dir.join(fp_str)
+            };
+
+            if !fp.exists() {
+                return Err(ExecutorError::ArtifactMissing(format!(
+                    "Artifact '{}' file not found at: {:?}",
+                    key, fp
+                )));
+            }
+
+            // Sandbox security check: ensure artifact resides strictly within output_dir
+            match (output_dir.canonicalize(), fp.canonicalize()) {
+                (Ok(canonical_dir), Ok(canonical_art)) => {
+                    if !canonical_art.starts_with(&canonical_dir) {
+                        return Err(ExecutorError::SecurityViolation(format!(
+                            "Artifact '{}' escapes sandboxed output directory: {:?}",
+                            key, fp
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(ExecutorError::SecurityViolation(format!(
+                        "Failed to verify sandbox canonical boundaries for artifact '{}': {:?}",
+                        key, fp
+                    )));
+                }
+            }
+
+            let format_str = art["format"].as_str().unwrap_or_default().to_string();
+            let bounds = art["bounds"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|b| b.as_f64()).collect::<Vec<f64>>());
+
+            artifacts.insert(
+                key.clone(),
+                VerifiedArtifactDto {
+                    file_path: fp.to_string_lossy().into_owned(),
+                    format: format_str,
+                    bounds,
+                },
+            );
+        }
+    }
+
+    let error = val["error"].as_str().map(|s| s.to_string());
+
+    Ok(StandardJobResultDto {
+        job_id,
+        execution_time_ms,
+        status,
+        metrics,
+        artifacts,
+        error,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -678,7 +941,7 @@ pub(crate) fn generate_job_id() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 8. UNIT TESTS (pure functions only — no I/O, no async, no Tauri state)
+// 8. UNIT TESTS
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -693,37 +956,167 @@ mod tests {
             "job_id must start with 'exec_': {id}"
         );
         let parts: Vec<&str> = id.splitn(3, '_').collect();
-        assert_eq!(
-            parts.len(),
-            3,
-            "job_id must have 3 '_'-separated segments: {id}"
-        );
-        // Date part must be 8 digits
+        assert_eq!(parts.len(), 3, "job_id must have 3 segments: {id}");
         assert_eq!(parts[1].len(), 8, "date segment must be 8 digits: {id}");
     }
 
-    // TODO(Role-1): Un-comment these tests once parse_progress_line is implemented.
+    #[test]
+    fn test_parse_progress_line_valid() {
+        let line = r#"PROGRESS: {"job_id":"exec_20260916_abc","percent":45,"stage":"evaluating"}"#;
+        let result = parse_progress_line(line);
+        assert!(result.is_some());
+        let p = result.unwrap();
+        assert_eq!(p.percent, 45);
+        assert_eq!(p.stage, "evaluating");
+        assert_eq!(p.job_id, "exec_20260916_abc");
+    }
 
-    // #[test]
-    // fn test_parse_progress_line_valid() {
-    //     let line = r#"PROGRESS: {"job_id":"exec_20260916_abc","percent":45,"stage":"evaluating"}"#;
-    //     let result = parse_progress_line(line);
-    //     assert!(result.is_some());
-    //     let p = result.unwrap();
-    //     assert_eq!(p.percent, 45);
-    //     assert_eq!(p.stage, "evaluating");
-    // }
+    #[test]
+    fn test_parse_progress_line_lowercase() {
+        let line = r#"progress: {"job_id":"exec_20260916_abc","percent":60,"stage":"masking"}"#;
+        let result = parse_progress_line(line);
+        assert!(result.is_some());
+        let p = result.unwrap();
+        assert_eq!(p.percent, 60);
+        assert_eq!(p.stage, "masking");
+    }
 
-    // #[test]
-    // fn test_parse_progress_line_non_progress() {
-    //     let line = "INFO: Loading image from /tmp/drone_001.jpg";
-    //     assert!(parse_progress_line(line).is_none());
-    // }
+    #[test]
+    fn test_parse_progress_line_non_progress() {
+        let line = "INFO: Loading image from /tmp/drone_001.jpg";
+        assert!(parse_progress_line(line).is_none());
+    }
 
-    // #[test]
-    // fn test_parse_progress_line_malformed_json() {
-    //     let line = "PROGRESS: {broken json}";
-    //     // Must not panic — just returns None
-    //     assert!(parse_progress_line(line).is_none());
-    // }
+    #[test]
+    fn test_parse_progress_line_malformed_json() {
+        let line = "PROGRESS: {broken json}";
+        assert!(parse_progress_line(line).is_none());
+    }
+
+    #[test]
+    fn test_build_execution_payload_conforms_to_schema() {
+        let req = StartJobRequestDto {
+            plugin_id: "rgb-vegetation-exg".to_string(),
+            session_id: Some("session_001".to_string()),
+            target_image_path: "/data/images/drone_01.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            aoi: None,
+            parameters: HashMap::from([("threshold".to_string(), serde_json::json!(0.35))]),
+        };
+        let output_dir = Path::new("/tmp/test_output");
+        let payload = build_execution_payload("exec_test_123", output_dir, &req).unwrap();
+
+        assert_eq!(payload.execution_id, "exec_test_123");
+        assert_eq!(payload.session_id, Some("session_001".to_string()));
+        assert_eq!(payload.target.granularity, "single_image");
+        assert_eq!(payload.target.image_path, "/data/images/drone_01.jpg");
+        assert_eq!(payload.target.mime_type, "image/jpeg");
+        assert_eq!(
+            payload.parameters.get("threshold"),
+            Some(&serde_json::json!(0.35))
+        );
+    }
+
+    #[test]
+    fn test_read_and_validate_result_valid() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let out_dir = temp_dir.path();
+        let artifact_file = out_dir.join("mask.png");
+        std::fs::write(&artifact_file, b"fake png data").unwrap();
+
+        let result_json = serde_json::json!({
+            "execution_id": "exec_test",
+            "status": "success",
+            "execution_time_ms": 150,
+            "metrics": {
+                "coverage_pct": 72.5
+            },
+            "artifacts": {
+                "mask": {
+                    "file_path": "mask.png",
+                    "format": "image/png",
+                    "bounds": [116.85, -1.24, 116.86, -1.23]
+                }
+            },
+            "error": null
+        });
+
+        let result_path = out_dir.join("result.json");
+        std::fs::write(
+            &result_path,
+            serde_json::to_string_pretty(&result_json).unwrap(),
+        )
+        .unwrap();
+
+        let parsed = read_and_validate_result(&result_path, out_dir).unwrap();
+        assert_eq!(parsed.job_id, "exec_test");
+        assert_eq!(parsed.status, "success");
+        assert_eq!(parsed.execution_time_ms, 150);
+        assert!(parsed.artifacts.contains_key("mask"));
+    }
+
+    #[test]
+    fn test_read_and_validate_result_missing_artifact() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let out_dir = temp_dir.path();
+
+        let result_json = serde_json::json!({
+            "execution_id": "exec_test",
+            "status": "success",
+            "execution_time_ms": 150,
+            "metrics": {},
+            "artifacts": {
+                "mask": {
+                    "file_path": "non_existent.png",
+                    "format": "image/png"
+                }
+            }
+        });
+
+        let result_path = out_dir.join("result.json");
+        std::fs::write(
+            &result_path,
+            serde_json::to_string_pretty(&result_json).unwrap(),
+        )
+        .unwrap();
+
+        let err = read_and_validate_result(&result_path, out_dir);
+        assert!(err.is_err());
+        assert_eq!(err.unwrap_err().code(), "ARTIFACT_MISSING");
+    }
+
+    #[test]
+    fn test_read_and_validate_result_sandbox_escape() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let out_dir = temp_dir.path();
+
+        // Create an artifact file outside the sandbox
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside_file = outside_dir.path().join("evil.txt");
+        std::fs::write(&outside_file, b"escaped!").unwrap();
+
+        let result_json = serde_json::json!({
+            "execution_id": "exec_test",
+            "status": "success",
+            "execution_time_ms": 150,
+            "metrics": {},
+            "artifacts": {
+                "evil": {
+                    "file_path": outside_file.to_string_lossy(),
+                    "format": "text/plain"
+                }
+            }
+        });
+
+        let result_path = out_dir.join("result.json");
+        std::fs::write(
+            &result_path,
+            serde_json::to_string_pretty(&result_json).unwrap(),
+        )
+        .unwrap();
+
+        let err = read_and_validate_result(&result_path, out_dir);
+        assert!(err.is_err());
+        assert_eq!(err.unwrap_err().code(), "SECURITY_VIOLATION");
+    }
 }
