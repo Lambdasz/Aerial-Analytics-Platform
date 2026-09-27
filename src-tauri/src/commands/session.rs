@@ -14,7 +14,7 @@ fn lock_err(e: impl std::fmt::Display) -> CommandError {
     }
 }
 
-/// Membuat session baru, kosong (belum ada image).
+/// Creates a new, empty session (no images assigned yet).
 #[tauri::command]
 pub fn create_session(
     state: tauri::State<AppState>,
@@ -25,7 +25,7 @@ pub fn create_session(
     Ok(flight_session::create_session(&conn, project_id, name)?)
 }
 
-/// Ambil 1 session by id.
+/// Fetches a single session by id.
 #[tauri::command]
 pub fn get_session(
     state: tauri::State<AppState>,
@@ -35,7 +35,7 @@ pub fn get_session(
     Ok(flight_session::get_session(&conn, session_id)?)
 }
 
-/// Ambil semua session dalam 1 project.
+/// Lists every session belonging to a project.
 #[tauri::command]
 pub fn get_sessions_by_project(
     state: tauri::State<AppState>,
@@ -45,7 +45,7 @@ pub fn get_sessions_by_project(
     Ok(flight_session::get_sessions_by_project(&conn, project_id)?)
 }
 
-/// User overwrite nama session yang auto-generate.
+/// Overwrites a session's auto-generated name with a user-provided one.
 #[tauri::command]
 pub fn update_session_name(
     state: tauri::State<AppState>,
@@ -58,7 +58,7 @@ pub fn update_session_name(
     )?)
 }
 
-/// Ubah status active <-> archived.
+/// Transitions a session between `active` and `archived`.
 #[tauri::command]
 pub fn update_session_status(
     state: tauri::State<AppState>,
@@ -71,7 +71,7 @@ pub fn update_session_status(
     )?)
 }
 
-/// Dipanggil saat user upload dan pilih session existing.
+/// Called when the user uploads an image and picks an existing session.
 #[tauri::command]
 pub fn assign_image_to_session(
     state: tauri::State<AppState>,
@@ -84,8 +84,8 @@ pub fn assign_image_to_session(
     )?)
 }
 
-/// Hitung ulang date_start/date_end dari EXIF captured_at semua image di session ini.
-/// Dipanggil setiap ada image masuk atau keluar.
+/// Recomputes date_start/date_end from the EXIF captured_at of every image
+/// in this session. Called whenever an image is added to or removed from it.
 #[tauri::command]
 pub fn recalculate_session_date_range(
     state: tauri::State<AppState>,
@@ -97,8 +97,8 @@ pub fn recalculate_session_date_range(
     )?)
 }
 
-/// Perilaku penghapusan session yang masih memiliki image terkait belum ditentukan
-/// dan memerlukan pembahasan lebih lanjut dengan tim.
+/// The behavior for deleting a session that still has images assigned to it
+/// has not been decided yet and needs further discussion with the team.
 #[tauri::command]
 pub fn delete_session(state: tauri::State<AppState>, session_id: Uuid) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(lock_err)?;
