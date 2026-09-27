@@ -28,7 +28,7 @@ cargo test --manifest-path src-tauri/Cargo.toml                               # 
 cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  # generate rustdoc
 ```
 
-**No JS/TS test runner** (no `test` script in `package.json`) — don't mention one in changes or PRs. Rust tests exist (`cargo test`, see above). Plugin tests: `python -m unittest discover -s tests -v` from inside the plugin dir (e.g. `plugins/rgb-landcover-classification/`; needs the plugin's Python deps).
+**No JS/TS test runner** (no `test` script in `package.json`) — don't mention one in changes or PRs. Rust tests exist (`cargo test`, see above). Plugin tests: `python -m unittest discover -s tests -v` from inside the plugin dir (`plugins/rgb-landcover-classification/` or `plugins/tree_detection/`; needs the plugin's Python deps).
 
 ### Pre-commit gates (all four MUST pass)
 
@@ -74,18 +74,19 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
 - `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).
   - `plugin_manager.rs` + `plugin_manager/` — plugin discovery, lifecycle, async execution, error isolation. The entry is the file `plugin_manager.rs`; never reintroduce `plugin_manager/mod.rs` alongside it (Rust rejects both existing).
-  - `commands/` — Tauri IPC commands (thin handlers).
+  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, Module 1 flight sessions). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, `plugin_manager/commands.rs` + `executor.rs`, and `greet`/`import_plots` inline in `lib.rs`.
   - `models/` — Shared Rust types (must derive `Serialize`/`Deserialize` if crossing IPC boundary).
-  - `services/` — Business logic (commands delegate here).
-  - `modules/` — Module-specific logic (module_01 metadata, module_10 temporal).
+  - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_10/` (temporal change analysis).
+  - `plot.rs` / `plot_api.rs` — Module 9 (GeoJSON plot import, plot API).
   - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
-  - `reporting/` — Reporting module.
-- `plugins/` — Plugin implementations (mock, mock_rust, rgb-vegetation-detection, rgb-landcover-classification, template).
+  - `reporting.rs` + `reporting/` — Module 11 scaffolding. **Not compiled**: `lib.rs` has no `mod reporting;`, so changes there aren't built or checked until it's wired in.
+  - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
+- `plugins/` — Plugin implementations (mock, mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, template).
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
 
 ### Adding new Tauri commands (2 required steps)
 
-1. Implement the `#[tauri::command]` function (thin — parse/validate, delegate to `services/`, map errors).
+1. Implement the `#[tauri::command]` function in `src-tauri/src/commands/` — never in `modules/`, `plugin_manager/`, or `lib.rs` (thin — parse/validate, delegate to the module's logic in `modules/module_NN/`, map errors). Stateful commands take `tauri::State<AppState>` (`AppState` in `lib.rs` holds the plugin job tracker and the shared SQLite connection).
 2. Register it in `invoke_handler(tauri::generate_handler![...])` in `src-tauri/src/lib.rs`.
 
 **Do NOT add capability entries for custom commands.** They are auto-allowed; an unknown `allow-*` entry in `src-tauri/capabilities/default.json` breaks the Tauri build script ("Permission ... not found"). That file is only for plugin/core permissions (e.g. `opener:default`, `dialog:default`). (CONTRIBUTING.md still claims otherwise — the build script is the source of truth.)
@@ -110,14 +111,15 @@ Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payl
 ### Key constraints
 
 - **Failing plugins MUST NOT crash the core app.** All plugin execution is isolated via async subprocesses (Tokio). Design plugin boundaries with this in mind.
+- **Local DB is SQLite via `rusqlite`** (`bundled` feature — no system SQLite needed). `run()` in `lib.rs` opens `aerial.db` in the project root and shares one connection through `AppState.db` (`Arc<Mutex<rusqlite::Connection>>`); schema is created by `modules::module_01::init_schema`. The project-root location is a temporary, dev-only choice — never commit `.db` files, and don't build features that assume the path is permanent (it will move to the OS app-data dir before a real release).
 - **Vite port is fixed at 1420** (`strictPort: true` in `vite.config.ts`) because Tauri's `devUrl` expects it (`src-tauri/tauri.conf.json`). `src-tauri/**` is excluded from Vite's file watcher.
 - **TypeScript strict mode** is enabled (`tsconfig.json`): `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`.
 - **Prettier**: semicolons on, double quotes, trailing commas, 100 char print width.
 
 ### Where new code goes
 
-- New Tauri command → `src-tauri/src/commands/` + register in `lib.rs` (no capability entry — see above).
-- Command bodies MUST stay thin — logic belongs in `services/`.
+- New Tauri command → `src-tauri/src/commands/` only (one file per domain, e.g. `session.rs`) + register in `lib.rs` (no capability entry — see above).
+- Command bodies MUST stay thin — logic belongs in `src-tauri/src/modules/module_NN/`.
 - New Rust data model → `src-tauri/src/models/`.
 - New TypeScript helper → `src/lib/`.
 - New UI → `src/features/<feature>/` (note: pages currently live in `src/modules/module-NN/`). Promote to shared `src/components/` only when 2+ features need it.
