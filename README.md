@@ -4,6 +4,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![rusqlite](https://img.shields.io/badge/rusqlite-0.32-003B57?logo=sqlite&logoColor=white)](https://github.com/rusqlite/rusqlite)
 [![Blueprint](https://img.shields.io/badge/Blueprint.js-6-2d72d2?style=flat&logo=blueprint&logoColor=white)](https://blueprintjs.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
@@ -41,6 +42,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 - **Frontend Language**: [TypeScript 6](https://www.typescriptlang.org/)
 - **Backend Language**: [Rust](https://rust-lang.org/)
+- **Database**: [SQLite](https://sqlite.org/) via [rusqlite 0.32](https://github.com/rusqlite/rusqlite) (bundled)
 - **UI Framework**: [React 19](https://react.dev/)
 - **UI Component Library**: [Blueprint.js](https://blueprintjs.com/)
 - **Map**: [Leaflet](https://leafletjs.com/) / [react-leaflet](https://react-leaflet.js.org/)
