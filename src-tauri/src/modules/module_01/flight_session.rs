@@ -219,7 +219,18 @@ pub fn assign_image_to_session(
     session_id: Uuid,
     image_id: Uuid,
 ) -> Result<(), SessionError> {
-    let rows = conn.execute(
+    let previous_session_id: Option<String> = conn
+        .query_row(
+            "SELECT session_id FROM image WHERE id = ?1",
+            params![image_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(previous_session_id) = previous_session_id else {
+        return Err(SessionError::ImageNotFound { image_id });
+    };
+
+    conn.execute(
         "UPDATE image SET session_id = ?1 WHERE id = ?2",
         params![session_id.to_string(), image_id.to_string()],
     )?;
