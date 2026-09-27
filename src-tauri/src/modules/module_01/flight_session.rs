@@ -234,10 +234,15 @@ pub fn assign_image_to_session(
         "UPDATE image SET session_id = ?1 WHERE id = ?2",
         params![session_id.to_string(), image_id.to_string()],
     )?;
-    if rows == 0 {
-        return Err(SessionError::ImageNotFound { image_id });
+
+    recalculate_session_date_range(conn, session_id)?;
+
+    if previous_session_id != session_id.to_string() {
+        if let Ok(previous_session_id) = Uuid::parse_str(&previous_session_id) {
+            recalculate_session_date_range(conn, previous_session_id)?;
+        }
     }
-    recalculate_session_date_range(conn, session_id)
+    Ok(())
 }
 
 /// Recomputes `date_start`/`date_end` for a session from the `captured_at`
@@ -258,6 +263,17 @@ pub fn recalculate_session_date_range(
     conn: &Connection,
     session_id: Uuid,
 ) -> Result<(), SessionError> {
+    let exists: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM session WHERE id = ?1",
+            params![session_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if exists.is_none() {
+        return Err(SessionError::NotFound { session_id });
+    }
+
     let mut stmt = conn.prepare(
         "SELECT id, session_id, file_path, location_lat, location_lon, captured_at
          FROM image WHERE session_id = ?1",
