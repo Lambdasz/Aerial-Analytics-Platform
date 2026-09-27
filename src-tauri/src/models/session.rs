@@ -1,5 +1,20 @@
 //! Data model definitions for `Session`, `Project`, and `Image`.
 //!
+//! These are the canonical persisted records for Module 1's organisational
+//! hierarchy:
+//!
+//! ```text
+//! Project
+//! └── Session (date_start/date_end derived from its images)
+//!     └── Image (one persisted record per imported file)
+//! ```
+//!
+//! [`Image`] here is the storage-side record (id, path, location, capture
+//! time). It does not carry the richer EXIF/XMP metadata captured during
+//! import — see [`crate::models::image::ImageMetadata`] for that, and
+//! [`crate::models::image`] generally for the in-flight import pipeline
+//! types that precede a record landing here.
+//!
 //! # A Note on Temporal Representation
 //!
 //! These structs use two different datetime types on purpose — don't mix
