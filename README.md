@@ -28,6 +28,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
     * [3. Development](#3-development)
   * [Dealing with Dependencies](#dealing-with-dependencies)
   * [Available Scripts](#available-scripts)
+    * [Generating Rust Documentation](#generating-rust-documentation)
   * [Continuous Integration](#continuous-integration)
   * [Project Structure](#project-structure)
   * [Contributing](#contributing)
@@ -257,7 +258,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   └── mod.rs
 │       ├── models/               # Serde structs/enums shared with the frontend
 │       │   ├── session.rs        # Flight session types
-│       │   ├── image.rs   # Image import types
+│       │   ├── image.rs          # Image import and image metadata types
 │       │   └── mod.rs
 │       ├── services/             # Domain logic — pure functions where practical
 │       ├── modules/
