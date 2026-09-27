@@ -473,13 +473,21 @@ use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 
 /// Shared application state injected into every Tauri command via `.manage()`.
 pub struct AppState {
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
+    /// SQLite connection shared across commands that need persistence
+    /// (currently: Flight Session Management, Module 1.4).
+    ///
+    /// TODO(M1.4): file location is a placeholder (`aerial.db` next to the
+    /// binary's working directory, per team decision 2026-09-26 to keep it
+    /// simple for dev) — revisit for the OS app-data directory before
+    /// shipping a real build.
+    pub db: Arc<Mutex<rusqlite::Connection>>,
 }
 
 // Learn more about Tauri commands at
@@ -504,11 +512,15 @@ pub mod plot_api;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let db_conn = rusqlite::Connection::open("aerial.db").expect("failed to open SQLite database");
+    modules::module_01::init_schema(&db_conn).expect("failed to initialize session/image schema");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+            db: Arc::new(Mutex::new(db_conn)),
         })
         .invoke_handler(tauri::generate_handler![
             greet,
