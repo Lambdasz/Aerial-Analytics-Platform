@@ -107,6 +107,10 @@ pub enum ImportError {
     /// `session_id` does not reference an existing session.
     SessionNotFound { session_id: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
+    ///
+    /// Also used as a defensive fallback by `module_01::image_importer::classify_file`
+    /// when the format detector fails in a way its contract says can't happen;
+    /// in that case `extension` isn't necessarily the actual cause.
     UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
     MagicMismatch { path: String },

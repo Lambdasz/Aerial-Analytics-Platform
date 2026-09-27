@@ -26,6 +26,12 @@ use crate::modules::module_01::metadata_extractor::detect_format;
 /// [`ImportError::UnsupportedFormat`] if the extension is missing or not
 /// jpeg/jpg/dng. [`ImportError::MagicMismatch`] if the extension is supported
 /// but `header` does not match. `path` is `candidate.source_path`.
+///
+/// Also returns [`ImportError::UnsupportedFormat`] as a defensive fallback if
+/// [`detect_format`] returns an `Io`/`MalformedExif`/`MalformedXmp`
+/// [`MetadataError`] — variants its own contract says it never produces. In
+/// that case `extension` is not necessarily unsupported; the failure is
+/// unrelated to the extension check.
 fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
     let extension = extension_of(&candidate.file_name);
     match detect_format(&candidate.header, &extension) {
