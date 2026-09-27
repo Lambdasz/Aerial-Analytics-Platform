@@ -54,3 +54,43 @@ impl From<MetadataError> for crate::plugin_manager::error::CommandError {
         }
     }
 }
+
+/// Domain error for Flight Session Management operations (Module 1.4).
+///
+/// Maps to [`CommandError`](crate::plugin_manager::error::CommandError) for
+/// transmission to the frontend via Tauri IPC.
+#[derive(Error, Debug)]
+pub enum SessionError {
+    /// No session exists with the given id.
+    #[error("session '{session_id}' not found")]
+    NotFound { session_id: uuid::Uuid },
+
+    /// `assign_image_to_session` was called with an image id that does not
+    /// exist in the `image` table.
+    #[error("image '{image_id}' not found")]
+    ImageNotFound { image_id: uuid::Uuid },
+
+    /// The underlying SQLite operation failed.
+    #[error("database error: {0}")]
+    Db(#[from] rusqlite::Error),
+}
+
+impl SessionError {
+    /// Returns a short error code for client-side programmatic matching.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound { .. } => "SESSION_NOT_FOUND",
+            Self::ImageNotFound { .. } => "IMAGE_NOT_FOUND",
+            Self::Db(_) => "DB_ERROR",
+        }
+    }
+}
+
+impl From<SessionError> for crate::plugin_manager::error::CommandError {
+    fn from(err: SessionError) -> Self {
+        crate::plugin_manager::error::CommandError {
+            code: err.code().to_string(),
+            message: err.to_string(),
+        }
+    }
+}
