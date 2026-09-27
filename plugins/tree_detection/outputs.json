@@ -1,0 +1,72 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "tree_count",
+      "label": "Tree Count",
+      "type": "integer",
+      "unit": "items",
+      "description": "Trees kept after confidence filtering (inside the AOI when one is given)."
+    },
+    {
+      "key": "avg_confidence",
+      "label": "Average Confidence",
+      "type": "float",
+      "description": "Mean confidence of the counted detections (0.0-1.0)."
+    },
+    {
+      "key": "removed_low_confidence",
+      "label": "Removed (Low Confidence)",
+      "type": "integer",
+      "unit": "items",
+      "description": "Detections discarded by the confidence threshold."
+    },
+    {
+      "key": "trees_outside_aoi",
+      "label": "Trees Outside AOI",
+      "type": "integer",
+      "unit": "items",
+      "description": "Detections outside the AOI polygon. 0 when no AOI is given."
+    },
+    {
+      "key": "analysis_area_m2",
+      "label": "Analysis Area",
+      "type": "float",
+      "unit": "m²",
+      "description": "AOI area, or the image ground footprint when no AOI is given."
+    },
+    {
+      "key": "tree_density",
+      "label": "Tree Density",
+      "type": "float",
+      "description": "tree_count divided by analysis_area_m2, in the unit given by tree_density_unit."
+    },
+    {
+      "key": "tree_density_unit",
+      "label": "Tree Density Unit",
+      "type": "string",
+      "description": "Either per_ha or per_m2."
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "tree_points",
+      "label": "Detected Trees",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": false,
+      "layer_hint": {
+        "layer_type": "point_marker",
+        "stroke_color": "#1a7f37"
+      }
+    },
+    {
+      "key": "plugin_output",
+      "label": "Full Detection Result",
+      "type": "document",
+      "format": "application/json",
+      "optional": false
+    }
+  ]
+}

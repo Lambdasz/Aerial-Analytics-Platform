@@ -1,0 +1,9 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/inputs.v1.json",
+  "granularity": "single_image",
+  "supported_mime_types": ["image/jpeg", "image/png", "image/tiff"],
+  "requires_metadata": ["resolution", "gps"],
+  "optional_metadata": ["altitude", "timestamp"],
+  "supports_aoi": true,
+  "aoi_format": "geojson_polygon"
+}

@@ -1,0 +1,53 @@
+.gallery-sidebar {
+  width: 320px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #293742; /* Blueprint Dark background */
+  border-right: 1px solid #10161a;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.gallery-header {
+  padding: 15px;
+  border-bottom: 1px solid #10161a;
+  background-color: #30404d;
+}
+
+.gallery-list {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gallery-card {
+  padding: 8px !important;
+  display: flex;
+  gap: 10px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.gallery-card.active {
+  border: 1px solid #137cbd; /* Blueprint primary blue */
+  box-shadow: 0 0 0 2px rgba(19, 124, 189, 0.4) !important;
+  background-color: #394b59;
+}
+
+.gallery-card img {
+  width: 80px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.gallery-card-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  font-size: 12px;
+}

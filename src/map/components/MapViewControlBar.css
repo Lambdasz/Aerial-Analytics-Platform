@@ -1,0 +1,28 @@
+.map-view-control-bar {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  z-index: 1000; /* Above Leaflet map */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map-view-control-bar .bp5-button-group {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  background: white;
+  border-radius: 4px;
+}
+
+.zoom-indicator {
+  font-family: monospace;
+  font-weight: bold;
+  min-width: 45px;
+  text-align: center;
+}
+/* Blueprint disabled buttons look too faded, let's keep it visible but unclickable */
+.zoom-indicator.bp5-disabled {
+  color: #182026 !important;
+  opacity: 1 !important;
+  background-color: #f5f8fa !important;
+}
