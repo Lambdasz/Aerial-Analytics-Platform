@@ -4,7 +4,7 @@
     "payload": {
       "layer_id": "result_tree_001",
       "layer_name": "Deteksi Pohon - Sektor A",
-      "display_preference": { "type": "point", "color": "#FF0000", "icon": "tree_marker" },
+      "display_preference": { "type": "point", "color": "#27AE60", "icon": "tree_marker" },
       "spatial_results": [
         {
           "source": "tree_detection_v1",
@@ -28,11 +28,11 @@
     "action": "load_spatial_result",
     "payload": {
       "layer_id": "result_vegetation_001",
-      "layer_name": "Indeks Vegetasi - Sektor A",
+      "layer_name": "Deteksi Vegetasi (ExG) - Sektor A",
       "display_preference": { "type": "point", "color": "#2ECC40", "icon": "" },
       "spatial_results": [
         {
-          "source": "vegetation_index_v1",
+          "source": "vegetation_detection_v1",
           "geometry": {
             "type": "Polygon",
             "coordinates": [
@@ -46,7 +46,7 @@
             ]
           },
           "properties": {
-            "vegetation_index_type": "NDVI",
+            "vegetation_index_type": "ExG",
             "mean_greenness_score": 0.68,
             "area_sqm": 1420.5
           }
@@ -57,19 +57,49 @@
   {
     "action": "load_spatial_result",
     "payload": {
-      "layer_id": "result_building_001",
-      "layer_name": "Deteksi Bangunan - Sektor A",
-      "display_preference": { "type": "point", "color": "#0074D9", "icon": "building_marker" },
+      "layer_id": "result_landcover_001",
+      "layer_name": "Klasifikasi Tutupan Lahan - Sektor A",
+      "display_preference": { "type": "point", "color": "#E67E22", "icon": "" },
       "spatial_results": [
         {
-          "source": "building_detection_v1",
-          "geometry": { "type": "Point", "coordinates": [116.458, -1.235] },
-          "properties": { "building_id": "B-001" }
+          "source": "landcover_classification_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.4578, -1.234],
+                [116.4592, -1.234],
+                [116.4592, -1.2354],
+                [116.4578, -1.2354],
+                [116.4578, -1.234]
+              ]
+            ]
+          },
+          "properties": {
+            "land_cover_class": "bare_soil",
+            "confidence": 0.85,
+            "area_sqm": 980.0
+          }
         },
         {
-          "source": "building_detection_v1",
-          "geometry": { "type": "Point", "coordinates": [116.4583, -1.2353] },
-          "properties": { "building_id": "B-002" }
+          "source": "landcover_classification_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.4592, -1.234],
+                [116.4605, -1.234],
+                [116.4605, -1.2354],
+                [116.4592, -1.2354],
+                [116.4592, -1.234]
+              ]
+            ]
+          },
+          "properties": {
+            "land_cover_class": "built_area",
+            "confidence": 0.91,
+            "area_sqm": 760.0
+          }
         }
       ]
     }

@@ -117,10 +117,10 @@ pub struct TreeProperties {
     pub height_est_m: f64,
 }
 
-/// Atribut khusus untuk hasil analisis indeks vegetasi (area).
+/// Atribut khusus untuk hasil analisis indeks vegetasi (Modul 4).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VegetationProperties {
-    /// Jenis indeks vegetasi yang digunakan (misal: `"NDVI"`, `"EVI"`).
+    /// Jenis indeks vegetasi yang digunakan (misal: `"ExG"`, `"VARI"`).
     pub vegetation_index_type: String,
 
     /// Skor rata-rata tingkat kehijauan pada area poligon tersebut.
@@ -130,26 +130,41 @@ pub struct VegetationProperties {
     pub area_sqm: f64,
 }
 
-/// Atribut khusus untuk hasil deteksi bangunan atau infrastruktur.
+/// Atribut khusus untuk hasil klasifikasi tutupan lahan (Modul 8).
+///
+/// Kelas tutupan lahan mencerminkan jenis area yang terdeteksi secara visual:
+/// vegetasi, tanah kosong, air, atau area terbangun (sebagai kelas, bukan deteksi bangunan individual).
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BuildingProperties {
-    /// ID unik dari bangunan yang dideteksi.
-    pub building_id: String,
+pub struct LandCoverProperties {
+    /// Nama kelas tutupan lahan yang terdeteksi
+    /// (misal: `"vegetation"`, `"bare_soil"`, `"water"`, `"built_area"`).
+    pub land_cover_class: String,
+
+    /// Tingkat kepercayaan klasifikasi (0.0 – 1.0).
+    pub confidence: f64,
+
+    /// Luas area kelas ini dalam satuan meter persegi.
+    pub area_sqm: f64,
 }
 
 /// Penampung fleksibel untuk segala jenis properti fitur spasial.
+///
+/// Hanya mencakup hasil dari modul analitik yang ada dalam scope proyek:
+/// - Modul 4 (RGB Vegetation Detection) → `Vegetation`
+/// - Modul 7 (Tree Detection & Counting) → `Tree`
+/// - Modul 8 (Land-Cover Classification) → `LandCover`
 ///
 /// Menggunakan atribut `#[serde(untagged)]`, sehingga saat de-serialisasi/serialisasi JSON,
 /// tipe data akan dicocokkan otomatis berdasarkan field yang tersedia (tanpa field penanda eksplisit).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum SpatialProperties {
-    /// Atribut deteksi pohon.
+    /// Atribut deteksi pohon (Modul 7).
     Tree(TreeProperties),
 
-    /// Atribut analisis vegetasi.
+    /// Atribut analisis vegetasi (Modul 4).
     Vegetation(VegetationProperties),
 
-    /// Atribut deteksi bangunan.
-    Building(BuildingProperties),
+    /// Atribut klasifikasi tutupan lahan (Modul 8).
+    LandCover(LandCoverProperties),
 }

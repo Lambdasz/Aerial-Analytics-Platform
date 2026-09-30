@@ -1,3 +1,17 @@
+/**
+ * Kontrak data spasial yang diterima dari backend Rust via Tauri.
+ *
+ * Hanya mencakup modul analitik yang berada dalam scope proyek:
+ * - Modul 4 (RGB Vegetation Detection)  → VegetationProperties
+ * - Modul 7 (Tree Detection & Counting) → TreeProperties
+ * - Modul 8 (Land-Cover Classification) → LandCoverProperties
+ *
+ * Catatan: BuildingProperties TIDAK termasuk — deteksi bangunan individual
+ * bukan bagian dari scope proyek ini. Modul 8 mengklasifikasikan
+ * tutupan lahan secara visual (termasuk 'built_area' sebagai kelas area,
+ * bukan deteksi objek bangunan individual).
+ */
+
 export interface MapLayerCommand {
   action: string;
   payload: LayerPayload;
@@ -20,22 +34,52 @@ export interface SpatialResult {
   properties: SpatialProperties;
 }
 
-// Catatan: coordinates mengikuti urutan GeoJSON [longitude, latitude]
+// Koordinat mengikuti urutan GeoJSON: [longitude, latitude]
 export type SpatialGeometry =
   { type: "Point"; coordinates: [number, number] } | { type: "Polygon"; coordinates: number[][][] };
 
-export type SpatialProperties = TreeProperties | VegetationProperties | BuildingProperties;
+/**
+ * Union tipe properti untuk seluruh hasil analitik yang didukung.
+ * Sesuai dengan `SpatialProperties` enum di backend Rust.
+ */
+export type SpatialProperties = TreeProperties | VegetationProperties | LandCoverProperties;
 
+/** Modul 7 — Tree Detection & Counting */
 export interface TreeProperties {
   tree_id: string;
   confidence: number;
   height_est_m: number;
 }
+
+/** Modul 4 — RGB Vegetation Detection */
 export interface VegetationProperties {
+  /** Jenis indeks yang digunakan: "ExG", "ExR", "VARI", dll. */
   vegetation_index_type: string;
   mean_greenness_score: number;
   area_sqm: number;
 }
-export interface BuildingProperties {
-  building_id: string;
+
+/**
+ * Modul 8 — RGB Land-Cover Classification
+ *
+ * Kelas yang mungkin muncul: "vegetation", "bare_soil", "water", "built_area"
+ * 'built_area' adalah kelas tutupan lahan (bukan deteksi bangunan individual).
+ */
+export interface LandCoverProperties {
+  land_cover_class: string;
+  confidence: number;
+  area_sqm: number;
+}
+
+// Type guards untuk membedakan tipe properties
+export function isTreeProperties(p: SpatialProperties): p is TreeProperties {
+  return "tree_id" in p;
+}
+
+export function isVegetationProperties(p: SpatialProperties): p is VegetationProperties {
+  return "vegetation_index_type" in p;
+}
+
+export function isLandCoverProperties(p: SpatialProperties): p is LandCoverProperties {
+  return "land_cover_class" in p;
 }

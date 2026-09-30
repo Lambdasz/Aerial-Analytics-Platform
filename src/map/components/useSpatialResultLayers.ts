@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
-import { invoke } from "@tauri-apps/api/core";
 import * as L from "leaflet";
+import { invokeMap } from "../error";
 import type {
   MapLayerCommand,
   LayerPayload,
@@ -53,9 +53,15 @@ function buildLayerGroup(payload: LayerPayload): L.LayerGroup {
 
 /**
  * Memuat data dummy hasil spasial dari backend Rust (command
- * `get_dummy_spatial_layers`) dan merender tiap layer (tree/vegetation/
- * building) ke peta Leaflet. Layer dengan `layer_id` yang sama akan
- * digantikan (replace) jika command dipanggil ulang.
+ * `get_dummy_spatial_layers`) dan merender tiap layer ke peta Leaflet.
+ *
+ * Layer yang didukung sesuai scope proyek:
+ * - Tree detection results   (Modul 7)
+ * - Vegetation detection results (Modul 4)
+ * - Land-cover classification results (Modul 8)
+ *
+ * Layer dengan `layer_id` yang sama akan digantikan (replace)
+ * jika command dipanggil ulang.
  */
 export function useSpatialResultLayers() {
   const map = useMap();
@@ -64,7 +70,7 @@ export function useSpatialResultLayers() {
   useEffect(() => {
     let cancelled = false;
 
-    invoke<MapLayerCommand[]>("get_dummy_spatial_layers")
+    invokeMap<MapLayerCommand[]>("get_dummy_spatial_layers")
       .then((commands) => {
         if (cancelled) return;
         commands.forEach(({ action, payload }) => {
