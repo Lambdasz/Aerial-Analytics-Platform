@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
 import * as L from "leaflet";
 import { invokeMap } from "../error";
@@ -7,9 +7,16 @@ import type {
   LayerPayload,
   SpatialResult,
   LayerDisplayMode,
-} from "../types/spatial_result";
+} from "../types/map";
 
 function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.Layer | null {
+  if (display.type === "image_overlay") {
+    const imageOverlay = L.imageOverlay(display.image_url, display.bounds, {
+      opacity: display.opacity,
+    });
+    return imageOverlay;
+  }
+
   switch (result.geometry.type) {
     case "Point": {
       const [lng, lat] = result.geometry.coordinates; // GeoJSON -> Leaflet
@@ -17,6 +24,18 @@ function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.
         return L.circleMarker([lat, lng], { color: display.color, radius: 8 });
       }
       return L.marker([lat, lng]);
+    }
+    case "LineString": {
+      const latlngs = result.geometry.coordinates.map(([lng, lat]) => [lat, lng] as [number, number]);
+      const color = display.type === "point" ? display.color : "#ff3333";
+      return L.polyline(latlngs, { color });
+    }
+    case "MultiLineString": {
+      const lines = result.geometry.coordinates.map((line) =>
+        line.map(([lng, lat]) => [lat, lng] as [number, number])
+      );
+      const color = display.type === "point" ? display.color : "#ff3333";
+      return L.polyline(lines, { color });
     }
     case "Polygon": {
       const rings = result.geometry.coordinates.map((ring) =>
@@ -27,27 +46,60 @@ function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.
       const color = display.type === "point" ? display.color : "#3388ff";
       return L.polygon(rings, { color });
     }
+
     default:
       return null;
   }
 }
 
-function buildPopupHtml(result: SpatialResult): string {
+function buildPopupHtml(result: SpatialResult, layerName: string): string {
+  const formatKey = (k: string) => k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
   const rows = Object.entries(result.properties)
-    .map(([key, value]) => `<div><strong>${key}</strong>: ${value}</div>`)
+    .map(
+      ([key, value]) => `
+      <tr>
+        <td class="bp5-text-muted"><strong>${formatKey(key)}</strong></td>
+        <td>${value}</td>
+      </tr>
+    `,
+    )
     .join("");
-  return `<div class="spatial-result-popup">${rows}</div>`;
+
+  return `
+    <div class="bp5-card bp5-elevation-2 spatial-result-popup-card" style="padding: 10px; min-width: 220px; background-color: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+      <h6 class="bp5-heading" style="margin-top: 0; margin-bottom: 10px; color: #2C3E50; font-size: 14px; border-bottom: 1px solid #ddd; padding-bottom: 8px;">
+        ${layerName}
+      </h6>
+      <table class="bp5-html-table bp5-html-table-condensed bp5-html-table-striped" style="width: 100%; margin: 0; font-size: 13px; color: #1f2937; background: transparent;">
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 function buildLayerGroup(payload: LayerPayload): L.LayerGroup {
   const group = L.layerGroup();
-  payload.spatial_results.forEach((result) => {
-    const layer = buildFeatureLayer(result, payload.display_preference);
-    if (layer) {
-      layer.bindPopup(buildPopupHtml(result));
-      group.addLayer(layer);
-    }
-  });
+  
+  if (payload.display_preference.type === "image_overlay") {
+    // SpatialResult is not needed for image_overlay, but the function signature expects one.
+    // However, since we bypassed it earlier, let's just create it directly here
+    const layer = L.imageOverlay(payload.display_preference.image_url, payload.display_preference.bounds, {
+      opacity: payload.display_preference.opacity,
+    });
+    group.addLayer(layer);
+  } else {
+    payload.spatial_results.forEach((result) => {
+      const layer = buildFeatureLayer(result, payload.display_preference);
+      if (layer) {
+        layer.bindPopup(buildPopupHtml(result, payload.layer_name));
+        group.addLayer(layer);
+      }
+    });
+  }
+
   return group;
 }
 
@@ -66,6 +118,7 @@ function buildLayerGroup(payload: LayerPayload): L.LayerGroup {
 export function useSpatialResultLayers() {
   const map = useMap();
   const layersRef = useRef<Map<string, L.LayerGroup>>(new Map());
+  const [activeLayers, setActiveLayers] = React.useState<LayerPayload[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +126,7 @@ export function useSpatialResultLayers() {
     invokeMap<MapLayerCommand[]>("get_dummy_spatial_layers")
       .then((commands) => {
         if (cancelled) return;
+        const loadedLayers: LayerPayload[] = [];
         commands.forEach(({ action, payload }) => {
           if (action !== "load_spatial_result") return;
 
@@ -82,7 +136,9 @@ export function useSpatialResultLayers() {
           const group = buildLayerGroup(payload);
           group.addTo(map);
           layersRef.current.set(payload.layer_id, group);
+          loadedLayers.push(payload);
         });
+        setActiveLayers(loadedLayers);
       })
       .catch((err) => console.error("Gagal memuat dummy spatial layers:", err));
 
@@ -92,6 +148,10 @@ export function useSpatialResultLayers() {
       cancelled = true;
       currentLayers.forEach((group) => map.removeLayer(group));
       currentLayers.clear();
+      setActiveLayers([]);
     };
   }, [map]);
+
+  return { activeLayers };
 }
+// Created by EnBee (Naufal Rifqi Rahman)

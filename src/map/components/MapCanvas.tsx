@@ -7,10 +7,17 @@ import { DroneImageMarker } from "./DroneImageMarker";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
 import { useSpatialResultLayers } from "./useSpatialResultLayers";
+import { MapLegend } from "./MapLegend";
+import { LayerPayload } from "../types/map";
 import "./MapCanvas.css";
 
-const SpatialResultLayer: React.FC = () => {
-  useSpatialResultLayers();
+const SpatialResultLayer: React.FC<{ onLayersChange: (layers: LayerPayload[]) => void }> = ({ onLayersChange }) => {
+  const { activeLayers } = useSpatialResultLayers();
+  
+  React.useEffect(() => {
+    onLayersChange(activeLayers);
+  }, [activeLayers, onLayersChange]);
+
   return null;
 };
 
@@ -42,6 +49,7 @@ type BasemapKey = keyof typeof BASEMAPS;
 
 export const MapCanvas: React.FC = () => {
   const [activeBasemap, setActiveBasemap] = useState<BasemapKey>("osm");
+  const [activeLayers, setActiveLayers] = useState<LayerPayload[]>([]);
   const { markers } = useImageMarkers(500); // Generate 500 dummy markers for testing clustering
 
   return (
@@ -60,6 +68,8 @@ export const MapCanvas: React.FC = () => {
         </ButtonGroup>
       </div>
 
+      <MapLegend layers={activeLayers} />
+
       {/* Map Engine (Fitur 1) */}
       <MapContainer
         center={[-1.247, 116.893]}
@@ -70,7 +80,7 @@ export const MapCanvas: React.FC = () => {
         zoomControl={false} // Zoom control default digantikan oleh MapViewControlBar
       >
         <MapSyncHandler />
-        <SpatialResultLayer />
+        <SpatialResultLayer onLayersChange={setActiveLayers} />
         <MapViewControlBar />
         <ScaleControl position="bottomright" imperial={false} />
 

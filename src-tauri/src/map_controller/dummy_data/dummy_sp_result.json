@@ -1,0 +1,178 @@
+[
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_tree_001",
+      "layer_name": "Deteksi Pohon - Sektor A",
+      "display_preference": { "type": "point", "color": "#27AE60", "icon": "tree_marker" },
+      "spatial_results": [
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.8595, -1.2215] },
+          "properties": { "tree_id": "T-001", "confidence": 0.93, "height_est_m": 12.5 }
+        },
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.8596, -1.2216] },
+          "properties": { "tree_id": "T-002", "confidence": 0.88, "height_est_m": 10.2 }
+        },
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.8597, -1.2214] },
+          "properties": { "tree_id": "T-003", "confidence": 0.77, "height_est_m": 8.4 }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_vegetation_001",
+      "layer_name": "Deteksi Vegetasi (ExG) - Sektor Kariangau",
+      "display_preference": { "type": "point", "color": "#2ECC40", "icon": "" },
+      "spatial_results": [
+        {
+          "source": "vegetation_detection_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.8575, -1.2210],
+                [116.8582, -1.2208],
+                [116.8590, -1.2212],
+                [116.8592, -1.2220],
+                [116.8586, -1.2228],
+                [116.8578, -1.2225],
+                [116.8570, -1.2218],
+                [116.8575, -1.2210]
+              ]
+            ]
+          },
+          "properties": {
+            "vegetation_index_type": "ExG",
+            "mean_greenness_score": 0.68,
+            "area_sqm": 1420.5
+          }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_landcover_001",
+      "layer_name": "Klasifikasi Tutupan Lahan - Sektor Kariangau",
+      "display_preference": { "type": "point", "color": "#E67E22", "icon": "" },
+      "spatial_results": [
+        {
+          "source": "landcover_classification_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.8595, -1.2212],
+                [116.8605, -1.2210],
+                [116.8610, -1.2216],
+                [116.8612, -1.2225],
+                [116.8608, -1.2232],
+                [116.8600, -1.2230],
+                [116.8592, -1.2222],
+                [116.8595, -1.2212]
+              ]
+            ]
+          },
+          "properties": {
+            "land_cover_class": "bare_soil",
+            "confidence": 0.85,
+            "area_sqm": 980.0
+          }
+        },
+        {
+          "source": "landcover_classification_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.8612, -1.2205],
+                [116.8622, -1.2202],
+                [116.8628, -1.2210],
+                [116.8625, -1.2222],
+                [116.8618, -1.2228],
+                [116.8612, -1.2220],
+                [116.8610, -1.2212],
+                [116.8612, -1.2205]
+              ]
+            ]
+          },
+          "properties": {
+            "land_cover_class": "built_area",
+            "confidence": 0.91,
+            "area_sqm": 760.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_drone_ortho_001",
+      "layer_name": "Hasil Scan Drone - Sektor Kariangau",
+      "display_preference": { 
+        "type": "image_overlay", 
+        "image_url": "http://localhost:1420/src/map/dummy_image/drone_ortho.png", 
+        "bounds": [
+          [-1.2243110280554836, 116.855973140003], 
+          [-1.2186297002884836, 116.863202751651]
+        ],
+        "opacity": 1.0
+      },
+      "spatial_results": [] 
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_tree_002",
+      "layer_name": "Deteksi Pohon - Titik B",
+      "display_preference": { "type": "point", "color": "#27AE60", "icon": "tree_marker" },
+      "spatial_results": [
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.8620, -1.2200] },
+          "properties": { "tree_id": "T-004", "confidence": 0.93, "height_est_m": 12.5 }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_line_001",
+      "layer_name": "Jalur Inspeksi - Kariangau",
+      "display_preference": { "type": "point", "color": "#E74C3C", "icon": "" },
+      "spatial_results": [
+        {
+          "source": "inspection_path",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [116.8570, -1.2205],
+              [116.8578, -1.2212],
+              [116.8585, -1.2220],
+              [116.8598, -1.2218],
+              [116.8605, -1.2225],
+              [116.8615, -1.2220],
+              [116.8625, -1.2222]
+            ]
+          },
+          "properties": {
+            "path_id": "P-01",
+            "type": "jalan_tanah",
+            "length_m": 450.5
+          }
+        }
+      ]
+    }
+  }
+]

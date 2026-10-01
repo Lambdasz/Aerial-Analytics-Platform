@@ -66,7 +66,7 @@ pub mod dummy {
     /// file JSON rusak atau tidak sesuai dengan skema [`MapLayerCommand`].
     #[tauri::command]
     pub fn get_dummy_spatial_layers() -> Result<Vec<MapLayerCommand>, String> {
-        const DUMMY_JSON: &str = include_str!("dummy_sp_result.json");
+        const DUMMY_JSON: &str = include_str!("../dummy_data/dummy_sp_result.json");
         serde_json::from_str(DUMMY_JSON)
             .map_err(|e| format!("Gagal parsing dummy_spatial_results.json: {e}"))
     }

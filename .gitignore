@@ -43,3 +43,4 @@ __pycache__/
 # Ngeblok hasil run, soale isinya cmn temporary
 runs/*
 !runs/.gitkeep
+src/map/dummy_image/drone_ortho.png

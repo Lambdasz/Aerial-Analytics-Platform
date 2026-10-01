@@ -95,6 +95,21 @@ impl SpatialGeometry {
                     }
                 }
             }
+            SpatialGeometry::LineString { coordinates } => {
+                if coordinates.len() < 2 {
+                    return Err(MapControllerError::InvalidGeometry(
+                        format!("Geometri LineString membutuhkan setidaknya 2 titik, mendapat {}", coordinates.len())
+                    ));
+                }
+                for (point_idx, point) in coordinates.iter().enumerate() {
+                    if point.len() != 2 {
+                        return Err(MapControllerError::InvalidGeometry(format!(
+                            "Titik ke-{} pada LineString membutuhkan tepat 2 koordinat [lon, lat]",
+                            point_idx
+                        )));
+                    }
+                }
+            }
         }
         Ok(())
     }

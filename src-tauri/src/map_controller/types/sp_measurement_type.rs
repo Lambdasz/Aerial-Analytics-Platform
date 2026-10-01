@@ -62,6 +62,9 @@ pub enum LayerDisplayMode {
 
         /// Tingkat transparansi gambar (0.0 sangat transparan, 1.0 sangat pekat).
         opacity: f64,
+
+        /// Batas koordinat sudut gambar dalam format [[lat_selatan, lng_barat], [lat_utara, lng_timur]].
+        bounds: [[f64; 2]; 2],
     },
 
     /// Merender layer sebagai titik (marker) di koordinat tertentu.
@@ -102,6 +105,10 @@ pub enum SpatialGeometry {
     /// Terdiri dari kumpulan *linear ring*. Tiap *ring* adalah array dari koordinat `[longitude, latitude]`.
     /// Titik awal dan akhir dalam satu *ring* harus sama agar membentuk area tertutup.
     Polygon { coordinates: Vec<Vec<Vec<f64>>> },
+
+    /// Geometri berupa garis.
+    /// Array dari koordinat `[longitude, latitude]`.
+    LineString { coordinates: Vec<Vec<f64>> },
 }
 
 /// Atribut khusus untuk hasil deteksi pohon individu.
@@ -147,6 +154,14 @@ pub struct LandCoverProperties {
     pub area_sqm: f64,
 }
 
+/// Atribut khusus untuk jalur inspeksi.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InspectionPathProperties {
+    pub path_id: String,
+    pub r#type: String, // 'type' is a reserved keyword in rust
+    pub length_m: f64,
+}
+
 /// Penampung fleksibel untuk segala jenis properti fitur spasial.
 ///
 /// Hanya mencakup hasil dari modul analitik yang ada dalam scope proyek:
@@ -167,4 +182,7 @@ pub enum SpatialProperties {
 
     /// Atribut klasifikasi tutupan lahan (Modul 8).
     LandCover(LandCoverProperties),
+    
+    /// Atribut jalur inspeksi.
+    InspectionPath(InspectionPathProperties),
 }
