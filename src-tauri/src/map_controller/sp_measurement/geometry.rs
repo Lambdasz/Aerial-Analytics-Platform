@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 use crate::map_controller::sp_measurement::validation_input::MapControllerError;
+use serde::{Deserialize, Serialize};
 
 /// Jari-jari bumi rata-rata (meter).
 const EARTH_RADIUS_M: f64 = 6_371_008.8;
@@ -26,7 +27,7 @@ pub type Coordinate = [f64; 2];
 pub type Polygon = Vec<Vec<Coordinate>>;
 
 /// Metadata AOI untuk `properties` GeoJSON.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AoiProperties {
     pub aoi_id: String,
     pub name: String,
@@ -36,14 +37,14 @@ pub struct AoiProperties {
 }
 
 /// Bagian `geometry` dari GeoJSON Feature.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AoiGeometry {
     pub r#type: String,
     pub coordinates: Polygon,
 }
 
 /// AOI standar siap dipertukarkan ke Module 2 dan Module 4–10.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AoiFeature {
     pub r#type: String,
     pub properties: AoiProperties,

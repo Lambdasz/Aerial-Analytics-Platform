@@ -423,6 +423,11 @@ pub fn run() {
             // Plot import
             import_plots,
             get_dummy_spatial_layers,
+            // Module 3 — AOI & Spatial Measurement (Person 2)
+            map_controller::commands::measure_distance,
+            map_controller::commands::measure_area,
+            map_controller::commands::measure_perimeter,
+            map_controller::commands::create_aoi_cmd,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,

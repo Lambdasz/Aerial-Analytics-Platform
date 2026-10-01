@@ -38,3 +38,19 @@ impl From<MapControllerError> for crate::plugin_manager::error::CommandError {
         }
     }
 }
+
+/// Converts [`validation_input::MapControllerError`] (used by `geometry.rs` as
+/// `GeometryError`) into the IPC-boundary [`CommandError`] so Tauri commands
+/// can use the `?` operator seamlessly.
+impl From<crate::map_controller::sp_measurement::validation_input::MapControllerError>
+    for crate::plugin_manager::error::CommandError
+{
+    fn from(
+        err: crate::map_controller::sp_measurement::validation_input::MapControllerError,
+    ) -> Self {
+        crate::plugin_manager::error::CommandError {
+            code: err.code(),
+            message: err.to_string(),
+        }
+    }
+}

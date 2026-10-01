@@ -10,8 +10,7 @@
 //! below will be enabled as the Module 3 backend is implemented.
 
 // Anda dapat mendeklarasikan submodule di sini, contoh:
-// pub mod commands;
-// pub mod types;
+pub mod commands;
 
 pub mod error;
 pub mod sp_measurement;
