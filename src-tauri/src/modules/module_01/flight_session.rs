@@ -105,8 +105,8 @@ pub fn create_session(
             session.id.to_string(),
             session.project_id.to_string(),
             session.name,
-            session.date_start.to_string(),
-            session.date_end.to_string(),
+            naive_to_iso(&session.date_start),
+            naive_to_iso(&session.date_end),
             status_to_str(session.status),
             session.created_at.to_rfc3339(),
             session.updated_at.to_rfc3339(),
@@ -289,8 +289,8 @@ pub fn recalculate_session_date_range(
     let rows = conn.execute(
         "UPDATE session SET date_start = ?1, date_end = ?2, updated_at = ?3 WHERE id = ?4",
         params![
-            start.to_string(),
-            end.to_string(),
+            naive_to_iso(&start),
+            naive_to_iso(&end),
             Utc::now().to_rfc3339(),
             session_id.to_string(),
         ],
@@ -357,6 +357,25 @@ fn status_to_str(status: SessionStatus) -> &'static str {
     }
 }
 
+/// Formats a `NaiveDateTime` as ISO 8601 with `T` separator so that
+/// `NaiveDateTime::parse_from_str` (and its `FromStr` impl) can round-trip it.
+///
+/// `NaiveDateTime::to_string()` uses a space separator (`2026-10-01 02:30:18`),
+/// which `NaiveDateTime::from_str` rejects — hence the explicit format here.
+fn naive_to_iso(dt: &NaiveDateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
+}
+
+/// Parses a `NaiveDateTime` from a DB string, tolerating both `T` and space
+/// separators (guards against legacy rows written with `to_string()`).
+fn parse_naive(s: &str, col: usize) -> rusqlite::Result<NaiveDateTime> {
+    // Try the standard FromStr first (expects `T` separator).
+    s.parse::<NaiveDateTime>()
+        // Fall back to the space-separated format produced by Display.
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
+        .map_err(|e| conversion_err(col, rusqlite::types::Type::Text, e))
+}
+
 fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
     let id: String = row.get(0)?;
     let project_id: String = row.get(1)?;
@@ -372,12 +391,8 @@ fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
         project_id: Uuid::parse_str(&project_id)
             .map_err(|e| conversion_err(1, rusqlite::types::Type::Text, e))?,
         name,
-        date_start: date_start
-            .parse()
-            .map_err(|e| conversion_err(3, rusqlite::types::Type::Text, e))?,
-        date_end: date_end
-            .parse()
-            .map_err(|e| conversion_err(4, rusqlite::types::Type::Text, e))?,
+        date_start: parse_naive(&date_start, 3)?,
+        date_end: parse_naive(&date_end, 4)?,
         status: match status.as_str() {
             "archived" => SessionStatus::Archived,
             _ => SessionStatus::Active,
