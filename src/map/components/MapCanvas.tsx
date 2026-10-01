@@ -6,6 +6,7 @@ import { useImageMarkers } from "./useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
+import { AoiDemoToolbar } from "./AoiDemoToolbar";
 import { useSpatialResultLayers } from "./useSpatialResultLayers";
 import { MapLegend } from "./MapLegend";
 import { LayerPayload } from "../types/map";
@@ -84,6 +85,7 @@ export const MapCanvas: React.FC = () => {
         <MapSyncHandler />
         <SpatialResultLayer onLayersChange={setActiveLayers} />
         <MapViewControlBar />
+        <AoiDemoToolbar />
         <ScaleControl position="bottomright" imperial={false} />
 
         <TileLayer
