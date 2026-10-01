@@ -11,9 +11,11 @@ import { MapLegend } from "./MapLegend";
 import { LayerPayload } from "../types/map";
 import "./MapCanvas.css";
 
-const SpatialResultLayer: React.FC<{ onLayersChange: (layers: LayerPayload[]) => void }> = ({ onLayersChange }) => {
+const SpatialResultLayer: React.FC<{ onLayersChange: (layers: LayerPayload[]) => void }> = ({
+  onLayersChange,
+}) => {
   const { activeLayers } = useSpatialResultLayers();
-  
+
   React.useEffect(() => {
     onLayersChange(activeLayers);
   }, [activeLayers, onLayersChange]);

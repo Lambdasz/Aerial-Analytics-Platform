@@ -30,8 +30,10 @@ export const MapLegend: React.FC<MapLegendProps> = ({ layers }) => {
 
   const legendContent = (
     <Card className="map-legend-popup-card" elevation={Elevation.ZERO}>
-      <h5 className="bp5-heading" style={{ marginBottom: "15px" }}>Legenda per Sektor</h5>
-      
+      <h5 className="bp5-heading" style={{ marginBottom: "15px" }}>
+        Legenda per Sektor
+      </h5>
+
       {Object.entries(groupedLayers).map(([sector, items], index, array) => (
         <div key={sector} className="map-legend-sector-group">
           <Tag minimal intent="primary" round style={{ marginBottom: "8px" }}>
@@ -43,9 +45,10 @@ export const MapLegend: React.FC<MapLegendProps> = ({ layers }) => {
                 <span
                   className="map-legend-color-box"
                   style={{
-                    backgroundColor: layer.display_preference.type === "point" 
-                      ? layer.display_preference.color 
-                      : "#cccccc",
+                    backgroundColor:
+                      layer.display_preference.type === "point"
+                        ? layer.display_preference.color
+                        : "#cccccc",
                   }}
                 />
                 <span className="map-legend-label">{layer.layer_name}</span>
@@ -60,17 +63,17 @@ export const MapLegend: React.FC<MapLegendProps> = ({ layers }) => {
 
   return (
     <div className="map-legend-container">
-      <Popover 
-        content={legendContent} 
-        position={Position.TOP_LEFT} 
-        minimal 
+      <Popover
+        content={legendContent}
+        position={Position.TOP_LEFT}
+        minimal
         modifiers={{ offset: { options: { offset: [0, 10] } } }}
       >
-        <Button 
-          icon="properties" 
-          text="Legenda" 
+        <Button
+          icon="properties"
+          text="Legenda"
           intent="primary"
-          large 
+          large
           className="map-legend-button"
         />
       </Popover>

@@ -27,7 +27,7 @@ export interface LayerPayload {
 export type LayerDisplayMode =
   | { type: "polygon"; color: string; opacity: number }
   | { type: "point"; color: string; icon: string }
-  | { 
+  | {
       type: "image_overlay";
       image_url: string;
       opacity: number;
@@ -51,7 +51,8 @@ export type SpatialGeometry =
  * Union tipe properti untuk seluruh hasil analitik yang didukung.
  * Sesuai dengan `SpatialProperties` enum di backend Rust.
  */
-export type SpatialProperties = TreeProperties | VegetationProperties | LandCoverProperties | InspectionPathProperties;
+export type SpatialProperties =
+  TreeProperties | VegetationProperties | LandCoverProperties | InspectionPathProperties;
 
 /** Modul 7 — Tree Detection & Counting */
 export interface TreeProperties {

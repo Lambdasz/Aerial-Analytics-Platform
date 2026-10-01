@@ -182,7 +182,7 @@ pub enum SpatialProperties {
 
     /// Atribut klasifikasi tutupan lahan (Modul 8).
     LandCover(LandCoverProperties),
-    
+
     /// Atribut jalur inspeksi.
     InspectionPath(InspectionPathProperties),
 }

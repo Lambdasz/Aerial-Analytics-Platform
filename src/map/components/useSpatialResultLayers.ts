@@ -2,12 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
 import * as L from "leaflet";
 import { invokeMap } from "../error";
-import type {
-  MapLayerCommand,
-  LayerPayload,
-  SpatialResult,
-  LayerDisplayMode,
-} from "../types/map";
+import type { MapLayerCommand, LayerPayload, SpatialResult, LayerDisplayMode } from "../types/map";
 
 function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.Layer | null {
   if (display.type === "image_overlay") {
@@ -26,13 +21,15 @@ function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.
       return L.marker([lat, lng]);
     }
     case "LineString": {
-      const latlngs = result.geometry.coordinates.map(([lng, lat]) => [lat, lng] as [number, number]);
+      const latlngs = result.geometry.coordinates.map(
+        ([lng, lat]) => [lat, lng] as [number, number],
+      );
       const color = display.type === "point" ? display.color : "#ff3333";
       return L.polyline(latlngs, { color });
     }
     case "MultiLineString": {
       const lines = result.geometry.coordinates.map((line) =>
-        line.map(([lng, lat]) => [lat, lng] as [number, number])
+        line.map(([lng, lat]) => [lat, lng] as [number, number]),
       );
       const color = display.type === "point" ? display.color : "#ff3333";
       return L.polyline(lines, { color });
@@ -82,13 +79,17 @@ function buildPopupHtml(result: SpatialResult, layerName: string): string {
 
 function buildLayerGroup(payload: LayerPayload): L.LayerGroup {
   const group = L.layerGroup();
-  
+
   if (payload.display_preference.type === "image_overlay") {
     // SpatialResult is not needed for image_overlay, but the function signature expects one.
     // However, since we bypassed it earlier, let's just create it directly here
-    const layer = L.imageOverlay(payload.display_preference.image_url, payload.display_preference.bounds, {
-      opacity: payload.display_preference.opacity,
-    });
+    const layer = L.imageOverlay(
+      payload.display_preference.image_url,
+      payload.display_preference.bounds,
+      {
+        opacity: payload.display_preference.opacity,
+      },
+    );
     group.addLayer(layer);
   } else {
     payload.spatial_results.forEach((result) => {
