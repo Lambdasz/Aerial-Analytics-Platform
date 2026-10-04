@@ -49,7 +49,10 @@ fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError
         // returns these variants, but that contract isn't enforced by the type
         // system. Treat it as an unsupported format rather than panicking.
         Err(
-            MetadataError::Io(_) | MetadataError::MalformedExif(_) | MetadataError::MalformedXmp(_),
+            MetadataError::Io(_)
+            | MetadataError::MalformedExif(_)
+            | MetadataError::MalformedXmp(_)
+            | MetadataError::NotImplemented { .. },
         ) => Err(ImportError::UnsupportedFormat {
             path: candidate.source_path.clone(),
             extension,

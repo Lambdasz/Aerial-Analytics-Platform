@@ -175,9 +175,12 @@ pub(crate) struct MetadataCompleteness {
 /// ([`MetadataError::UnsupportedFormat`], [`MetadataError::MagicMismatch`]),
 /// or has a present-but-corrupt EXIF/XMP segment
 /// ([`MetadataError::MalformedExif`], [`MetadataError::MalformedXmp`]).
+/// Until the pipeline is implemented this returns
+/// [`MetadataError::NotImplemented`] instead of panicking.
 pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
-    let _ = path;
-    unimplemented!("M1.3: read file bytes and compose the extraction pipeline")
+    Err(MetadataError::NotImplemented {
+        path: path.display().to_string(),
+    })
 }
 
 /// Determines the image format from the file extension and leading bytes.
