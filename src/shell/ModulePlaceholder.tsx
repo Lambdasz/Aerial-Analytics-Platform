@@ -16,12 +16,12 @@ export interface ModulePlaceholderProps {
 export function ModulePlaceholder({ moduleNumber, title }: ModulePlaceholderProps) {
   return (
     <section className="module-page">
-      <div className="module-page__header">
+      <div className="module-page_header">
         <Tag minimal>Modul {moduleNumber}</Tag>
-        <H3 className="module-page__title">{title}</H3>
+        <H3 className="module-page_title">{title}</H3>
       </div>
 
-      <Card className="module-page__body">
+      <Card className="module-page_body">
         <p>
           Halaman ini masih kosong. Isi halaman dikerjakan oleh pemilik modul di dalam folder{" "}
           <code>src/modules/</code> miliknya.

@@ -1,0 +1,132 @@
+/* style.css */
+
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Poppins:wght@400;600&display=swap");
+
+/* Shell */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-shell_navbar {
+  flex: 0 0 auto;
+}
+
+.app-shell_body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* Sidebar */
+
+.app-shell_sidebar {
+  flex: 0 0 290px;
+  width: 290px;
+  overflow-y: auto;
+  background-color: #252a31;
+  color: #e5e9f9;
+  font-family: "DM Sans", sans-serif;
+}
+
+.app-shell_brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  height: 130px;
+  box-sizing: border-box;
+  padding-top: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: "Poppins", sans-serif;
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.app-shell_brand-bold {
+  font-weight: 600;
+}
+
+.app-shell_menu {
+  margin: 0;
+  padding: 28px 0 0;
+  list-style: none;
+}
+
+.app-shell_item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 56px;
+  padding: 0 0 0 33px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell_item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.app-shell_item:focus,
+.app-shell_item:focus-visible {
+  outline: none;
+}
+
+.app-shell_item--active {
+  font-weight: 700;
+}
+
+.app-shell_item--active::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 0;
+  width: 5px;
+  height: 36px;
+  border-radius: 2px;
+  background: #2279ea;
+  z-index: 1000;
+}
+
+.app-shell_icon {
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
+
+/* Content */
+
+.app-shell_content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+  padding: 20px 24px 48px;
+}
+
+.app-shell_content > * {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.app-shell_content:has(> .app-container) {
+  padding: 0;
+}
