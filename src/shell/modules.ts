@@ -6,6 +6,7 @@ import { Module03Page } from "../modules/module-03/Module03Page";
 import { Module09Page } from "../modules/module-09/Module09Page";
 import { Module10Page } from "../modules/module-10/Module10Page";
 import { Module11Page } from "../modules/module-11/Module11Page";
+import { Example } from "./example";
 
 export interface ModuleEntry {
   /** Stable identifier used for navigation state. */
@@ -60,6 +61,12 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 11,
     label: "Dashboard & Reporting",
     Page: Module11Page,
+  },
+  {
+    id: "example",
+    moduleNumber: 7,
+    label: "Examples",
+    Page: Example,
   },
 ];
 

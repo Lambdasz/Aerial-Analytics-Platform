@@ -20,9 +20,10 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <Navbar className="app-shell_navbar">
-        <Navbar.Group>
-          <Navbar.Heading>Aerial Analytics Platform</Navbar.Heading>
-        </Navbar.Group>
+        <div className="app-shell_navbar-brand">
+          <span className="app-shell_navbar-bold">Aerial</span>
+          <span>Analytics Platform</span>
+        </div>
       </Navbar>
 
       <div className="app-shell_body">
