@@ -94,7 +94,7 @@ pub struct SpatialResult {
 }
 
 /// Bentuk geometri dari hasil spasial yang didukung, mengikuti struktur GeoJSON dasar.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum SpatialGeometry {
     /// Geometri berupa titik tunggal.
