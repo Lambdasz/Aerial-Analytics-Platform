@@ -1,6 +1,6 @@
 .map-wrapper {
   position: relative;
-  flex-grow: 1; /* Allow it to take up remaining space next to sidebar */
+  flex-grow: 1;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -17,7 +17,7 @@
   position: absolute;
   top: 15px;
   right: 15px;
-  z-index: 1000; /* Ensure it stays above the Leaflet canvas */
+  z-index: 1000;
   background: white;
   padding: 5px;
   border-radius: 4px;

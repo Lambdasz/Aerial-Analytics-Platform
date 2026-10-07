@@ -428,6 +428,12 @@ pub fn run() {
             map_controller::commands::measure_area,
             map_controller::commands::measure_perimeter,
             map_controller::commands::create_aoi_cmd,
+            // Module 3 — Layer Management & Annotation (Person 3)
+            map_controller::layer_commands::toggle_layer_visibility_cmd,
+            map_controller::layer_commands::set_layer_opacity_cmd,
+            map_controller::layer_commands::reorder_layer_stack_cmd,
+            map_controller::layer_commands::filter_layers_by_category_cmd,
+            map_controller::layer_commands::create_annotation_cmd,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,

@@ -16,6 +16,7 @@ pub struct LayerState {
 
 /// Error yang dapat terjadi pada operasi layer.
 #[derive(Debug, Error, PartialEq)]
+#[allow(dead_code)]
 pub enum LayerError {
     #[error("layer not found: {0}")]
     LayerNotFound(String),
