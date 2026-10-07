@@ -57,20 +57,14 @@ export function createAoi(args: {
   return invokeMap<AoiFeature>("create_aoi_cmd", args);
 }
 
-export function toggleLayerVisibility(
-  layer: LayerState,
-  isVisible: boolean,
-): Promise<LayerState> {
+export function toggleLayerVisibility(layer: LayerState, isVisible: boolean): Promise<LayerState> {
   return invokeMap<LayerState>("toggle_layer_visibility_cmd", {
     layer,
-    is_visible: isVisible,
+    isVisible,
   });
 }
 
-export function setLayerOpacity(
-  layer: LayerState,
-  opacity: number,
-): Promise<LayerState> {
+export function setLayerOpacity(layer: LayerState, opacity: number): Promise<LayerState> {
   return invokeMap<LayerState>("set_layer_opacity_cmd", {
     layer,
     opacity,
@@ -84,8 +78,8 @@ export function reorderLayerStack(
 ): Promise<LayerState[]> {
   return invokeMap<LayerState[]>("reorder_layer_stack_cmd", {
     layers,
-    from_index: fromIndex,
-    to_index: toIndex,
+    fromIndex,
+    toIndex,
   });
 }
 

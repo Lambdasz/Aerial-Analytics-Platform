@@ -1,12 +1,5 @@
 import React, { useState } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  ScaleControl,
-  Marker,
-  Popup,
-  Polygon,
-} from "react-leaflet";
+import { MapContainer, TileLayer, ScaleControl, Marker, Popup, Polygon } from "react-leaflet";
 import { Button, ButtonGroup } from "@blueprintjs/core";
 
 import { useImageMarkers } from "./useImageMarkers";
@@ -57,34 +50,45 @@ const AnnotationMarkers: React.FC<{
 
         // Data GeoJSON:
         // [longitude, latitude]
-        const [longitude, latitude] =
-          annotation.geometry.coordinates;
+        const [longitude, latitude] = annotation.geometry.coordinates;
 
         return (
-          <Marker
-            key={annotation.annotation_id}
-            position={[latitude, longitude]}
-          >
+          <Marker key={annotation.annotation_id} position={[latitude, longitude]}>
             <Popup>
               <div
                 style={{
-                  minWidth: "180px",
+                  minWidth: "200px",
+                  padding: "4px",
+                  backgroundColor: "#ffffff",
+                  color: "#222222",
+                  borderRadius: "6px",
                 }}
               >
-                <strong>
+                <strong
+                  style={{
+                    display: "block",
+                    fontSize: "14px",
+                    marginBottom: "8px",
+                  }}
+                >
                   Spatial Annotation
                 </strong>
 
                 <div
                   style={{
-                    marginTop: "8px",
-                    marginBottom: "8px",
+                    marginBottom: "10px",
+                    lineHeight: "1.4",
                   }}
                 >
                   {annotation.text}
                 </div>
 
-                <small>
+                <small
+                  style={{
+                    color: "#666666",
+                    lineHeight: "1.5",
+                  }}
+                >
                   Latitude: {latitude}
                   <br />
                   Longitude: {longitude}
@@ -106,9 +110,7 @@ const ManagedMapLayers: React.FC<{
   layers: LayerState[];
   markers: ReturnType<typeof useImageMarkers>["markers"];
 }> = ({ layers, markers }) => {
-  const sortedLayers = [...layers].sort(
-    (a, b) => a.z_index - b.z_index,
-  );
+  const sortedLayers = [...layers].sort((a, b) => a.z_index - b.z_index);
 
   return (
     <>
@@ -225,17 +227,13 @@ type BasemapKey = keyof typeof BASEMAPS;
 // =========================
 
 export const MapCanvas: React.FC = () => {
-  const [activeBasemap, setActiveBasemap] =
-    useState<BasemapKey>("osm");
+  const [activeBasemap, setActiveBasemap] = useState<BasemapKey>("osm");
 
-  const [activeLayers, setActiveLayers] =
-    useState<LayerPayload[]>([]);
+  const [activeLayers, setActiveLayers] = useState<LayerPayload[]>([]);
 
-  const [layers, setLayers] =
-    useState<LayerState[]>([]);
+  const [layers, setLayers] = useState<LayerState[]>([]);
 
-  const [annotations, setAnnotations] =
-    useState<AnnotationFeature[]>([]);
+  const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
 
   const { markers } = useImageMarkers(500);
 
@@ -247,22 +245,14 @@ export const MapCanvas: React.FC = () => {
 
       <div className="basemap-switcher">
         <ButtonGroup>
-          {(Object.keys(BASEMAPS) as BasemapKey[]).map(
-            (key) => (
-              <Button
-                key={key}
-                intent={
-                  activeBasemap === key
-                    ? "primary"
-                    : "none"
-                }
-                onClick={() =>
-                  setActiveBasemap(key)
-                }
-                text={BASEMAPS[key].name}
-              />
-            ),
-          )}
+          {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
+            <Button
+              key={key}
+              intent={activeBasemap === key ? "primary" : "none"}
+              onClick={() => setActiveBasemap(key)}
+              text={BASEMAPS[key].name}
+            />
+          ))}
         </ButtonGroup>
       </div>
 
@@ -276,10 +266,7 @@ export const MapCanvas: React.FC = () => {
           LAYER MANAGEMENT
           ========================= */}
 
-      <LayerManager
-        onAnnotationsChange={setAnnotations}
-        onLayersChange={setLayers}
-      />
+      <LayerManager onAnnotationsChange={setAnnotations} onLayersChange={setLayers} />
 
       {/* =========================
           MAP ENGINE
@@ -295,18 +282,13 @@ export const MapCanvas: React.FC = () => {
       >
         <MapSyncHandler />
 
-        <SpatialResultLayer
-          onLayersChange={setActiveLayers}
-        />
+        <SpatialResultLayer onLayersChange={setActiveLayers} />
 
         <MapViewControlBar />
 
         <AoiDemoToolbar />
 
-        <ScaleControl
-          position="bottomright"
-          imperial={false}
-        />
+        <ScaleControl position="bottomright" imperial={false} />
 
         {/* =========================
             BASEMAP
@@ -315,9 +297,7 @@ export const MapCanvas: React.FC = () => {
         <TileLayer
           key={activeBasemap}
           url={BASEMAPS[activeBasemap].url}
-          attribution={
-            BASEMAPS[activeBasemap].attribution
-          }
+          attribution={BASEMAPS[activeBasemap].attribution}
           maxZoom={21}
         />
 
@@ -325,18 +305,13 @@ export const MapCanvas: React.FC = () => {
             SPATIAL ANNOTATIONS
             ========================= */}
 
-        <AnnotationMarkers
-          annotations={annotations}
-        />
+        <AnnotationMarkers annotations={annotations} />
 
         {/* =========================
             IMAGE LOCATION MARKERS
             ========================= */}
 
-        <ManagedMapLayers
-          layers={layers}
-          markers={markers}
-        />
+        <ManagedMapLayers layers={layers} markers={markers} />
       </MapContainer>
     </div>
   );

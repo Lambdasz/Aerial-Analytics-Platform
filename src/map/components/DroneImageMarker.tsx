@@ -7,7 +7,7 @@ import { useImageSync } from "../store/ImageSyncContext";
 
 interface DroneImageMarkerProps {
   image: DroneImageMetadata;
-  opacity:number;
+  opacity: number;
 }
 
 export const DroneImageMarker: React.FC<DroneImageMarkerProps> = ({ image, opacity = 1 }) => {
