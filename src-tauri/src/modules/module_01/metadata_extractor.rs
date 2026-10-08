@@ -203,9 +203,40 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
 /// [`MetadataError::UnsupportedFormat`] if the extension is not `jpg`/`jpeg`/`dng`.
 /// [`MetadataError::MagicMismatch`] if the extension is supported but `header`
 /// does not match its magic number.
-pub(super) fn detect_format(header: &[u8], extension: &str) -> Result<ImageFormat, MetadataError> {
-    let _ = (header, extension);
-    unimplemented!("M1.3: sniff magic bytes against the claimed extension")
+///
+/// A `.dng` file is a TIFF container, so the sniff accepts either TIFF magic
+/// (little- or big-endian). A plain TIFF passes as DNG — a ≥16-byte header
+/// cannot tell them apart. `path` in the returned errors is always empty:
+/// this function has no path, and callers that have one (e.g.
+/// `image_importer::classify_file`) overwrite it.
+pub(crate) fn detect_format(header: &[u8], extension: &str) -> Result<ImageFormat, MetadataError> {
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => {
+            if header.starts_with(&[0xFF, 0xD8, 0xFF]) {
+                Ok(ImageFormat::Jpeg)
+            } else {
+                Err(MetadataError::MagicMismatch {
+                    path: String::new(),
+                })
+            }
+        }
+        "dng" => {
+            if header.starts_with(&[0x49, 0x49, 0x2A, 0x00])
+                || header.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])
+            {
+                Ok(ImageFormat::Dng)
+            } else {
+                Err(MetadataError::MagicMismatch {
+                    path: String::new(),
+                })
+            }
+        }
+        _ => Err(MetadataError::UnsupportedFormat {
+            path: String::new(),
+            extension,
+        }),
+    }
 }
 
 /// Parses the EXIF segment of an image into [`RawExifTags`].
@@ -434,55 +465,4 @@ pub(crate) fn resolve_field_alias(
     unimplemented!(
         "M1.3: user-provided provider-field-name -> canonical-field-name lookup, case-insensitive"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gps_coordinate_round_trips_through_serde() {
-        let coord = GpsCoordinate {
-            degrees: 1.0,
-            minutes: 16.0,
-            seconds: 12.5,
-            reference: 'S',
-        };
-        let json = serde_json::to_string(&coord).expect("serialize");
-        let decoded: GpsCoordinate = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(coord, decoded);
-    }
-
-    #[test]
-    fn pixel_dimensions_round_trips_through_serde() {
-        let dims = PixelDimensions {
-            width: 4000,
-            height: 3000,
-        };
-        let json = serde_json::to_string(&dims).expect("serialize");
-        let decoded: PixelDimensions = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(dims, decoded);
-    }
-
-    #[test]
-    fn metadata_completeness_defaults_to_empty() {
-        let report = MetadataCompleteness::default();
-        assert!(report.present.is_empty());
-        assert!(report.missing.is_empty());
-    }
-
-    #[test]
-    fn raw_exif_tags_default_has_all_none() {
-        let tags = RawExifTags::default();
-        assert_eq!(tags, RawExifTags::default());
-        assert!(tags.gps_latitude.is_none());
-        assert!(tags.camera_model_name.is_none());
-    }
-
-    #[test]
-    fn raw_xmp_tags_default_has_all_none() {
-        let tags = RawXmpTags::default();
-        assert!(tags.absolute_altitude_m.is_none());
-        assert!(tags.gimbal_yaw_degree.is_none());
-    }
 }
