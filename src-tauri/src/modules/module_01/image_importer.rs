@@ -4,19 +4,25 @@
 //!
 //! [`import_images`] is the entry point. [`find_name_conflicts`] and
 //! [`find_duplicate`] are shared helpers other modules call through the
-//! `module_01` re-exports.
+//! `module_01` re-exports. [`flag_incomplete_metadata`] is the second phase:
+//! after [`import_images`] decides what gets imported, the I/O layer extracts
+//! metadata for each imported id (impure) and calls it to flag images with
+//! missing required fields. Flagged images stay imported — they are reported
+//! as "incomplete metadata", never rejected.
 //! None of these functions read the disk. I/O fills [`ImportCandidate`]
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::models::image::ImageFormat;
 use crate::models::image::{
-    ContentHash, DuplicateFlag, ImportCandidate, ImportError, ImportReport, ImportRequest,
-    NameConflict, RejectedFile, SessionTarget,
+    ContentHash, DuplicateFlag, ImageMetadata, ImportCandidate, ImportError, ImportReport,
+    ImportRequest, IncompleteMetadataFlag, NameConflict, RejectedFile, SessionTarget,
 };
 use crate::modules::module_01::error::MetadataError;
-use crate::modules::module_01::metadata_extractor::detect_format;
+use crate::modules::module_01::metadata_extractor::{
+    detect_format, missing_required_fields, REQUIRED_METADATA_FIELDS,
+};
 
 /// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
@@ -270,4 +276,126 @@ pub(crate) fn import_images(
         rejected,
         name_conflicts,
     })
+}
+
+/// Flags successfully imported candidates whose extracted metadata is
+/// missing required fields ("incomplete metadata").
+///
+/// Pure, total (never fails).
+///
+/// # Composition
+///
+/// Second phase of the import pipeline, after [`import_images`]:
+///
+/// ```text
+/// import_images(request, known, existing_paths)
+///   -> I/O copies files + extracts metadata per imported id (impure)
+///   -> flag_incomplete_metadata(imported_candidates, metadata)
+/// ```
+///
+/// `metadata` maps `ImportCandidate.id` to its extracted [`ImageMetadata`].
+/// A candidate with no entry (extraction failed — corrupt or unreadable
+/// metadata) is flagged with every [`REQUIRED_METADATA_FIELDS`] missing.
+/// Flagged images stay imported; completeness never moves an id out of
+/// `imported_image_ids` into `rejected` or `duplicates`.
+///
+/// # Returns
+///
+/// One [`IncompleteMetadataFlag`] per imported candidate lacking at least
+/// one required field, in the same order as `imported`. Fully described
+/// candidates produce no flag.
+pub(crate) fn flag_incomplete_metadata(
+    imported: &[ImportCandidate],
+    metadata: &HashMap<String, ImageMetadata>,
+) -> Vec<IncompleteMetadataFlag> {
+    imported
+        .iter()
+        .filter_map(|candidate| {
+            let missing = match metadata.get(&candidate.id) {
+                Some(extracted) => missing_required_fields(extracted),
+                None => REQUIRED_METADATA_FIELDS
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
+            };
+            if missing.is_empty() {
+                None
+            } else {
+                Some(IncompleteMetadataFlag {
+                    candidate_id: candidate.id.clone(),
+                    source_path: candidate.source_path.clone(),
+                    missing,
+                })
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(id: &str) -> ImportCandidate {
+        ImportCandidate {
+            id: id.to_string(),
+            source_path: format!("/photos/{id}.jpg"),
+            file_name: format!("{id}.jpg"),
+            header: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            content_hash: ContentHash(format!("hash-{id}")),
+        }
+    }
+
+    fn complete_metadata() -> ImageMetadata {
+        ImageMetadata {
+            gps_latitude: Some(-7.5),
+            gps_longitude: Some(110.0),
+            gps_altitude_m: Some(120.0),
+            date_time_original: "2026-09-18T07:12:00".parse().ok(),
+            width: Some(4000),
+            height: Some(3000),
+            ..ImageMetadata::default()
+        }
+    }
+
+    #[test]
+    fn flags_only_incomplete_in_import_order() {
+        let imported = vec![candidate("a"), candidate("b"), candidate("c")];
+        let metadata: HashMap<String, ImageMetadata> = [
+            ("a".to_string(), complete_metadata()),
+            (
+                "b".to_string(),
+                ImageMetadata {
+                    date_time_original: None,
+                    ..complete_metadata()
+                },
+            ),
+            // "c" has no entry: extraction failed outright.
+        ]
+        .into_iter()
+        .collect();
+
+        let flags = flag_incomplete_metadata(&imported, &metadata);
+        assert_eq!(flags.len(), 2);
+        assert_eq!(flags[0].candidate_id, "b");
+        assert_eq!(flags[0].source_path, "/photos/b.jpg");
+        assert_eq!(flags[0].missing, vec!["date_time_original".to_string()]);
+        assert_eq!(flags[1].candidate_id, "c");
+        assert_eq!(
+            flags[1].missing,
+            REQUIRED_METADATA_FIELDS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn empty_when_all_complete_or_no_imports() {
+        let imported = vec![candidate("a")];
+        let metadata: HashMap<String, ImageMetadata> = [("a".to_string(), complete_metadata())]
+            .into_iter()
+            .collect();
+        assert!(flag_incomplete_metadata(&imported, &metadata).is_empty());
+        assert!(flag_incomplete_metadata(&[], &HashMap::new()).is_empty());
+    }
 }
