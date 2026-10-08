@@ -207,3 +207,11 @@ format detector fails in a way its own contract says can't happen (an
 that case the reported `extension` isn't necessarily the real cause of the
 failure — see the doc comments on `classify_file` and
 `ImportError::UnsupportedFormat` for detail.
+
+## Note on `ImportError::InvalidFileName`
+
+A file whose name yields no destination basename (empty, `.`, `..`, or a
+trailing separator) is rejected with `ImportError::InvalidFileName { path }`,
+not `UnsupportedFormat`. The two failures need different UI messages ("fix
+the file name" vs. "convert to JPG/DNG"), so they are separate variants even
+though both land in `ImportReport.rejected`.
