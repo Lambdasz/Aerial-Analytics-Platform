@@ -131,6 +131,12 @@ pub enum ImportError {
     NoImagesFound,
     /// `session_id` does not reference an existing session.
     SessionNotFound { session_id: String },
+    /// File name cannot be used as a destination name: it is empty, `.`,
+    /// `..`, or ends in a path separator, so no basename can be derived
+    /// from it. This is a naming problem, not a format problem — kept
+    /// separate from [`ImportError::UnsupportedFormat`] so the UI reports
+    /// the real cause instead of misleading the user about the file format.
+    InvalidFileName { path: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
     ///
     /// Also used as a defensive fallback by `module_01::image_importer::classify_file`

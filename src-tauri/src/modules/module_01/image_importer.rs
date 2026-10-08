@@ -209,8 +209,9 @@ pub(crate) fn find_duplicate(
 /// A name conflict holds a candidate back: it is not listed in
 /// `imported_image_ids` until the frontend resolves the conflict. Rejected
 /// and duplicate files are never conflict candidates, because they are never
-/// copied. `dest_name` in the report is a basename; `.`, `..`, and empty
-/// names are rejected instead of imported.
+/// copied. `dest_name` in the report is a basename; `.`, `..`, empty names,
+/// and trailing-separator names are rejected with
+/// [`ImportError::InvalidFileName`] instead of imported.
 ///
 /// # Errors
 ///
@@ -237,9 +238,8 @@ pub(crate) fn import_images(
         if dest_basename(&candidate.file_name).is_none() {
             rejected.push(RejectedFile {
                 source_path: candidate.source_path.clone(),
-                reason: ImportError::UnsupportedFormat {
+                reason: ImportError::InvalidFileName {
                     path: candidate.source_path.clone(),
-                    extension: extension_of(&candidate.file_name),
                 },
             });
         } else if let Err(reason) = classify_file(candidate) {
@@ -493,5 +493,43 @@ mod tests {
         assert_eq!(report.imported_image_ids, vec!["b".to_string()]);
         assert!(report.duplicates.is_empty());
         assert_eq!(report.name_conflicts.len(), 1);
+    }
+
+    #[test]
+    fn invalid_file_names_rejected_with_dedicated_reason() {
+        let request = import_request(vec![
+            candidate_named("empty", "/in/a.jpg", "", "H1"),
+            candidate_named("dot", "/in/b.jpg", ".", "H2"),
+            candidate_named("dotdot", "/in/c.jpg", "..", "H3"),
+            candidate_named("trailing", "/in/d.jpg", "photos/", "H4"),
+            candidate_named("ok", "/in/e.jpg", "e.jpg", "H5"),
+        ]);
+        let report = import_images(&request, &[], &[]).expect("import runs");
+        // Only the well-named file imports; invalid names never reach
+        // conflict or duplicate detection.
+        assert_eq!(report.imported_image_ids, vec!["ok".to_string()]);
+        assert!(report.duplicates.is_empty());
+        assert!(report.name_conflicts.is_empty());
+        assert_eq!(
+            report
+                .rejected
+                .iter()
+                .map(|r| r.reason.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                ImportError::InvalidFileName {
+                    path: "/in/a.jpg".to_string(),
+                },
+                ImportError::InvalidFileName {
+                    path: "/in/b.jpg".to_string(),
+                },
+                ImportError::InvalidFileName {
+                    path: "/in/c.jpg".to_string(),
+                },
+                ImportError::InvalidFileName {
+                    path: "/in/d.jpg".to_string(),
+                },
+            ]
+        );
     }
 }
