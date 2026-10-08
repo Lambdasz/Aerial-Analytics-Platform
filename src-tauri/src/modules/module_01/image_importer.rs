@@ -20,9 +20,7 @@ use crate::models::image::{
     ImportRequest, IncompleteMetadataFlag, NameConflict, RejectedFile, SessionTarget,
 };
 use crate::modules::module_01::error::MetadataError;
-use crate::modules::module_01::metadata_extractor::{
-    detect_format, missing_required_fields, REQUIRED_METADATA_FIELDS,
-};
+use crate::modules::module_01::metadata_extractor::{detect_format, missing_required_fields};
 
 /// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
@@ -54,14 +52,18 @@ fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError
         Err(MetadataError::MagicMismatch { .. }) => Err(ImportError::MagicMismatch {
             path: candidate.source_path.clone(),
         }),
+        // NotImplemented is propagated distinctly: an unfinished backend
+        // must never be misreported as a user file problem. Unreachable
+        // from `detect_format` today (it never returns this variant), but
+        // the arm keeps the conversion honest if that ever changes.
+        Err(MetadataError::NotImplemented { .. }) => Err(ImportError::NotImplemented {
+            path: candidate.source_path.clone(),
+        }),
         // Defensive fallback: detect_format's documented contract says it never
         // returns these variants, but that contract isn't enforced by the type
         // system. Treat it as an unsupported format rather than panicking.
         Err(
-            MetadataError::Io(_)
-            | MetadataError::MalformedExif(_)
-            | MetadataError::MalformedXmp(_)
-            | MetadataError::NotImplemented { .. },
+            MetadataError::Io(_) | MetadataError::MalformedExif(_) | MetadataError::MalformedXmp(_),
         ) => Err(ImportError::UnsupportedFormat {
             path: candidate.source_path.clone(),
             extension,
@@ -306,8 +308,13 @@ pub(crate) fn import_images(
 /// ```
 ///
 /// `metadata` maps `ImportCandidate.id` to its extracted [`ImageMetadata`].
-/// A candidate with no entry (extraction failed — corrupt or unreadable
-/// metadata) is flagged with every [`REQUIRED_METADATA_FIELDS`] missing.
+/// A candidate with **no entry** was never extracted (extraction unavailable
+/// — e.g. `extract_metadata` is still a stub): completeness cannot be judged,
+/// so no flag is emitted. This keeps a stubbed pipeline from reporting every
+/// import as "incomplete metadata". When extraction was attempted but failed
+/// (corrupt or unreadable metadata), the I/O layer records
+/// [`ImageMetadata::default()`] instead — every required field is then
+/// missing, and the candidate is flagged with all of them.
 /// Flagged images stay imported; completeness never moves an id out of
 /// `imported_image_ids` into `rejected` or `duplicates`.
 ///
@@ -315,7 +322,7 @@ pub(crate) fn import_images(
 ///
 /// One [`IncompleteMetadataFlag`] per imported candidate lacking at least
 /// one required field, in the same order as `imported`. Fully described
-/// candidates produce no flag.
+/// candidates, and candidates with no metadata entry, produce no flag.
 pub(crate) fn flag_incomplete_metadata(
     imported: &[ImportCandidate],
     metadata: &HashMap<String, ImageMetadata>,
@@ -323,13 +330,8 @@ pub(crate) fn flag_incomplete_metadata(
     imported
         .iter()
         .filter_map(|candidate| {
-            let missing = match metadata.get(&candidate.id) {
-                Some(extracted) => missing_required_fields(extracted),
-                None => REQUIRED_METADATA_FIELDS
-                    .iter()
-                    .map(|name| (*name).to_string())
-                    .collect(),
-            };
+            let extracted = metadata.get(&candidate.id)?;
+            let missing = missing_required_fields(extracted);
             if missing.is_empty() {
                 None
             } else {
@@ -346,6 +348,7 @@ pub(crate) fn flag_incomplete_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::module_01::metadata_extractor::REQUIRED_METADATA_FIELDS;
 
     fn candidate(id: &str) -> ImportCandidate {
         ImportCandidate {
@@ -407,19 +410,40 @@ mod tests {
                     ..complete_metadata()
                 },
             ),
-            // "c" has no entry: extraction failed outright.
+            // "c" has no entry: never extracted (unknown) — skipped, not flagged.
         ]
         .into_iter()
         .collect();
 
         let flags = flag_incomplete_metadata(&imported, &metadata);
-        assert_eq!(flags.len(), 2);
+        assert_eq!(flags.len(), 1);
         assert_eq!(flags[0].candidate_id, "b");
         assert_eq!(flags[0].source_path, "/photos/b.jpg");
         assert_eq!(flags[0].missing, vec!["date_time_original".to_string()]);
-        assert_eq!(flags[1].candidate_id, "c");
+    }
+
+    #[test]
+    fn absent_metadata_means_unknown_not_flagged() {
+        // Stub-era scenario: extraction unavailable, so the map is empty.
+        // Nothing is reported "incomplete" — completeness cannot be judged.
+        let imported = vec![candidate("a"), candidate("b")];
+        assert!(flag_incomplete_metadata(&imported, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn default_metadata_flags_every_required_field() {
+        // Corrupt/unreadable convention: the I/O layer records
+        // `ImageMetadata::default()` when extraction was attempted but
+        // failed, so the candidate is flagged with all required fields.
+        let imported = vec![candidate("a")];
+        let metadata: HashMap<String, ImageMetadata> =
+            [("a".to_string(), ImageMetadata::default())]
+                .into_iter()
+                .collect();
+        let flags = flag_incomplete_metadata(&imported, &metadata);
+        assert_eq!(flags.len(), 1);
         assert_eq!(
-            flags[1].missing,
+            flags[0].missing,
             REQUIRED_METADATA_FIELDS
                 .iter()
                 .map(|name| (*name).to_string())
@@ -493,6 +517,56 @@ mod tests {
         assert_eq!(report.imported_image_ids, vec!["b".to_string()]);
         assert!(report.duplicates.is_empty());
         assert_eq!(report.name_conflicts.len(), 1);
+    }
+
+    #[test]
+    fn conflicts_group_case_insensitively_first_name_wins() {
+        let candidates = vec![
+            candidate_named("a", "/in/a.jpg", "Photo.JPG", "H1"),
+            candidate_named("b", "/in/b.jpg", "photo.jpg", "H2"),
+        ];
+        let conflicts = find_name_conflicts(&candidates, &[]);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].dest_name, "Photo.JPG");
+        assert_eq!(
+            conflicts[0].sources,
+            vec!["/in/a.jpg".to_string(), "/in/b.jpg".to_string()]
+        );
+        assert_eq!(conflicts[0].existing_path, None);
+    }
+
+    #[test]
+    fn conflicts_prefer_existing_path_casing() {
+        let candidates = vec![candidate_named("a", "/in/a.jpg", "keep.jpg", "H1")];
+        let conflicts = find_name_conflicts(&candidates, &["/session/Keep.JPG".to_string()]);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].dest_name, "Keep.JPG");
+        assert_eq!(
+            conflicts[0].existing_path,
+            Some("/session/Keep.JPG".to_string())
+        );
+    }
+
+    #[test]
+    fn no_conflict_for_unique_or_unmatched_existing() {
+        let candidates = vec![
+            candidate_named("a", "/in/a.jpg", "a.jpg", "H1"),
+            candidate_named("b", "/in/b.jpg", "b.jpg", "H2"),
+        ];
+        // Unrelated existing paths are not conflicts.
+        let conflicts = find_name_conflicts(&candidates, &["/session/other.jpg".to_string()]);
+        assert!(conflicts.is_empty());
+        assert!(find_name_conflicts(&[], &["/session/x.jpg".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn conflicts_skip_invalid_basenames() {
+        let candidates = vec![
+            candidate_named("empty", "/in/a.jpg", "", "H1"),
+            candidate_named("dotdot", "/in/b.jpg", "..", "H2"),
+            candidate_named("ok", "/in/c.jpg", "c.jpg", "H3"),
+        ];
+        assert!(find_name_conflicts(&candidates, &[]).is_empty());
     }
 
     #[test]
