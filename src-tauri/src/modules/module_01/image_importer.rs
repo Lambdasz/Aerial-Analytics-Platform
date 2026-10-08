@@ -197,9 +197,14 @@ pub(crate) fn find_duplicate(
 /// [`ImportError::SessionNotFound`].
 ///
 /// Duplicate scope is the project. Persisted `known` hashes are checked
-/// first. Intra-batch hashes are folded only after name conflicts, and only
-/// against ids that this call actually imports. A later file is never marked
-/// as a duplicate of a candidate this call holds back.
+/// first. Intra-batch hashes are folded only after name conflicts: every
+/// pending candidate registers its hash (first claimant in batch order
+/// wins), including candidates held back by a name conflict. A later file
+/// with identical content is flagged as a duplicate of the held-back id
+/// rather than imported — conflict resolution happens in a later import
+/// call that cannot re-run this batch's dedup, so holding the hashes back
+/// would silently admit two copies of the same image once the user renames
+/// and imports the conflicted files.
 ///
 /// A name conflict holds a candidate back: it is not listed in
 /// `imported_image_ids` until the frontend resolves the conflict. Rejected
@@ -258,13 +263,20 @@ pub(crate) fn import_images(
     let mut seen: Vec<(String, ContentHash)> = Vec::new();
     let mut imported_image_ids = Vec::new();
     for candidate in pending {
+        // Check against hashes claimed by earlier batch-mates (held-back
+        // candidates included), then claim this hash if still unclaimed, so
+        // a file identical to a conflict-held file is flagged rather than
+        // imported. The conflict hold-back below still applies afterwards.
+        let duplicate_of = find_duplicate(&candidate, &seen);
+        if duplicate_of.is_none() {
+            seen.push((candidate.id.clone(), candidate.content_hash.clone()));
+        }
         if conflicting.contains(candidate.source_path.as_str()) {
             continue;
         }
-        if let Some(flag) = find_duplicate(&candidate, &seen) {
+        if let Some(flag) = duplicate_of {
             duplicates.push(flag);
         } else {
-            seen.push((candidate.id.clone(), candidate.content_hash.clone()));
             imported_image_ids.push(candidate.id);
         }
     }
@@ -345,6 +357,32 @@ mod tests {
         }
     }
 
+    fn candidate_named(
+        id: &str,
+        source_path: &str,
+        file_name: &str,
+        hash: &str,
+    ) -> ImportCandidate {
+        ImportCandidate {
+            id: id.to_string(),
+            source_path: source_path.to_string(),
+            file_name: file_name.to_string(),
+            header: vec![0xFF, 0xD8, 0xFF, 0xE0],
+            content_hash: ContentHash(hash.to_string()),
+        }
+    }
+
+    fn import_request(candidates: Vec<ImportCandidate>) -> ImportRequest {
+        ImportRequest {
+            from_folder: false,
+            session: SessionTarget::New {
+                id: "session-1".to_string(),
+                label: "Session".to_string(),
+            },
+            candidates,
+        }
+    }
+
     fn complete_metadata() -> ImageMetadata {
         ImageMetadata {
             gps_latitude: Some(-7.5),
@@ -397,5 +435,63 @@ mod tests {
             .collect();
         assert!(flag_incomplete_metadata(&imported, &metadata).is_empty());
         assert!(flag_incomplete_metadata(&[], &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn held_back_hash_still_dedups_later_identical_file() {
+        // Reviewer scenario: A and C collide on x.jpg (also colliding with
+        // the existing x.jpg) while B carries identical content under a
+        // free name. B must be flagged as a duplicate of held-back A, not
+        // imported — otherwise resolving the conflict later admits two
+        // copies of hash H into the project.
+        let request = import_request(vec![
+            candidate_named("a", "/in/a.jpg", "x.jpg", "H"),
+            candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
+            candidate_named("c", "/in/c.jpg", "x.jpg", "H"),
+        ]);
+        let report =
+            import_images(&request, &[], &["/session/x.jpg".to_string()]).expect("import runs");
+        assert!(report.imported_image_ids.is_empty());
+        assert_eq!(
+            report.duplicates,
+            vec![DuplicateFlag {
+                source_path: "/in/b.jpg".to_string(),
+                existing_image_id: "a".to_string(),
+                content_hash: ContentHash("H".to_string()),
+            }]
+        );
+        assert_eq!(report.name_conflicts.len(), 1);
+        assert_eq!(
+            report.name_conflicts[0].sources,
+            vec!["/in/a.jpg".to_string(), "/in/c.jpg".to_string()]
+        );
+    }
+
+    #[test]
+    fn first_claimant_wins_without_conflicts() {
+        let request = import_request(vec![
+            candidate_named("x", "/in/x.jpg", "x.jpg", "H"),
+            candidate_named("y", "/in/y.jpg", "y.jpg", "H"),
+        ]);
+        let report = import_images(&request, &[], &[]).expect("import runs");
+        assert_eq!(report.imported_image_ids, vec!["x".to_string()]);
+        assert_eq!(report.duplicates.len(), 1);
+        assert_eq!(report.duplicates[0].existing_image_id, "x".to_string());
+    }
+
+    #[test]
+    fn conflict_later_does_not_block_earlier_import() {
+        // Order matters: the earlier claimant owns the hash. B (free name)
+        // imports normally; A (conflicting name, identical content) is held
+        // back without a duplicate flag.
+        let request = import_request(vec![
+            candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
+            candidate_named("a", "/in/a.jpg", "x.jpg", "H"),
+        ]);
+        let report =
+            import_images(&request, &[], &["/session/x.jpg".to_string()]).expect("import runs");
+        assert_eq!(report.imported_image_ids, vec!["b".to_string()]);
+        assert!(report.duplicates.is_empty());
+        assert_eq!(report.name_conflicts.len(), 1);
     }
 }

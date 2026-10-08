@@ -69,7 +69,13 @@ pub struct NameConflict {
     pub existing_path: Option<String>,
 }
 
-/// A candidate whose content hash matches an image already in the project.
+/// A candidate whose content hash matches an image already in the project,
+/// or an earlier candidate of the same import batch (including one held
+/// back by a name conflict — its content still counts toward the
+/// project-scope duplicate rule).
+///
+/// `existing_image_id` is therefore either a persisted image id (matched
+/// against `known`) or a batch-mate candidate id (matched intra-batch).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateFlag {
     pub source_path: String,
