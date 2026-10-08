@@ -84,6 +84,25 @@ pub struct RejectedFile {
     pub reason: ImportError,
 }
 
+/// An imported image whose extracted metadata lacks required fields.
+///
+/// The image stays imported (its id is still in
+/// [`ImportReport::imported_image_ids`]); this flag tells the frontend and
+/// Image Quality Checking to display it as "incomplete metadata".
+/// `missing` holds required field names from
+/// `crate::modules::module_01::REQUIRED_METADATA_FIELDS`. When extraction
+/// failed entirely (corrupt or unreadable metadata) it lists every required
+/// field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteMetadataFlag {
+    /// `ImportCandidate.id` of the imported image.
+    pub candidate_id: String,
+    /// Absolute source path, for display and correlation.
+    pub source_path: String,
+    /// Required field names absent from the extracted metadata.
+    pub missing: Vec<String>,
+}
+
 /// Outcome of one [`ImportRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportReport {
