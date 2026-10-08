@@ -877,6 +877,22 @@ fn merge_tags(
     }
 }
 
+/// Required [`ImageMetadata`] fields for the "incomplete metadata" import
+/// flag (M1-23).
+///
+/// Covers the acceptance criteria of Image Metadata Extraction (M1-9): GPS
+/// coordinates, acquisition date, altitude, and resolution. XMP DJI flight
+/// telemetry is deliberately excluded — a non-DJI drone never carries it,
+/// so requiring it would flag every such image.
+pub(crate) const REQUIRED_METADATA_FIELDS: &[&str] = &[
+    "gps_latitude",
+    "gps_longitude",
+    "gps_altitude_m",
+    "date_time_original",
+    "width",
+    "height",
+];
+
 /// Reports which [`ImageMetadata`] fields are present versus missing.
 ///
 /// # Integration
@@ -896,8 +912,89 @@ fn merge_tags(
 /// A [`MetadataCompleteness`] listing present and missing field names, used
 /// by Image Quality Checking to flag images with missing metadata.
 pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
-    let _ = metadata;
-    unimplemented!("M1.3: walk ImageMetadata's Option fields and bucket by presence")
+    let fields: [(&str, bool); 32] = [
+        ("gps_latitude", metadata.gps_latitude.is_some()),
+        ("gps_longitude", metadata.gps_longitude.is_some()),
+        ("gps_altitude_m", metadata.gps_altitude_m.is_some()),
+        (
+            "absolute_altitude_m",
+            metadata.absolute_altitude_m.is_some(),
+        ),
+        ("date_time_original", metadata.date_time_original.is_some()),
+        ("width", metadata.width.is_some()),
+        ("height", metadata.height.is_some()),
+        ("format", metadata.format.is_some()),
+        ("make", metadata.make.is_some()),
+        ("camera_model_name", metadata.camera_model_name.is_some()),
+        ("exposure_time_s", metadata.exposure_time_s.is_some()),
+        ("f_number", metadata.f_number.is_some()),
+        ("iso", metadata.iso.is_some()),
+        ("focal_length_mm", metadata.focal_length_mm.is_some()),
+        ("focal_length_35mm", metadata.focal_length_35mm.is_some()),
+        ("flash", metadata.flash.is_some()),
+        ("white_balance", metadata.white_balance.is_some()),
+        ("metering_mode", metadata.metering_mode.is_some()),
+        ("exposure_mode", metadata.exposure_mode.is_some()),
+        ("digital_zoom_ratio", metadata.digital_zoom_ratio.is_some()),
+        ("color_space", metadata.color_space.is_some()),
+        ("orientation", metadata.orientation.is_some()),
+        (
+            "relative_altitude_m",
+            metadata.relative_altitude_m.is_some(),
+        ),
+        ("gimbal_roll_degree", metadata.gimbal_roll_degree.is_some()),
+        ("gimbal_yaw_degree", metadata.gimbal_yaw_degree.is_some()),
+        (
+            "gimbal_pitch_degree",
+            metadata.gimbal_pitch_degree.is_some(),
+        ),
+        ("flight_roll_degree", metadata.flight_roll_degree.is_some()),
+        ("flight_yaw_degree", metadata.flight_yaw_degree.is_some()),
+        (
+            "flight_pitch_degree",
+            metadata.flight_pitch_degree.is_some(),
+        ),
+        ("flight_x_speed", metadata.flight_x_speed.is_some()),
+        ("flight_y_speed", metadata.flight_y_speed.is_some()),
+        ("flight_z_speed", metadata.flight_z_speed.is_some()),
+    ];
+    let mut present = Vec::with_capacity(fields.len());
+    let mut missing = Vec::with_capacity(fields.len());
+    for (name, is_present) in fields {
+        if is_present {
+            present.push(name.to_string());
+        } else {
+            missing.push(name.to_string());
+        }
+    }
+    MetadataCompleteness { present, missing }
+}
+
+/// Lists the [`REQUIRED_METADATA_FIELDS`] absent from already-extracted
+/// metadata.
+///
+/// Pure, total. Empty means the image counts as fully described for import
+/// purposes; non-empty feeds [`IncompleteMetadataFlag`](crate::models::image::IncompleteMetadataFlag)
+/// via `image_importer::flag_incomplete_metadata`.
+pub(crate) fn missing_required_fields(metadata: &ImageMetadata) -> Vec<String> {
+    let checks = [
+        ("gps_latitude", metadata.gps_latitude.is_some()),
+        ("gps_longitude", metadata.gps_longitude.is_some()),
+        ("gps_altitude_m", metadata.gps_altitude_m.is_some()),
+        ("date_time_original", metadata.date_time_original.is_some()),
+        ("width", metadata.width.is_some()),
+        ("height", metadata.height.is_some()),
+    ];
+    debug_assert_eq!(checks.len(), REQUIRED_METADATA_FIELDS.len());
+    debug_assert!(checks
+        .iter()
+        .map(|(name, _)| *name)
+        .eq(REQUIRED_METADATA_FIELDS.iter().copied()));
+    checks
+        .into_iter()
+        .filter(|(_, is_present)| !is_present)
+        .map(|(name, _)| name.to_string())
+        .collect()
 }
 
 /// Projects [`ImageMetadata`] into the minimal shape Module 2 needs for
@@ -1121,6 +1218,68 @@ mod tests {
         assert_eq!(
             meta.date_time_original.map(|d| d.to_string()),
             Some("2026-09-18 07:12:00".to_string())
+        );
+    }
+
+    fn required_metadata() -> ImageMetadata {
+        ImageMetadata {
+            gps_latitude: Some(-7.5),
+            gps_longitude: Some(110.0),
+            gps_altitude_m: Some(120.0),
+            date_time_original: "2026-09-18T07:12:00".parse().ok(),
+            width: Some(4000),
+            height: Some(3000),
+            ..ImageMetadata::default()
+        }
+    }
+
+    #[test]
+    fn completeness_empty_is_all_missing() {
+        let report = describe_completeness(&ImageMetadata::default());
+        assert!(report.present.is_empty());
+        assert_eq!(report.missing.len(), 32);
+        assert!(report.missing.contains(&"gps_latitude".to_string()));
+        // Every required field shows up as missing.
+        for name in REQUIRED_METADATA_FIELDS {
+            assert!(report.missing.contains(&(*name).to_string()));
+        }
+    }
+
+    #[test]
+    fn completeness_buckets_partial() {
+        let meta = ImageMetadata {
+            gps_latitude: Some(-7.5),
+            width: Some(4000),
+            ..ImageMetadata::default()
+        };
+        let report = describe_completeness(&meta);
+        assert_eq!(
+            report.present,
+            vec!["gps_latitude".to_string(), "width".to_string()]
+        );
+        assert_eq!(report.present.len() + report.missing.len(), 32);
+        assert!(report.missing.contains(&"date_time_original".to_string()));
+    }
+
+    #[test]
+    fn missing_required_empty_when_required_present() {
+        // Extra optional fields absent: still counts as complete for import.
+        assert!(missing_required_fields(&required_metadata()).is_empty());
+    }
+
+    #[test]
+    fn missing_required_lists_only_required_absent() {
+        let mut meta = required_metadata();
+        meta.date_time_original = None;
+        meta.gps_altitude_m = None;
+        // A present-but-optional field must not appear in the report.
+        meta.make = Some("DJI".to_string());
+        assert_eq!(
+            missing_required_fields(&meta),
+            vec![
+                "gps_altitude_m".to_string(),
+                "date_time_original".to_string()
+            ]
         );
     }
 }
