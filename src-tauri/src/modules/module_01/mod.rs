@@ -23,8 +23,10 @@ pub use flight_session::{
     assign_image_to_session, create_session, delete_session, get_session, get_sessions_by_project,
     init_schema, recalculate_session_date_range, update_session_name, update_session_status,
 };
-pub(crate) use image_importer::{find_duplicate, find_name_conflicts, import_images};
+pub(crate) use image_importer::{
+    find_duplicate, find_name_conflicts, flag_incomplete_metadata, import_images,
+};
 pub(crate) use metadata_extractor::{
-    describe_completeness, detect_format, extract_metadata, to_plugin_metadata,
-    MetadataCompleteness,
+    describe_completeness, detect_format, extract_metadata, missing_required_fields,
+    to_plugin_metadata, MetadataCompleteness, REQUIRED_METADATA_FIELDS,
 };
