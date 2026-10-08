@@ -97,8 +97,9 @@ pub struct RejectedFile {
 /// Image Quality Checking to display it as "incomplete metadata".
 /// `missing` holds required field names from
 /// `crate::modules::module_01::REQUIRED_METADATA_FIELDS`. When extraction
-/// failed entirely (corrupt or unreadable metadata) it lists every required
-/// field.
+/// was attempted but failed (corrupt or unreadable metadata), the I/O layer
+/// records a default (all-`None`) metadata value, so the flag lists every
+/// required field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncompleteMetadataFlag {
     /// `ImportCandidate.id` of the imported image.
@@ -131,6 +132,11 @@ pub enum ImportError {
     NoImagesFound,
     /// `session_id` does not reference an existing session.
     SessionNotFound { session_id: String },
+    /// Transient development marker: the extraction pipeline hit a function
+    /// that is declared but not implemented yet. Never a statement about the
+    /// file itself — kept distinct from [`ImportError::UnsupportedFormat`]
+    /// so an unfinished backend is not misreported as a user file problem.
+    NotImplemented { path: String },
     /// File name cannot be used as a destination name: it is empty, `.`,
     /// `..`, or ends in a path separator, so no basename can be derived
     /// from it. This is a naming problem, not a format problem — kept
