@@ -106,6 +106,49 @@ Pure, total. Walks a previously-extracted `ImageMetadata` and buckets its
 fields into present vs. missing. **Contract: Module 1.3 → Module 1.5** (feeds
 Image Quality Checking, which flags images with missing metadata).
 
+### `missing_required_fields` / `REQUIRED_METADATA_FIELDS`
+
+```rust
+pub(crate) const REQUIRED_METADATA_FIELDS: &[&str] = &[
+    "gps_latitude", "gps_longitude", "gps_altitude_m",
+    "date_time_original", "width", "height",
+];
+
+pub(crate) fn missing_required_fields(metadata: &ImageMetadata) -> Vec<String> {
+    // ...
+}
+```
+
+Pure, total. Returns the subset of `REQUIRED_METADATA_FIELDS` absent from
+the metadata (empty = fully described for import). Covers the M1-9
+acceptance criteria (GPS, date, altitude, resolution); XMP flight telemetry
+is excluded since non-DJI drones never carry it.
+
+### `flag_incomplete_metadata`
+
+```rust
+pub(crate) fn flag_incomplete_metadata(
+    imported: &[ImportCandidate],
+    metadata: &HashMap<String, ImageMetadata>,
+) -> Vec<IncompleteMetadataFlag> {
+    // ...
+}
+```
+
+Pure, total. Second phase of the import pipeline, after `import_images`:
+
+```text
+import_images(request, known, existing_paths)
+  -> I/O copies files + extracts metadata per imported id (impure)
+  -> flag_incomplete_metadata(imported_candidates, metadata)
+```
+
+One `IncompleteMetadataFlag { candidate_id, source_path, missing }` per
+imported candidate lacking a required field, in import order. Candidates
+with no metadata entry (extraction failed — corrupt/unreadable) are flagged
+with every required field missing. Flagged images stay imported; the flag
+never moves an id into `rejected` or `duplicates`.
+
 ### `to_plugin_metadata`
 
 ```rust
