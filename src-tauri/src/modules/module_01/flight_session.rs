@@ -15,20 +15,44 @@
 //!
 //! ## Open integration question
 //!
-//! [`assign_image_to_session`] updates the `session_id` column on the
-//! `image` table. This module assumes that table already exists (created
-//! either here or by Module 1's Image Import work) with at minimum an
-//! `id TEXT PRIMARY KEY` and `session_id TEXT` column. Needs confirming
-//! with whoever owns Image persistence.
+//! Resolved 2026-10-08 (M1-24): this module owns the `image` table,
+//! including the extracted-metadata columns. [`insert_image`] persists a
+//! record built by the pure [`image_from_metadata`] from an
+//! [`ImageMetadata`](crate::models::image::ImageMetadata); [`get_image`]
+//! and [`get_images_by_session`] read records back.
 
 use chrono::{NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use super::error::SessionError;
+use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::models::{Image, Session, SessionStatus};
 
-/// Creates the `session` and `image` tables if they do not already exist.
+/// Column definitions for the `image` table, shared by [`init_schema`]
+/// (fresh databases) and [`migrate_image_schema`] (table rebuild for
+/// outdated databases).
+const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
+            session_id    TEXT NOT NULL REFERENCES session(id),
+            file_path     TEXT NOT NULL UNIQUE,
+            location_lat  REAL,
+            location_lon  REAL,
+            captured_at   TEXT,
+            gps_altitude_m REAL,
+            width         INTEGER,
+            height        INTEGER,
+            format        TEXT,
+            make          TEXT,
+            camera_model  TEXT";
+
+/// Columns of the `image` table in canonical order, for `SELECT`s and for
+/// the data-preserving copy in [`migrate_image_schema`].
+const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
+    captured_at, gps_altitude_m, width, height, format, make, camera_model";
+
+/// Creates the `session` and `image` tables if they do not already exist,
+/// then upgrades the `image` table to the current schema when it predates
+/// M1-24 (missing metadata columns or `NOT NULL` location/capture fields).
 ///
 /// The `image` table is defined here (rather than by Module 1's Image
 /// Import work) per team decision on 2026-09-26: Adit is building the
@@ -52,16 +76,107 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         [],
     )?;
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS image (
-            id            TEXT PRIMARY KEY,
-            session_id    TEXT NOT NULL REFERENCES session(id),
-            file_path     TEXT NOT NULL UNIQUE,
-            location_lat  REAL NOT NULL,
-            location_lon  REAL NOT NULL,
-            captured_at   TEXT NOT NULL
-        )",
+        &format!("CREATE TABLE IF NOT EXISTS image ({IMAGE_TABLE_COLUMNS_DDL})"),
         [],
     )?;
+    migrate_image_schema(conn)?;
+    Ok(())
+}
+
+/// Upgrades a pre-M1-24 `image` table to the current schema, preserving
+/// every existing row.
+///
+/// A pre-M1-24 table is detected by introspection (`PRAGMA table_info`):
+/// either the metadata columns are absent or `location_lat`,
+/// `location_lon`, or `captured_at` still carry a `NOT NULL` constraint
+/// (SQLite cannot drop such a constraint with `ALTER TABLE`, hence the
+/// rebuild). The upgrade copies the six original columns row-for-row and
+/// leaves the new metadata columns `NULL`.
+///
+/// Idempotent: a table already on the current schema is left untouched.
+/// Safe to re-run after a previously interrupted upgrade: a stray
+/// `image_new` table from an earlier failure is dropped first, and the old
+/// table is only dropped after its rows have been copied.
+///
+/// # Purity
+///
+/// Impure — DDL and data copy against the database.
+pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
+    let exists: Option<String> = conn
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'image'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(_) = exists else {
+        conn.execute(
+            &format!("CREATE TABLE image ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )?;
+        return Ok(());
+    };
+
+    let mut stmt = conn.prepare("PRAGMA table_info(image)")?;
+    let columns = stmt
+        .query_map([], |row| {
+            let name: String = row.get(1)?;
+            let notnull: i64 = row.get(3)?;
+            Ok((name, notnull))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
+    let expected = [
+        "id",
+        "session_id",
+        "file_path",
+        "location_lat",
+        "location_lon",
+        "captured_at",
+        "gps_altitude_m",
+        "width",
+        "height",
+        "format",
+        "make",
+        "camera_model",
+    ];
+    let current = names == expected
+        && columns
+            .iter()
+            .filter(|(name, _)| {
+                matches!(
+                    name.as_str(),
+                    "location_lat" | "location_lon" | "captured_at"
+                )
+            })
+            .all(|(_, notnull)| *notnull == 0);
+    if current {
+        return Ok(());
+    }
+
+    // Intersect old columns with the new schema so the copy works no matter
+    // which historical variant is on disk.
+    let shared: Vec<&str> = expected
+        .into_iter()
+        .filter(|col| names.contains(col))
+        .collect();
+    if !shared.contains(&"id") {
+        return Err(SessionError::Db(rusqlite::Error::InvalidColumnName(
+            "image table lacks an id column; cannot migrate".to_string(),
+        )));
+    }
+    let shared_list = shared.join(", ");
+    conn.execute("DROP TABLE IF EXISTS image_new", [])?;
+    conn.execute(
+        &format!("CREATE TABLE image_new ({IMAGE_TABLE_COLUMNS_DDL})"),
+        [],
+    )?;
+    conn.execute(
+        &format!("INSERT INTO image_new ({shared_list}) SELECT {shared_list} FROM image"),
+        [],
+    )?;
+    conn.execute("DROP TABLE image", [])?;
+    conn.execute("ALTER TABLE image_new RENAME TO image", [])?;
     Ok(())
 }
 
@@ -105,8 +220,8 @@ pub fn create_session(
             session.id.to_string(),
             session.project_id.to_string(),
             session.name,
-            session.date_start.to_string(),
-            session.date_end.to_string(),
+            naive_to_db(session.date_start),
+            naive_to_db(session.date_end),
             status_to_str(session.status),
             session.created_at.to_rfc3339(),
             session.updated_at.to_rfc3339(),
@@ -274,10 +389,9 @@ pub fn recalculate_session_date_range(
         return Err(SessionError::NotFound { session_id });
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT id, session_id, file_path, location_lat, location_lon, captured_at
-         FROM image WHERE session_id = ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {IMAGE_COLUMNS} FROM image WHERE session_id = ?1"
+    ))?;
     let images = stmt
         .query_map(params![session_id.to_string()], row_to_image)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -289,8 +403,8 @@ pub fn recalculate_session_date_range(
     let rows = conn.execute(
         "UPDATE session SET date_start = ?1, date_end = ?2, updated_at = ?3 WHERE id = ?4",
         params![
-            start.to_string(),
-            end.to_string(),
+            naive_to_db(start),
+            naive_to_db(end),
             Utc::now().to_rfc3339(),
             session_id.to_string(),
         ],
@@ -323,8 +437,117 @@ pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), Session
     Ok(())
 }
 
+/// Builds a persistable [`Image`] record from already-extracted metadata.
+///
+/// Pure, total (never fails).
+///
+/// # Arguments
+///
+/// * `image_id` — id for the new record (generated by the caller).
+/// * `session_id` — session the image is imported into.
+/// * `file_path` — absolute destination path of the copied file.
+/// * `metadata` — output of [`crate::modules::module_01::extract_metadata`].
+///   Absent tags become `NULL` columns; the record is always built, even
+///   when every field is missing (M1-23 "incomplete metadata").
+pub fn image_from_metadata(
+    image_id: Uuid,
+    session_id: Uuid,
+    file_path: String,
+    metadata: &ImageMetadata,
+) -> Image {
+    Image {
+        id: image_id,
+        session_id,
+        file_path,
+        location_lat: metadata.gps_latitude,
+        location_lon: metadata.gps_longitude,
+        captured_at: metadata.date_time_original,
+        gps_altitude_m: metadata.gps_altitude_m,
+        width: metadata.width,
+        height: metadata.height,
+        format: metadata.format.map(|format| match format {
+            ImageFormat::Jpeg => "jpeg".to_string(),
+            ImageFormat::Dng => "dng".to_string(),
+        }),
+        make: metadata.make.clone(),
+        camera_model: metadata.camera_model_name.clone(),
+    }
+}
+
+/// Persists one image record built by [`image_from_metadata`].
+///
+/// # Purity
+///
+/// Impure — writes a new row.
+///
+/// # Errors
+///
+/// [`SessionError::Db`] if the insert fails (e.g. duplicate `file_path`).
+pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError> {
+    conn.execute(
+        "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
+            captured_at, gps_altitude_m, width, height, format, make, camera_model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            image.id.to_string(),
+            image.session_id.to_string(),
+            image.file_path,
+            image.location_lat,
+            image.location_lon,
+            image.captured_at.map(naive_to_db),
+            image.gps_altitude_m,
+            image.width.map(i64::from),
+            image.height.map(i64::from),
+            image.format,
+            image.make,
+            image.camera_model,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Fetches a single persisted image by id, including its stored metadata.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+///
+/// # Errors
+///
+/// [`SessionError::ImageNotFound`] if no image with that id exists.
+/// [`SessionError::Db`] on any other database error.
+pub fn get_image(conn: &Connection, image_id: Uuid) -> Result<Image, SessionError> {
+    conn.query_row(
+        &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE id = ?1"),
+        params![image_id.to_string()],
+        row_to_image,
+    )
+    .optional()?
+    .ok_or(SessionError::ImageNotFound { image_id })
+}
+
+/// Lists every persisted image belonging to a session, in file-path order.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+pub fn get_images_by_session(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<Vec<Image>, SessionError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {IMAGE_COLUMNS} FROM image WHERE session_id = ?1 ORDER BY file_path"
+    ))?;
+    let images = stmt
+        .query_map(params![session_id.to_string()], row_to_image)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(images)
+}
+
 /// Derives a session's `(date_start, date_end)` as the min/max `captured_at`
 /// across a set of images.
+///
+/// Images without a capture time (missing `DateTimeOriginal`) are skipped.
 ///
 /// # Purity
 ///
@@ -332,9 +555,9 @@ pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), Session
 ///
 /// # Returns
 ///
-/// `None` when `images` is empty (nothing to derive a range from).
+/// `None` when `images` is empty or none of them has a capture time.
 fn compute_date_range(images: &[Image]) -> Option<(NaiveDateTime, NaiveDateTime)> {
-    let mut iter = images.iter().map(|img| img.captured_at);
+    let mut iter = images.iter().filter_map(|img| img.captured_at);
     let first = iter.next()?;
     let (min, max) = iter.fold((first, first), |(min, max), t| (min.min(t), max.max(t)));
     Some((min, max))
@@ -372,11 +595,9 @@ fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
         project_id: Uuid::parse_str(&project_id)
             .map_err(|e| conversion_err(1, rusqlite::types::Type::Text, e))?,
         name,
-        date_start: date_start
-            .parse()
+        date_start: naive_from_db(&date_start)
             .map_err(|e| conversion_err(3, rusqlite::types::Type::Text, e))?,
-        date_end: date_end
-            .parse()
+        date_end: naive_from_db(&date_end)
             .map_err(|e| conversion_err(4, rusqlite::types::Type::Text, e))?,
         status: match status.as_str() {
             "archived" => SessionStatus::Archived,
@@ -395,9 +616,27 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let id: String = row.get(0)?;
     let session_id: String = row.get(1)?;
     let file_path: String = row.get(2)?;
-    let location_lat: f64 = row.get(3)?;
-    let location_lon: f64 = row.get(4)?;
-    let captured_at: String = row.get(5)?;
+    let location_lat: Option<f64> = row.get(3)?;
+    let location_lon: Option<f64> = row.get(4)?;
+    let captured_at: Option<String> = row.get(5)?;
+    let gps_altitude_m: Option<f64> = row.get(6)?;
+    let width: Option<i64> = row.get(7)?;
+    let height: Option<i64> = row.get(8)?;
+    let format: Option<String> = row.get(9)?;
+    let make: Option<String> = row.get(10)?;
+    let camera_model: Option<String> = row.get(11)?;
+
+    let captured_at = captured_at
+        .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
+        .transpose()?;
+    // Width/height are written by `insert_image` from `u32`, so any stored
+    // value outside `u32` range is corrupt data, not a missing value.
+    let width = width
+        .map(|v| u32::try_from(v).map_err(|e| conversion_err(7, rusqlite::types::Type::Integer, e)))
+        .transpose()?;
+    let height = height
+        .map(|v| u32::try_from(v).map_err(|e| conversion_err(8, rusqlite::types::Type::Integer, e)))
+        .transpose()?;
 
     Ok(Image {
         id: Uuid::parse_str(&id).map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
@@ -406,10 +645,31 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         file_path,
         location_lat,
         location_lon,
-        captured_at: captured_at
-            .parse()
-            .map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e))?,
+        captured_at,
+        gps_altitude_m,
+        width,
+        height,
+        format,
+        make,
+        camera_model,
     })
+}
+
+/// Canonical text encoding for timezone-naive timestamps in SQLite
+/// (`date_start`, `date_end`, `captured_at`).
+///
+/// `NaiveDateTime::to_string` emits a space separator that `str::parse`
+/// cannot read back, so timestamps must go through this helper instead.
+fn naive_to_db(dt: NaiveDateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+/// Parses a timestamp column written by [`naive_to_db`]. Also accepts the
+/// legacy space-separated form (with optional fractional seconds) written
+/// before M1-24, so upgraded databases keep reading.
+fn naive_from_db(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
 }
 
 /// Wraps a parse error (UUID or `NaiveDateTime`) as a proper
@@ -432,9 +692,15 @@ mod tests {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             file_path: "test.jpg".to_string(),
-            location_lat: 0.0,
-            location_lon: 0.0,
-            captured_at: captured_at.parse().unwrap(),
+            location_lat: Some(0.0),
+            location_lon: Some(0.0),
+            captured_at: Some(captured_at.parse().unwrap()),
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: None,
+            make: None,
+            camera_model: None,
         }
     }
 
@@ -462,5 +728,255 @@ mod tests {
     fn default_session_name_formats_timestamp() {
         let at: NaiveDateTime = "2026-09-18T07:12:00".parse().unwrap();
         assert_eq!(default_session_name(at), "Session - 2026-09-18 07:12");
+    }
+
+    fn full_metadata() -> ImageMetadata {
+        ImageMetadata {
+            gps_latitude: Some(-7.5),
+            gps_longitude: Some(110.0),
+            gps_altitude_m: Some(120.0),
+            date_time_original: "2026-09-18T07:12:00".parse().ok(),
+            width: Some(4000),
+            height: Some(3000),
+            format: Some(ImageFormat::Jpeg),
+            make: Some("DJI".to_string()),
+            camera_model_name: Some("Mavic 3".to_string()),
+            ..ImageMetadata::default()
+        }
+    }
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        init_schema(&conn).expect("init schema");
+        conn
+    }
+
+    #[test]
+    fn image_from_metadata_maps_all_fields() {
+        let image_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let image = image_from_metadata(
+            image_id,
+            session_id,
+            "/photos/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        assert_eq!(image.id, image_id);
+        assert_eq!(image.session_id, session_id);
+        assert_eq!(image.location_lat, Some(-7.5));
+        assert_eq!(image.location_lon, Some(110.0));
+        assert_eq!(
+            image.captured_at,
+            Some("2026-09-18T07:12:00".parse::<NaiveDateTime>().unwrap())
+        );
+        assert_eq!(image.gps_altitude_m, Some(120.0));
+        assert_eq!(image.width, Some(4000));
+        assert_eq!(image.height, Some(3000));
+        assert_eq!(image.format.as_deref(), Some("jpeg"));
+        assert_eq!(image.make.as_deref(), Some("DJI"));
+        assert_eq!(image.camera_model.as_deref(), Some("Mavic 3"));
+    }
+
+    #[test]
+    fn image_from_metadata_empty_is_all_none() {
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "/photos/b.dng".to_string(),
+            &ImageMetadata::default(),
+        );
+        assert_eq!(image.location_lat, None);
+        assert_eq!(image.captured_at, None);
+        assert_eq!(image.width, None);
+        assert_eq!(image.format, None);
+    }
+
+    #[test]
+    fn insert_and_get_image_round_trip() {
+        let conn = memory_db();
+        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            session.id,
+            "/photos/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        insert_image(&conn, &image).expect("insert");
+        assert_eq!(get_image(&conn, image.id).expect("get"), image);
+        let listed = get_images_by_session(&conn, session.id).expect("list");
+        assert_eq!(listed, vec![image]);
+    }
+
+    #[test]
+    fn incomplete_image_persists_with_nulls() {
+        let conn = memory_db();
+        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            session.id,
+            "/photos/b.jpg".to_string(),
+            &ImageMetadata::default(),
+        );
+        insert_image(&conn, &image).expect("insert incomplete");
+        let stored = get_image(&conn, image.id).expect("get");
+        assert_eq!(stored.captured_at, None);
+        assert_eq!(stored.location_lat, None);
+
+        let missing = get_image(&conn, Uuid::new_v4());
+        assert!(matches!(missing, Err(SessionError::ImageNotFound { .. })));
+    }
+
+    #[test]
+    fn migrate_upgrades_pre_m24_table_preserving_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute(
+            "CREATE TABLE session (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                date_start  TEXT,
+                date_end    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("old session table");
+        conn.execute(
+            "CREATE TABLE image (
+                id            TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL REFERENCES session(id),
+                file_path     TEXT NOT NULL UNIQUE,
+                location_lat  REAL NOT NULL,
+                location_lon  REAL NOT NULL,
+                captured_at   TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("old image table");
+        let session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO session (id, project_id, name, date_start, date_end, status, created_at, updated_at)
+             VALUES (?1, ?2, 'S', '2026-09-18 07:12:00', '2026-09-18 07:12:00', 'active', '2026-09-18T07:12:00+00:00', '2026-09-18T07:12:00+00:00')",
+            params![session_id, Uuid::new_v4().to_string()],
+        )
+        .expect("old session row");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at)
+             VALUES (?1, ?2, '/photos/old.jpg', -7.5, 110.0, '2026-09-18 07:12:00')",
+            params![Uuid::new_v4().to_string(), session_id],
+        )
+        .expect("old image row");
+
+        init_schema(&conn).expect("migrate");
+
+        let old: Image = conn
+            .query_row(
+                &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/photos/old.jpg'"),
+                [],
+                row_to_image,
+            )
+            .expect("old row readable");
+        assert_eq!(old.location_lat, Some(-7.5));
+        assert_eq!(old.width, None);
+
+        // Previously impossible on the old schema: persisting an image
+        // without GPS or capture time.
+        let session_uuid = Uuid::parse_str(&session_id).expect("session uuid");
+        let incomplete = image_from_metadata(
+            Uuid::new_v4(),
+            session_uuid,
+            "/photos/new.jpg".to_string(),
+            &ImageMetadata::default(),
+        );
+        insert_image(&conn, &incomplete).expect("insert after migrate");
+
+        // Second run is a no-op.
+        init_schema(&conn).expect("idempotent");
+        assert_eq!(
+            get_images_by_session(&conn, session_uuid)
+                .expect("list")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn date_range_skips_undated_images() {
+        let dated = img("2026-09-18T07:15:00");
+        let mut undated = img("2026-09-20T10:00:00");
+        undated.captured_at = None;
+        // Only undated images: no range to derive.
+        assert_eq!(compute_date_range(&[undated.clone()]), None);
+        // Mixed: undated images are ignored.
+        let (start, end) = compute_date_range(&[undated, dated]).unwrap();
+        assert_eq!(start, end);
+        assert_eq!(
+            start,
+            "2026-09-18T07:15:00".parse::<NaiveDateTime>().unwrap()
+        );
+    }
+
+    #[test]
+    fn naive_datetime_db_round_trip_with_legacy_fallback() {
+        let dt: NaiveDateTime = "2026-09-18T07:12:00".parse().unwrap();
+        let stored = naive_to_db(dt);
+        assert_eq!(stored, "2026-09-18T07:12:00");
+        assert_eq!(naive_from_db(&stored).expect("round trip"), dt);
+        // Legacy space-separated rows (pre-M1-24) keep reading.
+        assert_eq!(naive_from_db("2026-09-18 07:12:00").expect("legacy"), dt);
+    }
+
+    #[test]
+    fn session_create_get_round_trip() {
+        let conn = memory_db();
+        let created =
+            create_session(&conn, Uuid::new_v4(), Some("Trip".to_string())).expect("create");
+        let fetched = get_session(&conn, created.id).expect("get");
+        assert_eq!(fetched.id, created.id);
+        // Stored at second precision; the in-memory value keeps nanoseconds.
+        assert_eq!(
+            naive_to_db(fetched.date_start),
+            naive_to_db(created.date_start)
+        );
+    }
+
+    #[test]
+    fn recalculate_derives_range_from_stored_images() {
+        let conn = memory_db();
+        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let dated = |path: &str, dt: &str| {
+            let mut meta = full_metadata();
+            meta.date_time_original = dt.parse().ok();
+            image_from_metadata(Uuid::new_v4(), session.id, path.to_string(), &meta)
+        };
+        insert_image(&conn, &dated("/photos/a.jpg", "2026-09-20T10:00:00")).expect("a");
+        insert_image(&conn, &dated("/photos/b.jpg", "2026-09-18T07:15:00")).expect("b");
+        let meta = ImageMetadata {
+            width: Some(10),
+            height: Some(10),
+            ..ImageMetadata::default()
+        };
+        insert_image(
+            &conn,
+            &image_from_metadata(
+                Uuid::new_v4(),
+                session.id,
+                "/photos/c.jpg".to_string(),
+                &meta,
+            ),
+        )
+        .expect("c undated");
+        recalculate_session_date_range(&conn, session.id).expect("recalc");
+        let updated = get_session(&conn, session.id).expect("get");
+        assert_eq!(
+            updated.date_start,
+            "2026-09-18T07:15:00".parse::<NaiveDateTime>().unwrap()
+        );
+        assert_eq!(
+            updated.date_end,
+            "2026-09-20T10:00:00".parse::<NaiveDateTime>().unwrap()
+        );
     }
 }
