@@ -20,8 +20,10 @@ pub mod metadata_extractor;
 
 pub use error::{MetadataError, SessionError};
 pub use flight_session::{
-    assign_image_to_session, create_session, delete_session, get_session, get_sessions_by_project,
-    init_schema, recalculate_session_date_range, update_session_name, update_session_status,
+    assign_image_to_session, create_session, delete_session, get_image, get_images_by_session,
+    get_session, get_sessions_by_project, image_from_metadata, init_schema, insert_image,
+    migrate_image_schema, recalculate_session_date_range, update_session_name,
+    update_session_status,
 };
 pub(crate) use image_importer::{
     find_duplicate, find_name_conflicts, flag_incomplete_metadata, import_images,
