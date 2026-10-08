@@ -10,8 +10,12 @@
 //! ```
 //!
 //! [`Image`] here is the storage-side record (id, path, location, capture
-//! time). It does not carry the richer EXIF/XMP metadata captured during
-//! import — see [`crate::models::image::ImageMetadata`] for that, and
+//! time, plus the most-queried EXIF-derived fields). It carries the
+//! acceptance-critical metadata (GPS, date, altitude, resolution) as
+//! nullable columns so images with missing tags still persist — see
+//! [`crate::modules::module_01::REQUIRED_METADATA_FIELDS`]. For the full
+//! EXIF/XMP telemetry captured during import (camera settings, flight
+//! data, etc.), see [`crate::models::image::ImageMetadata`], and
 //! [`crate::models::image`] generally for the in-flight import pipeline
 //! types that precede a record landing here.
 //!
@@ -73,10 +77,12 @@ pub struct Session {
 
 /// A persisted image record belonging to a session.
 ///
-/// This is the canonical stored record. For the richer EXIF/XMP-derived
-/// metadata captured during import (dimensions, camera settings, flight
-/// telemetry, etc.), see [`crate::models::image::ImageMetadata`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// This is the canonical stored record. Location, capture time, and the
+/// most-queried EXIF fields are nullable: an image with missing metadata is
+/// still imported, with absent tags stored as `NULL` (M1-23 "incomplete
+/// metadata"). Use [`crate::modules::module_01::missing_required_fields`]
+/// to recover which required fields are missing for a stored record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {
     pub id: Uuid,
@@ -84,12 +90,30 @@ pub struct Image {
     /// Absolute path to the original file (not a directory path, and not a
     /// reference to any derived or multi-variant representation thereof).
     pub file_path: String,
-    pub location_lat: f64,
-    pub location_lon: f64,
+    /// GPS latitude in decimal degrees. `None` when the source image has no
+    /// GPS tags.
+    pub location_lat: Option<f64>,
+    /// GPS longitude in decimal degrees. `None` when the source image has no
+    /// GPS tags.
+    pub location_lon: Option<f64>,
     /// Timezone-naive. Derived from EXIF metadata, representing local camera
     /// time at the moment of image acquisition (the majority of camera systems
     /// do not encode a timezone offset within their EXIF data). Serves as the
     /// primary source for the computation of the `date_start` and `date_end`
-    /// fields of the associated `Session`.
-    pub captured_at: NaiveDateTime,
+    /// fields of the associated `Session`. `None` when the source image has
+    /// no `DateTimeOriginal` tag; such images are skipped by the session
+    /// date-range derivation.
+    pub captured_at: Option<NaiveDateTime>,
+    /// GPS altitude in metres above sea level (EXIF). `None` when absent.
+    pub gps_altitude_m: Option<f64>,
+    /// Image width in pixels. `None` when dimensions could not be read.
+    pub width: Option<u32>,
+    /// Image height in pixels. `None` when dimensions could not be read.
+    pub height: Option<u32>,
+    /// Detected image format, as a lowercase string (`"jpeg"` / `"dng"`).
+    pub format: Option<String>,
+    /// Camera manufacturer (e.g. `"DJI"`). `None` when absent.
+    pub make: Option<String>,
+    /// Camera model name (e.g. `"Mavic 3"`). `None` when absent.
+    pub camera_model: Option<String>,
 }
