@@ -145,9 +145,13 @@ import_images(request, known, existing_paths)
 
 One `IncompleteMetadataFlag { candidate_id, source_path, missing }` per
 imported candidate lacking a required field, in import order. Candidates
-with no metadata entry (extraction failed — corrupt/unreadable) are flagged
-with every required field missing. Flagged images stay imported; the flag
-never moves an id into `rejected` or `duplicates`.
+with no metadata entry (never extracted — e.g. `extract_metadata` is still
+a stub) are skipped: completeness cannot be judged, so nothing is emitted
+and a stubbed pipeline does not report every import as incomplete. When
+extraction was attempted but failed (corrupt/unreadable), the I/O layer
+records `ImageMetadata::default()` instead, which flags every required
+field as missing. Flagged images stay imported; the flag never moves an id
+into `rejected` or `duplicates`.
 
 ### `to_plugin_metadata`
 
