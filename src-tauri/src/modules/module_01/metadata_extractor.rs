@@ -1282,4 +1282,111 @@ mod tests {
             ]
         );
     }
+
+    // Restored (deleted without justification in 5f09e0c): serde and
+    // default coverage for the module's plain data types.
+    #[test]
+    fn gps_coordinate_round_trips_through_serde() {
+        let coord = GpsCoordinate {
+            degrees: 1.0,
+            minutes: 16.0,
+            seconds: 12.5,
+            reference: 'S',
+        };
+        let json = serde_json::to_string(&coord).expect("serialize");
+        let decoded: GpsCoordinate = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(coord, decoded);
+    }
+
+    #[test]
+    fn pixel_dimensions_round_trips_through_serde() {
+        let dims = PixelDimensions {
+            width: 4000,
+            height: 3000,
+        };
+        let json = serde_json::to_string(&dims).expect("serialize");
+        let decoded: PixelDimensions = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(dims, decoded);
+    }
+
+    #[test]
+    fn metadata_completeness_defaults_to_empty() {
+        let report = MetadataCompleteness::default();
+        assert!(report.present.is_empty());
+        assert!(report.missing.is_empty());
+    }
+
+    #[test]
+    fn raw_exif_tags_default_has_all_none() {
+        let tags = RawExifTags::default();
+        assert_eq!(tags, RawExifTags::default());
+        assert!(tags.gps_latitude.is_none());
+        assert!(tags.camera_model_name.is_none());
+    }
+
+    #[test]
+    fn raw_xmp_tags_default_has_all_none() {
+        let tags = RawXmpTags::default();
+        assert!(tags.absolute_altitude_m.is_none());
+        assert!(tags.gimbal_yaw_degree.is_none());
+    }
+
+    #[test]
+    fn detect_format_accepts_jpeg() {
+        let header = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        assert_eq!(
+            detect_format(&header, "jpg").expect("jpg"),
+            ImageFormat::Jpeg
+        );
+        assert_eq!(
+            detect_format(&header, "jpeg").expect("jpeg"),
+            ImageFormat::Jpeg
+        );
+        // Extension matching is case-insensitive with an optional dot.
+        assert_eq!(
+            detect_format(&header, ".JPG").expect("dot JPG"),
+            ImageFormat::Jpeg
+        );
+    }
+
+    #[test]
+    fn detect_format_accepts_tiff_magic_both_endians() {
+        let little = [0x49, 0x49, 0x2A, 0x00, 0x08, 0x00];
+        let big = [0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x08];
+        assert_eq!(
+            detect_format(&little, "dng").expect("little-endian"),
+            ImageFormat::Dng
+        );
+        assert_eq!(
+            detect_format(&big, "DNG").expect("big-endian"),
+            ImageFormat::Dng
+        );
+    }
+
+    #[test]
+    fn detect_format_rejects_mismatch() {
+        let jpeg = [0xFF, 0xD8, 0xFF, 0xE0];
+        let tiff = [0x49, 0x49, 0x2A, 0x00];
+        assert!(matches!(
+            detect_format(&tiff, "jpg"),
+            Err(MetadataError::MagicMismatch { .. })
+        ));
+        assert!(matches!(
+            detect_format(&jpeg, "dng"),
+            Err(MetadataError::MagicMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn detect_format_rejects_unsupported_extension() {
+        let header = [0xFF, 0xD8, 0xFF, 0xE0];
+        for extension in ["png", "tif", "mp4", ""] {
+            match detect_format(&header, extension) {
+                Err(MetadataError::UnsupportedFormat { extension: got, .. }) => {
+                    assert_eq!(got, extension)
+                }
+                other => panic!("{extension:?} should be unsupported, got {other:?}"),
+            }
+        }
+    }
 }
