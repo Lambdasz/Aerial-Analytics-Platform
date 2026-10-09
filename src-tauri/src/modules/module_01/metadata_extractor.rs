@@ -41,6 +41,15 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use unicode_normalization::UnicodeNormalization;
+
+/// Folds a name into its comparison key: NFC-composed, then
+/// Unicode-lowercased. Shared by destination basenames and alias-table keys
+/// so `É`/`é` and composed/decomposed accents collide the same way
+/// everywhere in this module.
+pub(crate) fn normalize_name(base: &str) -> String {
+    base.nfc().collect::<String>().to_lowercase()
+}
 
 /// Raw EXIF tags read from a JPEG APP1 segment or DNG IFD0, prior to being
 /// merged into [`ImageMetadata`].
@@ -175,12 +184,28 @@ pub(crate) struct MetadataCompleteness {
 /// ([`MetadataError::UnsupportedFormat`], [`MetadataError::MagicMismatch`]),
 /// or has a present-but-corrupt EXIF/XMP segment
 /// ([`MetadataError::MalformedExif`], [`MetadataError::MalformedXmp`]).
-/// Until the pipeline is implemented this returns
-/// [`MetadataError::NotImplemented`] instead of panicking.
 pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
-    Err(MetadataError::NotImplemented {
-        path: path.display().to_string(),
-    })
+    let bytes = std::fs::read(path)?;
+    let extension = path
+        .extension()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    // detect_format has no path, so its errors carry an empty one; fill in
+    // the file that actually failed.
+    let format = detect_format(&bytes, extension).map_err(|err| match err {
+        MetadataError::UnsupportedFormat { extension, .. } => MetadataError::UnsupportedFormat {
+            path: path.display().to_string(),
+            extension,
+        },
+        MetadataError::MagicMismatch { .. } => MetadataError::MagicMismatch {
+            path: path.display().to_string(),
+        },
+        other => other,
+    })?;
+    let dimensions = read_dimensions(&bytes, format)?;
+    let exif = parse_exif(&bytes)?;
+    let xmp = parse_xmp_dji(&bytes)?;
+    Ok(merge_tags(exif, xmp, dimensions, format))
 }
 
 /// Determines the image format from the file extension and leading bytes.
@@ -738,9 +763,91 @@ fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
 ///
 /// [`MetadataError::MalformedXmp`] if an XMP packet is present but is not
 /// well-formed XML, or the DJI namespace is present but malformed.
+fn parse_dji_f64(name: &str, value: &str) -> Result<f64, MetadataError> {
+    value.trim().parse().map_err(|_| {
+        MetadataError::MalformedXmp(format!("drone-dji:{name} is not a number: {value:?}"))
+    })
+}
+
+fn parse_dji_f32(name: &str, value: &str) -> Result<f32, MetadataError> {
+    value.trim().parse().map_err(|_| {
+        MetadataError::MalformedXmp(format!("drone-dji:{name} is not a number: {value:?}"))
+    })
+}
+
+/// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
+///
+/// Unknown attributes (e.g. new firmware tags) are ignored, so newer
+/// packets keep parsing.
+fn assign_dji_tag(tags: &mut RawXmpTags, name: &str, value: &str) -> Result<(), MetadataError> {
+    match name {
+        "AbsoluteAltitude" => tags.absolute_altitude_m = Some(parse_dji_f64(name, value)?),
+        "RelativeAltitude" => tags.relative_altitude_m = Some(parse_dji_f64(name, value)?),
+        "GimbalRollDegree" => tags.gimbal_roll_degree = Some(parse_dji_f32(name, value)?),
+        "GimbalYawDegree" => tags.gimbal_yaw_degree = Some(parse_dji_f32(name, value)?),
+        "GimbalPitchDegree" => tags.gimbal_pitch_degree = Some(parse_dji_f32(name, value)?),
+        "FlightRollDegree" => tags.flight_roll_degree = Some(parse_dji_f32(name, value)?),
+        "FlightYawDegree" => tags.flight_yaw_degree = Some(parse_dji_f32(name, value)?),
+        "FlightPitchDegree" => tags.flight_pitch_degree = Some(parse_dji_f32(name, value)?),
+        "FlightXSpeed" => tags.flight_x_speed = Some(parse_dji_f32(name, value)?),
+        "FlightYSpeed" => tags.flight_y_speed = Some(parse_dji_f32(name, value)?),
+        "FlightZSpeed" => tags.flight_z_speed = Some(parse_dji_f32(name, value)?),
+        _ => {}
+    }
+    Ok(())
+}
+
 fn parse_xmp_dji(bytes: &[u8]) -> Result<RawXmpTags, MetadataError> {
-    let _ = bytes;
-    unimplemented!("M1.3: parse the drone-dji XMP namespace")
+    const PREFIX: &str = "drone-dji:";
+    // XMP packets are UTF-8 text embedded in the file; view the bytes
+    // lossily so arbitrary binary cannot break the scan.
+    let text = String::from_utf8_lossy(bytes);
+    if !text.contains(PREFIX) {
+        // No DJI packet (e.g. non-DJI drones, or no XMP at all): absence
+        // is not an error.
+        return Ok(RawXmpTags::default());
+    }
+    let malformed = |detail: &str| MetadataError::MalformedXmp(detail.to_string());
+    let raw = text.as_bytes();
+    let mut tags = RawXmpTags::default();
+    let mut cursor = 0;
+    while let Some(found) = text[cursor..].find(PREFIX) {
+        // Every index below is a char boundary: `PREFIX`, the attribute
+        // name, whitespace, `=`, and the quotes are all ASCII.
+        let mut i = cursor + found + PREFIX.len();
+        let name_start = i;
+        while matches!(raw.get(i), Some(b) if b.is_ascii_alphanumeric()) {
+            i += 1;
+        }
+        let name = &text[name_start..i];
+        while matches!(raw.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            i += 1;
+        }
+        if raw.get(i) != Some(&b'=') {
+            return Err(malformed("drone-dji attribute without '='"));
+        }
+        i += 1;
+        while matches!(raw.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            i += 1;
+        }
+        let quote = match raw.get(i) {
+            Some(b'"') => b'"',
+            Some(b'\'') => b'\'',
+            _ => return Err(malformed("drone-dji attribute value without quotes")),
+        };
+        i += 1;
+        let value_start = i;
+        let value_end = loop {
+            match raw.get(i) {
+                None => return Err(malformed("unterminated drone-dji attribute value")),
+                Some(b) if *b == quote => break i,
+                _ => i += 1,
+            }
+        };
+        assign_dji_tag(&mut tags, name, &text[value_start..value_end])?;
+        cursor = value_end + 1;
+    }
+    Ok(tags)
 }
 
 /// Reads pixel dimensions from a JPEG SOF0 segment or DNG IFD0.
@@ -1020,6 +1127,11 @@ pub(crate) fn missing_required_fields(metadata: &ImageMetadata) -> Vec<String> {
 /// when both latitude and longitude are present, and `format` rendered as
 /// a lowercase string (`"jpeg"` / `"dng"`).
 ///
+/// Missing values use the only total mapping the target shape allows:
+/// absent width/height become `0`, absent format becomes `""`. That empty
+/// format never matches `allowed_formats`, so a missing format fails
+/// pre-flight fail-closed when a format list is required.
+///
 /// # Module Contract
 ///
 /// This function represents the cross-module contract:
@@ -1028,8 +1140,17 @@ pub(crate) fn to_plugin_metadata(
     metadata: &ImageMetadata,
     path: &Path,
 ) -> crate::plugin_manager::payload::ImageMetadata {
-    let _ = (metadata, path);
-    unimplemented!("M1.3: project ImageMetadata into the plugin_manager pre-flight shape")
+    crate::plugin_manager::payload::ImageMetadata {
+        path: path.display().to_string(),
+        has_gps: metadata.gps_latitude.is_some() && metadata.gps_longitude.is_some(),
+        width: metadata.width.unwrap_or(0),
+        height: metadata.height.unwrap_or(0),
+        format: match metadata.format {
+            Some(ImageFormat::Jpeg) => "jpeg".to_string(),
+            Some(ImageFormat::Dng) => "dng".to_string(),
+            None => String::new(),
+        },
+    }
 }
 
 /// Resolves a provider-specific metadata field name to this module's
@@ -1048,21 +1169,26 @@ pub(crate) fn to_plugin_metadata(
 /// # Arguments
 ///
 /// * `aliases` — user-supplied mapping from a provider's raw field name to
-///   this module's canonical field name. Keys are matched case-insensitively.
+///   this module's canonical field name. Keys are matched after Unicode
+///   folding ([`normalize_name`]), so case and accent composition do not
+///   matter.
 /// * `raw_key` — the field name as it appears in the provider's metadata.
 ///
 /// # Returns
 ///
-/// `Some(canonical_name)` if `raw_key` case-insensitively matches a key in
-/// `aliases`, otherwise `None`.
+/// `Some(canonical_name)` if `raw_key` matches a key in `aliases` after
+/// folding, otherwise `None`.
 pub(crate) fn resolve_field_alias(
     aliases: &HashMap<String, String>,
     raw_key: &str,
 ) -> Option<String> {
-    let _ = (aliases, raw_key);
-    unimplemented!(
-        "M1.3: user-provided provider-field-name -> canonical-field-name lookup, case-insensitive"
-    )
+    let folded = normalize_name(raw_key);
+    for (key, canonical) in aliases {
+        if normalize_name(key) == folded {
+            return Some(canonical.clone());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1388,5 +1514,196 @@ mod tests {
                 other => panic!("{extension:?} should be unsupported, got {other:?}"),
             }
         }
+    }
+
+    const DJI_XMP: &str = concat!(
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">",
+        "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+        "<rdf:Description rdf:about=\"\" ",
+        "xmlns:drone-dji=\"http://dji.com/drone-dji/1.0/\" ",
+        "drone-dji:AbsoluteAltitude=\"+120.5\" ",
+        "drone-dji:RelativeAltitude=\"+45.25\" ",
+        "drone-dji:GimbalRollDegree=\"+0.00\" ",
+        "drone-dji:GimbalYawDegree=\"+12.50\" ",
+        "drone-dji:GimbalPitchDegree=\"-30.00\" ",
+        "drone-dji:FlightRollDegree=\"+1.00\" ",
+        "drone-dji:FlightYawDegree=\"+12.00\" ",
+        "drone-dji:FlightPitchDegree=\"-2.00\" ",
+        "drone-dji:FlightXSpeed=\"+0.50\" ",
+        "drone-dji:FlightYSpeed=\"-1.25\" ",
+        "drone-dji:FlightZSpeed=\"+0.00\"/>",
+        "</rdf:RDF></x:xmpmeta>",
+    );
+
+    #[test]
+    fn parse_xmp_dji_absent_packet_is_default() {
+        let tags = parse_xmp_dji(b"\x00\xff not an xmp packet").expect("binary");
+        assert_eq!(tags, RawXmpTags::default());
+        let adobe = b"<x:xmpmeta><rdf:RDF><rdf:Description/></rdf:RDF></x:xmpmeta>";
+        let tags = parse_xmp_dji(adobe).expect("non-dji xmp");
+        assert_eq!(tags, RawXmpTags::default());
+    }
+
+    #[test]
+    fn parse_xmp_dji_reads_dji_telemetry() {
+        let tags = parse_xmp_dji(DJI_XMP.as_bytes()).expect("dji packet");
+        assert_eq!(tags.absolute_altitude_m, Some(120.5));
+        assert_eq!(tags.relative_altitude_m, Some(45.25));
+        assert_eq!(tags.gimbal_roll_degree, Some(0.0));
+        assert_eq!(tags.gimbal_yaw_degree, Some(12.5));
+        assert_eq!(tags.gimbal_pitch_degree, Some(-30.0));
+        assert_eq!(tags.flight_roll_degree, Some(1.0));
+        assert_eq!(tags.flight_yaw_degree, Some(12.0));
+        assert_eq!(tags.flight_pitch_degree, Some(-2.0));
+        assert_eq!(tags.flight_x_speed, Some(0.5));
+        assert_eq!(tags.flight_y_speed, Some(-1.25));
+        assert_eq!(tags.flight_z_speed, Some(0.0));
+    }
+
+    #[test]
+    fn parse_xmp_dji_ignores_unknown_attributes() {
+        let packet = "<rdf:Description \
+            drone-dji:FutureTag=\"99\" \
+            drone-dji:GimbalYawDegree=\"+12.50\"/>";
+        let tags = parse_xmp_dji(packet.as_bytes()).expect("unknown attr");
+        assert_eq!(tags.gimbal_yaw_degree, Some(12.5));
+    }
+
+    #[test]
+    fn parse_xmp_dji_rejects_non_numeric_value() {
+        let packet = DJI_XMP.replace("+12.50", "fast");
+        assert!(matches!(
+            parse_xmp_dji(packet.as_bytes()),
+            Err(MetadataError::MalformedXmp(_))
+        ));
+    }
+
+    #[test]
+    fn parse_xmp_dji_rejects_truncated_value() {
+        let truncated = "<rdf:Description drone-dji:AbsoluteAltitude=\"+120.5";
+        assert!(matches!(
+            parse_xmp_dji(truncated.as_bytes()),
+            Err(MetadataError::MalformedXmp(_))
+        ));
+    }
+
+    #[test]
+    fn to_plugin_metadata_projects_full_metadata() {
+        let metadata = ImageMetadata {
+            gps_latitude: Some(-7.5),
+            gps_longitude: Some(110.0),
+            width: Some(4000),
+            height: Some(3000),
+            format: Some(ImageFormat::Dng),
+            ..ImageMetadata::default()
+        };
+        let projected = to_plugin_metadata(&metadata, Path::new("/photos/dji_0001.dng"));
+        assert_eq!(projected.path, "/photos/dji_0001.dng");
+        assert!(projected.has_gps);
+        assert_eq!(projected.width, 4000);
+        assert_eq!(projected.height, 3000);
+        assert_eq!(projected.format, "dng");
+    }
+
+    #[test]
+    fn to_plugin_metadata_missing_fields_fail_closed() {
+        let projected = to_plugin_metadata(&ImageMetadata::default(), Path::new("a.jpg"));
+        assert!(!projected.has_gps);
+        assert_eq!(projected.width, 0);
+        assert_eq!(projected.height, 0);
+        assert_eq!(projected.format, "");
+        let half = ImageMetadata {
+            gps_latitude: Some(-7.5),
+            ..ImageMetadata::default()
+        };
+        assert!(!to_plugin_metadata(&half, Path::new("a.jpg")).has_gps);
+    }
+
+    #[test]
+    fn resolve_field_alias_matches_case_insensitively() {
+        let aliases: HashMap<String, String> =
+            [("Tinggi_meter".to_string(), "height_meter".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            resolve_field_alias(&aliases, "tinggi_METER"),
+            Some("height_meter".to_string())
+        );
+        assert_eq!(resolve_field_alias(&aliases, "unknown"), None);
+        assert_eq!(resolve_field_alias(&HashMap::new(), "Tinggi_meter"), None);
+    }
+
+    #[test]
+    fn resolve_field_alias_folds_unicode_keys() {
+        let aliases: HashMap<String, String> =
+            [("Élévation".to_string(), "height_meter".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            resolve_field_alias(&aliases, "élévation"),
+            Some("height_meter".to_string())
+        );
+        // Decomposed e + combining acute matches the composed key.
+        assert_eq!(
+            resolve_field_alias(&aliases, "e\u{0301}lévation"),
+            Some("height_meter".to_string())
+        );
+    }
+
+    fn jpeg_sof_no_exif() -> Vec<u8> {
+        let mut v = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        v.extend_from_slice(b"JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00");
+        v.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 0x08]);
+        v.extend_from_slice(&300u16.to_be_bytes());
+        v.extend_from_slice(&400u16.to_be_bytes());
+        v.extend_from_slice(&[0x01, 0x01, 0x11, 0x00, 0xFF, 0xD9]);
+        v
+    }
+
+    #[test]
+    fn extract_metadata_jpeg_without_exif_reads_dimensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        std::fs::write(&path, jpeg_sof_no_exif()).expect("write fixture");
+        let metadata = extract_metadata(&path).expect("extract");
+        assert_eq!(metadata.width, Some(400));
+        assert_eq!(metadata.height, Some(300));
+        assert_eq!(metadata.format, Some(ImageFormat::Jpeg));
+        assert_eq!(metadata.gps_latitude, None);
+    }
+
+    #[test]
+    fn extract_metadata_reports_real_path_and_extension() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, jpeg_sof_no_exif()).expect("write fixture");
+        let err = extract_metadata(&path).unwrap_err();
+        match err {
+            MetadataError::UnsupportedFormat {
+                path: got,
+                extension,
+            } => {
+                assert_eq!(got, path.display().to_string());
+                assert_eq!(extension, "txt");
+            }
+            other => panic!("expected UnsupportedFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_metadata_dng_reads_tiff_dimensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.dng");
+        std::fs::write(&path, tiff_le_with_dimensions(400, 300)).expect("write fixture");
+        let metadata = extract_metadata(&path).expect("extract");
+        assert_eq!(metadata.width, Some(400));
+        assert_eq!(metadata.height, Some(300));
+        assert_eq!(metadata.format, Some(ImageFormat::Dng));
+    }
+
+    #[test]
+    fn extract_metadata_missing_file_is_io_error() {
+        let err = extract_metadata(Path::new("/nonexistent-dir-xyz/photo.jpg")).unwrap_err();
+        assert!(matches!(err, MetadataError::Io(_)));
     }
 }

@@ -12,7 +12,7 @@
 //! None of these functions read the disk. I/O fills [`ImportCandidate`]
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 
 use crate::models::image::ImageFormat;
 use crate::models::image::{
@@ -20,7 +20,9 @@ use crate::models::image::{
     ImportRequest, IncompleteMetadataFlag, NameConflict, RejectedFile, SessionTarget,
 };
 use crate::modules::module_01::error::MetadataError;
-use crate::modules::module_01::metadata_extractor::{detect_format, missing_required_fields};
+use crate::modules::module_01::metadata_extractor::{
+    detect_format, missing_required_fields, normalize_name,
+};
 
 /// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
@@ -99,13 +101,14 @@ fn extension_of(file_name: &str) -> String {
 /// Finds destination-basename collisions.
 ///
 /// Compares incoming candidates against each other and against the paths
-/// already in the session folder. Matching is case-insensitive on the
-/// basename (macOS and Windows filesystems are case-insensitive, and the
-/// flatten-copy puts everything in one folder). `dest_name` is the basename
-/// only — directories, `.`, and `..` are stripped — and prefers the name
-/// already in the session folder when `existing_path` is set. Does not
-/// rename; the frontend resolves [`NameConflict`]. Existing paths with no
-/// incoming counterpart are not conflicts.
+/// already in the session folder. Matching folds the basename to NFC and
+/// lowercases it, so `É`/`é` and composed/decomposed accents collide the way
+/// they do on macOS and Windows, and the flatten-copy puts everything in one
+/// folder. `dest_name` is the basename only — directories, `.`, and `..` are
+/// stripped — and prefers the name already in the session folder when
+/// `existing_path` is set. Does not rename; the frontend resolves
+/// [`NameConflict`]. Existing paths with no incoming counterpart are not
+/// conflicts.
 ///
 /// # Purity
 ///
@@ -114,8 +117,9 @@ pub(crate) fn find_name_conflicts(
     candidates: &[ImportCandidate],
     existing_paths: &[String],
 ) -> Vec<NameConflict> {
+    #[derive(Default)]
     struct Group {
-        dest_name: String,
+        dest_name: Option<String>,
         sources: Vec<String>,
         existing_path: Option<String>,
     }
@@ -125,31 +129,19 @@ pub(crate) fn find_name_conflicts(
         let Some(base) = dest_basename(path) else {
             continue;
         };
-        let group = groups
-            .entry(base.to_ascii_lowercase())
-            .or_insert_with(|| Group {
-                dest_name: String::new(),
-                sources: Vec::new(),
-                existing_path: None,
-            });
+        let group = groups.entry(normalize_name(base)).or_default();
         if group.existing_path.is_none() {
             group.existing_path = Some(path.clone());
-            group.dest_name = base.to_string();
+            group.dest_name = Some(base.to_string());
         }
     }
     for candidate in candidates {
         let Some(base) = dest_basename(&candidate.file_name) else {
             continue;
         };
-        let group = groups
-            .entry(base.to_ascii_lowercase())
-            .or_insert_with(|| Group {
-                dest_name: String::new(),
-                sources: Vec::new(),
-                existing_path: None,
-            });
-        if group.dest_name.is_empty() {
-            group.dest_name = base.to_string();
+        let group = groups.entry(normalize_name(base)).or_default();
+        if group.dest_name.is_none() {
+            group.dest_name = Some(base.to_string());
         }
         group.sources.push(candidate.source_path.clone());
     }
@@ -159,8 +151,8 @@ pub(crate) fn find_name_conflicts(
         .filter_map(|group| {
             let collides_incoming = group.sources.len() > 1;
             let collides_existing = group.sources.len() == 1 && group.existing_path.is_some();
-            (collides_incoming || collides_existing).then_some(NameConflict {
-                dest_name: group.dest_name,
+            (collides_incoming || collides_existing).then(|| NameConflict {
+                dest_name: group.dest_name.unwrap_or_default(),
                 sources: group.sources,
                 existing_path: group.existing_path,
             })
@@ -236,6 +228,18 @@ pub(crate) fn import_images(
     let mut duplicates = Vec::new();
     let mut rejected = Vec::new();
 
+    // Hash → image id, seeded from the persisted images (first entry wins).
+    // Batch candidates register themselves as they are accepted, so the
+    // first claimant of a content wins and later identical files are
+    // duplicates of it.
+    let mut known_hashes: HashMap<&str, &str> =
+        HashMap::with_capacity(known.len() + request.candidates.len());
+    for (image_id, hash) in known {
+        known_hashes
+            .entry(hash.0.as_str())
+            .or_insert(image_id.as_str());
+    }
+
     for candidate in &request.candidates {
         if dest_basename(&candidate.file_name).is_none() {
             rejected.push(RejectedFile {
@@ -249,8 +253,13 @@ pub(crate) fn import_images(
                 source_path: candidate.source_path.clone(),
                 reason,
             });
-        } else if let Some(flag) = find_duplicate(candidate, known) {
-            duplicates.push(flag);
+        } else if let Some(&existing_image_id) = known_hashes.get(candidate.content_hash.0.as_str())
+        {
+            duplicates.push(DuplicateFlag {
+                source_path: candidate.source_path.clone(),
+                existing_image_id: existing_image_id.to_string(),
+                content_hash: candidate.content_hash.clone(),
+            });
         } else {
             pending.push(candidate.clone());
         }
@@ -262,24 +271,28 @@ pub(crate) fn import_images(
         .flat_map(|conflict| conflict.sources.iter().map(String::as_str))
         .collect();
 
-    let mut seen: Vec<(String, ContentHash)> = Vec::new();
     let mut imported_image_ids = Vec::new();
-    for candidate in pending {
-        // Check against hashes claimed by earlier batch-mates (held-back
-        // candidates included), then claim this hash if still unclaimed, so
-        // a file identical to a conflict-held file is flagged rather than
-        // imported. The conflict hold-back below still applies afterwards.
-        let duplicate_of = find_duplicate(&candidate, &seen);
-        if duplicate_of.is_none() {
-            seen.push((candidate.id.clone(), candidate.content_hash.clone()));
-        }
+    for candidate in &pending {
+        // Claim the hash before the conflict check, so a file identical to a
+        // conflict-held file is flagged rather than imported. The conflict
+        // hold-back below still applies afterwards.
+        let duplicate_of = match known_hashes.entry(candidate.content_hash.0.as_str()) {
+            Entry::Occupied(entry) => Some(*entry.get()),
+            Entry::Vacant(entry) => {
+                entry.insert(candidate.id.as_str());
+                None
+            }
+        };
         if conflicting.contains(candidate.source_path.as_str()) {
             continue;
         }
-        if let Some(flag) = duplicate_of {
-            duplicates.push(flag);
-        } else {
-            imported_image_ids.push(candidate.id);
+        match duplicate_of {
+            Some(existing_image_id) => duplicates.push(DuplicateFlag {
+                source_path: candidate.source_path.clone(),
+                existing_image_id: existing_image_id.to_string(),
+                content_hash: candidate.content_hash.clone(),
+            }),
+            None => imported_image_ids.push(candidate.id.clone()),
         }
     }
 
@@ -308,10 +321,9 @@ pub(crate) fn import_images(
 /// ```
 ///
 /// `metadata` maps `ImportCandidate.id` to its extracted [`ImageMetadata`].
-/// A candidate with **no entry** was never extracted (extraction unavailable
-/// — e.g. `extract_metadata` is still a stub): completeness cannot be judged,
-/// so no flag is emitted. This keeps a stubbed pipeline from reporting every
-/// import as "incomplete metadata". When extraction was attempted but failed
+/// A candidate with **no entry** was never extracted (the I/O layer skipped
+/// it): completeness cannot be judged, so no flag is emitted. This keeps
+/// skipped files from being reported as "incomplete metadata". When extraction was attempted but failed
 /// (corrupt or unreadable metadata), the I/O layer records
 /// [`ImageMetadata::default()`] instead — every required field is then
 /// missing, and the candidate is flagged with all of them.
@@ -605,5 +617,30 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn conflicts_detect_unicode_case_folding() {
+        let candidates = vec![
+            candidate_named("a", "/in/a.jpg", "Émile.jpg", "H1"),
+            candidate_named("b", "/in/b.jpg", "émile.jpg", "H2"),
+        ];
+        let conflicts = find_name_conflicts(&candidates, &[]);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].dest_name, "Émile.jpg");
+        assert_eq!(conflicts[0].sources.len(), 2);
+    }
+
+    #[test]
+    fn conflicts_detect_unicode_nfc_nfd_normalization() {
+        let candidates = vec![
+            // é composed (NFC) vs e + combining acute (NFD).
+            candidate_named("a", "/in/a.jpg", "\u{00E9}mile.jpg", "H1"),
+            candidate_named("b", "/in/b.jpg", "e\u{0301}mile.jpg", "H2"),
+        ];
+        let conflicts = find_name_conflicts(&candidates, &[]);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].dest_name, "\u{00E9}mile.jpg");
+        assert_eq!(conflicts[0].sources.len(), 2);
     }
 }

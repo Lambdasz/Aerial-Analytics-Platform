@@ -9,9 +9,9 @@
 //! helpers [`find_name_conflicts`], [`find_duplicate`], and [`detect_format`].
 //!
 //! `unused_imports` is allowed at module level because these re-exports are
-//! not yet consumed anywhere. [`detect_format`] and the import helpers are
-//! implemented; the rest of the extraction pipeline is still stubbed (see
-//! [`metadata_extractor`] and [`image_importer`]).
+//! not yet consumed anywhere. The extraction pipeline (`detect_format`,
+//! `extract_metadata`, the EXIF/XMP parsers) and the import helpers are
+//! implemented (see [`metadata_extractor`] and [`image_importer`]).
 
 pub mod error;
 pub mod flight_session;
