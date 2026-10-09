@@ -1,0 +1,1437 @@
+/* ==========================================================================
+   Module 01: Sesi Penerbangan (Flight Sessions)
+   Design accurately adapted from TaskFlow reference layout & palette.
+   ========================================================================== */
+
+.m1-page {
+  --m1-font-primary: Bahnschrift, "DIN Alternate", "Segoe UI", system-ui, sans-serif;
+  --m1-bg-main: #f6f7f9; /* Sama dengan sidebar */
+  --m1-card-bg: #ffffff;
+  --m1-session-card-bg: #f6f7f9; /* Card sesi berwarna abu-abu senada */
+  --m1-border: rgba(17, 20, 24, 0.08);
+  --m1-text-main: #0f172a;
+  --m1-text-muted: #64748b;
+  --m1-blue-primary: #2563eb;
+  --m1-blue-hover: #1d4ed8;
+
+  font-family: var(--m1-font-primary);
+  color: var(--m1-text-main);
+  background-color: var(--m1-bg-main);
+
+  /* Menghilangkan sisa putih di ujung-ujung container shell */
+  margin: -20px -24px -48px -24px;
+  padding: 20px 24px 48px 24px;
+  min-height: calc(100% + 68px);
+  width: auto;
+  box-sizing: border-box;
+}
+
+.m1-page * {
+  box-sizing: border-box;
+}
+
+.m1-page button,
+.m1-page input,
+.m1-page select,
+.m1-page .bp5-button,
+.m1-page .bp5-input,
+.m1-page .bp5-tag {
+  font-family: var(--m1-font-primary);
+}
+
+.m1-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.m1-condensed {
+  font-stretch: semi-condensed;
+  font-variation-settings: "wdth" 85;
+}
+
+/* ── White Panel Cards ──────────────────────────────────────────────────── */
+
+.m1-white-panel {
+  background-color: var(--m1-card-bg);
+  border: 1px solid var(--m1-border);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  margin-bottom: 18px;
+}
+
+/* Panel 1: Judul Card */
+.m1-header-panel {
+  padding: 20px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.m1-header__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.m1-header__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--m1-text-main);
+  letter-spacing: -0.02em;
+}
+
+.m1-header__subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--m1-text-muted);
+}
+
+.m1-primary-pill-btn {
+  background: var(--m1-blue-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 9999px;
+  padding: 9px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+  transition: all 0.15s ease;
+}
+
+.m1-primary-pill-btn:hover:not(:disabled) {
+  background: var(--m1-blue-hover);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
+}
+
+.m1-primary-pill-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* ── 2. Empat Card Berwarna di dalam Kontainer Putih ─────────────────────── */
+
+.m1-summary-panel {
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+
+.m1-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 1024px) {
+  .m1-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .m1-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.m1-summary-card {
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 114px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+  position: relative;
+}
+
+.m1-summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Pastel Tint Colors (Deeper Shade 300 Tones) */
+.m1-summary-card--blue {
+  background-color: #93c5fd;
+  border: 1px solid #60a5fa;
+}
+.m1-summary-card--blue .m1-summary-card__value {
+  color: #0f2759;
+}
+.m1-summary-card--blue .m1-summary-card__label {
+  color: #1e3a8a;
+}
+.m1-summary-card--blue .m1-summary-card__subtext {
+  color: #1e3a8a;
+}
+
+.m1-summary-card--purple {
+  background-color: #c4b5fd;
+  border: 1px solid #a78bfa;
+}
+.m1-summary-card--purple .m1-summary-card__value {
+  color: #3b0764;
+}
+.m1-summary-card--purple .m1-summary-card__label {
+  color: #4c1d95;
+}
+.m1-summary-card--purple .m1-summary-card__subtext {
+  color: #4c1d95;
+}
+
+.m1-summary-card--green {
+  background-color: #86efac;
+  border: 1px solid #4ade80;
+}
+.m1-summary-card--green .m1-summary-card__value {
+  color: #052e16;
+}
+.m1-summary-card--green .m1-summary-card__label {
+  color: #14532d;
+}
+.m1-summary-card--green .m1-summary-card__subtext {
+  color: #14532d;
+}
+
+.m1-summary-card--rose {
+  background-color: #fda4af;
+  border: 1px solid #fb7185;
+}
+.m1-summary-card--rose .m1-summary-card__value {
+  color: #4c0519;
+}
+.m1-summary-card--rose .m1-summary-card__label {
+  color: #881337;
+}
+.m1-summary-card--rose .m1-summary-card__subtext {
+  color: #881337;
+}
+
+.m1-summary-card--interactive {
+  cursor: pointer;
+}
+
+.m1-summary-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.m1-summary-card__label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.m1-summary-card__value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0 0 6px 0;
+  letter-spacing: -0.02em;
+}
+
+.m1-summary-card__value--medium {
+  font-size: 20px;
+}
+
+.m1-summary-card__value--text {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.m1-summary-card__subtext {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.m1-segment-track {
+  width: 100%;
+  height: 6px;
+  background-color: rgba(15, 39, 89, 0.18);
+  border-radius: 9999px;
+  overflow: hidden;
+  display: flex;
+  margin: 6px 0;
+}
+
+/* Bar fill disesuaikan senada dengan warna kartu biru */
+.m1-segment-fill--active {
+  background-color: #1d4ed8;
+  height: 100%;
+}
+
+.m1-segment-fill--archived {
+  background-color: #60a5fa;
+  height: 100%;
+}
+
+/* ── 3. Panel ID Proyek ─────────────────────────────────────────────────── */
+
+.m1-project-panel {
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.m1-project-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.m1-project-bar__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.m1-project-bar__identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.m1-project-bar__icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background-color: #eff6ff;
+  color: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid #dbeafe;
+}
+
+.m1-project-bar__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--m1-text-main);
+  margin: 0 0 2px 0;
+}
+
+.m1-project-bar__subtitle {
+  font-size: 12px;
+  color: var(--m1-text-muted);
+  margin: 0;
+}
+
+.m1-project-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Button: Muat Sesi */
+.m1-btn-load {
+  background: var(--m1-blue-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2);
+  transition: all 0.15s ease;
+}
+
+.m1-btn-load:hover:not(:disabled) {
+  background: var(--m1-blue-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.m1-btn-load:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Button: Buat ID Proyek Baru */
+.m1-btn-new-project {
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.m1-btn-new-project:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.m1-btn-new-project:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Project Input Wrapper */
+.m1-project-bar__input-wrapper {
+  width: 100%;
+}
+
+.m1-project-input-box {
+  display: flex;
+  align-items: center;
+  background-color: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 0 8px 0 14px;
+  height: 42px;
+  transition: all 0.15s ease;
+}
+
+.m1-project-input-box:focus-within {
+  border-color: var(--m1-blue-primary);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.m1-project-input-box--invalid {
+  border-color: #ef4444 !important;
+  background-color: #fffafb;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1) !important;
+}
+
+.m1-project-input-prefix {
+  font-size: 12px;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-right: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.m1-project-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  color: var(--m1-text-main);
+  letter-spacing: 0.02em;
+}
+
+.m1-input-action-btn {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.m1-input-action-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.m1-copy-idle,
+.m1-copy-feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.m1-copy-feedback {
+  color: #16a34a;
+}
+
+.m1-project-bar__meta {
+  font-size: 12px;
+  margin: 0;
+}
+
+.m1-project-bar__hint {
+  font-size: 12px;
+  color: var(--m1-text-muted);
+  margin: 0;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.m1-project-bar__hint--error {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.m1-spinner-mini {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: m1-spin 0.6s linear infinite;
+}
+
+@keyframes m1-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 4. Kontainer Putih Besar: Semua Sesi + Grid + Pagination ────────────── */
+
+.m1-sessions-container {
+  padding: 22px 24px 28px;
+  margin-bottom: 24px;
+}
+
+.m1-controls-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding-bottom: 4px;
+}
+
+.m1-controls-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.m1-controls-bar__heading {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--m1-text-main);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m1-controls-bar__badge {
+  font-size: 12px;
+  font-weight: 600;
+  background-color: #f1f5f9;
+  color: #475569;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  border: 1px solid #e2e8f0;
+}
+
+.m1-controls-bar__right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Sleek Professional Search Bar */
+.m1-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 250px;
+}
+
+.m1-search-input {
+  width: 100%;
+  height: 38px;
+  border-radius: 9999px;
+  background-color: #f8fafc;
+  border: 1px solid #cbd5e1;
+  padding: 0 32px 0 36px;
+  font-size: 13px;
+  color: var(--m1-text-main);
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.m1-search-input:focus {
+  background-color: #ffffff;
+  border-color: var(--m1-blue-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.m1-search-input::placeholder {
+  color: #94a3b8;
+}
+
+.m1-search-icon {
+  position: absolute;
+  left: 12px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.m1-search-clear {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: color 0.15s ease;
+}
+
+.m1-search-clear:hover {
+  color: var(--m1-text-main);
+}
+
+/* Professional Capsule Status Filters (tanpa titik kecil) */
+.m1-filter-capsule {
+  display: inline-flex;
+  align-items: center;
+  background-color: #f1f5f9;
+  padding: 3px;
+  border-radius: 9999px;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  gap: 2px;
+}
+
+.m1-filter-pill {
+  border: none;
+  background: transparent;
+  border-radius: 9999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.m1-filter-pill:hover:not(:disabled) {
+  color: #0f172a;
+}
+
+.m1-filter-pill--active {
+  background-color: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  font-weight: 700;
+}
+
+.m1-filter-pill__count {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background-color: rgba(0, 0, 0, 0.06);
+  color: inherit;
+}
+
+.m1-filter-pill--active .m1-filter-pill__count {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.m1-filter-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Professional Sort Button via Popover ────────────────────────────────── */
+
+.m1-sort-container {
+  position: relative;
+  display: inline-block;
+}
+
+.m1-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 9999px;
+  height: 38px;
+  padding: 0 14px 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.m1-sort-btn:hover:not(:disabled) {
+  background-color: #ffffff;
+  border-color: #94a3b8;
+}
+
+.m1-sort-btn--active {
+  background-color: #ffffff !important;
+  border-color: var(--m1-blue-primary) !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+
+.m1-sort-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.m1-sort-icon {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.m1-sort-label {
+  white-space: nowrap;
+}
+
+.m1-sort-chevron {
+  color: #64748b;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.m1-sort-chevron--open {
+  transform: rotate(180deg);
+}
+
+.m1-sort-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow:
+    0 12px 28px -4px rgba(15, 23, 42, 0.15),
+    0 4px 6px -2px rgba(15, 23, 42, 0.05);
+  padding: 6px;
+  min-width: 160px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: m1-menu-pop 0.12s ease-out;
+}
+
+@keyframes m1-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.m1-sort-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.m1-sort-item:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.m1-sort-item--active {
+  color: #2563eb;
+  font-weight: 600;
+  background-color: #eff6ff;
+}
+
+.m1-sort-item__check {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #2563eb;
+}
+
+/* ── Session Cards Grid ─────────────────────────────────────────────────── */
+
+.m1-session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+  margin-bottom: 24px;
+  width: 100%;
+}
+
+/* Card sesi berwarna abu-abu senada dengan latar untuk efek kontras layered */
+.m1-session-card {
+  background-color: var(--m1-session-card-bg);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 230px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+  position: relative;
+}
+
+.m1-session-card:hover {
+  background-color: #f1f5f9;
+  transform: translateY(-2px);
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+}
+
+.m1-session-card--highlighted {
+  border-color: var(--m1-blue-primary) !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25) !important;
+}
+
+.m1-session-card__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.m1-session-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* Status Text Tanpa Background Kotak/Rounded */
+.m1-session-card__tag {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.m1-session-card__tag--active {
+  color: #16a34a !important;
+}
+
+.m1-session-card__tag--archived {
+  color: #64748b !important;
+}
+
+/* 3-Dots Button & Offset Popover */
+.m1-card-menu-wrapper {
+  position: relative;
+}
+
+.m1-card-menu-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--m1-text-muted);
+  transition: all 0.15s ease;
+}
+
+.m1-card-menu-btn:hover,
+.m1-card-menu-btn--active {
+  background-color: #f8fafc;
+  color: var(--m1-text-main);
+  border-color: #cbd5e1;
+}
+
+/* Dropdown Menu Murni: Turun rapi di bawah tombol, tanpa panah yang aneh */
+.m1-card-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow:
+    0 12px 28px -4px rgba(15, 23, 42, 0.18),
+    0 4px 6px -2px rgba(15, 23, 42, 0.05);
+  padding: 6px;
+  min-width: 175px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: m1-menu-pop 0.12s ease-out;
+}
+
+.m1-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.m1-card-menu-item:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.m1-card-menu-item svg {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.m1-card-menu-item:hover svg {
+  color: #0f172a;
+}
+
+.m1-card-menu-item--danger {
+  color: #dc2626;
+}
+
+.m1-card-menu-item--danger svg {
+  color: #dc2626;
+}
+
+.m1-card-menu-item--danger:hover {
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.m1-card-menu-item--danger:hover svg {
+  color: #b91c1c;
+}
+
+.m1-card-menu-divider {
+  height: 1px;
+  background-color: #f1f5f9;
+  margin: 4px 0;
+}
+
+/* Card Title */
+.m1-session-card__name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--m1-text-main);
+  margin: 10px 0 8px 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+/* ID & Copy Row */
+.m1-session-card__id-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.m1-session-card__id-badge {
+  font-size: 12px;
+  color: #475569;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-family: monospace;
+}
+
+.m1-copy-btn {
+  background: none;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.m1-copy-btn:hover {
+  background-color: #ffffff;
+  color: var(--m1-text-main);
+}
+
+.m1-session-card__date-range {
+  font-size: 12px;
+  color: var(--m1-text-muted);
+  margin-bottom: 12px;
+}
+
+/* Progress Section (TaskFlow Dashboard Style) */
+.m1-session-card__progress-section {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.m1-session-card__progress-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 7px;
+}
+
+.m1-progress-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.m1-progress-percent {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--m1-blue-primary);
+}
+
+.m1-progress-percent--archived {
+  color: #64748b;
+}
+
+.m1-progress-track {
+  width: 100%;
+  height: 6px;
+  background-color: #f1f5f9;
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.m1-progress-fill {
+  height: 100%;
+  background-color: var(--m1-blue-primary);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+  animation: m1-grow-bar 380ms ease-out 1;
+}
+
+.m1-progress-fill--archived {
+  background-color: #94a3b8;
+}
+
+.m1-progress-meta {
+  display: flex;
+  align-items: center;
+}
+
+.m1-progress-meta__text {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.3;
+}
+
+@keyframes m1-grow-bar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m1-progress-fill {
+    animation: none !important;
+  }
+}
+
+/* Card Footer */
+.m1-session-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+  margin-top: 14px;
+}
+
+.m1-session-card__images-count {
+  font-size: 12px;
+  color: var(--m1-text-muted);
+}
+
+.m1-add-img-btn {
+  background: none;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m1-text-main);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background-color 0.15s ease;
+}
+
+.m1-add-img-btn:hover {
+  background-color: #ffffff;
+}
+
+/* ── Pagination (Matching TaskFlow) ─────────────────────────────────────── */
+
+.m1-pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 18px 0 0;
+  margin-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.m1-pagination-bar__info {
+  font-size: 13px;
+  color: var(--m1-text-muted);
+}
+
+.m1-pagination-bar__buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.m1-page-num-btn {
+  min-width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--m1-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.m1-page-num-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  color: var(--m1-text-main);
+  border-color: rgba(17, 20, 24, 0.1);
+}
+
+.m1-page-num-btn--active {
+  background: var(--m1-blue-primary) !important;
+  color: #ffffff !important;
+  border-color: var(--m1-blue-primary) !important;
+}
+
+.m1-page-num-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── States ─────────────────────────────────────────────────────────────── */
+
+.m1-state-container {
+  padding: 48px 24px;
+  background-color: #f8fafc;
+  border: 1px dashed rgba(17, 20, 24, 0.12);
+  border-radius: 16px;
+  margin: 16px 0;
+}
+
+.m1-skeleton-card {
+  height: 230px;
+  background-color: var(--m1-session-card-bg);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  animation: m1-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes m1-pulse {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+/* ==========================================================================
+   PORTAL MODAL / DIALOG CUSTOM STYLES
+   Mendesain ulang jendela modal agar tampak sangat modern, bukan default Blueprint.
+   ========================================================================== */
+
+/* Backdrop Overlay dengan Blur Lembut */
+.m1-dialog-portal .bp5-overlay-backdrop {
+  background-color: rgba(15, 23, 42, 0.5) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+/* Kontainer Card Dialog */
+.m1-dialog-portal .bp5-dialog {
+  border-radius: 20px !important;
+  overflow: hidden !important;
+  background: #ffffff !important;
+  box-shadow:
+    0 25px 60px -12px rgba(15, 23, 42, 0.3),
+    0 0 0 1px rgba(15, 23, 42, 0.08) !important;
+  border: none !important;
+  padding: 0 !important;
+  width: 480px !important;
+  max-width: 92vw !important;
+  font-family: Bahnschrift, "DIN Alternate", "Segoe UI", system-ui, sans-serif !important;
+}
+
+/* Header Dialog */
+.m1-dialog-portal .bp5-dialog-header {
+  background: #ffffff !important;
+  padding: 20px 24px 16px 24px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  min-height: auto !important;
+  box-shadow: none !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.m1-dialog-portal .bp5-dialog-header .bp5-heading {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  letter-spacing: -0.01em !important;
+  margin: 0 !important;
+}
+
+.m1-dialog-portal .bp5-dialog-header .bp5-icon {
+  color: #2563eb !important;
+  margin-right: 12px !important;
+  background: #eff6ff !important;
+  padding: 7px !important;
+  border-radius: 10px !important;
+  border: 1px solid #dbeafe !important;
+  box-sizing: content-box !important;
+}
+
+.m1-dialog-portal .bp5-dialog-close-button {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  background: #f8fafc !important;
+  color: #64748b !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  transition: all 0.15s ease !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.m1-dialog-portal .bp5-dialog-close-button:hover {
+  background: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Content Dialog */
+.m1-dialog-portal .m1-dialog-content {
+  padding: 22px 24px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+}
+
+.m1-dialog-portal .bp5-label {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #1e293b !important;
+  margin-bottom: 8px !important;
+}
+
+.m1-dialog-portal .bp5-text-muted {
+  color: #64748b !important;
+  font-weight: 400 !important;
+  font-size: 12px !important;
+}
+
+.m1-dialog-portal .bp5-form-helper-text {
+  font-size: 12px !important;
+  color: #64748b !important;
+  margin-top: 8px !important;
+  line-height: 1.4 !important;
+}
+
+.m1-dialog-portal .bp5-input {
+  height: 44px !important;
+  border-radius: 12px !important;
+  background-color: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  padding: 0 14px !important;
+  font-size: 14px !important;
+  color: #0f172a !important;
+  transition: all 0.15s ease !important;
+  box-shadow: none !important;
+}
+
+.m1-dialog-portal .bp5-input:focus {
+  background-color: #ffffff !important;
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+}
+
+/* Footer Dialog */
+.m1-dialog-portal .m1-dialog-footer {
+  padding: 16px 24px !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  border-top: 1px solid #f1f5f9 !important;
+  background-color: #f8fafc !important;
+}
+
+.m1-dialog-portal .m1-dialog-footer .bp5-button {
+  border-radius: 10px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 9px 20px !important;
+  height: 40px !important;
+  transition: all 0.15s ease !important;
+  box-shadow: none !important;
+}
+
+/* Tombol Batal */
+.m1-dialog-portal .m1-dialog-footer .bp5-button:not(.bp5-intent-primary):not(.bp5-intent-danger) {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+.m1-dialog-portal
+  .m1-dialog-footer
+  .bp5-button:not(.bp5-intent-primary):not(.bp5-intent-danger):hover {
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+
+/* Tombol Submit Primary */
+.m1-dialog-portal .m1-dialog-footer .bp5-button.bp5-intent-primary {
+  background: #2563eb !important;
+  border: none !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.25) !important;
+}
+
+.m1-dialog-portal .m1-dialog-footer .bp5-button.bp5-intent-primary:hover {
+  background: #1d4ed8 !important;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35) !important;
+  transform: translateY(-1px);
+}
+
+/* Alert Hapus Sesi Custom */
+.m1-dialog-portal .bp5-alert.m1-custom-alert,
+.bp5-alert.m1-custom-alert {
+  border-radius: 20px !important;
+  overflow: hidden !important;
+  background: #ffffff !important;
+  box-shadow: 0 25px 60px -12px rgba(15, 23, 42, 0.3) !important;
+  padding: 24px !important;
+}
+
+.m1-dialog-portal .m1-alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 8px 0;
+}
+
+.m1-dialog-portal .m1-alert-message {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.m1-dialog-portal .m1-alert-subtext {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+  line-height: 1.4;
+}
