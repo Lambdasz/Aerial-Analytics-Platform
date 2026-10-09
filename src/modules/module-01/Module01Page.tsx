@@ -1,13 +1,14 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
-  Button,
-  Callout,
-  Intent,
-  NonIdealState,
-  OverlayToaster,
-  Position,
-  type Toaster,
-} from "@blueprintjs/core";
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  Component,
+  type ReactNode,
+  type ErrorInfo,
+} from "react";
+import { Button, Callout, Intent, NonIdealState } from "@blueprintjs/core";
 
 import {
   type Session,
@@ -42,7 +43,7 @@ const STORAGE_KEY = "m1_last_project_id";
 type StatusFilter = "all" | "active" | "archived";
 type SortOrder = "newest" | "oldest" | "name";
 
-export function Module01Page() {
+function Module01PageInner() {
   const [projectId, setProjectId] = useState<string>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -97,15 +98,15 @@ export function Module01Page() {
   const [assignTarget, setAssignTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
 
-  // Blueprint Toaster reference
-  const toasterRef = useRef<Toaster | null>(null);
+  // Pure React Toast notification state
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = useCallback((message: string, intent: Intent = Intent.SUCCESS) => {
-    toasterRef.current?.show({
-      message,
-      intent,
-      timeout: 2500,
-    });
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    const timer = setTimeout(() => {
+      setToastMessage(null);
+    }, 2500);
+    return () => clearTimeout(timer);
   }, []);
 
   // Format friendly error message matching brief
@@ -376,13 +377,25 @@ export function Module01Page() {
 
   return (
     <main className="m1-page" aria-labelledby="m1-page-heading">
-      {/* Blueprint OverlayToaster for feedback */}
-      <OverlayToaster
-        ref={(instance) => {
-          toasterRef.current = instance;
-        }}
-        position={Position.TOP_RIGHT}
-      />
+      {/* Pure React Toast notification for feedback */}
+      {toastMessage && (
+        <div className="m1-custom-toast" role="status" aria-live="polite">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       {/* Accessible live status region */}
       <div className="visually-hidden" aria-live="polite">
@@ -869,5 +882,94 @@ export function Module01Page() {
         busy={busy}
       />
     </main>
+  );
+}
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class Module01ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Module 01 Error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="m1-page" style={{ padding: 32 }}>
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #fee2e2",
+              borderRadius: 16,
+              padding: 28,
+              boxShadow: "0 10px 25px -5px rgba(0,0,0,0.05)",
+            }}
+          >
+            <h2 style={{ color: "#dc2626", margin: "0 0 12px 0", fontSize: 18, fontWeight: 700 }}>
+              Terjadi Kendala Tampilan pada Modul Sesi Penerbangan
+            </h2>
+            <p style={{ color: "#475569", fontSize: 14, margin: "0 0 16px 0" }}>
+              Silakan klik tombol di bawah untuk memuat ulang modul:
+            </p>
+            <pre
+              style={{
+                background: "#fef2f2",
+                color: "#991b1b",
+                padding: 14,
+                borderRadius: 8,
+                fontSize: 12,
+                overflowX: "auto",
+                margin: "0 0 16px 0",
+              }}
+            >
+              {this.state.error?.message}
+            </pre>
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                window.location.reload();
+              }}
+              style={{
+                background: "#2563eb",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: 8,
+                padding: "10px 20px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Muat Ulang Halaman
+            </button>
+          </div>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function Module01Page() {
+  return (
+    <Module01ErrorBoundary>
+      <Module01PageInner />
+    </Module01ErrorBoundary>
   );
 }

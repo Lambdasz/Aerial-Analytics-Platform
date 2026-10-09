@@ -1435,3 +1435,26 @@
   margin: 0;
   line-height: 1.4;
 }
+
+/* Toast Notification Feedback */
+.m1-custom-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 9999;
+  background-color: #0f172a;
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 12px 28px -4px rgba(15, 23, 42, 0.25);
+  animation: m1-menu-pop 0.15s ease-out;
+}
+
+.m1-custom-toast svg {
+  color: #22c55e;
+}
