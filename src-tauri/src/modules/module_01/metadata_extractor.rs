@@ -787,14 +787,14 @@ fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
 
 /// Parses a DJI numeric attribute leniently.
 ///
-/// `None` for an empty or non-numeric value (`"n/a"`, text, a truncated
-/// write). The field is left unset instead of failing the extraction.
+/// `None` for an empty, non-numeric or non-finite value (`"n/a"`, text, a
+/// truncated write, `nan`/`inf`, which `str::parse` would otherwise accept). The field is left unset instead of failing the extraction.
 fn parse_dji_f64(value: &str) -> Option<f64> {
-    value.trim().parse().ok()
+    value.trim().parse().ok().filter(|v: &f64| v.is_finite())
 }
 
 fn parse_dji_f32(value: &str) -> Option<f32> {
-    value.trim().parse().ok()
+    value.trim().parse().ok().filter(|v: &f32| v.is_finite())
 }
 
 /// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
@@ -1890,6 +1890,16 @@ mod tests {
         // Siblings still parse.
         assert_eq!(tags.absolute_altitude_m, Some(120.5));
         assert_eq!(tags.gimbal_roll_degree, Some(0.0));
+    }
+
+    #[test]
+    fn parse_xmp_dji_rejects_non_finite_numbers() {
+        let packet = br#"<x:xmpmeta drone-dji:GimbalYawDegree="nan" drone-dji:GimbalPitchDegree="inf" drone-dji:FlightXSpeed="-infinity" drone-dji:FlightYSpeed="+1.5"/>"#;
+        let tags = parse_xmp_dji(packet);
+        assert_eq!(tags.gimbal_yaw_degree, None);
+        assert_eq!(tags.gimbal_pitch_degree, None);
+        assert_eq!(tags.flight_x_speed, None);
+        assert_eq!(tags.flight_y_speed, Some(1.5));
     }
 
     #[test]
