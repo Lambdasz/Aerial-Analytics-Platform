@@ -43,6 +43,7 @@ use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
@@ -189,14 +190,16 @@ pub(crate) struct MetadataCompleteness {
 /// ([`MetadataError::MalformedExif`]). A malformed XMP DJI packet is not an
 /// error: it leaves the flight-telemetry fields `None` like a missing tag.
 pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
-    let bytes = std::fs::read(path)?;
+    let mut file = std::fs::File::open(path)?;
     let extension = path
         .extension()
         .and_then(|name| name.to_str())
         .unwrap_or("");
+    let mut header = Vec::with_capacity(16);
+    file.by_ref().take(16).read_to_end(&mut header)?;
     // detect_format has no path, so its errors carry an empty one; fill in
     // the file that actually failed.
-    let format = detect_format(&bytes, extension).map_err(|err| match err {
+    let format = detect_format(&header, extension).map_err(|err| match err {
         MetadataError::UnsupportedFormat { extension, .. } => MetadataError::UnsupportedFormat {
             path: path.display().to_string(),
             extension,
@@ -206,11 +209,25 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
         },
         other => other,
     })?;
+    file.seek(SeekFrom::Start(0))?;
+    // A JPEG keeps everything this module reads before the scan data, so
+    // only that prefix is loaded. A DNG is a TIFF container whose parsers
+    // index the whole file, so it is read in full.
+    let bytes = match format {
+        ImageFormat::Jpeg => read_jpeg_head(&mut file)?,
+        ImageFormat::Dng => {
+            let mut all = Vec::new();
+            file.read_to_end(&mut all)?;
+            all
+        }
+    };
     let dimensions = read_dimensions(&bytes, format)?;
     let exif = parse_exif(&bytes)?;
     // Never fails: a malformed XMP packet leaves flight telemetry unset
     // instead of discarding the EXIF, GPS and dimensions above.
-    let xmp = parse_xmp_dji(&bytes);
+    let xmp = xmp_packet(&bytes, format)
+        .map(parse_xmp_dji)
+        .unwrap_or_default();
     Ok(merge_tags(exif, xmp, dimensions, format))
 }
 
@@ -822,6 +839,99 @@ fn xmp_packet_span(text: &str) -> Option<(usize, usize)> {
         .or_else(|| rest.find("<?xpacket end").map(|i| start + i))
         .unwrap_or(text.len());
     Some((start, end.max(start)))
+}
+
+/// Reads a JPEG from its start through the SOS segment header, leaving the
+/// entropy-coded scan data (the bulk of the file) unread.
+///
+/// SOF (dimensions), APP1 Exif and APP1 XMP all precede SOS, so this prefix
+/// is all the extractor needs. A truncated or invalid structure is not an
+/// error here: whatever was read is returned and [`jpeg_segments`] reports
+/// the exact problem.
+fn read_jpeg_head<R: Read>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+    fn read_byte<R: Read>(reader: &mut R, out: &mut Vec<u8>) -> std::io::Result<Option<u8>> {
+        let mut byte = [0u8; 1];
+        match reader.read_exact(&mut byte) {
+            Ok(()) => {
+                out.push(byte[0]);
+                Ok(Some(byte[0]))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    let mut out = Vec::new();
+    reader.by_ref().take(2).read_to_end(&mut out)?;
+    if out != [0xFF, 0xD8] {
+        // Not a JPEG start; let the parsers report it from what we have.
+        reader.by_ref().take(1 << 16).read_to_end(&mut out)?;
+        return Ok(out);
+    }
+    loop {
+        // Marker: 0xFF, optional 0xFF padding, then the code.
+        match read_byte(reader, &mut out)? {
+            Some(0xFF) => {}
+            _ => return Ok(out),
+        }
+        let code = loop {
+            match read_byte(reader, &mut out)? {
+                Some(0xFF) => continue,
+                Some(code) => break code,
+                None => return Ok(out),
+            }
+        };
+        if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
+            continue;
+        }
+        let mut len_bytes = Vec::with_capacity(2);
+        reader.by_ref().take(2).read_to_end(&mut len_bytes)?;
+        out.extend_from_slice(&len_bytes);
+        let [hi, lo] = len_bytes[..] else {
+            return Ok(out);
+        };
+        let len = usize::from(u16::from_be_bytes([hi, lo]));
+        if len < 2 {
+            return Ok(out);
+        }
+        let read = reader
+            .by_ref()
+            .take((len - 2) as u64)
+            .read_to_end(&mut out)?;
+        if read < len - 2 || code == 0xDA {
+            return Ok(out);
+        }
+    }
+}
+
+/// XMP payload prefix inside a JPEG APP1 segment.
+const XMP_APP1_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+
+/// The XMP packet bytes of an image, or `None` when it carries none.
+///
+/// JPEG: the APP1 segment starting with the standard XMP namespace header.
+/// DNG: the IFD0 `XMP` tag (`0x02BC`). Only this slice is scanned for DJI
+/// telemetry, so `drone-dji:` text elsewhere in the file (a JPEG comment,
+/// EXIF strings, scan data) is never mistaken for it. A damaged structure
+/// simply yields `None`: optional telemetry must not fail extraction.
+fn xmp_packet(bytes: &[u8], format: ImageFormat) -> Option<&[u8]> {
+    match format {
+        ImageFormat::Jpeg => jpeg_segments(bytes)
+            .map_while(Result::ok)
+            .find_map(|(code, seg)| {
+                (code == 0xE1)
+                    .then(|| seg.strip_prefix(XMP_APP1_HEADER))
+                    .flatten()
+            }),
+        ImageFormat::Dng => {
+            let (endian, ifd0_off) = tiff_header(bytes)?;
+            let ifd0 = parse_ifd(bytes, endian, ifd0_off).ok()?;
+            // BYTE/UNDEFINED, one byte per count; a packet never fits inline.
+            let entry = find_entry(&ifd0, 0x02BC)?;
+            let (off, len) = (entry.val_u32 as usize, entry.count as usize);
+            bytes.get(off..off.checked_add(len)?)
+        }
+    }
 }
 
 /// Parses the XMP DJI drone-telemetry packet of an image into [`RawXmpTags`].
@@ -1882,6 +1992,85 @@ mod tests {
         assert_eq!(metadata.width, Some(400));
         assert_eq!(metadata.height, Some(300));
         assert_eq!(metadata.format, Some(ImageFormat::Dng));
+    }
+
+    fn jpeg_with_segments(segments: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let mut v = vec![0xFF, 0xD8];
+        for (code, payload) in segments {
+            v.extend_from_slice(&[0xFF, *code]);
+            v.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+            v.extend_from_slice(payload);
+        }
+        v
+    }
+
+    fn sof_payload() -> Vec<u8> {
+        let mut p = vec![0x08];
+        p.extend_from_slice(&300u16.to_be_bytes());
+        p.extend_from_slice(&400u16.to_be_bytes());
+        p.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+        p
+    }
+
+    #[test]
+    fn read_jpeg_head_stops_after_the_sos_header() {
+        let mut file = jpeg_with_segments(&[(0xC0, sof_payload()), (0xDA, vec![0x00, 0x00])]);
+        let head_len = file.len();
+        file.extend(std::iter::repeat_n(0xAB, 10_000));
+        let head = read_jpeg_head(&mut file.as_slice()).expect("read");
+        assert_eq!(head.len(), head_len);
+        assert_eq!(head, file[..head_len]);
+    }
+
+    #[test]
+    fn read_jpeg_head_keeps_a_truncated_segment_for_the_parser_to_report() {
+        let mut file = jpeg_with_segments(&[(0xC0, sof_payload())]);
+        file.truncate(file.len() - 3);
+        let head = read_jpeg_head(&mut file.as_slice()).expect("read");
+        assert_eq!(head, file);
+        assert!(jpeg_dimensions(&head).is_err());
+    }
+
+    #[test]
+    fn extract_metadata_reads_dji_xmp_from_the_xmp_segment() {
+        let mut xmp = XMP_APP1_HEADER.to_vec();
+        xmp.extend_from_slice(
+            b"<x:xmpmeta><rdf:Description drone-dji:GimbalYawDegree=\"-90.5\"/></x:xmpmeta>",
+        );
+        let file = jpeg_with_segments(&[(0xE1, xmp), (0xC0, sof_payload())]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        std::fs::write(&path, file).expect("write fixture");
+        let metadata = extract_metadata(&path).expect("extract");
+        assert_eq!(metadata.gimbal_yaw_degree, Some(-90.5));
+        assert_eq!(metadata.width, Some(400));
+    }
+
+    #[test]
+    fn xmp_packet_reads_the_dng_xmp_tag() {
+        let packet = b"<x:xmpmeta drone-dji:FlightYawDegree=\"7.5\"/>";
+        let mut dng = vec![0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00];
+        dng.extend_from_slice(&1u16.to_le_bytes());
+        dng.extend_from_slice(&0x02BCu16.to_le_bytes());
+        dng.extend_from_slice(&1u16.to_le_bytes()); // BYTE
+        dng.extend_from_slice(&(packet.len() as u32).to_le_bytes());
+        dng.extend_from_slice(&26u32.to_le_bytes()); // after IFD0 + next pointer
+        dng.extend_from_slice(&0u32.to_le_bytes());
+        dng.extend_from_slice(packet);
+        let found = xmp_packet(&dng, ImageFormat::Dng).expect("packet");
+        assert_eq!(found, packet);
+        assert_eq!(parse_xmp_dji(found).flight_yaw_degree, Some(7.5));
+    }
+
+    #[test]
+    fn extract_metadata_ignores_dji_text_outside_the_xmp_segment() {
+        let comment = b"<x:xmpmeta>drone-dji:GimbalYawDegree=\"12\"</x:xmpmeta>".to_vec();
+        let file = jpeg_with_segments(&[(0xFE, comment), (0xC0, sof_payload())]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        std::fs::write(&path, file).expect("write fixture");
+        let metadata = extract_metadata(&path).expect("extract");
+        assert_eq!(metadata.gimbal_yaw_degree, None);
     }
 
     #[test]
