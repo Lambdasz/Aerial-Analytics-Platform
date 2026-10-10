@@ -1076,26 +1076,13 @@ pub(crate) const REQUIRED_METADATA_FIELDS: &[&str] = &[
     "height",
 ];
 
-/// Reports which [`ImageMetadata`] fields are present versus missing.
+/// One `(name, present)` row per [`ImageMetadata`] field.
 ///
-/// # Integration
-///
-/// - **Direction**: Module 1.3 → Module 1.5 (Image Quality Checking)
-///
-/// # Purity
-///
-/// Pure, total (never fails).
-///
-/// # Arguments
-///
-/// * `metadata` — previously extracted image metadata.
-///
-/// # Returns
-///
-/// A [`MetadataCompleteness`] listing present and missing field names, used
-/// by Image Quality Checking to flag images with missing metadata.
-pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
-    let fields: [(&str, bool); 32] = [
+/// The single source of truth for field names: [`describe_completeness`] and
+/// [`missing_required_fields`] both derive from it, so adding a field to
+/// [`ImageMetadata`] means editing this table only.
+fn field_presence(metadata: &ImageMetadata) -> [(&'static str, bool); 32] {
+    [
         ("gps_latitude", metadata.gps_latitude.is_some()),
         ("gps_longitude", metadata.gps_longitude.is_some()),
         ("gps_altitude_m", metadata.gps_altitude_m.is_some()),
@@ -1140,7 +1127,29 @@ pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataComplet
         ("flight_x_speed", metadata.flight_x_speed.is_some()),
         ("flight_y_speed", metadata.flight_y_speed.is_some()),
         ("flight_z_speed", metadata.flight_z_speed.is_some()),
-    ];
+    ]
+}
+
+/// Reports which [`ImageMetadata`] fields are present versus missing.
+///
+/// # Integration
+///
+/// - **Direction**: Module 1.3 → Module 1.5 (Image Quality Checking)
+///
+/// # Purity
+///
+/// Pure, total (never fails).
+///
+/// # Arguments
+///
+/// * `metadata` — previously extracted image metadata.
+///
+/// # Returns
+///
+/// A [`MetadataCompleteness`] listing present and missing field names, used
+/// by Image Quality Checking to flag images with missing metadata.
+pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataCompleteness {
+    let fields = field_presence(metadata);
     let mut present = Vec::with_capacity(fields.len());
     let mut missing = Vec::with_capacity(fields.len());
     for (name, is_present) in fields {
@@ -1160,22 +1169,9 @@ pub(crate) fn describe_completeness(metadata: &ImageMetadata) -> MetadataComplet
 /// purposes; non-empty feeds [`IncompleteMetadataFlag`](crate::models::image::IncompleteMetadataFlag)
 /// via `image_importer::flag_incomplete_metadata`.
 pub(crate) fn missing_required_fields(metadata: &ImageMetadata) -> Vec<String> {
-    let checks = [
-        ("gps_latitude", metadata.gps_latitude.is_some()),
-        ("gps_longitude", metadata.gps_longitude.is_some()),
-        ("gps_altitude_m", metadata.gps_altitude_m.is_some()),
-        ("date_time_original", metadata.date_time_original.is_some()),
-        ("width", metadata.width.is_some()),
-        ("height", metadata.height.is_some()),
-    ];
-    debug_assert_eq!(checks.len(), REQUIRED_METADATA_FIELDS.len());
-    debug_assert!(checks
-        .iter()
-        .map(|(name, _)| *name)
-        .eq(REQUIRED_METADATA_FIELDS.iter().copied()));
-    checks
+    field_presence(metadata)
         .into_iter()
-        .filter(|(_, is_present)| !is_present)
+        .filter(|(name, is_present)| REQUIRED_METADATA_FIELDS.contains(name) && !is_present)
         .map(|(name, _)| name.to_string())
         .collect()
 }
@@ -1467,6 +1463,17 @@ mod tests {
     fn missing_required_empty_when_required_present() {
         // Extra optional fields absent: still counts as complete for import.
         assert!(missing_required_fields(&required_metadata()).is_empty());
+    }
+
+    #[test]
+    fn every_required_field_is_in_the_presence_table() {
+        let table = field_presence(&ImageMetadata::default());
+        for name in REQUIRED_METADATA_FIELDS {
+            assert!(
+                table.iter().any(|(n, _)| n == name),
+                "{name} missing from field_presence"
+            );
+        }
     }
 
     #[test]
