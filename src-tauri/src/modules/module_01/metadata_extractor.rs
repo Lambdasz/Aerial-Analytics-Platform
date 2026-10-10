@@ -683,19 +683,68 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
     Err(malformed("SOF marker not found"))
 }
 
-/// Reads DNG/TIFF dimensions from IFD0 ImageWidth (256) / ImageLength (257).
+/// `(width, height)` of one IFD, `None` when either is absent or zero.
+fn ifd_dimensions(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian) -> Option<(u32, u32)> {
+    let width = read_u32_val(tiff, entries, endian, 256)?;
+    let height = read_u32_val(tiff, entries, endian, 257)?;
+    (width != 0 && height != 0).then_some((width, height))
+}
+
+/// Reads DNG/TIFF dimensions of the full-resolution image.
+///
+/// Many DNGs store a reduced-resolution preview in IFD0
+/// (`NewSubfileType` bit 0 set) and the real image in a SubIFD (tag `0x14A`).
+/// Candidates are IFD0 plus every readable SubIFD; the largest one that is
+/// not flagged reduced-resolution wins, falling back to the largest overall.
 fn tiff_dimensions(tiff: &[u8]) -> Result<PixelDimensions, MetadataError> {
     let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     let (endian, ifd0_off) = tiff_header(tiff).ok_or_else(|| malformed("bad TIFF header"))?;
     let ifd0 = parse_ifd(tiff, endian, ifd0_off)?;
-    let width =
-        read_u32_val(tiff, &ifd0, endian, 256).ok_or_else(|| malformed("missing ImageWidth"))?;
-    let height =
-        read_u32_val(tiff, &ifd0, endian, 257).ok_or_else(|| malformed("missing ImageLength"))?;
-    if width == 0 || height == 0 {
-        return Err(malformed("invalid TIFF dimensions"));
+    let ifd0_dims = ifd_dimensions(tiff, &ifd0, endian);
+
+    // (reduced_resolution, width, height)
+    let mut candidates: Vec<(bool, u32, u32)> = Vec::new();
+    let is_reduced = |entries: &[IfdEntry]| {
+        read_u32_val(tiff, entries, endian, 254).is_some_and(|kind| kind & 1 == 1)
+    };
+    if let Some((w, h)) = ifd0_dims {
+        candidates.push((is_reduced(&ifd0), w, h));
     }
-    Ok(PixelDimensions { width, height })
+    if let Some(sub) = find_entry(&ifd0, 0x14A) {
+        // Offsets are LONG; a lone offset is stored inline in the value field.
+        let offsets: Vec<u32> = match entry_data(tiff, sub) {
+            Some(data) if sub.typ == 4 => (0..data.len() / 4)
+                .filter_map(|i| u32_at(data, i * 4, endian))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for off in offsets {
+            let Ok(entries) = parse_ifd(tiff, endian, off as usize) else {
+                continue;
+            };
+            if let Some((w, h)) = ifd_dimensions(tiff, &entries, endian) {
+                candidates.push((is_reduced(&entries), w, h));
+            }
+        }
+    }
+
+    let area = |(_, w, h): &(bool, u32, u32)| u64::from(*w) * u64::from(*h);
+    let best = candidates
+        .iter()
+        .filter(|c| !c.0)
+        .max_by_key(|c| area(c))
+        .or_else(|| candidates.iter().max_by_key(|c| area(c)));
+    match best {
+        Some(&(_, width, height)) => Ok(PixelDimensions { width, height }),
+        // Nothing usable anywhere: report the most specific IFD0 problem.
+        None if read_u32_val(tiff, &ifd0, endian, 256).is_none() => {
+            Err(malformed("missing ImageWidth"))
+        }
+        None if read_u32_val(tiff, &ifd0, endian, 257).is_none() => {
+            Err(malformed("missing ImageLength"))
+        }
+        None => Err(malformed("invalid TIFF dimensions")),
+    }
 }
 
 fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
@@ -1261,6 +1310,32 @@ mod tests {
         v
     }
 
+    /// DNG whose IFD0 is a 256x171 reduced-resolution preview
+    /// (`NewSubfileType = 1`) and whose SubIFD holds the full image.
+    fn tiff_le_with_preview_ifd0(full: (u32, u32), preview: (u32, u32)) -> Vec<u8> {
+        fn entry(tag: u16, typ: u16, value: u32) -> Vec<u8> {
+            let mut e = tag.to_le_bytes().to_vec();
+            e.extend_from_slice(&typ.to_le_bytes());
+            e.extend_from_slice(&1u32.to_le_bytes());
+            e.extend_from_slice(&value.to_le_bytes());
+            e
+        }
+        // IFD0 at 8: count + 4 entries + next = 54 bytes, so SubIFD at 62.
+        let mut v = vec![0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00];
+        v.extend_from_slice(&4u16.to_le_bytes());
+        v.extend(entry(254, 4, 1));
+        v.extend(entry(256, 4, preview.0));
+        v.extend(entry(257, 4, preview.1));
+        v.extend(entry(0x14A, 4, 62));
+        v.extend_from_slice(&0u32.to_le_bytes());
+        v.extend_from_slice(&3u16.to_le_bytes());
+        v.extend(entry(254, 4, 0));
+        v.extend(entry(256, 4, full.0));
+        v.extend(entry(257, 4, full.1));
+        v.extend_from_slice(&0u32.to_le_bytes());
+        v
+    }
+
     fn tiff_le_with_make(make: &str) -> Vec<u8> {
         let mut s = make.as_bytes().to_vec();
         s.push(0);
@@ -1331,6 +1406,19 @@ mod tests {
         let bytes = tiff_le_with_dimensions(640, 480);
         let dims = read_dimensions(&bytes, ImageFormat::Dng).expect("ifd0");
         assert_eq!((dims.width, dims.height), (640, 480));
+    }
+
+    #[test]
+    fn tiff_dimensions_prefers_full_resolution_subifd_over_preview_ifd0() {
+        let dng = tiff_le_with_preview_ifd0((5280, 3956), (256, 171));
+        let dims = tiff_dimensions(&dng).expect("dimensions");
+        assert_eq!((dims.width, dims.height), (5280, 3956));
+    }
+
+    #[test]
+    fn tiff_dimensions_keeps_ifd0_when_no_subifd() {
+        let dims = tiff_dimensions(&tiff_le_with_dimensions(4000, 3000)).expect("dimensions");
+        assert_eq!((dims.width, dims.height), (4000, 3000));
     }
 
     #[test]
