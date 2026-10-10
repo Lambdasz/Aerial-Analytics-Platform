@@ -219,10 +219,17 @@
 //!     └── Image n
 //! ```
 //!
-//! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
-//! - `modules::module_01` — image metadata extraction API
-//!   (`modules::module_01::extract_metadata`).
-//! - `commands::session` — flight session command stubs.
+//! - `models::image` — shared image types ([`models::ImageMetadata`], [`models::ImageFormat`],
+//!   plus the import request/report types).
+//! - `modules::module_01::metadata_extractor` — EXIF/XMP DJI metadata extraction
+//!   (`extract_metadata`), format sniffing, completeness checks, and the
+//!   plugin pre-flight projection.
+//! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
+//!   per-file classification, filesystem-aware name-conflict detection,
+//!   project-scope duplicate detection, and incomplete-metadata flags.
+//! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
+//!   `session`/`image` schema, including the crash-safe `image` table migration.
+//! - `commands::session` — flight session Tauri commands.
 //!
 //! ### Tauri Commands
 //!
@@ -236,6 +243,13 @@
 //! | `assign_image_to_session` | Associate an image with a session |
 //! | `recalculate_session_date_range` | Recompute a session's date range from its images |
 //! | `delete_session` | Delete a session |
+//!
+//! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
+//! import planning and the schema migration are implemented and unit tested.
+//! The import and extraction functions are pure/library-level only: no Tauri
+//! command exposes them yet, so the UI cannot import images, and the I/O layer
+//! that copies files and persists the resulting [`models::ImageMetadata`] rows
+//! is not wired in.
 //!
 //! ---
 //!
