@@ -1185,8 +1185,7 @@ pub(crate) fn to_plugin_metadata(
     }
 }
 
-/// Resolves a provider-specific metadata field name to this module's
-/// canonical field name using a user-supplied alias table.
+/// A user-supplied alias table, folded once so each lookup is one hash probe.
 ///
 /// Different image/drone providers label the same logical field with
 /// different strings (e.g. `"Tinggi_meter"` vs. this module's canonical
@@ -1194,33 +1193,40 @@ pub(crate) fn to_plugin_metadata(
 /// supplies the alias table explicitly, so a wrong or missing mapping is the
 /// user's responsibility, not an inference the platform performed for them.
 ///
-/// # Purity
-///
-/// Pure, total (never fails).
-///
-/// # Arguments
-///
-/// * `aliases` — user-supplied mapping from a provider's raw field name to
-///   this module's canonical field name. Keys are matched after Unicode
-///   folding ([`normalize_name`]), so case and accent composition do not
-///   matter.
-/// * `raw_key` — the field name as it appears in the provider's metadata.
-///
-/// # Returns
-///
-/// `Some(canonical_name)` if `raw_key` matches a key in `aliases` after
-/// folding, otherwise `None`.
-pub(crate) fn resolve_field_alias(
-    aliases: &HashMap<String, String>,
-    raw_key: &str,
-) -> Option<String> {
-    let folded = normalize_name(raw_key);
-    for (key, canonical) in aliases {
-        if normalize_name(key) == folded {
-            return Some(canonical.clone());
+/// Keys are folded with [`normalize_name`], so case and accent composition do
+/// not matter. If two user keys fold to the same string, the one that sorts
+/// first wins, so the result does not depend on `HashMap` iteration order.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AliasTable(HashMap<String, String>);
+
+impl AliasTable {
+    /// Folds every key of `aliases` once.
+    pub(crate) fn new(aliases: &HashMap<String, String>) -> Self {
+        let mut sorted: Vec<(&String, &String)> = aliases.iter().collect();
+        sorted.sort();
+        let mut folded = HashMap::with_capacity(sorted.len());
+        for (key, canonical) in sorted {
+            folded
+                .entry(normalize_name(key))
+                .or_insert_with(|| canonical.clone());
         }
+        Self(folded)
     }
-    None
+
+    /// Resolves a provider-specific field name to this module's canonical
+    /// field name.
+    ///
+    /// # Purity
+    ///
+    /// Pure, total (never fails).
+    ///
+    /// # Returns
+    ///
+    /// `Some(canonical_name)` if `raw_key` matches a key after folding,
+    /// otherwise `None`.
+    pub(crate) fn resolve(&self, raw_key: &str) -> Option<&str> {
+        self.0.get(&normalize_name(raw_key)).map(String::as_str)
+    }
 }
 
 #[cfg(test)]
@@ -1699,33 +1705,43 @@ mod tests {
     }
 
     #[test]
-    fn resolve_field_alias_matches_case_insensitively() {
+    fn alias_table_matches_case_insensitively() {
         let aliases: HashMap<String, String> =
             [("Tinggi_meter".to_string(), "height_meter".to_string())]
                 .into_iter()
                 .collect();
+        let table = AliasTable::new(&aliases);
+        assert_eq!(table.resolve("tinggi_METER"), Some("height_meter"));
+        assert_eq!(table.resolve("unknown"), None);
         assert_eq!(
-            resolve_field_alias(&aliases, "tinggi_METER"),
-            Some("height_meter".to_string())
+            AliasTable::new(&HashMap::new()).resolve("Tinggi_meter"),
+            None
         );
-        assert_eq!(resolve_field_alias(&aliases, "unknown"), None);
-        assert_eq!(resolve_field_alias(&HashMap::new(), "Tinggi_meter"), None);
     }
 
     #[test]
-    fn resolve_field_alias_folds_unicode_keys() {
+    fn alias_table_folds_unicode_keys() {
         let aliases: HashMap<String, String> =
             [("Élévation".to_string(), "height_meter".to_string())]
                 .into_iter()
                 .collect();
+        let table = AliasTable::new(&aliases);
+        assert_eq!(table.resolve("élévation"), Some("height_meter"));
+        assert_eq!(table.resolve("e\u{0301}lévation"), Some("height_meter"));
+    }
+
+    #[test]
+    fn alias_table_folded_collision_is_deterministic() {
+        let aliases: HashMap<String, String> = [
+            ("Height".to_string(), "from_upper".to_string()),
+            ("height".to_string(), "from_lower".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        // "Height" sorts before "height", so it wins on every run.
         assert_eq!(
-            resolve_field_alias(&aliases, "élévation"),
-            Some("height_meter".to_string())
-        );
-        // Decomposed e + combining acute matches the composed key.
-        assert_eq!(
-            resolve_field_alias(&aliases, "e\u{0301}lévation"),
-            Some("height_meter".to_string())
+            AliasTable::new(&aliases).resolve("HEIGHT"),
+            Some("from_upper")
         );
     }
 
