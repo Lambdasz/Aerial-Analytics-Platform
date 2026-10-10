@@ -76,7 +76,8 @@ destination filesystem decides two names are the same file:
 None of them folds `ß` to `ss`: no target filesystem does.
 
 - **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
-  Per-candidate failures (bad format, magic mismatch, invalid file name) are
+  Per-candidate failures (bad format, magic mismatch, invalid file name, missing
+  content hash) are
   reported in the result's `rejected` list, not as an `Err`.
 - **The caller validates the session.** This function has no session list, so
   it never returns `ImportError::SessionNotFound`. The command that owns the
@@ -257,3 +258,11 @@ trailing separator) is rejected with `ImportError::InvalidFileName { path }`,
 not `UnsupportedFormat`. The two failures need different UI messages ("fix
 the file name" vs. "convert to JPG/DNG"), so they are separate variants even
 though both land in `ImportReport.rejected`.
+
+## Note on `ImportError::MissingContentHash`
+
+A candidate whose `content_hash` is empty was never hashed (for example its
+read failed). It is rejected with `ImportError::MissingContentHash { path }`
+instead of being compared: an empty string would otherwise make unrelated
+files duplicates of one another. Persisted `known` entries with an empty hash
+are ignored for the same reason.

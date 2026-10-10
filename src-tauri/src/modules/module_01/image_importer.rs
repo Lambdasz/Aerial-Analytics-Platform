@@ -258,6 +258,12 @@ pub(crate) fn find_duplicate(
 ///
 /// `folding` selects the name-conflict policy; see [`NameFolding`].
 ///
+/// A candidate with an empty `content_hash` is rejected with
+/// [`ImportError::MissingContentHash`], and persisted `known` entries with an
+/// empty hash are ignored: an empty hash means the content was never hashed,
+/// and treating it as a value would make unrelated files duplicates of each
+/// other.
+///
 /// A name conflict holds a candidate back: it is not listed in
 /// `imported_image_ids` until the frontend resolves the conflict. Rejected
 /// and duplicate files are never conflict candidates, because they are never
@@ -294,6 +300,10 @@ pub(crate) fn import_images(
     let mut known_hashes: HashMap<&str, &str> =
         HashMap::with_capacity(known.len() + request.candidates.len());
     for (image_id, hash) in known {
+        // An empty stored hash means "never hashed", not a shared content.
+        if hash.0.is_empty() {
+            continue;
+        }
         known_hashes
             .entry(hash.0.as_str())
             .or_insert(image_id.as_str());
@@ -304,6 +314,13 @@ pub(crate) fn import_images(
             rejected.push(RejectedFile {
                 source_path: candidate.source_path.clone(),
                 reason: ImportError::InvalidFileName {
+                    path: candidate.source_path.clone(),
+                },
+            });
+        } else if candidate.content_hash.0.is_empty() {
+            rejected.push(RejectedFile {
+                source_path: candidate.source_path.clone(),
+                reason: ImportError::MissingContentHash {
                     path: candidate.source_path.clone(),
                 },
             });
@@ -847,5 +864,41 @@ mod tests {
         ];
         assert!(find_name_conflicts(&candidates, &[], NameFolding::Apfs).is_empty());
         assert!(find_name_conflicts(&candidates, &[], NameFolding::Ntfs).is_empty());
+    }
+
+    #[test]
+    fn empty_content_hash_is_rejected_not_deduplicated() {
+        let request = import_request(vec![
+            candidate_named("a", "/in/a.jpg", "a.jpg", ""),
+            candidate_named("b", "/in/b.jpg", "b.jpg", ""),
+            candidate_named("c", "/in/c.jpg", "c.jpg", "H"),
+        ]);
+        let report = import_images(&request, &[], &[], NameFolding::Exact).expect("import runs");
+        assert_eq!(report.imported_image_ids, vec!["c".to_string()]);
+        assert!(report.duplicates.is_empty());
+        assert_eq!(
+            report
+                .rejected
+                .iter()
+                .map(|r| r.reason.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                ImportError::MissingContentHash {
+                    path: "/in/a.jpg".to_string()
+                },
+                ImportError::MissingContentHash {
+                    path: "/in/b.jpg".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_known_hash_does_not_match_anything() {
+        let request = import_request(vec![candidate_named("a", "/in/a.jpg", "a.jpg", "H")]);
+        let known = vec![("old".to_string(), ContentHash(String::new()))];
+        let report = import_images(&request, &known, &[], NameFolding::Exact).expect("import runs");
+        assert_eq!(report.imported_image_ids, vec!["a".to_string()]);
+        assert!(report.duplicates.is_empty());
     }
 }

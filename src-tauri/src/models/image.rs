@@ -148,6 +148,10 @@ pub enum ImportError {
     /// separate from [`ImportError::UnsupportedFormat`] so the UI reports
     /// the real cause instead of misleading the user about the file format.
     InvalidFileName { path: String },
+    /// `content_hash` is empty, so the file's content was never hashed
+    /// (for example the read failed). It cannot be deduplicated, and an
+    /// empty value would make unrelated files look identical.
+    MissingContentHash { path: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
     ///
     /// Also used as a defensive fallback by `module_01::image_importer::classify_file`
