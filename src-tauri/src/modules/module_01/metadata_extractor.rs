@@ -289,25 +289,6 @@ pub(crate) fn detect_format(header: &[u8], extension: &str) -> Result<ImageForma
     }
 }
 
-/// Parses the EXIF segment of an image into [`RawExifTags`].
-///
-/// # Purity
-///
-/// Pure.
-///
-/// # Arguments
-///
-/// * `bytes` — full contents of the source image file.
-///
-/// # Returns
-///
-/// `Ok(RawExifTags)` with every tag that was present; missing tags are
-/// `None`.
-///
-/// # Errors
-///
-/// [`MetadataError::MalformedExif`] if an EXIF segment is present but its
-/// structure cannot be parsed.
 /// Byte order of an embedded TIFF header (EXIF in JPEG APP1, or a DNG file).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TiffEndian {
@@ -647,8 +628,16 @@ fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
     if let Some(gps) = read_u32_val(tiff, &ifd0, endian, 0x8825)
         .and_then(|off| parse_ifd(tiff, endian, off as usize).ok())
     {
-        out.gps_latitude = gps_decimal(tiff, &gps, endian, 1, 2, ['S', 's']);
-        out.gps_longitude = gps_decimal(tiff, &gps, endian, 3, 4, ['W', 'w']);
+        let lat = gps_decimal(tiff, &gps, endian, 1, 2, ['S', 's']);
+        let lon = gps_decimal(tiff, &gps, endian, 3, 4, ['W', 'w']);
+        // Out-of-range values are garbage, and exactly (0, 0) is the "no
+        // fix" placeholder some cameras write; neither is a real location.
+        let in_range = |v: Option<f64>, max: f64| v.filter(|v| v.abs() <= max);
+        let (lat, lon) = (in_range(lat, 90.0), in_range(lon, 180.0));
+        if lat != Some(0.0) || lon != Some(0.0) {
+            out.gps_latitude = lat;
+            out.gps_longitude = lon;
+        }
         if let Some(alt) = read_rational(tiff, &gps, endian, 6) {
             // GPSAltitudeRef: 0 = above sea level, 1 = below. The tag is
             // type BYTE in most files, so read the first raw byte rather
@@ -781,6 +770,25 @@ fn tiff_dimensions(tiff: &[u8]) -> Result<PixelDimensions, MetadataError> {
     }
 }
 
+/// Parses the EXIF segment of an image into [`RawExifTags`].
+///
+/// # Purity
+///
+/// Pure.
+///
+/// # Arguments
+///
+/// * `bytes` — full contents of the source image file.
+///
+/// # Returns
+///
+/// `Ok(RawExifTags)` with every tag that was present; missing tags are
+/// `None`.
+///
+/// # Errors
+///
+/// [`MetadataError::MalformedExif`] if an EXIF segment is present but its
+/// structure cannot be parsed.
 fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
     // DNG files are TIFF containers: the whole file is the TIFF payload.
     if is_tiff(bytes) {
@@ -805,16 +813,16 @@ fn parse_dji_f32(value: &str) -> Option<f32> {
     value.trim().parse().ok().filter(|v: &f32| v.is_finite())
 }
 
-/// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
-///
-/// Non-numeric values leave the field unset; a valid value already read
-/// from the same tag is kept. Unknown attributes (e.g. new firmware tags)
-/// are ignored, so newer packets keep parsing.
 /// Overwrites `slot` only when `new` parsed; an invalid repeat keeps the old value.
 fn keep<T: Copy>(slot: &mut Option<T>, new: Option<T>) {
     *slot = new.or(*slot);
 }
 
+/// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
+///
+/// Non-numeric values leave the field unset; a valid value already read
+/// from the same tag is kept. Unknown attributes (e.g. new firmware tags)
+/// are ignored, so newer packets keep parsing.
 fn assign_dji_tag(tags: &mut RawXmpTags, name: &str, value: &str) {
     match name {
         "AbsoluteAltitude" => keep(&mut tags.absolute_altitude_m, parse_dji_f64(value)),

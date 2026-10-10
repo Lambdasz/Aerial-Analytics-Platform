@@ -152,10 +152,15 @@ fn with_immediate_transaction<T>(
 ) -> Result<T, SessionError> {
     conn.execute("BEGIN IMMEDIATE", [])?;
     match body(conn) {
-        Ok(value) => {
-            conn.execute("COMMIT", [])?;
-            Ok(value)
-        }
+        Ok(value) => match conn.execute("COMMIT", []) {
+            Ok(_) => Ok(value),
+            Err(err) => {
+                // A failed COMMIT leaves the transaction open on the shared
+                // connection, which would break every later BEGIN.
+                let _ = conn.execute("ROLLBACK", []);
+                Err(err.into())
+            }
+        },
         Err(err) => {
             let _ = conn.execute("ROLLBACK", []);
             Err(err)
