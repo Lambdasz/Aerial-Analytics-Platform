@@ -501,6 +501,18 @@ fn is_tiff(bytes: &[u8]) -> bool {
     tiff_header(bytes).is_some()
 }
 
+/// Markers that stand alone, with no length field: `SOI`, `EOI`, `RSTn`,
+/// `TEM`. The one definition both JPEG scanners use.
+fn is_standalone_marker(code: u8) -> bool {
+    code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01
+}
+
+/// Payload size of a marker segment from its big-endian length field, which
+/// counts itself. `None` when the field is below its own 2 bytes.
+fn segment_payload_len(length_field: [u8; 2]) -> Option<usize> {
+    usize::from(u16::from_be_bytes(length_field)).checked_sub(2)
+}
+
 /// Walks the JPEG marker segments after SOI, yielding `(marker, payload)`.
 ///
 /// Padding `0xFF` bytes and standalone markers (`SOI`, `EOI`, `RSTn`, `TEM`)
@@ -524,7 +536,7 @@ fn jpeg_segments(bytes: &[u8]) -> impl Iterator<Item = Result<(u8, &[u8]), Metad
                 break;
             }
             let code = bytes[code_pos];
-            if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
+            if is_standalone_marker(code) {
                 pos = code_pos + 1;
                 continue;
             }
@@ -532,13 +544,13 @@ fn jpeg_segments(bytes: &[u8]) -> impl Iterator<Item = Result<(u8, &[u8]), Metad
                 done = true;
                 return Some(Err(malformed("truncated JPEG segment header")));
             }
-            let len = u16::from_be_bytes([bytes[code_pos + 1], bytes[code_pos + 2]]) as usize;
-            if len < 2 {
+            let Some(payload_len) = segment_payload_len([bytes[code_pos + 1], bytes[code_pos + 2]])
+            else {
                 done = true;
                 return Some(Err(malformed("invalid JPEG segment length")));
-            }
+            };
             let data_start = code_pos + 3;
-            let data_end = data_start + (len - 2);
+            let data_end = data_start + payload_len;
             if data_end > bytes.len() {
                 done = true;
                 return Some(Err(malformed("truncated JPEG segment")));
@@ -885,7 +897,7 @@ fn read_jpeg_head<R: Read>(reader: &mut R) -> std::io::Result<Vec<u8>> {
                 None => return Ok(out),
             }
         };
-        if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
+        if is_standalone_marker(code) {
             continue;
         }
         let mut len_bytes = Vec::with_capacity(2);
@@ -894,15 +906,14 @@ fn read_jpeg_head<R: Read>(reader: &mut R) -> std::io::Result<Vec<u8>> {
         let [hi, lo] = len_bytes[..] else {
             return Ok(out);
         };
-        let len = usize::from(u16::from_be_bytes([hi, lo]));
-        if len < 2 {
+        let Some(payload_len) = segment_payload_len([hi, lo]) else {
             return Ok(out);
-        }
+        };
         let read = reader
             .by_ref()
-            .take((len - 2) as u64)
+            .take(payload_len as u64)
             .read_to_end(&mut out)?;
-        if read < len - 2 || code == 0xDA {
+        if read < payload_len || code == 0xDA {
             return Ok(out);
         }
     }
@@ -2083,6 +2094,31 @@ mod tests {
         let head = read_jpeg_head(&mut file.as_slice()).expect("read");
         assert_eq!(head.len(), head_len);
         assert_eq!(head, file[..head_len]);
+    }
+
+    #[test]
+    fn read_jpeg_head_and_jpeg_segments_agree_on_where_metadata_ends() {
+        // Padding bytes and standalone markers between segments, then scan
+        // data: the head reader must stop exactly where the parser does.
+        let mut file = vec![0xFF, 0xD8, 0xFF, 0xFF, 0xD0];
+        file.extend_from_slice(&[0xFF, 0xE1, 0x00, 0x04, 0xAA, 0xBB]);
+        file.extend_from_slice(&[0xFF, 0x01]);
+        file.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B]);
+        file.extend_from_slice(&sof_payload());
+        file.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02]);
+        let head_len = file.len();
+        file.extend(std::iter::repeat_n(0x5A, 500));
+
+        let head = read_jpeg_head(&mut file.as_slice()).expect("read");
+        assert_eq!(head.len(), head_len);
+        let from_head: Vec<u8> = jpeg_segments(&head)
+            .map(|seg| seg.expect("seg").0)
+            .collect();
+        let from_file: Vec<u8> = jpeg_segments(&file)
+            .map(|seg| seg.expect("seg").0)
+            .collect();
+        assert_eq!(from_head, vec![0xE1, 0xC0, 0xDA]);
+        assert_eq!(from_head, from_file);
     }
 
     #[test]
