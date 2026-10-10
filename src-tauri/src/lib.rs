@@ -527,7 +527,13 @@ pub mod plot_api;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_conn = rusqlite::Connection::open("aerial.db").expect("failed to open SQLite database");
-    modules::module_01::init_schema(&db_conn).expect("failed to initialize session/image schema");
+    // A schema that cannot be initialised (for example an `image` table the
+    // migration refuses to rebuild) must not stop the whole desktop app from
+    // opening: Modules 2-11 do not need it. Session/image commands then
+    // report the database error to the UI instead.
+    if let Err(err) = modules::module_01::init_schema(&db_conn) {
+        eprintln!("warning: could not initialize the session/image schema: {err}");
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
