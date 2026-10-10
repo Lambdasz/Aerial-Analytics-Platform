@@ -22,7 +22,7 @@
 //! and [`get_images_by_session`] read records back.
 
 use chrono::{NaiveDateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use uuid::Uuid;
 
 use super::error::SessionError;
@@ -50,6 +50,146 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
     captured_at, gps_altitude_m, width, height, format, make, camera_model";
 
+/// Canonical `image` columns. A table carrying all of them with nullable
+/// location columns is already current and is never rebuilt, so any columns
+/// a user added beyond this list survive untouched.
+const IMAGE_COLUMN_NAMES: &[&str] = &[
+    "id",
+    "session_id",
+    "file_path",
+    "location_lat",
+    "location_lon",
+    "captured_at",
+    "gps_altitude_m",
+    "width",
+    "height",
+    "format",
+    "make",
+    "camera_model",
+];
+
+/// One `PRAGMA table_info` row, as far as a rebuild needs it.
+struct ColumnInfo {
+    name: String,
+    type_: String,
+    notnull: i64,
+    default: Option<String>,
+}
+
+/// Quotes an identifier so a column name that needs quoting cannot break
+/// the generated DDL.
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Column DDL for an existing column, preserved across a rebuild so custom
+/// columns keep their type, `NOT NULL`, and default.
+fn column_ddl(column: &ColumnInfo) -> String {
+    let mut ddl = format!("{} {}", quote_ident(&column.name), column.type_);
+    if column.notnull != 0 {
+        ddl.push_str(" NOT NULL");
+    }
+    if let Some(default) = &column.default {
+        ddl.push_str(&format!(" DEFAULT {default}"));
+    }
+    ddl
+}
+
+fn table_info(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, SessionError> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| {
+            Ok(ColumnInfo {
+                name: row.get(1)?,
+                type_: row.get(2)?,
+                notnull: row.get(3)?,
+                default: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, SessionError> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some())
+}
+
+fn table_is_empty(conn: &Connection, table: &str) -> Result<bool, SessionError> {
+    let quoted = quote_ident(table);
+    Ok(conn
+        .query_row(&format!("SELECT 1 FROM {quoted} LIMIT 1"), [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        .is_none())
+}
+
+/// Runs `body` inside one immediate transaction, rolling back on error.
+///
+/// Uses explicit BEGIN/COMMIT rather than rusqlite's `Transaction` because
+/// this module's public functions take `&Connection` and must keep doing
+/// so. `IMMEDIATE` takes the write lock up front, so the DDL sequence below
+/// it cannot interleave with another writer.
+fn with_immediate_transaction<T>(
+    conn: &Connection,
+    body: impl FnOnce(&Connection) -> Result<T, SessionError>,
+) -> Result<T, SessionError> {
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    match body(conn) {
+        Ok(value) => {
+            conn.execute("COMMIT", [])?;
+            Ok(value)
+        }
+        Err(err) => {
+            let _ = conn.execute("ROLLBACK", []);
+            Err(err)
+        }
+    }
+}
+
+/// Recovers an `image` table left half-migrated by a killed rebuild.
+///
+/// An interrupted migration used to leave the only copy of the rows in
+/// `image_new`. `CREATE TABLE IF NOT EXISTS image` then created an empty
+/// table on the next start and those rows were stranded. This runs before
+/// that create, in one transaction, so a kill during recovery rolls back
+/// instead of losing either table.
+///
+/// - no `image_new`: nothing to do
+/// - `image` missing: `image_new` becomes `image`
+/// - `image` still has rows: `image` is the pre-DROP original, so the
+///   leftover copy is dropped
+/// - `image` is empty and `image_new` has rows: `image` is the table created
+///   after the crash, so the rows in `image_new` win
+/// - both empty: the leftover copy is dropped
+fn recover_image_table(conn: &Connection) -> Result<(), SessionError> {
+    if !table_exists(conn, "image_new")? {
+        return Ok(());
+    }
+    // Keep the old table only when it is the real one: it exists and is
+    // either non-empty, or the leftover copy is empty too.
+    let keep_old = table_exists(conn, "image")?
+        && (table_is_empty(conn, "image_new")? || !table_is_empty(conn, "image")?);
+    with_immediate_transaction(conn, |conn| {
+        if keep_old {
+            conn.execute("DROP TABLE image_new", [])?;
+        } else {
+            if table_exists(conn, "image")? {
+                conn.execute("DROP TABLE image", [])?;
+            }
+            conn.execute("ALTER TABLE image_new RENAME TO image", [])?;
+        }
+        Ok(())
+    })
+}
+
 /// Creates the `session` and `image` tables if they do not already exist,
 /// then upgrades the `image` table to the current schema when it predates
 /// M1-24 (missing metadata columns or `NOT NULL` location/capture fields).
@@ -75,6 +215,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         )",
         [],
     )?;
+    recover_image_table(conn)?;
     conn.execute(
         &format!("CREATE TABLE IF NOT EXISTS image ({IMAGE_TABLE_COLUMNS_DDL})"),
         [],
@@ -87,97 +228,87 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
 /// every existing row.
 ///
 /// A pre-M1-24 table is detected by introspection (`PRAGMA table_info`):
-/// either the metadata columns are absent or `location_lat`,
-/// `location_lon`, or `captured_at` still carry a `NOT NULL` constraint
-/// (SQLite cannot drop such a constraint with `ALTER TABLE`, hence the
-/// rebuild). The upgrade copies the six original columns row-for-row and
-/// leaves the new metadata columns `NULL`.
+/// either a canonical column is absent, or `location_lat`, `location_lon`,
+/// or `captured_at` still carries a `NOT NULL` constraint (SQLite cannot
+/// drop such a constraint with `ALTER TABLE`, hence the rebuild). The
+/// upgrade copies every existing column, so rows keep their data and the new
+/// metadata columns are `NULL`.
 ///
-/// Idempotent: a table already on the current schema is left untouched.
-/// Safe to re-run after a previously interrupted upgrade: a stray
-/// `image_new` table from an earlier failure is dropped first, and the old
-/// table is only dropped after its rows have been copied.
+/// Idempotent: a table already on the current schema is left untouched,
+/// including any columns a user added beyond the canonical set — an extra
+/// column is not a migration. The rebuild runs in one transaction, so a
+/// crash rolls it back instead of publishing a half-moved table. (A crash
+/// before this function ran at all is handled by [`recover_image_table`],
+/// which `init_schema` calls first.)
 ///
 /// # Purity
 ///
 /// Impure — DDL and data copy against the database.
 pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
-    let exists: Option<String> = conn
-        .query_row(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'image'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(_) = exists else {
+    if !table_exists(conn, "image")? {
         conn.execute(
             &format!("CREATE TABLE image ({IMAGE_TABLE_COLUMNS_DDL})"),
             [],
         )?;
         return Ok(());
-    };
+    }
 
-    let mut stmt = conn.prepare("PRAGMA table_info(image)")?;
-    let columns = stmt
-        .query_map([], |row| {
-            let name: String = row.get(1)?;
-            let notnull: i64 = row.get(3)?;
-            Ok((name, notnull))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
-    let expected = [
-        "id",
-        "session_id",
-        "file_path",
-        "location_lat",
-        "location_lon",
-        "captured_at",
-        "gps_altitude_m",
-        "width",
-        "height",
-        "format",
-        "make",
-        "camera_model",
-    ];
-    let current = names == expected
+    let columns = table_info(conn, "image")?;
+    let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    // Current means every canonical column is present and the three
+    // location columns are nullable. Extra columns do not force a rebuild.
+    let current = IMAGE_COLUMN_NAMES.iter().all(|name| names.contains(name))
         && columns
             .iter()
-            .filter(|(name, _)| {
+            .filter(|c| {
                 matches!(
-                    name.as_str(),
+                    c.name.as_str(),
                     "location_lat" | "location_lon" | "captured_at"
                 )
             })
-            .all(|(_, notnull)| *notnull == 0);
+            .all(|c| c.notnull == 0);
     if current {
         return Ok(());
     }
 
-    // Intersect old columns with the new schema so the copy works no matter
-    // which historical variant is on disk.
-    let shared: Vec<&str> = expected
-        .into_iter()
-        .filter(|col| names.contains(col))
+    // Copy the canonical columns the old table already has, plus anything
+    // else it carries, so no user column is dropped by the rebuild.
+    let mut shared: Vec<String> = IMAGE_COLUMN_NAMES
+        .iter()
+        .filter(|name| names.contains(*name))
+        .map(|name| quote_ident(name))
         .collect();
-    if !shared.contains(&"id") {
+    let mut extra_ddl: Vec<String> = Vec::new();
+    for column in &columns {
+        if !IMAGE_COLUMN_NAMES.contains(&column.name.as_str()) {
+            extra_ddl.push(column_ddl(column));
+            shared.push(quote_ident(&column.name));
+        }
+    }
+    if !names.contains(&"id") {
         return Err(SessionError::Db(rusqlite::Error::InvalidColumnName(
             "image table lacks an id column; cannot migrate".to_string(),
         )));
     }
     let shared_list = shared.join(", ");
-    conn.execute("DROP TABLE IF EXISTS image_new", [])?;
-    conn.execute(
-        &format!("CREATE TABLE image_new ({IMAGE_TABLE_COLUMNS_DDL})"),
-        [],
-    )?;
-    conn.execute(
-        &format!("INSERT INTO image_new ({shared_list}) SELECT {shared_list} FROM image"),
-        [],
-    )?;
-    conn.execute("DROP TABLE image", [])?;
-    conn.execute("ALTER TABLE image_new RENAME TO image", [])?;
-    Ok(())
+    let mut ddl = IMAGE_TABLE_COLUMNS_DDL.to_string();
+    if !extra_ddl.is_empty() {
+        ddl.push_str(",\n            ");
+        ddl.push_str(&extra_ddl.join(",\n            "));
+    }
+
+    // One transaction: either the whole table moves or nothing does.
+    with_immediate_transaction(conn, |conn| {
+        conn.execute("DROP TABLE IF EXISTS image_new", [])?;
+        conn.execute(&format!("CREATE TABLE image_new ({ddl})"), [])?;
+        conn.execute(
+            &format!("INSERT INTO image_new ({shared_list}) SELECT {shared_list} FROM image"),
+            [],
+        )?;
+        conn.execute("DROP TABLE image", [])?;
+        conn.execute("ALTER TABLE image_new RENAME TO image", [])?;
+        Ok(())
+    })
 }
 
 /// Creates a new, empty session (no images assigned yet).
@@ -900,6 +1031,217 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    /// Creates the `session` table plus one row, so `image` rows have a
+    /// session to reference. Returns the session id.
+    fn seeded_session(conn: &Connection) -> String {
+        conn.execute(
+            "CREATE TABLE session (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                date_start  TEXT,
+                date_end    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("session table");
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO session (id, project_id, name, date_start, date_end, status, created_at, updated_at)
+             VALUES (?1, ?2, 'S', '2026-09-18 07:12:00', '2026-09-18 07:12:00', 'active', '2026-09-18T07:12:00+00:00', '2026-09-18T07:12:00+00:00')",
+            params![id, Uuid::new_v4().to_string()],
+        )
+        .expect("session row");
+        id
+    }
+
+    #[test]
+    fn init_schema_keeps_custom_columns_and_data() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            "CREATE TABLE image (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                location_lat REAL,
+                location_lon REAL,
+                captured_at TEXT,
+                gps_altitude_m REAL,
+                width INTEGER,
+                height INTEGER,
+                format TEXT,
+                make TEXT,
+                camera_model TEXT,
+                user_notes TEXT
+            )",
+            [],
+        )
+        .expect("current image table with a custom column");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, user_notes)
+             VALUES ('img-1', ?1, '/photos/a.jpg', 'IMPORTANT NOTE')",
+            params![session_id],
+        )
+        .expect("row with a note");
+
+        // A custom column is not a migration: the table is rebuilt nowhere.
+        init_schema(&conn).expect("init");
+        let columns = table_info(&conn, "image").expect("introspect");
+        assert!(columns.iter().any(|c| c.name == "user_notes"));
+        let note: String = conn
+            .query_row("SELECT user_notes FROM image", [], |row| row.get(0))
+            .expect("note survives");
+        assert_eq!(note, "IMPORTANT NOTE");
+
+        init_schema(&conn).expect("second init");
+        let note: String = conn
+            .query_row("SELECT user_notes FROM image", [], |row| row.get(0))
+            .expect("note still there");
+        assert_eq!(note, "IMPORTANT NOTE");
+    }
+
+    #[test]
+    fn init_schema_recovers_rows_stranded_in_image_new() {
+        // State left behind by a killed rebuild: the only copy of the row is
+        // in image_new, and no image table exists.
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            &format!("CREATE TABLE image_new ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )
+        .expect("image_new");
+        conn.execute(
+            "INSERT INTO image_new (id, session_id, file_path)
+             VALUES ('img-1', ?1, '/photos/old.jpg')",
+            params![session_id],
+        )
+        .expect("row only in image_new");
+        assert!(!table_exists(&conn, "image").expect("no image table"));
+
+        init_schema(&conn).expect("recover");
+        assert!(!table_exists(&conn, "image_new").expect("leftover dropped"));
+        let path: String = conn
+            .query_row("SELECT file_path FROM image", [], |row| row.get(0))
+            .expect("row recovered");
+        assert_eq!(path, "/photos/old.jpg");
+
+        init_schema(&conn).expect("second init");
+        let path: String = conn
+            .query_row("SELECT file_path FROM image", [], |row| row.get(0))
+            .expect("row still there");
+        assert_eq!(path, "/photos/old.jpg");
+    }
+
+    #[test]
+    fn empty_image_table_with_rows_in_image_new_keeps_the_rows() {
+        // The bug as shipped: init_schema created an empty image table, so
+        // the row in image_new was stranded and lost on the next start.
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            &format!("CREATE TABLE image ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )
+        .expect("empty image table");
+        conn.execute(
+            &format!("CREATE TABLE image_new ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )
+        .expect("image_new");
+        conn.execute(
+            "INSERT INTO image_new (id, session_id, file_path)
+             VALUES ('img-1', ?1, '/photos/old.jpg')",
+            params![session_id],
+        )
+        .expect("row only in image_new");
+
+        init_schema(&conn).expect("recover");
+        assert!(!table_exists(&conn, "image_new").expect("leftover dropped"));
+        let path: String = conn
+            .query_row("SELECT file_path FROM image", [], |row| row.get(0))
+            .expect("row recovered");
+        assert_eq!(path, "/photos/old.jpg");
+    }
+
+    #[test]
+    fn image_with_rows_beats_leftover_image_new() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            &format!("CREATE TABLE image ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )
+        .expect("image");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path) VALUES ('img-1', ?1, '/photos/keep.jpg')",
+            params![session_id],
+        )
+        .expect("real row");
+        conn.execute(
+            &format!("CREATE TABLE image_new ({IMAGE_TABLE_COLUMNS_DDL})"),
+            [],
+        )
+        .expect("image_new");
+        conn.execute(
+            "INSERT INTO image_new (id, session_id, file_path) VALUES ('img-2', ?1, '/photos/copy.jpg')",
+            params![session_id],
+        )
+        .expect("leftover row");
+
+        init_schema(&conn).expect("init");
+        assert!(!table_exists(&conn, "image_new").expect("leftover dropped"));
+        let paths: Vec<String> = conn
+            .prepare("SELECT file_path FROM image ORDER BY file_path")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .expect("list");
+        assert_eq!(paths, vec!["/photos/keep.jpg".to_string()]);
+    }
+
+    #[test]
+    fn migrate_copies_custom_columns_when_rebuilding() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            "CREATE TABLE image (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                location_lat REAL NOT NULL,
+                location_lon REAL NOT NULL,
+                captured_at TEXT NOT NULL,
+                user_notes TEXT
+            )",
+            [],
+        )
+        .expect("legacy image table with a custom column");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at, user_notes)
+             VALUES ('img-1', ?1, '/photos/old.jpg', -7.5, 110.0, '2026-09-18 07:12:00', 'IMPORTANT NOTE')",
+            params![session_id],
+        )
+        .expect("legacy row with a note");
+
+        init_schema(&conn).expect("migrate");
+
+        let columns = table_info(&conn, "image").expect("introspect");
+        assert!(columns.iter().any(|c| c.name == "user_notes"));
+        let (lat, note): (Option<f64>, String) = conn
+            .query_row("SELECT location_lat, user_notes FROM image", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .expect("row readable");
+        assert_eq!(lat, Some(-7.5));
+        assert_eq!(note, "IMPORTANT NOTE");
     }
 
     #[test]
