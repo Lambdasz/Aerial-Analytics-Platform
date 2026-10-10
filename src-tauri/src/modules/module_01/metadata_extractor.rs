@@ -43,7 +43,7 @@ use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
@@ -215,9 +215,10 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
     // only that prefix is loaded. A DNG is a TIFF container whose parsers
     // index the whole file, so it is read in full.
     let bytes = match format {
-        ImageFormat::Jpeg => read_jpeg_head(&mut file)?,
+        // `read_jpeg_head` reads byte by byte; buffer so that is not a syscall each.
+        ImageFormat::Jpeg => read_jpeg_head(&mut BufReader::with_capacity(1 << 16, &mut file))?,
         ImageFormat::Dng => {
-            let mut all = Vec::new();
+            let mut all = Vec::with_capacity(file.metadata()?.len() as usize + 1);
             file.read_to_end(&mut all)?;
             all
         }
@@ -497,6 +498,10 @@ fn tiff_header(tiff: &[u8]) -> Option<(TiffEndian, usize)> {
     Some((endian, off))
 }
 
+fn malformed(msg: &str) -> MetadataError {
+    MetadataError::MalformedExif(msg.to_string())
+}
+
 fn is_tiff(bytes: &[u8]) -> bool {
     tiff_header(bytes).is_some()
 }
@@ -519,7 +524,6 @@ fn segment_payload_len(length_field: [u8; 2]) -> Option<usize> {
 /// are skipped. The walk ends after the SOS segment (the metadata section is
 /// over) or after the first error. Yields nothing when `bytes` is not a JPEG.
 fn jpeg_segments(bytes: &[u8]) -> impl Iterator<Item = Result<(u8, &[u8]), MetadataError>> {
-    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     let mut pos = 2;
     let mut done = bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8];
     std::iter::from_fn(move || {
@@ -625,7 +629,6 @@ fn gps_decimal(
 /// Fills [`RawExifTags`] from one TIFF payload (EXIF APP1 contents or a
 /// whole DNG file).
 fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
-    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     let (endian, ifd0_off) = tiff_header(tiff).ok_or_else(|| malformed("bad TIFF header"))?;
     if ifd0_off >= tiff.len() {
         return Err(malformed("IFD0 offset out of bounds"));
@@ -695,7 +698,6 @@ fn is_sof_marker(code: u8) -> bool {
 
 /// Reads JPEG dimensions by scanning for the first SOF marker.
 fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
-    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     if bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8] {
         return Err(malformed("not a JPEG"));
     }
@@ -730,7 +732,6 @@ fn ifd_dimensions(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian) -> Opti
 /// Candidates are IFD0 plus every readable SubIFD; the largest one that is
 /// not flagged reduced-resolution wins, falling back to the largest overall.
 fn tiff_dimensions(tiff: &[u8]) -> Result<PixelDimensions, MetadataError> {
-    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     let (endian, ifd0_off) = tiff_header(tiff).ok_or_else(|| malformed("bad TIFF header"))?;
     let ifd0 = parse_ifd(tiff, endian, ifd0_off)?;
     let ifd0_dims = ifd_dimensions(tiff, &ifd0, endian);
@@ -809,35 +810,24 @@ fn parse_dji_f32(value: &str) -> Option<f32> {
 /// Non-numeric values leave the field unset; a valid value already read
 /// from the same tag is kept. Unknown attributes (e.g. new firmware tags)
 /// are ignored, so newer packets keep parsing.
+/// Overwrites `slot` only when `new` parsed; an invalid repeat keeps the old value.
+fn keep<T: Copy>(slot: &mut Option<T>, new: Option<T>) {
+    *slot = new.or(*slot);
+}
+
 fn assign_dji_tag(tags: &mut RawXmpTags, name: &str, value: &str) {
     match name {
-        "AbsoluteAltitude" => {
-            tags.absolute_altitude_m = parse_dji_f64(value).or(tags.absolute_altitude_m)
-        }
-        "RelativeAltitude" => {
-            tags.relative_altitude_m = parse_dji_f64(value).or(tags.relative_altitude_m)
-        }
-        "GimbalRollDegree" => {
-            tags.gimbal_roll_degree = parse_dji_f32(value).or(tags.gimbal_roll_degree)
-        }
-        "GimbalYawDegree" => {
-            tags.gimbal_yaw_degree = parse_dji_f32(value).or(tags.gimbal_yaw_degree)
-        }
-        "GimbalPitchDegree" => {
-            tags.gimbal_pitch_degree = parse_dji_f32(value).or(tags.gimbal_pitch_degree)
-        }
-        "FlightRollDegree" => {
-            tags.flight_roll_degree = parse_dji_f32(value).or(tags.flight_roll_degree)
-        }
-        "FlightYawDegree" => {
-            tags.flight_yaw_degree = parse_dji_f32(value).or(tags.flight_yaw_degree)
-        }
-        "FlightPitchDegree" => {
-            tags.flight_pitch_degree = parse_dji_f32(value).or(tags.flight_pitch_degree)
-        }
-        "FlightXSpeed" => tags.flight_x_speed = parse_dji_f32(value).or(tags.flight_x_speed),
-        "FlightYSpeed" => tags.flight_y_speed = parse_dji_f32(value).or(tags.flight_y_speed),
-        "FlightZSpeed" => tags.flight_z_speed = parse_dji_f32(value).or(tags.flight_z_speed),
+        "AbsoluteAltitude" => keep(&mut tags.absolute_altitude_m, parse_dji_f64(value)),
+        "RelativeAltitude" => keep(&mut tags.relative_altitude_m, parse_dji_f64(value)),
+        "GimbalRollDegree" => keep(&mut tags.gimbal_roll_degree, parse_dji_f32(value)),
+        "GimbalYawDegree" => keep(&mut tags.gimbal_yaw_degree, parse_dji_f32(value)),
+        "GimbalPitchDegree" => keep(&mut tags.gimbal_pitch_degree, parse_dji_f32(value)),
+        "FlightRollDegree" => keep(&mut tags.flight_roll_degree, parse_dji_f32(value)),
+        "FlightYawDegree" => keep(&mut tags.flight_yaw_degree, parse_dji_f32(value)),
+        "FlightPitchDegree" => keep(&mut tags.flight_pitch_degree, parse_dji_f32(value)),
+        "FlightXSpeed" => keep(&mut tags.flight_x_speed, parse_dji_f32(value)),
+        "FlightYSpeed" => keep(&mut tags.flight_y_speed, parse_dji_f32(value)),
+        "FlightZSpeed" => keep(&mut tags.flight_z_speed, parse_dji_f32(value)),
         _ => {}
     }
 }
@@ -1351,11 +1341,9 @@ pub(crate) fn to_plugin_metadata(
         has_gps: metadata.gps_latitude.is_some() && metadata.gps_longitude.is_some(),
         width: metadata.width.unwrap_or(0),
         height: metadata.height.unwrap_or(0),
-        format: match metadata.format {
-            Some(ImageFormat::Jpeg) => "jpeg".to_string(),
-            Some(ImageFormat::Dng) => "dng".to_string(),
-            None => String::new(),
-        },
+        format: metadata
+            .format
+            .map_or_else(String::new, |f| f.as_str().to_string()),
     }
 }
 

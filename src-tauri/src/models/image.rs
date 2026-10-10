@@ -171,6 +171,16 @@ pub enum ImageFormat {
     Dng,
 }
 
+impl ImageFormat {
+    /// Lowercase name used in the database and plugin payloads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImageFormat::Jpeg => "jpeg",
+            ImageFormat::Dng => "dng",
+        }
+    }
+}
+
 /// Complete metadata for a single aerial RGB image.
 ///
 /// Fields are populated from EXIF and XMP DJI tags when available.

@@ -22,11 +22,11 @@
 //! and [`get_images_by_session`] read records back.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 use super::error::SessionError;
-use crate::models::image::{ImageFormat, ImageMetadata};
+use crate::models::image::ImageMetadata;
 use crate::models::{Image, Session, SessionStatus};
 
 /// Column definitions for the `image` table, shared by [`init_schema`]
@@ -401,7 +401,7 @@ pub fn create_session(
             session.name,
             naive_to_db(session.date_start),
             naive_to_db(session.date_end),
-            status_to_str(session.status),
+            session.status.as_str(),
             session.created_at.to_rfc3339(),
             session.updated_at.to_rfc3339(),
         ],
@@ -465,9 +465,7 @@ pub fn update_session_name(
         "UPDATE session SET name = ?1, updated_at = ?2 WHERE id = ?3",
         params![new_name, now.to_rfc3339(), session_id.to_string()],
     )?;
-    if rows == 0 {
-        return Err(SessionError::NotFound { session_id });
-    }
+    require_changed(rows, session_id)?;
     get_session(conn, session_id)
 }
 
@@ -484,15 +482,9 @@ pub fn update_session_status(
     let now = Utc::now();
     let rows = conn.execute(
         "UPDATE session SET status = ?1, updated_at = ?2 WHERE id = ?3",
-        params![
-            status_to_str(status),
-            now.to_rfc3339(),
-            session_id.to_string()
-        ],
+        params![status.as_str(), now.to_rfc3339(), session_id.to_string()],
     )?;
-    if rows == 0 {
-        return Err(SessionError::NotFound { session_id });
-    }
+    require_changed(rows, session_id)?;
     get_session(conn, session_id)
 }
 
@@ -518,16 +510,14 @@ pub fn assign_image_to_session(
     // One transaction: the move and both recalculations commit together, so
     // a failure never leaves the image moved while the caller sees an error.
     with_immediate_transaction(conn, |conn| {
-        let previous_session_id: Option<String> = conn
+        let previous_session_id: String = conn
             .query_row(
                 "SELECT session_id FROM image WHERE id = ?1",
                 params![image_id.to_string()],
                 |row| row.get(0),
             )
-            .optional()?;
-        let Some(previous_session_id) = previous_session_id else {
-            return Err(SessionError::ImageNotFound { image_id });
-        };
+            .optional()?
+            .ok_or(SessionError::ImageNotFound { image_id })?;
 
         conn.execute(
             "UPDATE image SET session_id = ?1 WHERE id = ?2",
@@ -536,14 +526,15 @@ pub fn assign_image_to_session(
 
         recalculate_session_date_range(conn, session_id)?;
 
-        if previous_session_id != session_id.to_string() {
-            if let Ok(previous_session_id) = Uuid::parse_str(&previous_session_id) {
-                // The previous session may be gone (the image row outlived a
-                // `delete_session`); there is nothing to recalculate then.
-                match recalculate_session_date_range(conn, previous_session_id) {
-                    Ok(()) | Err(SessionError::NotFound { .. }) => {}
-                    Err(err) => return Err(err),
-                }
+        if let Some(previous) = Uuid::parse_str(&previous_session_id)
+            .ok()
+            .filter(|previous| *previous != session_id)
+        {
+            // The previous session may be gone (the image row outlived a
+            // `delete_session`); there is nothing to recalculate then.
+            match recalculate_session_date_range(conn, previous) {
+                Ok(()) | Err(SessionError::NotFound { .. }) => {}
+                Err(err) => return Err(err),
             }
         }
         Ok(())
@@ -580,12 +571,7 @@ pub fn recalculate_session_date_range(
         return Err(SessionError::NotFound { session_id });
     };
 
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {IMAGE_COLUMNS} FROM image WHERE session_id = ?1"
-    ))?;
-    let images = stmt
-        .query_map(params![session_id.to_string()], row_to_image)?
-        .collect::<Result<Vec<_>, _>>()?;
+    let images = get_images_by_session(conn, session_id)?;
 
     // No dated image left: fall back to the range a fresh session starts
     // with (`created_at` for both ends) rather than keeping dates of images
@@ -595,11 +581,7 @@ pub fn recalculate_session_date_range(
         None => {
             let created = DateTime::parse_from_rfc3339(&created_at)
                 .map_err(|err| {
-                    SessionError::Db(rusqlite::Error::FromSqlConversionFailure(
-                        6,
-                        rusqlite::types::Type::Text,
-                        Box::new(err),
-                    ))
+                    SessionError::Db(conversion_err(6, rusqlite::types::Type::Text, err))
                 })?
                 .naive_utc();
             (created, created)
@@ -615,10 +597,7 @@ pub fn recalculate_session_date_range(
             session_id.to_string(),
         ],
     )?;
-    if rows == 0 {
-        return Err(SessionError::NotFound { session_id });
-    }
-    Ok(())
+    require_changed(rows, session_id)
 }
 
 /// Deletes a session.
@@ -637,10 +616,7 @@ pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), Session
         "DELETE FROM session WHERE id = ?1",
         params![session_id.to_string()],
     )?;
-    if rows == 0 {
-        return Err(SessionError::NotFound { session_id });
-    }
-    Ok(())
+    require_changed(rows, session_id)
 }
 
 /// Builds a persistable [`Image`] record from already-extracted metadata.
@@ -671,10 +647,7 @@ pub fn image_from_metadata(
         gps_altitude_m: metadata.gps_altitude_m,
         width: metadata.width,
         height: metadata.height,
-        format: metadata.format.map(|format| match format {
-            ImageFormat::Jpeg => "jpeg".to_string(),
-            ImageFormat::Dng => "dng".to_string(),
-        }),
+        format: metadata.format.map(|format| format.as_str().to_string()),
         make: metadata.make.clone(),
         camera_model: metadata.camera_model_name.clone(),
     }
@@ -779,16 +752,20 @@ fn default_session_name(at: NaiveDateTime) -> String {
     format!("Session - {}", at.format("%Y-%m-%d %H:%M"))
 }
 
-fn status_to_str(status: SessionStatus) -> &'static str {
-    match status {
-        SessionStatus::Active => "active",
-        SessionStatus::Archived => "archived",
+/// Errors with [`SessionError::NotFound`] when an `UPDATE`/`DELETE` touched no row.
+fn require_changed(rows: usize, session_id: Uuid) -> Result<(), SessionError> {
+    if rows == 0 {
+        return Err(SessionError::NotFound { session_id });
     }
+    Ok(())
+}
+
+fn uuid_col(row: &Row, idx: usize) -> rusqlite::Result<Uuid> {
+    let raw: String = row.get(idx)?;
+    Uuid::parse_str(&raw).map_err(|e| conversion_err(idx, rusqlite::types::Type::Text, e))
 }
 
 fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
-    let id: String = row.get(0)?;
-    let project_id: String = row.get(1)?;
     let name: String = row.get(2)?;
     let date_start: String = row.get(3)?;
     let date_end: String = row.get(4)?;
@@ -797,18 +774,14 @@ fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
     let updated_at: String = row.get(7)?;
 
     Ok(Session {
-        id: Uuid::parse_str(&id).map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
-        project_id: Uuid::parse_str(&project_id)
-            .map_err(|e| conversion_err(1, rusqlite::types::Type::Text, e))?,
+        id: uuid_col(row, 0)?,
+        project_id: uuid_col(row, 1)?,
         name,
         date_start: naive_from_db(&date_start)
             .map_err(|e| conversion_err(3, rusqlite::types::Type::Text, e))?,
         date_end: naive_from_db(&date_end)
             .map_err(|e| conversion_err(4, rusqlite::types::Type::Text, e))?,
-        status: match status.as_str() {
-            "archived" => SessionStatus::Archived,
-            _ => SessionStatus::Active,
-        },
+        status: SessionStatus::from_db(&status),
         created_at: created_at
             .parse()
             .map_err(|e| conversion_err(6, rusqlite::types::Type::Text, e))?,
@@ -819,8 +792,6 @@ fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
 }
 
 fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
-    let id: String = row.get(0)?;
-    let session_id: String = row.get(1)?;
     let file_path: String = row.get(2)?;
     let location_lat: Option<f64> = row.get(3)?;
     let location_lon: Option<f64> = row.get(4)?;
@@ -845,9 +816,8 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         .transpose()?;
 
     Ok(Image {
-        id: Uuid::parse_str(&id).map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
-        session_id: Uuid::parse_str(&session_id)
-            .map_err(|e| conversion_err(1, rusqlite::types::Type::Text, e))?,
+        id: uuid_col(row, 0)?,
+        session_id: uuid_col(row, 1)?,
         file_path,
         location_lat,
         location_lon,
@@ -892,6 +862,7 @@ fn conversion_err(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::image::ImageFormat;
 
     fn img(captured_at: &str) -> Image {
         Image {

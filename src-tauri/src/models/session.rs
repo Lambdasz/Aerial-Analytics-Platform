@@ -52,6 +52,24 @@ pub enum SessionStatus {
     Archived,
 }
 
+impl SessionStatus {
+    /// Text stored in the `session.status` column.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionStatus::Active => "active",
+            SessionStatus::Archived => "archived",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); unknown values read as `Active`.
+    pub fn from_db(raw: &str) -> Self {
+        match raw {
+            "archived" => SessionStatus::Archived,
+            _ => SessionStatus::Active,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
