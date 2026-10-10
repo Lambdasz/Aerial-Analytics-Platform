@@ -69,7 +69,12 @@ pub struct NameConflict {
     pub existing_path: Option<String>,
 }
 
-/// A candidate whose content hash matches an image already in the project.
+/// A candidate whose content hash matches another image.
+///
+/// In [`ImportReport::duplicates`], `existing_image_id` is a persisted image
+/// id or the id of an earlier candidate that is being imported. In
+/// [`ImportReport::pending_duplicates`] it is the id of a candidate that is
+/// held back by an unresolved name conflict and may never be imported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateFlag {
     pub source_path: String,
@@ -82,6 +87,26 @@ pub struct DuplicateFlag {
 pub struct RejectedFile {
     pub source_path: String,
     pub reason: ImportError,
+}
+
+/// An imported image whose extracted metadata lacks required fields.
+///
+/// The image stays imported (its id is still in
+/// [`ImportReport::imported_image_ids`]); this flag tells the frontend and
+/// Image Quality Checking to display it as "incomplete metadata".
+/// `missing` holds required field names from
+/// `crate::modules::module_01::REQUIRED_METADATA_FIELDS`. When extraction
+/// was attempted but failed (corrupt or unreadable metadata), the I/O layer
+/// records a default (all-`None`) metadata value, so the flag lists every
+/// required field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteMetadataFlag {
+    /// `ImportCandidate.id` of the imported image.
+    pub candidate_id: String,
+    /// Absolute source path, for display and correlation.
+    pub source_path: String,
+    /// Required field names absent from the extracted metadata.
+    pub missing: Vec<String>,
 }
 
 /// Outcome of one [`ImportRequest`].
@@ -97,6 +122,12 @@ pub struct ImportReport {
     pub rejected: Vec<RejectedFile>,
     /// Destination-basename collisions found during the import.
     pub name_conflicts: Vec<NameConflict>,
+    /// Candidates whose content matches a file held back by an unresolved
+    /// name conflict. They are not imported, but are not known duplicates
+    /// either: if the held-back file is never imported, these still need to
+    /// be. Re-import them after the conflict is resolved.
+    #[serde(default)]
+    pub pending_duplicates: Vec<DuplicateFlag>,
 }
 
 /// Reasons an import operation or a single candidate within it can fail.
@@ -106,6 +137,21 @@ pub enum ImportError {
     NoImagesFound,
     /// `session_id` does not reference an existing session.
     SessionNotFound { session_id: String },
+    /// Transient development marker: the extraction pipeline hit a function
+    /// that is declared but not implemented yet. Never a statement about the
+    /// file itself — kept distinct from [`ImportError::UnsupportedFormat`]
+    /// so an unfinished backend is not misreported as a user file problem.
+    NotImplemented { path: String },
+    /// File name cannot be used as a destination name: it is empty, `.`,
+    /// `..`, or ends in a path separator, so no basename can be derived
+    /// from it. This is a naming problem, not a format problem — kept
+    /// separate from [`ImportError::UnsupportedFormat`] so the UI reports
+    /// the real cause instead of misleading the user about the file format.
+    InvalidFileName { path: String },
+    /// `content_hash` is empty, so the file's content was never hashed
+    /// (for example the read failed). It cannot be deduplicated, and an
+    /// empty value would make unrelated files look identical.
+    MissingContentHash { path: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
     ///
     /// Also used as a defensive fallback by `module_01::image_importer::classify_file`
@@ -123,6 +169,16 @@ pub enum ImageFormat {
     Jpeg,
     /// DNG (Digital Negative) raw image.
     Dng,
+}
+
+impl ImageFormat {
+    /// Lowercase name used in the database and plugin payloads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImageFormat::Jpeg => "jpeg",
+            ImageFormat::Dng => "dng",
+        }
+    }
 }
 
 /// Complete metadata for a single aerial RGB image.
