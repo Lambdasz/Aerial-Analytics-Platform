@@ -31,6 +31,10 @@ pub enum MetadataError {
     /// The XMP DJI packet was present but could not be parsed.
     #[error("malformed XMP data: {0}")]
     MalformedXmp(String),
+
+    /// Extraction is declared but not implemented yet.
+    #[error("metadata extraction is not implemented for '{path}'")]
+    NotImplemented { path: String },
 }
 
 impl MetadataError {
@@ -42,6 +46,7 @@ impl MetadataError {
             Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
             Self::MalformedExif(_) => "MALFORMED_EXIF",
             Self::MalformedXmp(_) => "MALFORMED_XMP",
+            Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
         }
     }
 }
