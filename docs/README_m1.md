@@ -26,8 +26,9 @@ and DNG/TIFF parsers, XMP DJI scan, merge helpers), and the schema migration
 are all live and covered by unit tests. Nothing in this module has a Tauri
 command yet, so the UI reaches none of it directly.
 
-Known gap: DNG dimensions are read from IFD0, which may be a reduced-resolution
-thumbnail when full sensor dimensions live in SubIFDs (tag 330).
+DNG dimensions come from the largest image not flagged reduced-resolution
+among IFD0 and its SubIFDs (tag 330), so a preview in IFD0 is not mistaken for
+the sensor size.
 
 ## Visibility
 
@@ -52,6 +53,7 @@ pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
     existing_paths: &[String],
+    case_insensitive_fs: bool,
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
@@ -63,7 +65,11 @@ destination-name-collision detection, and duplicate detection into one
 `request` is already populated with file headers/hashes/ids by I/O before
 this runs, and the caller applies the returned `ImportReport` afterwards.
 `existing_paths` are the files already in the session folder, whose
-basenames are compared (Unicode-folded) against incoming names.
+basenames are compared against incoming names. `case_insensitive_fs` picks
+the policy: `true` folds names (canonical decomposition + full Unicode case
+fold, so `IMG_1.JPG`/`img_1.jpg`, `É`/`é`, `ß`/`ss` collide), `false`
+(case-sensitive filesystems such as most Linux setups) only conflicts on
+byte-identical basenames.
 
 - **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
   Per-candidate failures (bad format, magic mismatch, invalid file name) are
@@ -73,8 +79,10 @@ basenames are compared (Unicode-folded) against incoming names.
   database checks an `Existing` id via `get_session` before calling in.
 - A name conflict holds a candidate out of `imported_image_ids` until the
   frontend resolves it. The backend never renames. Intra-batch duplicates
-  are flagged against the first file that claimed the content, including a
-  file this call held back.
+  are flagged against the first file that was accepted for import. A file
+  whose content matches a file this call _held back_ is not a duplicate
+  (the held-back file may never be imported); it is listed in
+  `pending_duplicates` so it can be imported once the conflict is resolved.
 
 ### `extract_metadata`
 
@@ -89,11 +97,11 @@ is the only impure function in the module (the only one that touches the
 filesystem); it's defined as the composition:
 
 ```text
-read file bytes
+read file (JPEG: up to the SOS header; DNG: whole file)
   -> detect_format(header, extension)
   -> read_dimensions(bytes, format)
   -> parse_exif(bytes)
-  -> parse_xmp_dji(bytes)
+  -> xmp_packet(bytes, format) -> parse_xmp_dji(packet)
   -> merge_tags(exif, xmp, dimensions, format)
 ```
 
