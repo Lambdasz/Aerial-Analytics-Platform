@@ -502,7 +502,9 @@ pub fn update_session_status(
 /// # Purity
 ///
 /// Impure. Also triggers [`recalculate_session_date_range`] for the target
-/// session, since adding an image can shift `date_start`/`date_end`.
+/// session, since adding an image can shift `date_start`/`date_end`, and for
+/// the previous one when it still exists. Everything runs in one
+/// transaction: on error nothing is changed.
 ///
 /// # Open question
 ///
@@ -513,30 +515,39 @@ pub fn assign_image_to_session(
     session_id: Uuid,
     image_id: Uuid,
 ) -> Result<(), SessionError> {
-    let previous_session_id: Option<String> = conn
-        .query_row(
-            "SELECT session_id FROM image WHERE id = ?1",
-            params![image_id.to_string()],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(previous_session_id) = previous_session_id else {
-        return Err(SessionError::ImageNotFound { image_id });
-    };
+    // One transaction: the move and both recalculations commit together, so
+    // a failure never leaves the image moved while the caller sees an error.
+    with_immediate_transaction(conn, |conn| {
+        let previous_session_id: Option<String> = conn
+            .query_row(
+                "SELECT session_id FROM image WHERE id = ?1",
+                params![image_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(previous_session_id) = previous_session_id else {
+            return Err(SessionError::ImageNotFound { image_id });
+        };
 
-    conn.execute(
-        "UPDATE image SET session_id = ?1 WHERE id = ?2",
-        params![session_id.to_string(), image_id.to_string()],
-    )?;
+        conn.execute(
+            "UPDATE image SET session_id = ?1 WHERE id = ?2",
+            params![session_id.to_string(), image_id.to_string()],
+        )?;
 
-    recalculate_session_date_range(conn, session_id)?;
+        recalculate_session_date_range(conn, session_id)?;
 
-    if previous_session_id != session_id.to_string() {
-        if let Ok(previous_session_id) = Uuid::parse_str(&previous_session_id) {
-            recalculate_session_date_range(conn, previous_session_id)?;
+        if previous_session_id != session_id.to_string() {
+            if let Ok(previous_session_id) = Uuid::parse_str(&previous_session_id) {
+                // The previous session may be gone (the image row outlived a
+                // `delete_session`); there is nothing to recalculate then.
+                match recalculate_session_date_range(conn, previous_session_id) {
+                    Ok(()) | Err(SessionError::NotFound { .. }) => {}
+                    Err(err) => return Err(err),
+                }
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Recomputes `date_start`/`date_end` for a session from the `captured_at`
@@ -1456,5 +1467,49 @@ mod tests {
             updated.date_end,
             "2026-09-20T10:00:00".parse::<NaiveDateTime>().unwrap()
         );
+    }
+
+    #[test]
+    fn assign_tolerates_a_deleted_previous_session() {
+        let conn = memory_db();
+        // Foreign keys are off on connections that never enabled them; that
+        // is how an image can outlive its session.
+        conn.execute("PRAGMA foreign_keys = OFF", [])
+            .expect("pragma");
+        let live = create_session(&conn, Uuid::new_v4(), None).expect("live");
+        // The image still points at a session that no longer exists.
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "/photos/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        insert_image(&conn, &image).expect("image");
+
+        assign_image_to_session(&conn, live.id, image.id).expect("assign succeeds");
+        let stored = get_image(&conn, image.id).expect("image");
+        assert_eq!(stored.session_id, live.id);
+    }
+
+    #[test]
+    fn assign_rolls_back_when_the_target_session_is_missing() {
+        let conn = memory_db();
+        // With foreign keys off the UPDATE itself succeeds, so only the
+        // transaction can undo it when the recalculation then fails.
+        conn.execute("PRAGMA foreign_keys = OFF", [])
+            .expect("pragma");
+        let original = create_session(&conn, Uuid::new_v4(), None).expect("original");
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            original.id,
+            "/photos/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        insert_image(&conn, &image).expect("image");
+
+        let err = assign_image_to_session(&conn, Uuid::new_v4(), image.id).unwrap_err();
+        assert!(matches!(err, SessionError::NotFound { .. }));
+        let stored = get_image(&conn, image.id).expect("image");
+        assert_eq!(stored.session_id, original.id, "the move must roll back");
     }
 }
