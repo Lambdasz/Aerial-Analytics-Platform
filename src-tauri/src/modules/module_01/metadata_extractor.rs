@@ -25,8 +25,11 @@
 //! ```
 //!
 //! A missing individual tag is not an error: fields are simply left as
-//! `None` in [`ImageMetadata`]. [`MetadataError`] is reserved for cases
-//! where the file itself cannot be read or is not a supported image format.
+//! `None` in [`ImageMetadata`]. A malformed XMP DJI packet counts as a
+//! missing tag, not a failure — optional telemetry never discards the rest
+//! of the extraction. [`MetadataError`] is reserved for cases where the
+//! file itself cannot be read, is not a supported image format, or has a
+//! present-but-corrupt EXIF segment.
 //!
 //! ## Module Contracts
 //!
@@ -182,8 +185,9 @@ pub(crate) struct MetadataCompleteness {
 /// Returns [`MetadataError`] if the file cannot be read
 /// ([`MetadataError::Io`]), is not a supported format
 /// ([`MetadataError::UnsupportedFormat`], [`MetadataError::MagicMismatch`]),
-/// or has a present-but-corrupt EXIF/XMP segment
-/// ([`MetadataError::MalformedExif`], [`MetadataError::MalformedXmp`]).
+/// or has a present-but-corrupt EXIF segment
+/// ([`MetadataError::MalformedExif`]). A malformed XMP DJI packet is not an
+/// error: it leaves the flight-telemetry fields `None` like a missing tag.
 pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
     let bytes = std::fs::read(path)?;
     let extension = path
@@ -204,7 +208,9 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
     })?;
     let dimensions = read_dimensions(&bytes, format)?;
     let exif = parse_exif(&bytes)?;
-    let xmp = parse_xmp_dji(&bytes)?;
+    // Never fails: a malformed XMP packet leaves flight telemetry unset
+    // instead of discarding the EXIF, GPS and dimensions above.
+    let xmp = parse_xmp_dji(&bytes);
     Ok(merge_tags(exif, xmp, dimensions, format))
 }
 
@@ -744,6 +750,71 @@ fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
     }
 }
 
+/// Parses a DJI numeric attribute leniently.
+///
+/// `None` for an empty or non-numeric value (`"n/a"`, text, a truncated
+/// write). The field is left unset instead of failing the extraction.
+fn parse_dji_f64(value: &str) -> Option<f64> {
+    value.trim().parse().ok()
+}
+
+fn parse_dji_f32(value: &str) -> Option<f32> {
+    value.trim().parse().ok()
+}
+
+/// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
+///
+/// Non-numeric values leave the field unset; a valid value already read
+/// from the same tag is kept. Unknown attributes (e.g. new firmware tags)
+/// are ignored, so newer packets keep parsing.
+fn assign_dji_tag(tags: &mut RawXmpTags, name: &str, value: &str) {
+    match name {
+        "AbsoluteAltitude" => {
+            tags.absolute_altitude_m = parse_dji_f64(value).or(tags.absolute_altitude_m)
+        }
+        "RelativeAltitude" => {
+            tags.relative_altitude_m = parse_dji_f64(value).or(tags.relative_altitude_m)
+        }
+        "GimbalRollDegree" => {
+            tags.gimbal_roll_degree = parse_dji_f32(value).or(tags.gimbal_roll_degree)
+        }
+        "GimbalYawDegree" => {
+            tags.gimbal_yaw_degree = parse_dji_f32(value).or(tags.gimbal_yaw_degree)
+        }
+        "GimbalPitchDegree" => {
+            tags.gimbal_pitch_degree = parse_dji_f32(value).or(tags.gimbal_pitch_degree)
+        }
+        "FlightRollDegree" => {
+            tags.flight_roll_degree = parse_dji_f32(value).or(tags.flight_roll_degree)
+        }
+        "FlightYawDegree" => {
+            tags.flight_yaw_degree = parse_dji_f32(value).or(tags.flight_yaw_degree)
+        }
+        "FlightPitchDegree" => {
+            tags.flight_pitch_degree = parse_dji_f32(value).or(tags.flight_pitch_degree)
+        }
+        "FlightXSpeed" => tags.flight_x_speed = parse_dji_f32(value).or(tags.flight_x_speed),
+        "FlightYSpeed" => tags.flight_y_speed = parse_dji_f32(value).or(tags.flight_y_speed),
+        "FlightZSpeed" => tags.flight_z_speed = parse_dji_f32(value).or(tags.flight_z_speed),
+        _ => {}
+    }
+}
+
+/// Byte span of the XMP packet, or `None` when the file carries none.
+///
+/// Only the packet is scanned, so a JPEG comment (or any other stray bytes)
+/// containing `drone-dji:` cannot be mistaken for DJI telemetry.
+fn xmp_packet_span(text: &str) -> Option<(usize, usize)> {
+    let start = text.find("<x:xmpmeta").or_else(|| text.find("<?xpacket"))?;
+    let rest = &text[start..];
+    let end = rest
+        .find("</x:xmpmeta>")
+        .map(|i| start + i + "</x:xmpmeta>".len())
+        .or_else(|| rest.find("<?xpacket end").map(|i| start + i))
+        .unwrap_or(text.len());
+    Some((start, end.max(start)))
+}
+
 /// Parses the XMP DJI drone-telemetry packet of an image into [`RawXmpTags`].
 ///
 /// # Purity
@@ -756,98 +827,103 @@ fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
 ///
 /// # Returns
 ///
-/// `Ok(RawXmpTags)` with every tag that was present. Returns all-`None`
-/// fields (not an error) for non-DJI images with no XMP DJI packet.
+/// [`RawXmpTags`] with every tag that was present. All-`None` fields (never
+/// an error) for non-DJI images with no XMP DJI packet, and for the tags a
+/// malformed packet left unread.
 ///
-/// # Errors
+/// Both serializations are accepted inside the packet:
 ///
-/// [`MetadataError::MalformedXmp`] if an XMP packet is present but is not
-/// well-formed XML, or the DJI namespace is present but malformed.
-fn parse_dji_f64(name: &str, value: &str) -> Result<f64, MetadataError> {
-    value.trim().parse().map_err(|_| {
-        MetadataError::MalformedXmp(format!("drone-dji:{name} is not a number: {value:?}"))
-    })
-}
-
-fn parse_dji_f32(name: &str, value: &str) -> Result<f32, MetadataError> {
-    value.trim().parse().map_err(|_| {
-        MetadataError::MalformedXmp(format!("drone-dji:{name} is not a number: {value:?}"))
-    })
-}
-
-/// Assigns one parsed `drone-dji:Name="value"` attribute to its field.
+/// * attribute form — `drone-dji:Name="value"` or `'value'`
+/// * element form — `<drone-dji:Name>value</drone-dji:Name>`
 ///
-/// Unknown attributes (e.g. new firmware tags) are ignored, so newer
-/// packets keep parsing.
-fn assign_dji_tag(tags: &mut RawXmpTags, name: &str, value: &str) -> Result<(), MetadataError> {
-    match name {
-        "AbsoluteAltitude" => tags.absolute_altitude_m = Some(parse_dji_f64(name, value)?),
-        "RelativeAltitude" => tags.relative_altitude_m = Some(parse_dji_f64(name, value)?),
-        "GimbalRollDegree" => tags.gimbal_roll_degree = Some(parse_dji_f32(name, value)?),
-        "GimbalYawDegree" => tags.gimbal_yaw_degree = Some(parse_dji_f32(name, value)?),
-        "GimbalPitchDegree" => tags.gimbal_pitch_degree = Some(parse_dji_f32(name, value)?),
-        "FlightRollDegree" => tags.flight_roll_degree = Some(parse_dji_f32(name, value)?),
-        "FlightYawDegree" => tags.flight_yaw_degree = Some(parse_dji_f32(name, value)?),
-        "FlightPitchDegree" => tags.flight_pitch_degree = Some(parse_dji_f32(name, value)?),
-        "FlightXSpeed" => tags.flight_x_speed = Some(parse_dji_f32(name, value)?),
-        "FlightYSpeed" => tags.flight_y_speed = Some(parse_dji_f32(name, value)?),
-        "FlightZSpeed" => tags.flight_z_speed = Some(parse_dji_f32(name, value)?),
-        _ => {}
-    }
-    Ok(())
-}
-
-fn parse_xmp_dji(bytes: &[u8]) -> Result<RawXmpTags, MetadataError> {
-    const PREFIX: &str = "drone-dji:";
+/// An occurrence that is neither (stray text, `xmlns:drone-dji=...`, a
+/// value without quotes, a truncated attribute) is skipped, and a
+/// non-numeric value leaves its field unset. A quirk in optional telemetry
+/// never discards it, so it must never fail this call.
+fn parse_xmp_dji(bytes: &[u8]) -> RawXmpTags {
     // XMP packets are UTF-8 text embedded in the file; view the bytes
     // lossily so arbitrary binary cannot break the scan.
     let text = String::from_utf8_lossy(bytes);
-    if !text.contains(PREFIX) {
-        // No DJI packet (e.g. non-DJI drones, or no XMP at all): absence
-        // is not an error.
-        return Ok(RawXmpTags::default());
-    }
-    let malformed = |detail: &str| MetadataError::MalformedXmp(detail.to_string());
-    let raw = text.as_bytes();
+    let Some((start, end)) = xmp_packet_span(&text) else {
+        return RawXmpTags::default();
+    };
+    const PREFIX: &str = "drone-dji:";
+    let packet = &text[start..end];
+    let raw = packet.as_bytes();
     let mut tags = RawXmpTags::default();
     let mut cursor = 0;
-    while let Some(found) = text[cursor..].find(PREFIX) {
+    while let Some(found) = packet[cursor..].find(PREFIX) {
         // Every index below is a char boundary: `PREFIX`, the attribute
-        // name, whitespace, `=`, and the quotes are all ASCII.
-        let mut i = cursor + found + PREFIX.len();
-        let name_start = i;
+        // name, whitespace, `=`, the quotes, and the tag markers are all
+        // ASCII.
+        let at = cursor + found;
+        let name_start = at + PREFIX.len();
+        let mut i = name_start;
         while matches!(raw.get(i), Some(b) if b.is_ascii_alphanumeric()) {
             i += 1;
         }
-        let name = &text[name_start..i];
-        while matches!(raw.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-            i += 1;
+        let name = &packet[name_start..i];
+        if name.is_empty() {
+            cursor = name_start;
+            continue;
         }
-        if raw.get(i) != Some(&b'=') {
-            return Err(malformed("drone-dji attribute without '='"));
+        let mut j = i;
+        while matches!(raw.get(j), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            j += 1;
         }
-        i += 1;
-        while matches!(raw.get(i), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-            i += 1;
-        }
-        let quote = match raw.get(i) {
-            Some(b'"') => b'"',
-            Some(b'\'') => b'\'',
-            _ => return Err(malformed("drone-dji attribute value without quotes")),
-        };
-        i += 1;
-        let value_start = i;
-        let value_end = loop {
-            match raw.get(i) {
-                None => return Err(malformed("unterminated drone-dji attribute value")),
-                Some(b) if *b == quote => break i,
-                _ => i += 1,
+        match raw.get(j) {
+            // Attribute form: name = "value" | 'value'.
+            Some(b'=') => {
+                let mut k = j + 1;
+                while matches!(raw.get(k), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+                    k += 1;
+                }
+                let quote = match raw.get(k) {
+                    Some(b'"') => b'"',
+                    Some(b'\'') => b'\'',
+                    // Unquoted value: not an attribute, skip this occurrence.
+                    _ => {
+                        cursor = i;
+                        continue;
+                    }
+                };
+                let value_start = k + 1;
+                let mut k = value_start;
+                let value_end = loop {
+                    match raw.get(k) {
+                        None => break k,
+                        Some(b) if *b == quote => break k,
+                        _ => k += 1,
+                    }
+                };
+                assign_dji_tag(&mut tags, name, &packet[value_start..value_end]);
+                // A truncated value ends at the packet end; keep going.
+                cursor = if value_end < raw.len() {
+                    value_end + 1
+                } else {
+                    value_end
+                };
             }
-        };
-        assign_dji_tag(&mut tags, name, &text[value_start..value_end])?;
-        cursor = value_end + 1;
+            // Element form: <drone-dji:Name>value</drone-dji:Name>.
+            Some(b'>') => {
+                let text_start = j + 1;
+                let close = format!("</{PREFIX}{name}>");
+                let value_end = packet[text_start..]
+                    .find(&close)
+                    .or_else(|| packet[text_start..].find('<'))
+                    .unwrap_or(packet.len() - text_start);
+                assign_dji_tag(&mut tags, name, &packet[text_start..text_start + value_end]);
+                cursor = text_start + value_end;
+            }
+            // Stray text, namespace declarations, or an attribute this
+            // parser does not understand: skip it.
+            _ => {
+                cursor = i;
+                continue;
+            }
+        }
     }
-    Ok(tags)
+    tags
 }
 
 /// Reads pixel dimensions from a JPEG SOF0 segment or DNG IFD0.
@@ -1537,16 +1613,16 @@ mod tests {
 
     #[test]
     fn parse_xmp_dji_absent_packet_is_default() {
-        let tags = parse_xmp_dji(b"\x00\xff not an xmp packet").expect("binary");
+        let tags = parse_xmp_dji(b"\x00\xff not an xmp packet");
         assert_eq!(tags, RawXmpTags::default());
         let adobe = b"<x:xmpmeta><rdf:RDF><rdf:Description/></rdf:RDF></x:xmpmeta>";
-        let tags = parse_xmp_dji(adobe).expect("non-dji xmp");
+        let tags = parse_xmp_dji(adobe);
         assert_eq!(tags, RawXmpTags::default());
     }
 
     #[test]
     fn parse_xmp_dji_reads_dji_telemetry() {
-        let tags = parse_xmp_dji(DJI_XMP.as_bytes()).expect("dji packet");
+        let tags = parse_xmp_dji(DJI_XMP.as_bytes());
         assert_eq!(tags.absolute_altitude_m, Some(120.5));
         assert_eq!(tags.relative_altitude_m, Some(45.25));
         assert_eq!(tags.gimbal_roll_degree, Some(0.0));
@@ -1561,30 +1637,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_xmp_dji_reads_element_form() {
+        let packet = "<x:xmpmeta><rdf:RDF><rdf:Description \
+            xmlns:drone-dji=\"http://dji.com/drone-dji/1.0/\">\
+            <drone-dji:GimbalYawDegree>+16.20</drone-dji:GimbalYawDegree>\
+            <drone-dji:AbsoluteAltitude>80.50</drone-dji:AbsoluteAltitude>\
+            </rdf:Description></rdf:RDF></x:xmpmeta>";
+        let tags = parse_xmp_dji(packet.as_bytes());
+        assert_eq!(tags.gimbal_yaw_degree, Some(16.2));
+        assert_eq!(tags.absolute_altitude_m, Some(80.5));
+    }
+
+    #[test]
     fn parse_xmp_dji_ignores_unknown_attributes() {
-        let packet = "<rdf:Description \
+        let packet = "<x:xmpmeta><rdf:Description \
             drone-dji:FutureTag=\"99\" \
-            drone-dji:GimbalYawDegree=\"+12.50\"/>";
-        let tags = parse_xmp_dji(packet.as_bytes()).expect("unknown attr");
+            drone-dji:GimbalYawDegree=\"+12.50\"/></x:xmpmeta>";
+        let tags = parse_xmp_dji(packet.as_bytes());
         assert_eq!(tags.gimbal_yaw_degree, Some(12.5));
     }
 
     #[test]
-    fn parse_xmp_dji_rejects_non_numeric_value() {
-        let packet = DJI_XMP.replace("+12.50", "fast");
-        assert!(matches!(
-            parse_xmp_dji(packet.as_bytes()),
-            Err(MetadataError::MalformedXmp(_))
-        ));
+    fn parse_xmp_dji_skips_stray_text_outside_the_packet() {
+        // A JPEG comment segment carrying unrelated drone-dji text must not
+        // be read as telemetry, nor fail the real packet that follows.
+        let file = b"comment: stray drone-dji: text, not an attribute\
+            <x:xmpmeta>\
+            <rdf:Description drone-dji:GimbalYawDegree=\"+12.50\"/>\
+            </x:xmpmeta>";
+        let tags = parse_xmp_dji(file);
+        assert_eq!(tags.gimbal_yaw_degree, Some(12.5));
     }
 
     #[test]
-    fn parse_xmp_dji_rejects_truncated_value() {
-        let truncated = "<rdf:Description drone-dji:AbsoluteAltitude=\"+120.5";
-        assert!(matches!(
-            parse_xmp_dji(truncated.as_bytes()),
-            Err(MetadataError::MalformedXmp(_))
-        ));
+    fn parse_xmp_dji_unparseable_value_leaves_that_field_unset() {
+        let packet = DJI_XMP.replace("+12.50", "n/a  ");
+        let tags = parse_xmp_dji(packet.as_bytes());
+        assert_eq!(tags.gimbal_yaw_degree, None);
+        // Siblings still parse.
+        assert_eq!(tags.absolute_altitude_m, Some(120.5));
+        assert_eq!(tags.gimbal_roll_degree, Some(0.0));
+    }
+
+    #[test]
+    fn parse_xmp_dji_truncated_attribute_does_not_error() {
+        // Nothing follows the opening quote: the attribute is skipped, and
+        // nothing is read, but no error is raised.
+        let truncated = "<x:xmpmeta><rdf:Description \
+            drone-dji:AbsoluteAltitude=\"+120.5</x:xmpmeta>";
+        let tags = parse_xmp_dji(truncated.as_bytes());
+        assert_eq!(tags.absolute_altitude_m, None);
+    }
+
+    #[test]
+    fn parse_xmp_dji_truncated_element_keeps_earlier_tags() {
+        let packet = "<x:xmpmeta><rdf:Description>\
+            <drone-dji:GimbalYawDegree>+16.20</drone-dji:GimbalYawDegree>\
+            <drone-dji:AbsoluteAltitude>80.5";
+        let tags = parse_xmp_dji(packet.as_bytes());
+        assert_eq!(tags.gimbal_yaw_degree, Some(16.2));
+        assert_eq!(tags.absolute_altitude_m, Some(80.5));
     }
 
     #[test]
