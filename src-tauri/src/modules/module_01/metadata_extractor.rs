@@ -632,12 +632,11 @@ fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
     };
 
     // GPS sub-IFD (tag 0x8825 in IFD0).
-    if let Some(gps_off) = read_u32_val(tiff, &ifd0, endian, 0x8825) {
-        let gps_off = gps_off as usize;
-        if gps_off >= tiff.len() {
-            return Err(malformed("GPS IFD offset out of bounds"));
-        }
-        let gps = parse_ifd(tiff, endian, gps_off)?;
+    // A pointer that leads nowhere (GPS data stripped, tag left behind) just
+    // leaves the GPS fields unset; it must not discard the rest.
+    if let Some(gps) = read_u32_val(tiff, &ifd0, endian, 0x8825)
+        .and_then(|off| parse_ifd(tiff, endian, off as usize).ok())
+    {
         out.gps_latitude = gps_decimal(tiff, &gps, endian, 1, 2, ['S', 's']);
         out.gps_longitude = gps_decimal(tiff, &gps, endian, 3, 4, ['W', 'w']);
         if let Some(alt) = read_rational(tiff, &gps, endian, 6) {
@@ -658,12 +657,9 @@ fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
     }
 
     // Exif sub-IFD (tag 0x8769 in IFD0).
-    if let Some(exif_off) = read_u32_val(tiff, &ifd0, endian, 0x8769) {
-        let exif_off = exif_off as usize;
-        if exif_off >= tiff.len() {
-            return Err(malformed("Exif IFD offset out of bounds"));
-        }
-        let exif = parse_ifd(tiff, endian, exif_off)?;
+    if let Some(exif) = read_u32_val(tiff, &ifd0, endian, 0x8769)
+        .and_then(|off| parse_ifd(tiff, endian, off as usize).ok())
+    {
         out.date_time_original_raw = read_ascii(tiff, &exif, 0x9003);
         out.exposure_time_s = read_rational(tiff, &exif, endian, 0x829A);
         out.f_number = read_rational(tiff, &exif, endian, 0x829D).map(|v| v as f32);
@@ -683,7 +679,14 @@ fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
     Ok(out)
 }
 
-/// Reads JPEG dimensions by scanning for the first SOF0–SOF3 marker.
+/// Whether `code` is a start-of-frame marker (SOF0–SOF15 minus DHT `0xC4`,
+/// JPG `0xC8` and DAC `0xCC`), so progressive, extended and arithmetic-coded
+/// JPEGs report their dimensions too.
+fn is_sof_marker(code: u8) -> bool {
+    matches!(code, 0xC0..=0xCF) && !matches!(code, 0xC4 | 0xC8 | 0xCC)
+}
+
+/// Reads JPEG dimensions by scanning for the first SOF marker.
 fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
     let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
     if bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8] {
@@ -691,7 +694,7 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
     }
     for segment in jpeg_segments(bytes) {
         let (code, seg) = segment?;
-        if matches!(code, 0xC0..=0xC3) {
+        if is_sof_marker(code) {
             if seg.len() < 7 {
                 return Err(malformed("truncated SOF segment"));
             }
@@ -1549,6 +1552,39 @@ mod tests {
         // SOI + APP1 header claiming more bytes than exist.
         let bytes = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x20, b'E', b'x'];
         assert!(parse_exif(&bytes).is_err());
+    }
+
+    #[test]
+    fn stale_gps_pointer_keeps_the_rest_of_the_exif() {
+        let mut tiff = tiff_le_with_make("TestCam");
+        // IFD0 holds one entry (Make) at offset 8; add a GPS pointer entry
+        // far outside the file by rewriting the count and appending it.
+        let count_off = 8;
+        tiff[count_off] = 2;
+        let entry_end = count_off + 2 + 12;
+        let mut gps = Vec::new();
+        gps.extend_from_slice(&0x8825u16.to_le_bytes());
+        gps.extend_from_slice(&4u16.to_le_bytes());
+        gps.extend_from_slice(&1u32.to_le_bytes());
+        gps.extend_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+        tiff.splice(entry_end..entry_end, gps);
+        // The inserted entry pushes the out-of-line Make string back 12 bytes.
+        tiff[18..22].copy_from_slice(&38u32.to_le_bytes());
+        let tags = parse_tiff_tags(&tiff).expect("a stale GPS pointer is not fatal");
+        assert_eq!(tags.make.as_deref(), Some("TestCam"));
+        assert_eq!(tags.gps_latitude, None);
+    }
+
+    #[test]
+    fn progressive_jpeg_reports_dimensions() {
+        let mut sof = vec![0x08];
+        sof.extend_from_slice(&300u16.to_be_bytes());
+        sof.extend_from_slice(&400u16.to_be_bytes());
+        sof.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]);
+        let file = jpeg_with_segments(&[(0xC2, sof)]);
+        let dims = jpeg_dimensions(&file).expect("SOF2 dimensions");
+        assert_eq!((dims.width, dims.height), (400, 300));
+        assert!(!is_sof_marker(0xC4) && !is_sof_marker(0xC8) && !is_sof_marker(0xCC));
     }
 
     #[test]
