@@ -10,10 +10,9 @@ use crate::plugin_manager::error::CommandError;
 impl From<layer::LayerError> for CommandError {
     fn from(err: layer::LayerError) -> Self {
         let (code, message) = match err {
-            layer::LayerError::LayerNotFound(layer_id) => (
-                "LAYER_NOT_FOUND",
-                format!("layer not found: {}", layer_id),
-            ),
+            layer::LayerError::LayerNotFound(layer_id) => {
+                ("LAYER_NOT_FOUND", format!("layer not found: {}", layer_id))
+            }
             layer::LayerError::InvalidOpacity => (
                 "INVALID_OPACITY",
                 "opacity must be between 0.0 and 1.0".to_string(),
@@ -42,10 +41,7 @@ pub fn toggle_layer_visibility_cmd(
 
 /// Mengubah opacity sebuah layer.
 #[tauri::command]
-pub fn set_layer_opacity_cmd(
-    layer: LayerState,
-    opacity: f64,
-) -> Result<LayerState, CommandError> {
+pub fn set_layer_opacity_cmd(layer: LayerState, opacity: f64) -> Result<LayerState, CommandError> {
     Ok(layer::set_layer_opacity(layer, opacity)?)
 }
 
@@ -61,10 +57,7 @@ pub fn reorder_layer_stack_cmd(
 
 /// Mengambil layer berdasarkan kategori.
 #[tauri::command]
-pub fn filter_layers_by_category_cmd(
-    layers: Vec<LayerState>,
-    category: String,
-) -> Vec<LayerState> {
+pub fn filter_layers_by_category_cmd(layers: Vec<LayerState>, category: String) -> Vec<LayerState> {
     layer::filter_layers_by_category(&layers, &category)
 }
 

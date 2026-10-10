@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useMap } from "react-leaflet";
-import { Button, ButtonGroup, Tooltip } from "@blueprintjs/core";
+import { Button, Tooltip } from "@blueprintjs/core";
 import * as L from "leaflet";
 import { useImageMarkers } from "./useImageMarkers";
 import "./MapViewControlBar.css";
@@ -50,30 +50,40 @@ export const MapViewControlBar: React.FC = () => {
   return (
     <div className="map-view-control-bar">
       {/* Zoom Controllers */}
-      <ButtonGroup vertical>
-        <Tooltip content="Zoom In" placement="right">
-          <Button icon="plus" onClick={handleZoomIn} />
+      <div className="control-capsule">
+        <Tooltip content="Zoom In" placement="left">
+          <Button icon="plus" minimal onClick={handleZoomIn} />
         </Tooltip>
 
-        <Button className="zoom-indicator" text={`${zoom}z`} disabled />
+        <div className="control-divider" />
 
-        <Tooltip content="Zoom Out" placement="right">
-          <Button icon="minus" onClick={handleZoomOut} />
+        <div className="zoom-indicator">{zoom}z</div>
+
+        <div className="control-divider" />
+
+        <Tooltip content="Zoom Out" placement="left">
+          <Button icon="minus" minimal onClick={handleZoomOut} />
         </Tooltip>
-      </ButtonGroup>
+      </div>
 
       {/* Navigation Controllers */}
-      <ButtonGroup vertical>
-        <Tooltip content="Bidik Keseluruhan Proyek" placement="right">
-          <Button icon="zoom-to-fit" intent="primary" onClick={handleFitBounds} />
+      <div className="control-capsule">
+        <Tooltip content="Bidik Keseluruhan Proyek" placement="left">
+          <Button icon="zoom-to-fit" minimal onClick={handleFitBounds} />
         </Tooltip>
-        <Tooltip content="Reset Koordinat Awal" placement="right">
-          <Button icon="locate" onClick={handleResetNorth} />
+
+        <div className="control-divider" />
+
+        <Tooltip content="Reset Koordinat Awal" placement="left">
+          <Button icon="locate" minimal onClick={handleResetNorth} />
         </Tooltip>
-        <Tooltip content="Layar Penuh (Fullscreen)" placement="right">
-          <Button icon="fullscreen" onClick={handleFullscreen} />
+
+        <div className="control-divider" />
+
+        <Tooltip content="Layar Penuh (Fullscreen)" placement="left">
+          <Button icon="fullscreen" minimal onClick={handleFullscreen} />
         </Tooltip>
-      </ButtonGroup>
+      </div>
     </div>
   );
 };

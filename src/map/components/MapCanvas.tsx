@@ -1,16 +1,24 @@
 import React, { useState } from "react";
-import { MapContainer, TileLayer, ScaleControl, Marker, Popup, Polygon } from "react-leaflet";
-import { Button, ButtonGroup } from "@blueprintjs/core";
+import {
+  MapContainer,
+  TileLayer,
+  ScaleControl,
+  Marker,
+  Popup,
+  Polygon,
+  ImageOverlay,
+} from "react-leaflet";
+import type { LatLngBoundsExpression } from "leaflet";
+import orthoBounds from "../dummy_image/bounds.json";
 
 import { useImageMarkers } from "./useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
-import { AoiDemoToolbar } from "./AoiDemoToolbar";
+import { MapLeftPanel } from "./MapLeftPanel";
 import { useSpatialResultLayers } from "./useSpatialResultLayers";
 import { MapLegend } from "./MapLegend";
-import { LayerManager } from "./LayerManager";
-
+import { MapTypeThumbnail } from "./MapTypeThumbnail";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 
@@ -118,6 +126,21 @@ const ManagedMapLayers: React.FC<{
         if (!layer.is_visible) {
           return null;
         }
+        // =========================
+        // ORTHOMOSAIC DRONE
+        // =========================
+
+        if (layer.layer_id === "orthomosaic_01") {
+          return (
+            <ImageOverlay
+              key={layer.layer_id}
+              url="/drone_ortho.jpg"
+              bounds={orthoBounds as LatLngBoundsExpression}
+              opacity={layer.opacity}
+              zIndex={layer.z_index}
+            />
+          );
+        }
 
         // =========================
         // DRONE IMAGERY
@@ -196,6 +219,7 @@ const BASEMAPS = {
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxNativeZoom: 19,
   },
 
   satellite: {
@@ -203,6 +227,7 @@ const BASEMAPS = {
     url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     attribution:
       "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+    maxNativeZoom: 18,
   },
 
   positron: {
@@ -217,6 +242,7 @@ const BASEMAPS = {
 
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxNativeZoom: 19,
   },
 };
 
@@ -235,84 +261,111 @@ export const MapCanvas: React.FC = () => {
 
   const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
 
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+
   const { markers } = useImageMarkers(500);
 
+  const toggleBasemap = () => {
+    setActiveBasemap((current) => (current === "osm" ? "satellite" : "osm"));
+  };
+
   return (
-    <div className="map-wrapper">
+    <div
+      className="map-wrapper"
+      style={{ position: "relative", width: "100%", height: "100vh", overflow: "hidden" }}
+    >
       {/* =========================
-          BASEMAP SWITCHER
+          LEFT SIDEBAR (TABS)
           ========================= */}
 
-      <div className="basemap-switcher">
-        <ButtonGroup>
-          {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
-            <Button
-              key={key}
-              intent={activeBasemap === key ? "primary" : "none"}
-              onClick={() => setActiveBasemap(key)}
-              text={BASEMAPS[key].name}
-            />
-          ))}
-        </ButtonGroup>
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          height: "100%",
+          zIndex: 1000,
+          pointerEvents: "none",
+        }}
+      >
+        <MapLeftPanel
+          map={mapInstance}
+          onAnnotationsChange={setAnnotations}
+          onLayersChange={setLayers}
+          isCollapsed={isSidebarCollapsed}
+          setIsCollapsed={setIsSidebarCollapsed}
+        />
       </div>
 
-      {/* =========================
-          SPATIAL RESULT LEGEND
-          ========================= */}
-
-      <MapLegend layers={activeLayers} />
-
-      {/* =========================
-          LAYER MANAGEMENT
-          ========================= */}
-
-      <LayerManager onAnnotationsChange={setAnnotations} onLayersChange={setLayers} />
-
-      {/* =========================
-          MAP ENGINE
-          ========================= */}
-
-      <MapContainer
-        center={[-1.247, 116.893]}
-        zoom={16}
-        minZoom={3}
-        maxZoom={21}
-        className="leaflet-map-container"
-        zoomControl={false}
-      >
-        <MapSyncHandler />
-
-        <SpatialResultLayer onLayersChange={setActiveLayers} />
-
-        <MapViewControlBar />
-
-        <AoiDemoToolbar />
-
-        <ScaleControl position="bottomright" imperial={false} />
-
+      <div style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }}>
         {/* =========================
-            BASEMAP
+            GMAPS THUMBNAIL SWITCHER
             ========================= */}
 
-        <TileLayer
-          key={activeBasemap}
-          url={BASEMAPS[activeBasemap].url}
-          attribution={BASEMAPS[activeBasemap].attribution}
-          maxZoom={21}
+        <MapTypeThumbnail
+          activeBasemap={activeBasemap}
+          onToggle={toggleBasemap}
+          isSidebarCollapsed={isSidebarCollapsed}
         />
 
         {/* =========================
+          SPATIAL RESULT LEGEND
+          ========================= */}
+
+        <MapLegend layers={activeLayers} />
+
+        {/* =========================
+          MAP ENGINE
+          ========================= */}
+
+        <MapContainer
+          center={[-1.247, 116.893]}
+          zoom={16}
+          minZoom={3}
+          maxZoom={21}
+          className="leaflet-map-container"
+          style={{ flex: 1, width: "100%", height: "100%" }}
+          zoomControl={false}
+          ref={setMapInstance}
+        >
+          <MapSyncHandler />
+
+          <SpatialResultLayer onLayersChange={setActiveLayers} />
+
+          {/* =========================
+            MAP CONTROLS
+            ========================= */}
+
+          <MapViewControlBar />
+
+          <ScaleControl position="bottomright" imperial={false} />
+
+          {/* =========================
+            BASEMAP
+            ========================= */}
+
+          <TileLayer
+            key={activeBasemap}
+            url={BASEMAPS[activeBasemap].url}
+            attribution={BASEMAPS[activeBasemap].attribution}
+            maxZoom={22}
+            maxNativeZoom={BASEMAPS[activeBasemap].maxNativeZoom}
+          />
+
+          {/* =========================
             SPATIAL ANNOTATIONS
             ========================= */}
 
-        <AnnotationMarkers annotations={annotations} />
+          <AnnotationMarkers annotations={annotations} />
 
-        {/* =========================
+          {/* =========================
             IMAGE LOCATION MARKERS
             ========================= */}
 
-        <ManagedMapLayers layers={layers} markers={markers} />
-      </MapContainer>
+          <ManagedMapLayers layers={layers} markers={markers} />
+        </MapContainer>
+      </div>
     </div>
   );
 };

@@ -1,53 +1,77 @@
 .gallery-sidebar {
-  width: 320px;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: #293742; /* Blueprint Dark background */
-  border-right: 1px solid #10161a;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
-  z-index: 10;
+  background-color: transparent;
+  font-family: var(--font-sf-pro-text);
 }
 
 .gallery-header {
-  padding: 15px;
-  border-bottom: 1px solid #10161a;
-  background-color: #30404d;
+  padding: 12px 16px;
+  background-color: transparent;
 }
 
 .gallery-list {
   flex-grow: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 0 16px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .gallery-card {
-  padding: 8px !important;
+  padding: 10px;
   display: flex;
-  gap: 10px;
-  transition: all 0.2s ease;
+  gap: 12px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
+  background-color: var(--color-gallery-white);
+  border-radius: 16px;
+  box-shadow: var(--shadow-subtle);
+  border: 2px solid transparent; /* Prepare for active border */
+}
+
+.gallery-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.05),
+    var(--shadow-subtle);
 }
 
 .gallery-card.active {
-  border: 1px solid #137cbd; /* Blueprint primary blue */
-  box-shadow: 0 0 0 2px rgba(19, 124, 189, 0.4) !important;
-  background-color: #394b59;
+  border-color: var(--color-apple-blue);
+  background-color: #f0f7ff; /* Sangat terang pastel blue */
+  box-shadow:
+    0 4px 12px rgba(0, 102, 204, 0.15),
+    var(--shadow-subtle);
+  transform: translateY(-2px);
 }
 
 .gallery-card img {
-  width: 80px;
-  height: 60px;
+  width: 70px;
+  height: 70px;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: 8px;
+  background-color: var(--color-control-gray); /* Placeholder if image loads slow */
 }
 
 .gallery-card-info {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
+  color: var(--color-ink);
+}
+
+.gallery-card-info strong {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.gallery-card-info span {
+  color: var(--color-slate);
+  font-size: 11px;
+  font-weight: 500;
 }

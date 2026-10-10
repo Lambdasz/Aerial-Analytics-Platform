@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { Card, Elevation, H5, Spinner } from "@blueprintjs/core";
+import { Spinner } from "@blueprintjs/core";
 import { useImageMarkers } from "./useImageMarkers";
 import { useImageSync } from "../store/ImageSyncContext";
 import "./ImageGallerySidebar.css";
@@ -20,10 +20,19 @@ export const ImageGallerySidebar: React.FC = () => {
   }, [activeImageId, interactionSource]);
 
   return (
-    <div className="gallery-sidebar bp5-dark">
+    <div className="gallery-sidebar">
       <div className="gallery-header">
-        <H5 style={{ margin: 0 }}>Project Gallery</H5>
-        <div className="bp5-text-muted">{markers.length} Photos</div>
+        <div
+          style={{
+            fontSize: "14px",
+            fontWeight: 600,
+            color: "var(--color-ink)",
+            marginBottom: "4px",
+          }}
+        >
+          Project Gallery
+        </div>
+        <div style={{ fontSize: "12px", color: "var(--color-slate)" }}>{markers.length} Photos</div>
       </div>
 
       <div className="gallery-list" ref={listRef}>
@@ -31,20 +40,26 @@ export const ImageGallerySidebar: React.FC = () => {
           <Spinner />
         ) : (
           markers.map((img) => (
-            <Card
+            <div
               key={img.image_id}
               id={`gallery-item-${img.image_id}`}
-              interactive={true}
-              elevation={activeImageId === img.image_id ? Elevation.THREE : Elevation.ZERO}
               className={`gallery-card ${activeImageId === img.image_id ? "active" : ""}`}
+              role="button"
+              tabIndex={0}
               onClick={() => setActiveImage(img.image_id, "gallery")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActiveImage(img.image_id, "gallery");
+                }
+              }}
             >
               <img src={img.thumbnail_url} alt={img.file_name} loading="lazy" />
               <div className="gallery-card-info">
                 <strong>{img.file_name}</strong>
-                <span className="bp5-text-muted">Alt: {img.altitude_agl.toFixed(0)}m</span>
+                <span>Alt: {img.altitude_agl.toFixed(0)}m</span>
               </div>
-            </Card>
+            </div>
           ))
         )}
       </div>

@@ -1,55 +1,4 @@
-/* Glassmorphism Popup */
-.glass-popup-card {
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
-  padding: 10px;
-  min-width: 250px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  font-family: inherit;
-}
-
-.glass-popup-card .bp5-card {
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-}
-
-.popup-thumbnail {
-  width: 100%;
-  height: 120px;
-  object-fit: cover;
-  border-radius: 4px;
-  margin-bottom: 8px;
-}
-
-.popup-telemetry {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-  font-size: 11px;
-  margin-top: 8px;
-}
-
-.telemetry-label {
-  color: #5c7080;
-  font-weight: 600;
-}
-
-.telemetry-value {
-  color: #182026;
-  text-align: right;
-  font-family: monospace;
-}
-
-.popup-actions {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
-  gap: 5px;
-}
+/* Apple-style Leaflet Popup */
 
 /* Adjust leaflet popup container to remove default white background and padding */
 .leaflet-popup-content-wrapper {
@@ -60,8 +9,96 @@
 
 .leaflet-popup-content {
   margin: 0 !important;
+  width: auto !important;
 }
 
 .leaflet-popup-tip-container {
-  display: none !important; /* Hide the default tip triangle */
+  display: none !important; /* Hilangkan panah segitiga default Leaflet yang kaku */
+}
+
+/* Glassmorphism Popup */
+.glass-popup-card {
+  background: var(--color-gallery-white);
+  border-radius: 16px;
+  padding: 16px;
+  min-width: 260px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.12),
+    var(--shadow-subtle);
+  font-family: var(--font-sf-pro-text);
+  border: 1px solid var(--color-hairline-silver);
+}
+
+.popup-thumbnail {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  background-color: var(--color-control-gray);
+}
+
+.popup-telemetry {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.telemetry-label {
+  color: var(--color-slate);
+  font-weight: 500;
+}
+
+.telemetry-value {
+  color: var(--color-ink);
+  text-align: right;
+  font-family: var(--font-sf-pro-text);
+  font-weight: 500;
+}
+
+.popup-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  gap: 8px;
+}
+
+/* Apple Buttons for Popup */
+.apple-popup-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.apple-popup-button.primary {
+  background: var(--color-apple-blue);
+  color: white;
+  border: 1px solid transparent;
+}
+
+.apple-popup-button.primary:hover {
+  background: #0062cc; /* Darker blue */
+  transform: translateY(-1px);
+}
+
+.apple-popup-button.secondary {
+  background: var(--color-gallery-white);
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline-silver);
+}
+
+.apple-popup-button.secondary:hover {
+  background: var(--color-control-gray);
+  transform: translateY(-1px);
 }

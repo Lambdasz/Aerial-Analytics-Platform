@@ -52,10 +52,7 @@ pub fn toggle_layer_visibility(
 /// Mengubah opacity sebuah layer.
 ///
 /// Nilai opacity harus berada pada rentang 0.0 sampai 1.0.
-pub fn set_layer_opacity(
-    mut layer: LayerState,
-    opacity: f64,
-) -> Result<LayerState, LayerError> {
+pub fn set_layer_opacity(mut layer: LayerState, opacity: f64) -> Result<LayerState, LayerError> {
     if !(0.0..=1.0).contains(&opacity) {
         return Err(LayerError::InvalidOpacity);
     }
@@ -90,10 +87,7 @@ pub fn reorder_layer_stack(
 }
 
 /// Mengambil layer berdasarkan kategori.
-pub fn filter_layers_by_category(
-    layers: &[LayerState],
-    category: &str,
-) -> Vec<LayerState> {
+pub fn filter_layers_by_category(layers: &[LayerState], category: &str) -> Vec<LayerState> {
     layers
         .iter()
         .filter(|layer| layer.category == category)
@@ -146,14 +140,7 @@ mod tests {
 
     #[test]
     fn test_toggle_layer_visibility() {
-        let layer = create_test_layer(
-            "layer_sat_01",
-            "Satellite Layer",
-            "satelite",
-            true,
-            1.0,
-            10,
-        );
+        let layer = create_test_layer("layer_sat_01", "Satellite Layer", "satelite", true, 1.0, 10);
 
         let result = toggle_layer_visibility(layer, false);
 
@@ -171,14 +158,7 @@ mod tests {
 
     #[test]
     fn test_set_layer_opacity() {
-        let layer = create_test_layer(
-            "layer_heat_02",
-            "Heatmap Layer",
-            "analysis",
-            true,
-            1.0,
-            20,
-        );
+        let layer = create_test_layer("layer_heat_02", "Heatmap Layer", "analysis", true, 1.0, 20);
 
         let result = set_layer_opacity(layer, 0.75);
 
@@ -192,14 +172,7 @@ mod tests {
 
     #[test]
     fn test_set_layer_opacity_invalid() {
-        let layer = create_test_layer(
-            "layer_heat_02",
-            "Heatmap Layer",
-            "analysis",
-            true,
-            1.0,
-            20,
-        );
+        let layer = create_test_layer("layer_heat_02", "Heatmap Layer", "analysis", true, 1.0, 20);
 
         let result = set_layer_opacity(layer, 1.5);
 
@@ -252,30 +225,9 @@ mod tests {
     #[test]
     fn test_filter_layers_by_category() {
         let layers = vec![
-            create_test_layer(
-                "L1",
-                "Satellite Layer",
-                "satelite",
-                true,
-                1.0,
-                0,
-            ),
-            create_test_layer(
-                "L2",
-                "Drone Layer",
-                "drone",
-                true,
-                1.0,
-                1,
-            ),
-            create_test_layer(
-                "L3",
-                "Satellite Analysis",
-                "satelite",
-                true,
-                0.5,
-                2,
-            ),
+            create_test_layer("L1", "Satellite Layer", "satelite", true, 1.0, 0),
+            create_test_layer("L2", "Drone Layer", "drone", true, 1.0, 1),
+            create_test_layer("L3", "Satellite Analysis", "satelite", true, 0.5, 2),
         ];
 
         let result = filter_layers_by_category(&layers, "satelite");
@@ -288,22 +240,8 @@ mod tests {
     #[test]
     fn test_filter_layers_by_category_empty() {
         let layers = vec![
-            create_test_layer(
-                "L1",
-                "Satellite Layer",
-                "satelite",
-                true,
-                1.0,
-                0,
-            ),
-            create_test_layer(
-                "L2",
-                "Drone Layer",
-                "drone",
-                true,
-                1.0,
-                1,
-            ),
+            create_test_layer("L1", "Satellite Layer", "satelite", true, 1.0, 0),
+            create_test_layer("L2", "Drone Layer", "drone", true, 1.0, 1),
         ];
 
         let result = filter_layers_by_category(&layers, "analysis");
@@ -329,10 +267,7 @@ mod tests {
         );
 
         assert_eq!(annotation.annotation_id, "anno_99");
-        assert_eq!(
-            annotation.text,
-            "Pohon terindikasi penyakit menguning"
-        );
+        assert_eq!(annotation.text, "Pohon terindikasi penyakit menguning");
         assert_eq!(annotation.geometry, geometry);
         assert_eq!(annotation.created_at, "2026-10-06T10:00:00Z");
     }

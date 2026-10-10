@@ -1,12 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { Button, Card, Tag, Slider, HTMLSelect, InputGroup, TextArea } from "@blueprintjs/core";
+import { Button, Tag, Slider, HTMLSelect } from "@blueprintjs/core";
 
 import type { LayerState, AnnotationFeature } from "../types/layer";
 
 import {
   toggleLayerVisibility,
   setLayerOpacity,
-  reorderLayerStack,
   filterLayersByCategory,
   createAnnotation,
 } from "../api";
@@ -19,6 +18,14 @@ const INITIAL_LAYERS: LayerState[] = [
     is_visible: true,
     opacity: 1,
     z_index: 0,
+  },
+  {
+    layer_id: "orthomosaic_01",
+    layer_name: "Orthomosaic Drone",
+    category: "Drone Imagery",
+    is_visible: true,
+    opacity: 1,
+    z_index: 5,
   },
   {
     layer_id: "flight_session_01",
@@ -61,8 +68,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
   const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
 
-  const [isExpanded, setIsExpanded] = useState(true);
-
   const [annotationText, setAnnotationText] = useState("");
 
   const [latitude, setLatitude] = useState("");
@@ -101,7 +106,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
   React.useEffect(() => {
     onLayersChange?.(layers);
-    }, [layers, onLayersChange]);
+  }, [layers, onLayersChange]);
 
   // =========================
   // LAYER MANAGEMENT
@@ -132,28 +137,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       );
     } catch (error) {
       console.error("Gagal mengubah opacity layer:", error);
-    }
-  };
-
-  const handleReorder = async (layer: LayerState, direction: "up" | "down") => {
-    const currentIndex = layers.findIndex((item) => item.layer_id === layer.layer_id);
-
-    if (currentIndex === -1) {
-      return;
-    }
-
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-
-    if (targetIndex < 0 || targetIndex >= layers.length) {
-      return;
-    }
-
-    try {
-      const updatedLayers = await reorderLayerStack(layers, currentIndex, targetIndex);
-
-      setLayers(updatedLayers);
-    } catch (error) {
-      console.error("Gagal mengubah urutan layer:", error);
     }
   };
 
@@ -220,42 +203,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
 
   return (
-    <Card
-      className="layer-manager"
-      elevation={2}
-      style={{
-        position: "absolute",
-        top: "205px",
-        bottom: isExpanded ? "15px" : undefined,
-        left: "15px",
-        zIndex: 1000,
-        width: "320px",
-        height: isExpanded ? undefined : "52px",
-        overflowY: isExpanded ? "auto" : "hidden",
-        transition: "height 0.2s ease",
-        padding: isExpanded ? undefined : "10px 14px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: isExpanded ? "16px" : "0",
-        }}
-      >
-        <h5 className="bp5-heading" style={{ margin: 0 }}>
-          Layer Management
-        </h5>
-
-        <Button
-          minimal
-          small
-          icon={isExpanded ? "chevron-up" : "chevron-down"}
-          onClick={() => setIsExpanded((current) => !current)}
-        />
-      </div>
-
+    <div style={{ paddingBottom: "20px" }}>
       {/* =========================
           CATEGORY FILTER
           ========================= */}
@@ -277,6 +225,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
         <HTMLSelect
           fill
+          className="apple-select"
           value={selectedCategory}
           onChange={(event) => {
             void handleCategoryChange(event.target.value);
@@ -295,15 +244,15 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           ========================= */}
 
       {visibleLayers.map((layer) => {
-        const actualIndex = layers.findIndex((item) => item.layer_id === layer.layer_id);
-
         return (
           <div
             key={layer.layer_id}
             style={{
               marginBottom: "16px",
-              paddingBottom: "12px",
-              borderBottom: "1px solid #e5e5e5",
+              padding: "16px",
+              background: "var(--color-gallery-white)",
+              borderRadius: "var(--radius-cards)",
+              boxShadow: "var(--shadow-subtle)",
             }}
           >
             <div
@@ -324,12 +273,31 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                   {layer.layer_name}
                 </div>
 
-                <Tag minimal>{layer.category}</Tag>
+                <Tag
+                  minimal
+                  round
+                  style={{
+                    background: "var(--color-control-gray)",
+                    color: "var(--color-ink)",
+                    fontSize: "11px",
+                    fontWeight: 500,
+                  }}
+                >
+                  {layer.category}
+                </Tag>
               </div>
 
               <Button
                 icon={layer.is_visible ? "eye-open" : "eye-off"}
                 text={layer.is_visible ? "ON" : "OFF"}
+                minimal={!layer.is_visible}
+                style={{
+                  borderRadius: "var(--radius-buttons)",
+                  background: layer.is_visible ? "var(--color-control-gray)" : "transparent",
+                  boxShadow: "none",
+                  color: layer.is_visible ? "var(--color-apple-blue)" : "var(--color-slate)",
+                  fontWeight: 600,
+                }}
                 onClick={() => {
                   void handleToggleVisibility(layer);
                 }}
@@ -341,6 +309,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
             <div
               style={{
                 marginTop: "10px",
+                padding: "0 8px",
               }}
             >
               <div
@@ -367,38 +336,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                 }}
               />
             </div>
-
-            {/* Reorder */}
-
-            <div
-              style={{
-                display: "flex",
-                gap: "6px",
-                marginTop: "8px",
-              }}
-            >
-              <Button
-                icon="arrow-up"
-                text="Naik"
-                small
-                disabled={actualIndex === 0}
-                onClick={() => {
-                  void handleReorder(layer, "up");
-                }}
-              />
-
-              <Button
-                icon="arrow-down"
-                text="Turun"
-                small
-                disabled={actualIndex === layers.length - 1}
-                onClick={() => {
-                  void handleReorder(layer, "down");
-                }}
-              />
-
-              <Tag minimal>Z: {layer.z_index}</Tag>
-            </div>
           </div>
         );
       })}
@@ -411,19 +348,33 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
         style={{
           marginTop: "20px",
           paddingTop: "16px",
-          borderTop: "2px solid #e5e5e5",
+          borderTop: "1px solid var(--color-hairline-silver)",
         }}
       >
         <div
           style={{
             marginBottom: "10px",
+            background: "var(--color-gallery-white)",
+            boxShadow: "var(--shadow-subtle)",
+            borderRadius: "12px",
+            padding: "8px 12px",
           }}
         >
-          <TextArea
-            fill
+          <textarea
             placeholder="Tulis catatan annotation..."
             value={annotationText}
             onChange={(event) => setAnnotationText(event.target.value)}
+            style={{
+              width: "100%",
+              minHeight: "60px",
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              color: "var(--color-ink)",
+              fontSize: "14px",
+              fontFamily: "var(--font-sf-pro-text)",
+              resize: "vertical",
+            }}
           />
         </div>
 
@@ -431,31 +382,80 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           style={{
             display: "flex",
             gap: "8px",
-            marginBottom: "10px",
+            marginBottom: "12px",
           }}
         >
-          <InputGroup
-            type="number"
-            placeholder="Latitude"
-            value={latitude}
-            onChange={(event) => setLatitude(event.target.value)}
-          />
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              background: "var(--color-gallery-white)",
+              boxShadow: "var(--shadow-subtle)",
+              borderRadius: "12px",
+              padding: "8px 12px",
+            }}
+          >
+            <input
+              type="number"
+              placeholder="Latitude"
+              value={latitude}
+              onChange={(event) => setLatitude(event.target.value)}
+              style={{
+                width: "100%",
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                color: "var(--color-ink)",
+                fontSize: "14px",
+                fontFamily: "var(--font-sf-pro-text)",
+              }}
+            />
+          </div>
 
-          <InputGroup
-            type="number"
-            placeholder="Longitude"
-            value={longitude}
-            onChange={(event) => setLongitude(event.target.value)}
-          />
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              background: "var(--color-gallery-white)",
+              boxShadow: "var(--shadow-subtle)",
+              borderRadius: "12px",
+              padding: "8px 12px",
+            }}
+          >
+            <input
+              type="number"
+              placeholder="Longitude"
+              value={longitude}
+              onChange={(event) => setLongitude(event.target.value)}
+              style={{
+                width: "100%",
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                color: "var(--color-ink)",
+                fontSize: "14px",
+                fontFamily: "var(--font-sf-pro-text)",
+              }}
+            />
+          </div>
         </div>
 
         <Button
           icon="add"
           text="Buat Annotation"
-          intent="primary"
           fill
           onClick={() => {
             void handleCreateAnnotation();
+          }}
+          style={{
+            borderRadius: "999px",
+            background: "var(--color-apple-blue)",
+            color: "#fff",
+            boxShadow: "none",
+            fontWeight: 600,
+            padding: "8px 16px",
           }}
         />
       </div>
@@ -479,10 +479,11 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
               <div
                 key={annotation.annotation_id}
                 style={{
-                  padding: "8px",
-                  marginBottom: "8px",
-                  background: "#f5f8fa",
-                  borderRadius: "4px",
+                  padding: "16px",
+                  marginBottom: "12px",
+                  background: "var(--color-gallery-white)",
+                  borderRadius: "var(--radius-cards)",
+                  boxShadow: "var(--shadow-subtle)",
                 }}
               >
                 <div
@@ -504,6 +505,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           })}
         </div>
       )}
-    </Card>
+    </div>
   );
 };

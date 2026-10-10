@@ -1,14 +1,6 @@
 import React, { useState } from "react";
-import { useMap } from "react-leaflet";
-import {
-  Button,
-  ButtonGroup,
-  Callout,
-  Card,
-  FormGroup,
-  InputGroup,
-  Spinner,
-} from "@blueprintjs/core";
+
+import { Button, Callout, Card, Spinner } from "@blueprintjs/core";
 import { useAOI } from "../hooks/useAOI";
 
 /**
@@ -23,8 +15,13 @@ function generateAoiId(): string {
   return "aoi-" + Date.now();
 }
 
-export const AoiDemoToolbar: React.FC = () => {
-  const map = useMap();
+import * as L from "leaflet";
+
+interface AoiDemoToolbarProps {
+  map: L.Map | null;
+}
+
+export const AoiDemoToolbar: React.FC<AoiDemoToolbarProps> = ({ map }) => {
   const { aoi, draftPolygon, isDrawing, isSaving, startDrawing, stopDrawing, clearAoi, saveAoi } =
     useAOI();
 
@@ -36,11 +33,11 @@ export const AoiDemoToolbar: React.FC = () => {
 
   const handleDraw = () => {
     setError(null);
-    startDrawing(map);
+    if (map) startDrawing(map);
   };
 
   const handleCancel = () => {
-    stopDrawing(map);
+    if (map) stopDrawing(map);
     clearAoi();
     setAoiId(generateAoiId());
     setAoiName("Area Demo");
@@ -72,56 +69,142 @@ export const AoiDemoToolbar: React.FC = () => {
   // ── Render ───────────────────────────────────────────────────────────
 
   return (
-    <div
+    <Card
+      elevation={0}
       style={{
-        position: "absolute",
-        top: 10,
-        left: 10,
-        zIndex: 1000,
-        background: "white",
-        padding: 12,
-        borderRadius: 4,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-        minWidth: 280,
-        color: "#182026",
+        padding: "16px",
+        background: "transparent",
+        color: "#3c4043",
       }}
     >
-      <FormGroup label="AOI ID" labelInfo="(wajib)" style={{ marginBottom: 8 }}>
-        <InputGroup
-          value={aoiId}
-          onChange={(e) => setAoiId(e.target.value)}
-          placeholder="aoi-001"
-          disabled={isSaving || aoi !== null}
-        />
-      </FormGroup>
-
-      <FormGroup label="Nama Area" labelInfo="(wajib)" style={{ marginBottom: 8 }}>
-        <InputGroup
-          value={aoiName}
-          onChange={(e) => setAoiName(e.target.value)}
-          placeholder="Lahan Sawit Blok A"
-          disabled={isSaving || aoi !== null}
-        />
-      </FormGroup>
-
-      <div style={{ borderTop: "1px solid #e1e8ed", paddingTop: 8, marginBottom: 8 }}>
-        <ButtonGroup>
-          <Button
-            icon="edit"
-            text="Draw AOI"
-            intent="primary"
-            onClick={handleDraw}
-            disabled={isDrawing || aoi !== null}
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "var(--color-slate)",
+            marginBottom: "6px",
+          }}
+        >
+          AOI ID <span style={{ fontWeight: 400 }}>(wajib)</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            background: "var(--color-gallery-white)",
+            boxShadow: "var(--shadow-subtle)",
+            borderRadius: "12px",
+            padding: "8px 12px",
+            opacity: isSaving || aoi !== null ? 0.6 : 1,
+          }}
+        >
+          <input
+            value={aoiId}
+            onChange={(e) => setAoiId(e.target.value)}
+            placeholder="aoi-001"
+            disabled={isSaving || aoi !== null}
+            style={{
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              color: "var(--color-ink)",
+              fontSize: "14px",
+              width: "100%",
+              fontFamily: "var(--font-sf-pro-text)",
+            }}
           />
-          <Button icon="cross" text="Batal" onClick={handleCancel} disabled={isCancelDisabled} />
-          <Button
-            icon="floppy-disk"
-            text="Simpan ke Rust"
-            intent="success"
-            onClick={() => void handleSave()}
-            disabled={isSaveDisabled}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "var(--color-slate)",
+            marginBottom: "6px",
+          }}
+        >
+          Nama Area <span style={{ fontWeight: 400 }}>(wajib)</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            background: "var(--color-gallery-white)",
+            boxShadow: "var(--shadow-subtle)",
+            borderRadius: "12px",
+            padding: "8px 12px",
+            opacity: isSaving || aoi !== null ? 0.6 : 1,
+          }}
+        >
+          <input
+            value={aoiName}
+            onChange={(e) => setAoiName(e.target.value)}
+            placeholder="Lahan Sawit Blok A"
+            disabled={isSaving || aoi !== null}
+            style={{
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              color: "var(--color-ink)",
+              fontSize: "14px",
+              width: "100%",
+              fontFamily: "var(--font-sf-pro-text)",
+            }}
           />
-        </ButtonGroup>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: "8px", paddingTop: "8px" }}>
+        <Button
+          icon="edit"
+          text="Draw AOI"
+          onClick={handleDraw}
+          disabled={isDrawing || aoi !== null}
+          style={{
+            borderRadius: "999px",
+            background: "var(--color-apple-blue)",
+            color: "#fff",
+            boxShadow: "none",
+            fontWeight: 600,
+            padding: "6px 16px",
+            flex: 1,
+          }}
+        />
+        <Button
+          icon="cross"
+          text="Batal"
+          onClick={handleCancel}
+          disabled={isCancelDisabled}
+          style={{
+            borderRadius: "999px",
+            background: "var(--color-control-gray)",
+            color: "var(--color-ink)",
+            boxShadow: "none",
+            fontWeight: 500,
+            padding: "6px 16px",
+          }}
+        />
+      </div>
+
+      <div style={{ marginTop: "8px" }}>
+        <Button
+          icon="floppy-disk"
+          text="Simpan ke Rust"
+          fill
+          onClick={() => void handleSave()}
+          disabled={isSaveDisabled}
+          style={{
+            borderRadius: "999px",
+            background: isSaveDisabled ? "var(--color-control-gray)" : "#34c759" /* Apple Green */,
+            color: isSaveDisabled ? "var(--color-slate)" : "#fff",
+            boxShadow: "none",
+            fontWeight: 600,
+            padding: "8px 16px",
+          }}
+        />
       </div>
 
       {isSaving && (
@@ -154,6 +237,6 @@ export const AoiDemoToolbar: React.FC = () => {
           </p>
         </Card>
       )}
-    </div>
+    </Card>
   );
 };

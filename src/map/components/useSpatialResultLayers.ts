@@ -56,19 +56,30 @@ function buildPopupHtml(result: SpatialResult, layerName: string): string {
     .map(
       ([key, value]) => `
       <tr>
-        <td class="bp5-text-muted"><strong>${formatKey(key)}</strong></td>
-        <td>${value}</td>
+        <td style="color: var(--color-slate); font-weight: 600; padding: 6px 0;">${formatKey(key)}</td>
+        <td style="color: var(--color-ink); font-weight: 500; text-align: right; font-family: var(--font-sf-pro-text); padding: 6px 0;">${value}</td>
       </tr>
     `,
     )
     .join("");
 
   return `
-    <div class="bp5-card bp5-elevation-2 spatial-result-popup-card" style="padding: 10px; min-width: 220px; background-color: rgba(255, 255, 255, 0.95); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-      <h6 class="bp5-heading" style="margin-top: 0; margin-bottom: 10px; color: #2C3E50; font-size: 14px; border-bottom: 1px solid #ddd; padding-bottom: 8px;">
+    <div style="
+      background: var(--color-gallery-white);
+      border-radius: 16px;
+      padding: 16px;
+      min-width: 260px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), var(--shadow-subtle);
+      font-family: var(--font-sf-pro-text);
+      border: 1px solid var(--color-hairline-silver);
+    ">
+      <div style="font-size: 15px; font-weight: 700; color: var(--color-ink); margin-bottom: 12px; letter-spacing: -0.2px; line-height: 1.3;">
         ${layerName}
-      </h6>
-      <table class="bp5-html-table bp5-html-table-condensed bp5-html-table-striped" style="width: 100%; margin: 0; font-size: 13px; color: #1f2937; background: transparent;">
+      </div>
+      
+      <div style="margin: 12px 0; border-bottom: 1px solid var(--color-hairline-silver);"></div>
+      
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
         <tbody>
           ${rows}
         </tbody>
