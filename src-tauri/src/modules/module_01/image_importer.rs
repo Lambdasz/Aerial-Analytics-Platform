@@ -14,15 +14,15 @@
 
 use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 
+use unicode_normalization::UnicodeNormalization;
+
 use crate::models::image::ImageFormat;
 use crate::models::image::{
     ContentHash, DuplicateFlag, ImageMetadata, ImportCandidate, ImportError, ImportReport,
     ImportRequest, IncompleteMetadataFlag, NameConflict, RejectedFile, SessionTarget,
 };
 use crate::modules::module_01::error::MetadataError;
-use crate::modules::module_01::metadata_extractor::{
-    detect_format, missing_required_fields, normalize_name,
-};
+use crate::modules::module_01::metadata_extractor::{detect_format, missing_required_fields};
 
 /// Classifies one candidate by delegating the magic sniff to [`detect_format`].
 ///
@@ -98,22 +98,62 @@ fn extension_of(file_name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// How the destination filesystem decides that two file names are the same
+/// file. The caller knows the target; the choice is per platform because the
+/// filesystems genuinely differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NameFolding {
+    /// Names are the same only when byte-identical (most Linux filesystems).
+    Exact,
+    /// NTFS: names that differ only by case are the same (per-character
+    /// simple upper-casing, as the volume's `$UpCase` table does). No
+    /// Unicode normalization: composed and decomposed accents are distinct
+    /// files.
+    Ntfs,
+    /// APFS/HFS+ in their default case-insensitive mode: names that differ
+    /// only by case or by canonical (NFC/NFD) form are the same. Case folding
+    /// is simple, per character, so `ß` stays distinct from `ss`.
+    Apfs,
+}
+
+/// Maps a character through its single-character case mapping, leaving it
+/// unchanged when the mapping expands to several characters (`ß`, `İ`).
+fn simple_case(c: char, mapping: impl Fn(char) -> String) -> char {
+    let mapped = mapping(c);
+    let mut chars = mapped.chars();
+    match (chars.next(), chars.next()) {
+        (Some(single), None) => single,
+        _ => c,
+    }
+}
+
+/// The comparison key of a basename under `folding`.
+fn fold_name(base: &str, folding: NameFolding) -> String {
+    match folding {
+        NameFolding::Exact => base.to_string(),
+        NameFolding::Ntfs => base
+            .chars()
+            .map(|c| simple_case(c, |c| c.to_uppercase().collect()))
+            .collect(),
+        NameFolding::Apfs => base
+            .nfd()
+            .map(|c| simple_case(c, |c| c.to_lowercase().collect()))
+            .collect(),
+    }
+}
+
 /// Finds destination-basename collisions.
 ///
 /// Compares incoming candidates against each other and against the paths
 /// already in the session folder; the flatten-copy puts everything in one
 /// folder.
 ///
-/// # Case policy
+/// # Name policy
 ///
-/// `case_insensitive_fs` says whether the destination filesystem treats
-/// names that differ only by case or normalization as the same file. The
-/// caller knows the target (macOS and Windows: usually `true`; Linux:
-/// usually `false`). When `true`, basenames are compared with
-/// [`normalize_name`] (canonical decomposition + full Unicode case fold), so
-/// `IMG_001.JPG`/`img_001.jpg`, `É`/`é`, `ß`/`ss` and composed/decomposed
-/// accents collide. When `false`, only byte-identical basenames collide, so
-/// a case-sensitive filesystem is never given conflicts that do not exist.
+/// `folding` says which names the destination filesystem treats as the same
+/// file; see [`NameFolding`]. Over-reporting is avoided on purpose: on a
+/// case-sensitive filesystem `IMG_001.JPG` and `img_001.jpg` are not a
+/// conflict, and on NTFS `É` and `E` + combining accent are not either.
 /// `dest_name` is the basename only — directories, `.`, and `..` are
 /// stripped — and prefers the name already in the session folder when
 /// `existing_path` is set. Does not rename; the frontend resolves
@@ -126,15 +166,9 @@ fn extension_of(file_name: &str) -> String {
 pub(crate) fn find_name_conflicts(
     candidates: &[ImportCandidate],
     existing_paths: &[String],
-    case_insensitive_fs: bool,
+    folding: NameFolding,
 ) -> Vec<NameConflict> {
-    let key = |base: &str| {
-        if case_insensitive_fs {
-            normalize_name(base)
-        } else {
-            base.to_string()
-        }
-    };
+    let key = |base: &str| fold_name(base, folding);
     #[derive(Default)]
     struct Group {
         dest_name: Option<String>,
@@ -222,8 +256,7 @@ pub(crate) fn find_duplicate(
 /// silently lost and the UI can offer to import them once the conflict is
 /// resolved.
 ///
-/// `case_insensitive_fs` selects the name-conflict policy; see
-/// [`find_name_conflicts`].
+/// `folding` selects the name-conflict policy; see [`NameFolding`].
 ///
 /// A name conflict holds a candidate back: it is not listed in
 /// `imported_image_ids` until the frontend resolves the conflict. Rejected
@@ -241,7 +274,7 @@ pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
     existing_paths: &[String],
-    case_insensitive_fs: bool,
+    folding: NameFolding,
 ) -> Result<ImportReport, ImportError> {
     if request.candidates.is_empty() {
         return Err(ImportError::NoImagesFound);
@@ -308,7 +341,7 @@ pub(crate) fn import_images(
         }
     }
 
-    let name_conflicts = find_name_conflicts(&representatives, existing_paths, case_insensitive_fs);
+    let name_conflicts = find_name_conflicts(&representatives, existing_paths, folding);
     let conflicting: HashSet<&str> = name_conflicts
         .iter()
         .flat_map(|conflict| conflict.sources.iter().map(String::as_str))
@@ -530,8 +563,13 @@ mod tests {
             candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
             candidate_named("c", "/in/c.jpg", "x.jpg", "H"),
         ]);
-        let report = import_images(&request, &[], &["/session/x.jpg".to_string()], true)
-            .expect("import runs");
+        let report = import_images(
+            &request,
+            &[],
+            &["/session/x.jpg".to_string()],
+            NameFolding::Apfs,
+        )
+        .expect("import runs");
         assert!(report.imported_image_ids.is_empty());
         assert!(report.duplicates.is_empty());
         let pending: Vec<_> = report
@@ -555,7 +593,7 @@ mod tests {
             candidate_named("a", "/in/a/x.jpg", "x.jpg", "H"),
             candidate_named("b", "/in/b/x.jpg", "x.jpg", "H"),
         ]);
-        let report = import_images(&request, &[], &[], true).expect("import runs");
+        let report = import_images(&request, &[], &[], NameFolding::Apfs).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["a".to_string()]);
         assert!(report.name_conflicts.is_empty());
         assert!(report.pending_duplicates.is_empty());
@@ -568,8 +606,13 @@ mod tests {
     fn known_duplicate_with_conflicting_name_is_a_duplicate() {
         let request = import_request(vec![candidate_named("a", "/in/a.jpg", "x.jpg", "H")]);
         let known = vec![("old".to_string(), ContentHash("H".to_string()))];
-        let report = import_images(&request, &known, &["/session/x.jpg".to_string()], true)
-            .expect("import runs");
+        let report = import_images(
+            &request,
+            &known,
+            &["/session/x.jpg".to_string()],
+            NameFolding::Apfs,
+        )
+        .expect("import runs");
         assert!(report.imported_image_ids.is_empty());
         assert!(report.name_conflicts.is_empty());
         assert_eq!(report.duplicates[0].existing_image_id, "old");
@@ -581,7 +624,7 @@ mod tests {
             candidate_named("x", "/in/x.jpg", "x.jpg", "H"),
             candidate_named("y", "/in/y.jpg", "y.jpg", "H"),
         ]);
-        let report = import_images(&request, &[], &[], true).expect("import runs");
+        let report = import_images(&request, &[], &[], NameFolding::Apfs).expect("import runs");
         assert!(report.pending_duplicates.is_empty());
         assert_eq!(report.duplicates.len(), 1);
     }
@@ -592,7 +635,7 @@ mod tests {
             candidate_named("x", "/in/x.jpg", "x.jpg", "H"),
             candidate_named("y", "/in/y.jpg", "y.jpg", "H"),
         ]);
-        let report = import_images(&request, &[], &[], true).expect("import runs");
+        let report = import_images(&request, &[], &[], NameFolding::Apfs).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["x".to_string()]);
         assert_eq!(report.duplicates.len(), 1);
         assert_eq!(report.duplicates[0].existing_image_id, "x".to_string());
@@ -607,8 +650,13 @@ mod tests {
             candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
             candidate_named("a", "/in/a.jpg", "x.jpg", "H"),
         ]);
-        let report = import_images(&request, &[], &["/session/x.jpg".to_string()], true)
-            .expect("import runs");
+        let report = import_images(
+            &request,
+            &[],
+            &["/session/x.jpg".to_string()],
+            NameFolding::Apfs,
+        )
+        .expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["b".to_string()]);
         assert_eq!(report.duplicates.len(), 1);
         assert!(report.name_conflicts.is_empty());
@@ -620,7 +668,7 @@ mod tests {
             candidate_named("a", "/in/a.jpg", "Photo.JPG", "H1"),
             candidate_named("b", "/in/b.jpg", "photo.jpg", "H2"),
         ];
-        let conflicts = find_name_conflicts(&candidates, &[], true);
+        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].dest_name, "Photo.JPG");
         assert_eq!(
@@ -633,7 +681,11 @@ mod tests {
     #[test]
     fn conflicts_prefer_existing_path_casing() {
         let candidates = vec![candidate_named("a", "/in/a.jpg", "keep.jpg", "H1")];
-        let conflicts = find_name_conflicts(&candidates, &["/session/Keep.JPG".to_string()], true);
+        let conflicts = find_name_conflicts(
+            &candidates,
+            &["/session/Keep.JPG".to_string()],
+            NameFolding::Apfs,
+        );
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].dest_name, "Keep.JPG");
         assert_eq!(
@@ -649,9 +701,15 @@ mod tests {
             candidate_named("b", "/in/b.jpg", "b.jpg", "H2"),
         ];
         // Unrelated existing paths are not conflicts.
-        let conflicts = find_name_conflicts(&candidates, &["/session/other.jpg".to_string()], true);
+        let conflicts = find_name_conflicts(
+            &candidates,
+            &["/session/other.jpg".to_string()],
+            NameFolding::Apfs,
+        );
         assert!(conflicts.is_empty());
-        assert!(find_name_conflicts(&[], &["/session/x.jpg".to_string()], true).is_empty());
+        assert!(
+            find_name_conflicts(&[], &["/session/x.jpg".to_string()], NameFolding::Apfs).is_empty()
+        );
     }
 
     #[test]
@@ -661,7 +719,7 @@ mod tests {
             candidate_named("dotdot", "/in/b.jpg", "..", "H2"),
             candidate_named("ok", "/in/c.jpg", "c.jpg", "H3"),
         ];
-        assert!(find_name_conflicts(&candidates, &[], true).is_empty());
+        assert!(find_name_conflicts(&candidates, &[], NameFolding::Apfs).is_empty());
     }
 
     #[test]
@@ -673,7 +731,7 @@ mod tests {
             candidate_named("trailing", "/in/d.jpg", "photos/", "H4"),
             candidate_named("ok", "/in/e.jpg", "e.jpg", "H5"),
         ]);
-        let report = import_images(&request, &[], &[], true).expect("import runs");
+        let report = import_images(&request, &[], &[], NameFolding::Apfs).expect("import runs");
         // Only the well-named file imports; invalid names never reach
         // conflict or duplicate detection.
         assert_eq!(report.imported_image_ids, vec!["ok".to_string()]);
@@ -708,7 +766,7 @@ mod tests {
             candidate_named("a", "/in/a.jpg", "Émile.jpg", "H1"),
             candidate_named("b", "/in/b.jpg", "émile.jpg", "H2"),
         ];
-        let conflicts = find_name_conflicts(&candidates, &[], true);
+        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].dest_name, "Émile.jpg");
         assert_eq!(conflicts[0].sources.len(), 2);
@@ -721,7 +779,7 @@ mod tests {
             candidate_named("a", "/in/a.jpg", "\u{00E9}mile.jpg", "H1"),
             candidate_named("b", "/in/b.jpg", "e\u{0301}mile.jpg", "H2"),
         ];
-        let conflicts = find_name_conflicts(&candidates, &[], true);
+        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].dest_name, "\u{00E9}mile.jpg");
         assert_eq!(conflicts[0].sources.len(), 2);
@@ -733,26 +791,61 @@ mod tests {
             candidate_named("a", "/in/a.jpg", "IMG_001.JPG", "H1"),
             candidate_named("b", "/in/b.jpg", "img_001.jpg", "H2"),
         ];
-        assert!(find_name_conflicts(&candidates, &[], false).is_empty());
-        assert_eq!(find_name_conflicts(&candidates, &[], true).len(), 1);
+        assert!(find_name_conflicts(&candidates, &[], NameFolding::Exact).is_empty());
+        assert_eq!(
+            find_name_conflicts(&candidates, &[], NameFolding::Apfs).len(),
+            1
+        );
 
         let same = vec![
             candidate_named("a", "/in/a.jpg", "img.jpg", "H1"),
             candidate_named("b", "/in/b.jpg", "img.jpg", "H2"),
         ];
-        assert_eq!(find_name_conflicts(&same, &[], false).len(), 1);
+        assert_eq!(find_name_conflicts(&same, &[], NameFolding::Exact).len(), 1);
         // Existing-path matching follows the same policy.
         let one = vec![candidate_named("a", "/in/a.jpg", "keep.jpg", "H1")];
-        assert!(find_name_conflicts(&one, &["/session/Keep.JPG".to_string()], false).is_empty());
+        assert!(
+            find_name_conflicts(&one, &["/session/Keep.JPG".to_string()], NameFolding::Exact)
+                .is_empty()
+        );
     }
 
     #[test]
-    fn case_insensitive_fs_uses_full_case_folding() {
+    fn folding_policies_differ_where_the_filesystems_differ() {
+        let pair = |a: &str, b: &str| {
+            vec![
+                candidate_named("a", "/in/a.jpg", a, "H1"),
+                candidate_named("b", "/in/b.jpg", b, "H2"),
+            ]
+        };
+        let conflicts =
+            |names: Vec<ImportCandidate>, folding| find_name_conflicts(&names, &[], folding).len();
+        // Case only: both case-insensitive policies collide, Exact does not.
+        let case = || pair("IMG_001.JPG", "img_001.jpg");
+        assert_eq!(conflicts(case(), NameFolding::Exact), 0);
+        assert_eq!(conflicts(case(), NameFolding::Ntfs), 1);
+        assert_eq!(conflicts(case(), NameFolding::Apfs), 1);
+        // Composed vs decomposed accent: only APFS treats them as equal.
+        let accents = || pair("\u{00E9}.jpg", "e\u{0301}.jpg");
+        assert_eq!(conflicts(accents(), NameFolding::Exact), 0);
+        assert_eq!(conflicts(accents(), NameFolding::Ntfs), 0);
+        assert_eq!(conflicts(accents(), NameFolding::Apfs), 1);
+        // Straße vs STRASSE is a different file on every filesystem.
+        let sharp = || pair("Stra\u{00DF}e.jpg", "STRASSE.jpg");
+        for folding in [NameFolding::Exact, NameFolding::Ntfs, NameFolding::Apfs] {
+            assert_eq!(conflicts(sharp(), folding), 0, "{folding:?}");
+        }
+    }
+
+    #[test]
+    fn ntfs_does_not_collide_a_dotted_capital_i_with_plain_i() {
+        // `İ` upper-cases to one char but lower-cases to two; folding must
+        // stay total and keep unrelated names apart.
         let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "Straße.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "STRASSE.jpg", "H2"),
+            candidate_named("a", "/in/a.jpg", "\u{0130}.jpg", "H1"),
+            candidate_named("b", "/in/b.jpg", "i.jpg", "H2"),
         ];
-        assert_eq!(find_name_conflicts(&candidates, &[], true).len(), 1);
-        assert!(find_name_conflicts(&candidates, &[], false).is_empty());
+        assert!(find_name_conflicts(&candidates, &[], NameFolding::Apfs).is_empty());
+        assert!(find_name_conflicts(&candidates, &[], NameFolding::Ntfs).is_empty());
     }
 }

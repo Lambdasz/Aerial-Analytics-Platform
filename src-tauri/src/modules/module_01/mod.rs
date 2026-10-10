@@ -26,7 +26,7 @@ pub use flight_session::{
     update_session_status,
 };
 pub(crate) use image_importer::{
-    find_duplicate, find_name_conflicts, flag_incomplete_metadata, import_images,
+    find_duplicate, find_name_conflicts, flag_incomplete_metadata, import_images, NameFolding,
 };
 pub(crate) use metadata_extractor::{
     describe_completeness, detect_format, extract_metadata, missing_required_fields,

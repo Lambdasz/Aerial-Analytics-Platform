@@ -42,7 +42,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Module 1 Dependencies
 unicode-normalization = "0.1"
-caseless = "0.2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

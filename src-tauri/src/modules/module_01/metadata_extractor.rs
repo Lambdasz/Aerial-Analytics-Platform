@@ -47,18 +47,13 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
-/// Folds a name into its comparison key: canonical decomposition, full
-/// Unicode case folding, then NFC.
-///
-/// This is the equivalence macOS (APFS/HFS+) and Windows apply to file names:
-/// `É`/`é`, composed/decomposed accents and `ß`/`ss` collide, and so do the
-/// two sigma forms. Compatibility forms (e.g. full-width letters) are
-/// deliberately not folded: no target filesystem treats them as equal.
-/// Shared by destination basenames (on case-insensitive filesystems) and
-/// alias-table keys.
-pub(crate) fn normalize_name(base: &str) -> String {
-    let decomposed: String = base.nfd().collect();
-    caseless::default_case_fold_str(&decomposed).nfc().collect()
+/// Folds a field name into an alias-table key: NFC-composed, then
+/// Unicode-lowercased, so `Élévation` matches `élévation` and composed
+/// matches decomposed accents. Deliberately conservative: it only has to make
+/// user-typed field names compare sensibly, and is unrelated to how any
+/// filesystem compares file names (see `image_importer::NameFolding`).
+fn normalize_alias_key(name: &str) -> String {
+    name.nfc().collect::<String>().to_lowercase()
 }
 
 /// Raw EXIF tags read from a JPEG APP1 segment or DNG IFD0, prior to being
@@ -1361,7 +1356,7 @@ pub(crate) fn to_plugin_metadata(
 /// supplies the alias table explicitly, so a wrong or missing mapping is the
 /// user's responsibility, not an inference the platform performed for them.
 ///
-/// Keys are folded with [`normalize_name`], so case and accent composition do
+/// Keys are folded with [`normalize_alias_key`], so case and accent composition do
 /// not matter. If two user keys fold to the same string, the one that sorts
 /// first wins, so the result does not depend on `HashMap` iteration order.
 #[derive(Debug, Clone, Default)]
@@ -1375,7 +1370,7 @@ impl AliasTable {
         let mut folded = HashMap::with_capacity(sorted.len());
         for (key, canonical) in sorted {
             folded
-                .entry(normalize_name(key))
+                .entry(normalize_alias_key(key))
                 .or_insert_with(|| canonical.clone());
         }
         Self(folded)
@@ -1393,7 +1388,9 @@ impl AliasTable {
     /// `Some(canonical_name)` if `raw_key` matches a key after folding,
     /// otherwise `None`.
     pub(crate) fn resolve(&self, raw_key: &str) -> Option<&str> {
-        self.0.get(&normalize_name(raw_key)).map(String::as_str)
+        self.0
+            .get(&normalize_alias_key(raw_key))
+            .map(String::as_str)
     }
 }
 
@@ -1981,13 +1978,17 @@ mod tests {
     }
 
     #[test]
-    fn normalize_name_is_a_full_case_fold() {
-        assert_eq!(normalize_name("STRASSE"), normalize_name("Straße"));
-        // Final and medial sigma fold together.
-        assert_eq!(normalize_name("ΟΔΟΣ"), normalize_name("οδος"));
-        assert_eq!(normalize_name("\u{00E9}"), normalize_name("E\u{0301}"));
-        // Compatibility forms (full-width letters) are not folded.
-        assert_ne!(normalize_name("\u{FF21}"), normalize_name("a"));
+    fn normalize_alias_key_folds_case_and_accent_composition() {
+        assert_eq!(
+            normalize_alias_key("Élévation"),
+            normalize_alias_key("e\u{0301}lévation")
+        );
+        assert_eq!(normalize_alias_key("HEIGHT"), normalize_alias_key("height"));
+        // Not a filesystem rule: ß is left alone.
+        assert_ne!(
+            normalize_alias_key("Stra\u{00DF}e"),
+            normalize_alias_key("STRASSE")
+        );
     }
 
     #[test]

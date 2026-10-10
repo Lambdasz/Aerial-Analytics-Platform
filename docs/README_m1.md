@@ -53,7 +53,7 @@ pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
     existing_paths: &[String],
-    case_insensitive_fs: bool,
+    folding: NameFolding,
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
@@ -65,11 +65,15 @@ destination-name-collision detection, and duplicate detection into one
 `request` is already populated with file headers/hashes/ids by I/O before
 this runs, and the caller applies the returned `ImportReport` afterwards.
 `existing_paths` are the files already in the session folder, whose
-basenames are compared against incoming names. `case_insensitive_fs` picks
-the policy: `true` folds names (canonical decomposition + full Unicode case
-fold, so `IMG_1.JPG`/`img_1.jpg`, `É`/`é`, `ß`/`ss` collide), `false`
-(case-sensitive filesystems such as most Linux setups) only conflicts on
-byte-identical basenames.
+basenames are compared against incoming names. `folding` says how the
+destination filesystem decides two names are the same file:
+
+- `Exact` — byte-identical names only (most Linux filesystems).
+- `Ntfs` — names differing only by case; composed and decomposed accents are
+  distinct files.
+- `Apfs` — names differing only by case or by canonical (NFC/NFD) form.
+
+None of them folds `ß` to `ss`: no target filesystem does.
 
 - **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
   Per-candidate failures (bad format, magic mismatch, invalid file name) are
