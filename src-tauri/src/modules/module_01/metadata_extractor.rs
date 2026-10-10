@@ -404,15 +404,7 @@ fn read_u16_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16)
     let entry = find_entry(entries, tag)?;
     let data = entry_data(tiff, entry)?;
     match entry.typ {
-        3 => {
-            if data.len() < 2 {
-                return None;
-            }
-            Some(match endian {
-                TiffEndian::Little => u16::from_le_bytes([data[0], data[1]]),
-                TiffEndian::Big => u16::from_be_bytes([data[0], data[1]]),
-            })
-        }
+        3 => u16_at(data, 0, endian),
         // Some writers emit these as LONG.
         4 => read_u32_val(tiff, entries, endian, tag).and_then(|v| u16::try_from(v).ok()),
         _ => None,
@@ -424,15 +416,7 @@ fn read_u32_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16)
     let data = entry_data(tiff, entry)?;
     match entry.typ {
         3 => read_u16_val(tiff, entries, endian, tag).map(u32::from),
-        4 => {
-            if data.len() < 4 {
-                return None;
-            }
-            Some(match endian {
-                TiffEndian::Little => u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-                TiffEndian::Big => u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-            })
-        }
+        4 => u32_at(data, 0, endian),
         _ => None,
     }
 }
@@ -499,6 +483,57 @@ fn is_tiff(bytes: &[u8]) -> bool {
     tiff_header(bytes).is_some()
 }
 
+/// Walks the JPEG marker segments after SOI, yielding `(marker, payload)`.
+///
+/// Padding `0xFF` bytes and standalone markers (`SOI`, `EOI`, `RSTn`, `TEM`)
+/// are skipped. The walk ends after the SOS segment (the metadata section is
+/// over) or after the first error. Yields nothing when `bytes` is not a JPEG.
+fn jpeg_segments(bytes: &[u8]) -> impl Iterator<Item = Result<(u8, &[u8]), MetadataError>> {
+    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
+    let mut pos = 2;
+    let mut done = bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8];
+    std::iter::from_fn(move || {
+        while !done && pos + 4 <= bytes.len() {
+            if bytes[pos] != 0xFF {
+                done = true;
+                return Some(Err(malformed("invalid JPEG marker")));
+            }
+            let mut code_pos = pos + 1;
+            while code_pos < bytes.len() && bytes[code_pos] == 0xFF {
+                code_pos += 1;
+            }
+            if code_pos >= bytes.len() {
+                break;
+            }
+            let code = bytes[code_pos];
+            if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
+                pos = code_pos + 1;
+                continue;
+            }
+            if code_pos + 3 > bytes.len() {
+                done = true;
+                return Some(Err(malformed("truncated JPEG segment header")));
+            }
+            let len = u16::from_be_bytes([bytes[code_pos + 1], bytes[code_pos + 2]]) as usize;
+            if len < 2 {
+                done = true;
+                return Some(Err(malformed("invalid JPEG segment length")));
+            }
+            let data_start = code_pos + 3;
+            let data_end = data_start + (len - 2);
+            if data_end > bytes.len() {
+                done = true;
+                return Some(Err(malformed("truncated JPEG segment")));
+            }
+            // SOS (start of scan) ends the metadata section.
+            done = code == 0xDA;
+            pos = data_end;
+            return Some(Ok((code, &bytes[data_start..data_end])));
+        }
+        None
+    })
+}
+
 /// Scans JPEG markers for the first APP1 `Exif\0\0` segment and returns the
 /// TIFF payload inside it.
 ///
@@ -507,58 +542,17 @@ fn is_tiff(bytes: &[u8]) -> bool {
 /// segment is present but truncated, or when the JPEG marker structure
 /// itself is truncated.
 fn find_exif_tiff(bytes: &[u8]) -> Result<Option<&[u8]>, MetadataError> {
-    let malformed = |msg: &str| MetadataError::MalformedExif(msg.to_string());
-    if bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8] {
-        return Ok(None);
-    }
-    let mut pos = 2;
-    while pos + 4 <= bytes.len() {
-        if bytes[pos] != 0xFF {
-            return Err(malformed("invalid JPEG marker"));
-        }
-        // Skip padding 0xFF bytes.
-        let mut code_pos = pos + 1;
-        while code_pos < bytes.len() && bytes[code_pos] == 0xFF {
-            code_pos += 1;
-        }
-        if code_pos >= bytes.len() {
-            break;
-        }
-        let code = bytes[code_pos];
-        // Standalone markers without a length field.
-        if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
-            pos = code_pos + 1;
-            continue;
-        }
-        if code_pos + 3 > bytes.len() {
-            return Err(malformed("truncated JPEG segment header"));
-        }
-        let len = u16::from_be_bytes([bytes[code_pos + 1], bytes[code_pos + 2]]) as usize;
-        if len < 2 {
-            return Err(malformed("invalid JPEG segment length"));
-        }
-        let data_start = code_pos + 3;
-        let data_end = data_start
-            .checked_add(len - 2)
-            .ok_or_else(|| malformed("overflow"))?;
-        if data_end > bytes.len() {
-            return Err(malformed("truncated JPEG segment"));
-        }
-        if code == 0xE1 {
-            let seg = &bytes[data_start..data_end];
-            if seg.len() > 6 && seg[..6] == [b'E', b'x', b'i', b'f', 0, 0] {
-                let tiff = &seg[6..];
-                if tiff_header(tiff).is_none() {
-                    return Err(malformed("invalid EXIF TIFF header"));
-                }
-                return Ok(Some(tiff));
+    for segment in jpeg_segments(bytes) {
+        let (code, seg) = segment?;
+        if code == 0xE1 && seg.len() > 6 && seg[..6] == [b'E', b'x', b'i', b'f', 0, 0] {
+            let tiff = &seg[6..];
+            if tiff_header(tiff).is_none() {
+                return Err(MetadataError::MalformedExif(
+                    "invalid EXIF TIFF header".to_string(),
+                ));
             }
+            return Ok(Some(tiff));
         }
-        // SOS (start of scan) ends the metadata section.
-        if code == 0xDA {
-            break;
-        }
-        pos = data_end;
     }
     Ok(None)
 }
@@ -672,39 +666,9 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
     if bytes.len() < 4 || bytes[0..2] != [0xFF, 0xD8] {
         return Err(malformed("not a JPEG"));
     }
-    let mut pos = 2;
-    while pos + 4 <= bytes.len() {
-        if bytes[pos] != 0xFF {
-            return Err(malformed("invalid JPEG marker"));
-        }
-        let mut code_pos = pos + 1;
-        while code_pos < bytes.len() && bytes[code_pos] == 0xFF {
-            code_pos += 1;
-        }
-        if code_pos >= bytes.len() {
-            break;
-        }
-        let code = bytes[code_pos];
-        if code == 0xD8 || code == 0xD9 || (0xD0..=0xD7).contains(&code) || code == 0x01 {
-            pos = code_pos + 1;
-            continue;
-        }
-        if code_pos + 3 > bytes.len() {
-            return Err(malformed("truncated JPEG segment header"));
-        }
-        let len = u16::from_be_bytes([bytes[code_pos + 1], bytes[code_pos + 2]]) as usize;
-        if len < 2 {
-            return Err(malformed("invalid JPEG segment length"));
-        }
-        let data_start = code_pos + 3;
-        let data_end = data_start
-            .checked_add(len - 2)
-            .ok_or_else(|| malformed("overflow"))?;
-        if data_end > bytes.len() {
-            return Err(malformed("truncated JPEG segment"));
-        }
+    for segment in jpeg_segments(bytes) {
+        let (code, seg) = segment?;
         if matches!(code, 0xC0..=0xC3) {
-            let seg = &bytes[data_start..data_end];
             if seg.len() < 7 {
                 return Err(malformed("truncated SOF segment"));
             }
@@ -715,10 +679,6 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<PixelDimensions, MetadataError> {
             }
             return Ok(PixelDimensions { width, height });
         }
-        if code == 0xDA {
-            break;
-        }
-        pos = data_end;
     }
     Err(malformed("SOF marker not found"))
 }
