@@ -74,6 +74,8 @@ struct ColumnInfo {
     type_: String,
     notnull: i64,
     default: Option<String>,
+    /// 1-based position in the primary key, `0` when not part of it.
+    pk: i64,
 }
 
 /// Quotes an identifier so a column name that needs quoting cannot break
@@ -84,13 +86,19 @@ fn quote_ident(name: &str) -> String {
 
 /// Column DDL for an existing column, preserved across a rebuild so custom
 /// columns keep their type, `NOT NULL`, and default.
+///
+/// The default is always parenthesised: `PRAGMA table_info` reports an
+/// expression default (`DEFAULT (datetime('now'))`) without its parentheses,
+/// and `DEFAULT (<literal>)` is valid for constants too. CHECK and REFERENCES
+/// clauses on custom columns are not carried over; PRIMARY KEY and UNIQUE
+/// ones are refused by [`reject_unrebuildable_columns`] rather than dropped.
 fn column_ddl(column: &ColumnInfo) -> String {
     let mut ddl = format!("{} {}", quote_ident(&column.name), column.type_);
     if column.notnull != 0 {
         ddl.push_str(" NOT NULL");
     }
     if let Some(default) = &column.default {
-        ddl.push_str(&format!(" DEFAULT {default}"));
+        ddl.push_str(&format!(" DEFAULT ({default})"));
     }
     ddl
 }
@@ -104,6 +112,7 @@ fn table_info(conn: &Connection, table: &str) -> Result<Vec<ColumnInfo>, Session
                 type_: row.get(2)?,
                 notnull: row.get(3)?,
                 default: row.get(4)?,
+                pk: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -152,6 +161,43 @@ fn with_immediate_transaction<T>(
             Err(err)
         }
     }
+}
+
+/// Fails before a rebuild when a custom column carries a constraint the
+/// rebuild cannot reproduce, so the migration errors instead of silently
+/// weakening the table.
+fn reject_unrebuildable_columns(
+    conn: &Connection,
+    columns: &[ColumnInfo],
+) -> Result<(), SessionError> {
+    let custom = |name: &str| !IMAGE_COLUMN_NAMES.contains(&name);
+    let refuse = |name: &str, what: &str| {
+        SessionError::Db(rusqlite::Error::InvalidColumnName(format!(
+            "custom image column '{name}' is part of a {what}; refusing to rebuild the table"
+        )))
+    };
+    if let Some(column) = columns.iter().find(|c| custom(&c.name) && c.pk != 0) {
+        return Err(refuse(&column.name, "PRIMARY KEY"));
+    }
+    let mut indexes = conn.prepare("PRAGMA index_list(image)")?;
+    let unique_indexes = indexes
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (index, unique) in unique_indexes {
+        if unique == 0 {
+            continue;
+        }
+        let mut info = conn.prepare(&format!("PRAGMA index_info({})", quote_ident(&index)))?;
+        let indexed = info
+            .query_map([], |row| row.get::<_, Option<String>>(2))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(name) = indexed.into_iter().flatten().find(|name| custom(name)) {
+            return Err(refuse(&name, "UNIQUE constraint"));
+        }
+    }
+    Ok(())
 }
 
 /// Recovers an `image` table left half-migrated by a killed rebuild.
@@ -270,6 +316,8 @@ pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
     if current {
         return Ok(());
     }
+
+    reject_unrebuildable_columns(conn, &columns)?;
 
     // Copy the canonical columns the old table already has, plus anything
     // else it carries, so no user column is dropped by the rebuild.
@@ -1058,6 +1106,94 @@ mod tests {
         )
         .expect("session row");
         id
+    }
+
+    #[test]
+    fn rebuild_keeps_an_expression_default_on_a_custom_column() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        // NOT NULL location columns force a rebuild.
+        conn.execute(
+            "CREATE TABLE image (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                location_lat REAL NOT NULL,
+                location_lon REAL NOT NULL,
+                captured_at TEXT NOT NULL,
+                gps_altitude_m REAL,
+                width INTEGER,
+                height INTEGER,
+                format TEXT,
+                make TEXT,
+                camera_model TEXT,
+                imported_at TEXT DEFAULT (datetime('now')),
+                score INTEGER NOT NULL DEFAULT 7
+            )",
+            [],
+        )
+        .expect("legacy table");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at)
+             VALUES ('img-1', ?1, '/a.jpg', 1.0, 2.0, '2026-09-18 07:12:00')",
+            params![session_id],
+        )
+        .expect("row");
+
+        init_schema(&conn).expect("rebuild must not fail on the defaults");
+
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path) VALUES ('img-2', ?1, '/b.jpg')",
+            params![session_id],
+        )
+        .expect("insert relying on defaults");
+        let (imported_at, score): (Option<String>, i64) = conn
+            .query_row(
+                "SELECT imported_at, score FROM image WHERE id = 'img-2'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("defaults applied");
+        assert!(imported_at.is_some(), "expression default must survive");
+        assert_eq!(score, 7);
+    }
+
+    #[test]
+    fn rebuild_refuses_a_custom_unique_column_without_losing_data() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(
+            "CREATE TABLE image (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL UNIQUE,
+                location_lat REAL NOT NULL,
+                location_lon REAL NOT NULL,
+                captured_at TEXT NOT NULL,
+                gps_altitude_m REAL,
+                width INTEGER,
+                height INTEGER,
+                format TEXT,
+                make TEXT,
+                camera_model TEXT,
+                serial TEXT UNIQUE
+            )",
+            [],
+        )
+        .expect("legacy table");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at, serial)
+             VALUES ('img-1', ?1, '/a.jpg', 1.0, 2.0, '2026-09-18 07:12:00', 'SN1')",
+            params![session_id],
+        )
+        .expect("row");
+
+        let err = init_schema(&conn).expect_err("unique custom column cannot be rebuilt");
+        assert!(err.to_string().contains("serial"), "{err}");
+        let serial: String = conn
+            .query_row("SELECT serial FROM image", [], |row| row.get(0))
+            .expect("original table untouched");
+        assert_eq!(serial, "SN1");
     }
 
     #[test]
