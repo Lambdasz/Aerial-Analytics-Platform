@@ -21,10 +21,13 @@ Project
 
 ## Status
 
-**All functions in this module are currently `unimplemented!()` stubs.**
-Signatures, types, and documented contracts (purity, error conditions) are
-final; function bodies are not yet written. Callers can compile against this
-API today, but calling any of these functions at runtime will panic.
+Implemented. Import entry points, the extraction pipeline (format sniff, JPEG
+and DNG/TIFF parsers, XMP DJI scan, merge helpers), and the schema migration
+are all live and covered by unit tests. Nothing in this module has a Tauri
+command yet, so the UI reaches none of it directly.
+
+Known gap: DNG dimensions are read from IFD0, which may be a reduced-resolution
+thumbnail when full sensor dimensions live in SubIFDs (tag 330).
 
 ## Visibility
 
@@ -48,7 +51,7 @@ use crate::modules::module_01::{
 pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
-    existing_dest_names: &[String],
+    existing_paths: &[String],
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
@@ -56,14 +59,22 @@ pub(crate) fn import_images(
 
 Entry point for RGB image import. Composes per-file format classification,
 destination-name-collision detection, and duplicate detection into one
-`ImportReport`. Does not copy files or touch the disk — `request` is already
-populated with file headers/hashes/ids by I/O before this runs, and the
-caller applies the returned `ImportReport` afterwards.
+`ImportReport`. Does not copy files or touch the disk or the database —
+`request` is already populated with file headers/hashes/ids by I/O before
+this runs, and the caller applies the returned `ImportReport` afterwards.
+`existing_paths` are the files already in the session folder, whose
+basenames are compared (Unicode-folded) against incoming names.
 
-- **Errors**: `ImportError::NoImagesFound` if `request` has no candidates;
-  `ImportError::SessionNotFound` if the target session doesn't exist.
-  Per-candidate failures (bad format, magic mismatch) are reported in the
-  result's `rejected` list, not as an `Err`.
+- **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
+  Per-candidate failures (bad format, magic mismatch, invalid file name) are
+  reported in the result's `rejected` list, not as an `Err`.
+- **The caller validates the session.** This function has no session list, so
+  it never returns `ImportError::SessionNotFound`. The command that owns the
+  database checks an `Existing` id via `get_session` before calling in.
+- A name conflict holds a candidate out of `imported_image_ids` until the
+  frontend resolves it. The backend never renames. Intra-batch duplicates
+  are flagged against the first file that claimed the content, including a
+  file this call held back.
 
 ### `extract_metadata`
 
@@ -87,12 +98,27 @@ read file bytes
 ```
 
 A tag missing from the file is not an error — the corresponding
-`ImageMetadata` field is simply `None`. `MetadataError` is reserved for cases
-where the file can't be read at all or isn't a supported format.
+`ImageMetadata` field is simply `None`.
 
 - **Errors**: `MetadataError::Io` (file unreadable), `UnsupportedFormat` /
-  `MagicMismatch` (not a supported image), `MalformedExif` / `MalformedXmp`
-  (a present tag/segment couldn't be parsed).
+  `MagicMismatch` (not a supported image), `MalformedExif` (a present EXIF
+  segment couldn't be parsed).
+
+## Note on the XMP DJI scan
+
+`parse_xmp_dji` reads only the XMP packet (`<x:xmpmeta>` / `<?xpacket>`), so a
+JPEG comment or other stray bytes containing `drone-dji:` are never mistaken
+for telemetry. Both serializations are accepted inside the packet:
+
+- attribute form — `drone-dji:Name="value"` or `'value'`
+- element form — `<drone-dji:Name>value</drone-dji:Name>`
+
+An occurrence that is neither (stray text, `xmlns:drone-dji=…`, an unquoted or
+truncated value) is skipped, and a non-numeric value (`"n/a"`, empty) leaves
+that one field `None`. Flight telemetry is optional: a quirk there never
+discards the EXIF, GPS, or dimensions already read, so XMP never fails an
+extraction. `MetadataError::MalformedXmp` remains in the error type but is no
+longer produced by this path.
 
 ### `describe_completeness`
 
@@ -144,14 +170,13 @@ import_images(request, known, existing_paths)
 ```
 
 One `IncompleteMetadataFlag { candidate_id, source_path, missing }` per
-imported candidate lacking a required field, in import order. Candidates
-with no metadata entry (never extracted — e.g. `extract_metadata` is still
-a stub) are skipped: completeness cannot be judged, so nothing is emitted
-and a stubbed pipeline does not report every import as incomplete. When
-extraction was attempted but failed (corrupt/unreadable), the I/O layer
-records `ImageMetadata::default()` instead, which flags every required
-field as missing. Flagged images stay imported; the flag never moves an id
-into `rejected` or `duplicates`.
+imported candidate lacking a required field, in import order. Candidates with
+no metadata entry were never extracted (the I/O layer skipped them), so
+completeness cannot be judged and nothing is emitted. When extraction was
+attempted but failed (corrupt/unreadable), the I/O layer records
+`ImageMetadata::default()` instead, which flags every required field as
+missing. Flagged images stay imported; the flag never moves an id into
+`rejected` or `duplicates`.
 
 ### `to_plugin_metadata`
 
@@ -191,16 +216,17 @@ pub enum MetadataError {
     MagicMismatch { path: String },
     MalformedExif(String),
     MalformedXmp(String),
+    NotImplemented { path: String },
 }
 ```
 
 The one fully-public type in this module — the domain error for every
 metadata-extraction operation. Each variant has a `code()` method
 (`"IO_ERROR"`, `"UNSUPPORTED_FORMAT"`, `"MAGIC_MISMATCH"`,
-`"MALFORMED_EXIF"`, `"MALFORMED_XMP"`) for programmatic matching on the
-frontend, and converts via `From<MetadataError> for CommandError` so it can
-be returned directly from a `#[tauri::command]` and reach the frontend over
-IPC.
+`"MALFORMED_EXIF"`, `"MALFORMED_XMP"`, `"NOT_IMPLEMENTED"`) for programmatic
+matching on the frontend, and converts via `From<MetadataError> for
+CommandError` so it can be returned directly from a `#[tauri::command]` and
+reach the frontend over IPC.
 
 ## Note on `ImportError::UnsupportedFormat`
 
