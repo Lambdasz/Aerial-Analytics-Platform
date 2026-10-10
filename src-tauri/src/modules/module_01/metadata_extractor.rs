@@ -47,12 +47,18 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use unicode_normalization::UnicodeNormalization;
 
-/// Folds a name into its comparison key: NFC-composed, then
-/// Unicode-lowercased. Shared by destination basenames and alias-table keys
-/// so `É`/`é` and composed/decomposed accents collide the same way
-/// everywhere in this module.
+/// Folds a name into its comparison key: canonical decomposition, full
+/// Unicode case folding, then NFC.
+///
+/// This is the equivalence macOS (APFS/HFS+) and Windows apply to file names:
+/// `É`/`é`, composed/decomposed accents and `ß`/`ss` collide, and so do the
+/// two sigma forms. Compatibility forms (e.g. full-width letters) are
+/// deliberately not folded: no target filesystem treats them as equal.
+/// Shared by destination basenames (on case-insensitive filesystems) and
+/// alias-table keys.
 pub(crate) fn normalize_name(base: &str) -> String {
-    base.nfc().collect::<String>().to_lowercase()
+    let decomposed: String = base.nfd().collect();
+    caseless::default_case_fold_str(&decomposed).nfc().collect()
 }
 
 /// Raw EXIF tags read from a JPEG APP1 segment or DNG IFD0, prior to being
@@ -1926,6 +1932,16 @@ mod tests {
         let table = AliasTable::new(&aliases);
         assert_eq!(table.resolve("élévation"), Some("height_meter"));
         assert_eq!(table.resolve("e\u{0301}lévation"), Some("height_meter"));
+    }
+
+    #[test]
+    fn normalize_name_is_a_full_case_fold() {
+        assert_eq!(normalize_name("STRASSE"), normalize_name("Straße"));
+        // Final and medial sigma fold together.
+        assert_eq!(normalize_name("ΟΔΟΣ"), normalize_name("οδος"));
+        assert_eq!(normalize_name("\u{00E9}"), normalize_name("E\u{0301}"));
+        // Compatibility forms (full-width letters) are not folded.
+        assert_ne!(normalize_name("\u{FF21}"), normalize_name("a"));
     }
 
     #[test]
