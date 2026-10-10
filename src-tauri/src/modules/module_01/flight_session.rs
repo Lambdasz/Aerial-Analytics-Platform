@@ -21,7 +21,7 @@
 //! [`ImageMetadata`](crate::models::image::ImageMetadata); [`get_image`]
 //! and [`get_images_by_session`] read records back.
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use uuid::Uuid;
 
@@ -561,23 +561,24 @@ pub fn assign_image_to_session(
 /// # Errors
 ///
 /// [`SessionError::NotFound`] if the session doesn't exist. A session with
-/// zero images assigned is left with its previous date range unchanged
-/// (not an error — see project decision log: `image_ids` may be empty on a
+/// zero dated images assigned is reset to the range a fresh session starts
+/// with (`date_start = date_end = created_at`), not left at the dates of
+/// images it no longer holds (not an error — `image_ids` may be empty on a
 /// freshly created session).
 pub fn recalculate_session_date_range(
     conn: &Connection,
     session_id: Uuid,
 ) -> Result<(), SessionError> {
-    let exists: Option<i64> = conn
+    let created_at: Option<String> = conn
         .query_row(
-            "SELECT 1 FROM session WHERE id = ?1",
+            "SELECT created_at FROM session WHERE id = ?1",
             params![session_id.to_string()],
             |row| row.get(0),
         )
         .optional()?;
-    if exists.is_none() {
+    let Some(created_at) = created_at else {
         return Err(SessionError::NotFound { session_id });
-    }
+    };
 
     let mut stmt = conn.prepare(&format!(
         "SELECT {IMAGE_COLUMNS} FROM image WHERE session_id = ?1"
@@ -586,8 +587,23 @@ pub fn recalculate_session_date_range(
         .query_map(params![session_id.to_string()], row_to_image)?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let Some((start, end)) = compute_date_range(&images) else {
-        return Ok(());
+    // No dated image left: fall back to the range a fresh session starts
+    // with (`created_at` for both ends) rather than keeping dates of images
+    // that are no longer in the session.
+    let (start, end) = match compute_date_range(&images) {
+        Some(range) => range,
+        None => {
+            let created = DateTime::parse_from_rfc3339(&created_at)
+                .map_err(|err| {
+                    SessionError::Db(rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(err),
+                    ))
+                })?
+                .naive_utc();
+            (created, created)
+        }
     };
 
     let rows = conn.execute(
@@ -1511,5 +1527,39 @@ mod tests {
         assert!(matches!(err, SessionError::NotFound { .. }));
         let stored = get_image(&conn, image.id).expect("image");
         assert_eq!(stored.session_id, original.id, "the move must roll back");
+    }
+
+    #[test]
+    fn emptied_session_resets_its_range_to_created_at() {
+        let conn = memory_db();
+        let source = create_session(&conn, Uuid::new_v4(), None).expect("source");
+        let target = create_session(&conn, Uuid::new_v4(), None).expect("target");
+        let mut meta = full_metadata();
+        meta.date_time_original = "2026-09-18T07:12:00".parse().ok();
+        let image = image_from_metadata(Uuid::new_v4(), source.id, "/a.jpg".to_string(), &meta);
+        insert_image(&conn, &image).expect("image");
+        recalculate_session_date_range(&conn, source.id).expect("recalc");
+        let with_image = get_session(&conn, source.id).expect("get");
+        assert_eq!(
+            with_image.date_start,
+            "2026-09-18T07:12:00".parse::<NaiveDateTime>().unwrap()
+        );
+
+        assign_image_to_session(&conn, target.id, image.id).expect("move");
+
+        let emptied = get_session(&conn, source.id).expect("get");
+        assert_eq!(
+            naive_to_db(emptied.date_start),
+            naive_to_db(source.date_start)
+        );
+        assert_eq!(
+            naive_to_db(emptied.date_end),
+            naive_to_db(source.date_start)
+        );
+        let moved = get_session(&conn, target.id).expect("get");
+        assert_eq!(
+            moved.date_start,
+            "2026-09-18T07:12:00".parse::<NaiveDateTime>().unwrap()
+        );
     }
 }
