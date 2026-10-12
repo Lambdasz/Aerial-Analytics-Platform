@@ -222,21 +222,18 @@ function Module01PageInner() {
   }, [projectId, formatError]);
 
   // Handle Project selection
-  const handleSelectProject = useCallback(
-    (project: Project) => {
-      setSelectedProject(project);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-      } catch {
-        // Ignore localStorage errors
-      }
-      setLoading(true);
-      setSearchQuery("");
-      setStatusFilter("all");
-      setCurrentPage(1);
-    },
-    [],
-  );
+  const handleSelectProject = useCallback((project: Project) => {
+    setSelectedProject(project);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+    } catch {
+      // Ignore localStorage errors
+    }
+    setLoading(true);
+    setSearchQuery("");
+    setStatusFilter("all");
+    setCurrentPage(1);
+  }, []);
 
   // Manual load sessions button
   const handleLoadSessions = () => {
@@ -371,8 +368,7 @@ function Module01PageInner() {
 
     result.sort((a, b) => {
       if (sortOrder === "newest") {
-        const diff =
-          parseCameraDate(b.dateEnd).getTime() - parseCameraDate(a.dateEnd).getTime();
+        const diff = parseCameraDate(b.dateEnd).getTime() - parseCameraDate(a.dateEnd).getTime();
         // Fallback to createdAt for stable sort when dateEnd is identical
         return diff !== 0
           ? diff
@@ -456,11 +452,11 @@ function Module01PageInner() {
         {busy ? "Sedang memproses…" : ""}
       </div>
 
-      {/* ── Page Header ────────────────────────────────────────────── */}
-      <header className="m1-header">
+      {/* ── 1. Page Header (White Rounded Panel) ──────────────────── */}
+      <header className="m1-white-panel m1-header-panel">
         <div className="m1-header__info">
           <div className="m1-header__tag-row">
-            <span className="m1-header__tag bp5-tag bp5-minimal">Modul 1</span>
+            <span className="m1-header__tag">Modul 1</span>
           </div>
           <h1 id="m1-page-heading" className="m1-header__title">
             Sesi Penerbangan
@@ -472,13 +468,29 @@ function Module01PageInner() {
         </div>
 
         <div className="m1-header__actions">
-          <Button
-            icon="plus"
-            intent={Intent.PRIMARY}
-            text="Sesi baru"
+          <button
+            type="button"
+            className="m1-primary-pill-btn"
             onClick={() => setIsCreateOpen(true)}
             disabled={!selectedProject || busy}
-          />
+            title={!selectedProject ? "Pilih proyek terlebih dahulu" : "Buat sesi baru"}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>Sesi baru</span>
+          </button>
         </div>
       </header>
 

@@ -3,6 +3,12 @@
    Design accurately adapted from TaskFlow reference layout & palette.
    ========================================================================== */
 
+/* App shell content alignment for Module 01 to eliminate edge gaps */
+.app-shell__content:has(> .m1-page) {
+  padding: 0;
+  background-color: #f6f7f9;
+}
+
 .m1-page {
   --m1-font-primary: Bahnschrift, "DIN Alternate", "Segoe UI", system-ui, sans-serif;
   --m1-bg-main: #f6f7f9; /* Sama dengan sidebar */
@@ -18,11 +24,10 @@
   color: var(--m1-text-main);
   background-color: var(--m1-bg-main);
 
-  /* Menghilangkan sisa putih di ujung-ujung container shell */
-  margin: -20px -24px -48px -24px;
+  margin: 0;
   padding: 20px 24px 48px 24px;
-  min-height: calc(100% + 68px);
-  width: auto;
+  min-height: 100%;
+  width: 100%;
   box-sizing: border-box;
 }
 
@@ -72,6 +77,22 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.m1-header__tag-row {
+  margin-bottom: 2px;
+}
+
+.m1-header__tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #2563eb;
+  background-color: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  padding: 2px 8px;
+  display: inline-block;
+  width: fit-content;
 }
 
 .m1-header__title {
