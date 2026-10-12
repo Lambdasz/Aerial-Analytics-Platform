@@ -564,6 +564,13 @@ pub fn run() {
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
+            // Project management
+            commands::project::create_project,
+            commands::project::get_project,
+            commands::project::list_projects,
+            commands::project::update_project,
+            commands::project::delete_project,
+            commands::project::count_images_by_project,
             // Temporal change analysis (Module 10)
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,

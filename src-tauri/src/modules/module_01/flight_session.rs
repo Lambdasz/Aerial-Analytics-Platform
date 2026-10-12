@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::error::SessionError;
 use crate::models::image::ImageMetadata;
-use crate::models::{Image, Session, SessionStatus};
+use crate::models::{Image, Project, Session, SessionStatus};
 
 /// Column definitions for the `image` table, shared by [`init_schema`]
 /// (fresh databases) and [`migrate_image_schema`] (table rebuild for
@@ -253,6 +253,16 @@ fn recover_image_table(conn: &Connection) -> Result<(), SessionError> {
 ///
 /// Impure — DDL against the database.
 pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            description TEXT,
+            created_at  TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS session (
             id          TEXT PRIMARY KEY,
@@ -622,6 +632,159 @@ pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), Session
         params![session_id.to_string()],
     )?;
     require_changed(rows, session_id)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Project CRUD
+// ─────────────────────────────────────────────────────────────────────
+
+/// Creates a new mapping project.
+///
+/// # Purity
+///
+/// Impure — writes a new row.
+pub fn create_project(
+    conn: &Connection,
+    name: String,
+    description: Option<String>,
+) -> Result<Project, SessionError> {
+    let now = Utc::now();
+    let project = Project {
+        id: Uuid::new_v4(),
+        name,
+        description,
+        created_at: now,
+        updated_at: now,
+    };
+    conn.execute(
+        "INSERT INTO project (id, name, description, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            project.id.to_string(),
+            project.name,
+            project.description,
+            project.created_at.to_rfc3339(),
+            project.updated_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(project)
+}
+
+/// Fetches a single project by id.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+pub fn get_project(conn: &Connection, project_id: Uuid) -> Result<Project, SessionError> {
+    conn.query_row(
+        "SELECT id, name, description, created_at, updated_at
+         FROM project WHERE id = ?1",
+        params![project_id.to_string()],
+        row_to_project,
+    )
+    .optional()?
+    .ok_or(SessionError::ProjectNotFound { project_id })
+}
+
+/// Lists every project, ordered by most recently updated first.
+///
+/// # Purity
+///
+/// Impure.
+pub fn list_projects(conn: &Connection) -> Result<Vec<Project>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, created_at, updated_at
+         FROM project ORDER BY updated_at DESC",
+    )?;
+    let projects = stmt
+        .query_map([], row_to_project)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(projects)
+}
+
+/// Overwrites a project's name and/or description.
+///
+/// # Purity
+///
+/// Impure.
+pub fn update_project(
+    conn: &Connection,
+    project_id: Uuid,
+    name: String,
+    description: Option<String>,
+) -> Result<Project, SessionError> {
+    let now = Utc::now();
+    let rows = conn.execute(
+        "UPDATE project SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
+        params![
+            name,
+            description,
+            now.to_rfc3339(),
+            project_id.to_string()
+        ],
+    )?;
+    if rows == 0 {
+        return Err(SessionError::ProjectNotFound { project_id });
+    }
+    get_project(conn, project_id)
+}
+
+/// Deletes a project and all its sessions.
+///
+/// # Purity
+///
+/// Impure.
+pub fn delete_project(conn: &Connection, project_id: Uuid) -> Result<(), SessionError> {
+    // Delete all sessions belonging to this project first
+    conn.execute(
+        "DELETE FROM session WHERE project_id = ?1",
+        params![project_id.to_string()],
+    )?;
+    let rows = conn.execute(
+        "DELETE FROM project WHERE id = ?1",
+        params![project_id.to_string()],
+    )?;
+    if rows == 0 {
+        return Err(SessionError::ProjectNotFound { project_id });
+    }
+    Ok(())
+}
+
+/// Counts the total number of images across all sessions in a project.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+pub fn count_images_by_project(conn: &Connection, project_id: Uuid) -> Result<u32, SessionError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM image i
+         INNER JOIN session s ON i.session_id = s.id
+         WHERE s.project_id = ?1",
+        params![project_id.to_string()],
+        |row| row.get(0),
+    )?;
+    Ok(count as u32)
+}
+
+fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
+    let id: String = row.get(0)?;
+    let name: String = row.get(1)?;
+    let description: Option<String> = row.get(2)?;
+    let created_at: String = row.get(3)?;
+    let updated_at: String = row.get(4)?;
+
+    Ok(Project {
+        id: Uuid::parse_str(&id)
+            .map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
+        name,
+        description,
+        created_at: created_at
+            .parse()
+            .map_err(|e| conversion_err(3, rusqlite::types::Type::Text, e))?,
+        updated_at: updated_at
+            .parse()
+            .map_err(|e| conversion_err(4, rusqlite::types::Type::Text, e))?,
+    })
 }
 
 /// Builds a persistable [`Image`] record from already-extracted metadata.

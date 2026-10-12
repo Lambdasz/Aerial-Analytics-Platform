@@ -23,6 +23,8 @@ import {
   updateSessionStatus,
 } from "./sessionCommands";
 
+import { type Project, countImagesByProject } from "./projectCommands";
+
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
 import { SummaryBoxes } from "./components/SummaryBoxes";
@@ -44,26 +46,37 @@ type StatusFilter = "all" | "active" | "archived";
 type SortOrder = "newest" | "oldest" | "name";
 
 function Module01PageInner() {
-  const [projectId, setProjectId] = useState<string>(() => {
+  const [selectedProject, setSelectedProject] = useState<Project | null>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved && isValidUuid(saved) ? saved : "";
+      const savedJson = localStorage.getItem(STORAGE_KEY);
+      if (savedJson) {
+        const parsed = JSON.parse(savedJson) as Project;
+        if (parsed && parsed.id && isValidUuid(parsed.id)) return parsed;
+      }
     } catch {
-      return "";
+      // Ignore
     }
+    return null;
   });
+
+  const projectId = selectedProject?.id ?? "";
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState<boolean>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return Boolean(saved && isValidUuid(saved));
+      const savedJson = localStorage.getItem(STORAGE_KEY);
+      if (savedJson) {
+        const parsed = JSON.parse(savedJson) as Project;
+        return Boolean(parsed && parsed.id && isValidUuid(parsed.id));
+      }
     } catch {
-      return false;
+      // Ignore
     }
+    return false;
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totalImages, setTotalImages] = useState<number | undefined>(undefined);
 
   // Search, filter, and sorting
   const [searchQuery, setSearchQuery] = useState("");
@@ -98,15 +111,24 @@ function Module01PageInner() {
   const [assignTarget, setAssignTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
 
-  // Pure React Toast notification state
+  // Pure React Toast notification state (with proper cleanup)
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToastMessage(message);
-    const timer = setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
+      toastTimerRef.current = null;
     }, 2500);
-    return () => clearTimeout(timer);
+  }, []);
+
+  // Cleanup toast timer on unmount
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
   }, []);
 
   // Format friendly error message matching brief
@@ -117,6 +139,9 @@ function Module01PageInner() {
       }
       if (err.code === "SESSION_NOT_FOUND") {
         return "Sesi tidak ditemukan, mungkin sudah dihapus. Muat ulang daftar sesi.";
+      }
+      if (err.code === "PROJECT_NOT_FOUND") {
+        return "Proyek tidak ditemukan. Pilih proyek lain atau buat proyek baru.";
       }
       if (err.code === "DB_ERROR") {
         return "Terjadi kesalahan pada basis data lokal. Periksa log atau coba lagi.";
@@ -141,10 +166,12 @@ function Module01PageInner() {
       try {
         const result = await getSessionsByProject(pid.trim());
         setSessions(result);
+        // Also fetch image count
         try {
-          localStorage.setItem(STORAGE_KEY, pid.trim());
+          const count = await countImagesByProject(pid.trim());
+          setTotalImages(count);
         } catch {
-          // Ignore localStorage errors
+          setTotalImages(undefined);
         }
       } catch (err) {
         setError(formatError(err));
@@ -156,7 +183,7 @@ function Module01PageInner() {
     [formatError],
   );
 
-  // Load sessions on mount if projectId was restored from localStorage
+  // Load sessions when project changes
   useEffect(() => {
     let isMounted = true;
     if (projectId && isValidUuid(projectId)) {
@@ -173,28 +200,43 @@ function Module01PageInner() {
             setLoading(false);
           }
         });
+      // Also fetch image count
+      countImagesByProject(projectId.trim())
+        .then((count) => {
+          if (isMounted) setTotalImages(count);
+        })
+        .catch(() => {
+          if (isMounted) setTotalImages(undefined);
+        });
+    } else {
+      // Defer state updates to avoid synchronous setState in effect body
+      queueMicrotask(() => {
+        setSessions([]);
+        setTotalImages(undefined);
+        setLoading(false);
+      });
     }
     return () => {
       isMounted = false;
     };
   }, [projectId, formatError]);
 
-  // Handle Project ID input change
-  const handleProjectIdChange = (newId: string) => {
-    setProjectId(newId);
-    try {
-      localStorage.setItem(STORAGE_KEY, newId);
-    } catch {
-      // Ignore localStorage errors
-    }
-  };
-
-  // Generate random UUID
-  const handleGenerateProjectId = () => {
-    const uuid = crypto.randomUUID();
-    setProjectId(uuid);
-    void fetchSessions(uuid, true);
-  };
+  // Handle Project selection
+  const handleSelectProject = useCallback(
+    (project: Project) => {
+      setSelectedProject(project);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+      } catch {
+        // Ignore localStorage errors
+      }
+      setLoading(true);
+      setSearchQuery("");
+      setStatusFilter("all");
+      setCurrentPage(1);
+    },
+    [],
+  );
 
   // Manual load sessions button
   const handleLoadSessions = () => {
@@ -309,7 +351,10 @@ function Module01PageInner() {
   };
 
   // Calculate statistics across ALL sessions
-  const stats = useMemo(() => calculateSessionStats(sessions), [sessions]);
+  const stats = useMemo(
+    () => ({ ...calculateSessionStats(sessions), totalImages }),
+    [sessions, totalImages],
+  );
 
   // Filter sessions
   const filteredSessions = useMemo(() => {
@@ -326,10 +371,19 @@ function Module01PageInner() {
 
     result.sort((a, b) => {
       if (sortOrder === "newest") {
-        return parseCameraDate(b.dateEnd).getTime() - parseCameraDate(a.dateEnd).getTime();
+        const diff =
+          parseCameraDate(b.dateEnd).getTime() - parseCameraDate(a.dateEnd).getTime();
+        // Fallback to createdAt for stable sort when dateEnd is identical
+        return diff !== 0
+          ? diff
+          : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       }
       if (sortOrder === "oldest") {
-        return parseCameraDate(a.dateStart).getTime() - parseCameraDate(b.dateStart).getTime();
+        const diff =
+          parseCameraDate(a.dateStart).getTime() - parseCameraDate(b.dateStart).getTime();
+        return diff !== 0
+          ? diff
+          : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       }
       if (sortOrder === "name") {
         return a.name.localeCompare(b.name, "id-ID");
@@ -423,7 +477,7 @@ function Module01PageInner() {
             intent={Intent.PRIMARY}
             text="Sesi baru"
             onClick={() => setIsCreateOpen(true)}
-            disabled={!projectId || !isValidUuid(projectId) || busy}
+            disabled={!selectedProject || busy}
           />
         </div>
       </header>
@@ -455,13 +509,11 @@ function Module01PageInner() {
         <SummaryBoxes stats={stats} onFocusLatestSession={handleFocusLatestSession} />
       </section>
 
-      {/* ── 3. ID Proyek dan Barnya (White Rounded Panel) ───────────── */}
+      {/* ── 3. Proyek Pemetaan (White Rounded Panel) ───────────── */}
       <section className="m1-white-panel m1-project-panel">
         <ProjectBar
-          projectId={projectId}
-          onProjectIdChange={handleProjectIdChange}
-          onGenerateProjectId={handleGenerateProjectId}
-          onLoadSessions={handleLoadSessions}
+          selectedProject={selectedProject}
+          onSelectProject={handleSelectProject}
           busy={busy || loading}
         />
       </section>
@@ -722,20 +774,12 @@ function Module01PageInner() {
               <div key={i} className="m1-skeleton-card" />
             ))}
           </div>
-        ) : !projectId || !isValidUuid(projectId) ? (
+        ) : !selectedProject ? (
           <div className="m1-state-container">
             <NonIdealState
               icon="folder-open"
-              title="Pilih atau Buat ID Proyek"
-              description="Masukkan UUID proyek atau klik 'Buat ID proyek baru' di atas untuk memuat daftar sesi penerbangan."
-              action={
-                <Button
-                  intent={Intent.PRIMARY}
-                  icon="add"
-                  text="Buat ID proyek baru"
-                  onClick={handleGenerateProjectId}
-                />
-              }
+              title="Pilih atau Buat Proyek"
+              description="Pilih proyek dari daftar di atas, atau buat proyek baru untuk mulai mengelola sesi penerbangan."
             />
           </div>
         ) : sessions.length === 0 ? (
