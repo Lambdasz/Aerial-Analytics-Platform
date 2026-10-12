@@ -575,6 +575,13 @@ pub fn run() {
             commands::session::delete_session,
             // Image preview
             commands::image_preview::preview_image,
+            // Project management
+            commands::project::create_project,
+            commands::project::get_project,
+            commands::project::list_projects,
+            commands::project::update_project,
+            commands::project::delete_project,
+            commands::project::count_images_by_project,
             // Temporal change analysis (Module 10)
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,

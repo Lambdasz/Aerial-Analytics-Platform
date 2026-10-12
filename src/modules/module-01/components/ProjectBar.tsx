@@ -1,50 +1,81 @@
-import { useState, type FC, type KeyboardEvent } from "react";
-import { isValidUuid } from "../sessionStats";
+import { useState, useEffect, type FC } from "react";
+import type { Project } from "../projectCommands";
+import { listProjects, createProject, deleteProject } from "../projectCommands";
+import { shortId } from "../sessionStats";
 
 interface ProjectBarProps {
-  projectId: string;
-  onProjectIdChange: (id: string) => void;
-  onGenerateProjectId: () => void;
-  onLoadSessions: () => void;
+  selectedProject: Project | null;
+  onSelectProject: (project: Project) => void;
   busy: boolean;
 }
 
-export const ProjectBar: FC<ProjectBarProps> = ({
-  projectId,
-  onProjectIdChange,
-  onGenerateProjectId,
-  onLoadSessions,
-  busy,
-}) => {
-  const [touched, setTouched] = useState(false);
-  const [copied, setCopied] = useState(false);
+export const ProjectBar: FC<ProjectBarProps> = ({ selectedProject, onSelectProject, busy }) => {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  const isValid = isValidUuid(projectId);
-  const isInvalid = touched && projectId.trim() !== "" && !isValid;
-
-  const handleBlur = () => {
-    setTouched(true);
-  };
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && projectId.trim() && isValid && !busy) {
-      onLoadSessions();
+  const fetchProjects = async () => {
+    try {
+      setLoading(true);
+      const result = await listProjects();
+      setProjects(result);
+    } catch {
+      // Silently handle — list may be empty on first run
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleCopy = async () => {
-    if (!projectId.trim()) return;
+  useEffect(() => {
+    // Defer to avoid synchronous setState in effect body
+    queueMicrotask(() => {
+      void fetchProjects();
+    });
+  }, []);
+
+  // Auto-select first project if none selected and projects exist
+  useEffect(() => {
+    if (!selectedProject && projects.length > 0) {
+      onSelectProject(projects[0]);
+    }
+  }, [projects, selectedProject, onSelectProject]);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreateBusy(true);
     try {
-      await navigator.clipboard.writeText(projectId.trim());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      const project = await createProject(newName.trim(), newDesc.trim() || null);
+      setNewName("");
+      setNewDesc("");
+      setIsCreateOpen(false);
+      await fetchProjects();
+      onSelectProject(project);
     } catch {
-      // Ignore clipboard error
+      // Error handled silently
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
+  const handleDelete = async (projectId: string) => {
+    try {
+      await deleteProject(projectId);
+      setConfirmDelete(null);
+      await fetchProjects();
+      if (selectedProject?.id === projectId) {
+        // Will auto-select via useEffect
+      }
+    } catch {
+      // Error handled silently
     }
   };
 
   return (
-    <section className="m1-project-bar" aria-label="Pengaturan ID Proyek">
+    <section className="m1-project-bar" aria-label="Manajemen Proyek">
       <div className="m1-project-bar__header">
         <div className="m1-project-bar__identity">
           <div className="m1-project-bar__icon-wrap" aria-hidden="true">
@@ -62,50 +93,20 @@ export const ProjectBar: FC<ProjectBarProps> = ({
             </svg>
           </div>
           <div>
-            <h3 className="m1-project-bar__title">Workspace & ID Proyek</h3>
+            <h3 className="m1-project-bar__title">Proyek Pemetaan</h3>
             <p className="m1-project-bar__subtitle">
-              Sesi penerbangan dikelompokkan berdasarkan UUID proyek lokal.
+              Pilih atau buat proyek untuk mengelola sesi penerbangan drone.
             </p>
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="m1-project-bar__actions">
           <button
             type="button"
-            className="m1-btn-load"
-            onClick={onLoadSessions}
-            disabled={!projectId.trim() || !isValid || busy}
-            title="Tarik dan muat sesi dari basis data untuk ID proyek ini"
-          >
-            {busy ? (
-              <span className="m1-spinner-mini" aria-hidden="true" />
-            ) : (
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <polyline points="23 4 23 10 17 10" />
-                <polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-            )}
-            <span>Muat sesi</span>
-          </button>
-
-          <button
-            type="button"
             className="m1-btn-new-project"
-            onClick={onGenerateProjectId}
-            disabled={busy}
-            title="Generate UUID baru untuk membuat proyek pemetaan baru"
+            onClick={() => setIsCreateOpen(!isCreateOpen)}
+            disabled={busy || createBusy}
+            title="Buat proyek pemetaan baru"
           >
             <svg
               width="15"
@@ -121,65 +122,151 @@ export const ProjectBar: FC<ProjectBarProps> = ({
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <span>Buat ID proyek baru</span>
+            <span>Proyek baru</span>
           </button>
         </div>
       </div>
 
-      {/* Input Row */}
-      <div className="m1-project-bar__input-wrapper">
-        <div
-          className={`m1-project-input-box ${isInvalid ? "m1-project-input-box--invalid" : ""} ${isValid ? "m1-project-input-box--valid" : ""}`}
-        >
-          <span className="m1-project-input-prefix">ID:</span>
-          <input
-            id="m1-project-id-input"
-            type="text"
-            className="m1-project-input"
-            value={projectId}
-            onChange={(e) => {
-              onProjectIdChange(e.target.value);
-              setTouched(true);
-            }}
-            onBlur={handleBlur}
-            onKeyDown={handleKeyDown}
-            placeholder="Contoh: 550e8400-e29b-41d4-a716-446655440000"
-            disabled={busy}
-            spellCheck={false}
-            autoComplete="off"
-          />
-
-          {projectId.trim() && (
+      {/* Create Project Inline Form */}
+      {isCreateOpen && (
+        <div className="m1-project-create-form">
+          <div className="m1-project-create-form__row">
+            <input
+              type="text"
+              className="m1-project-create-input"
+              placeholder="Nama proyek, cth: Blok A Perkebunan Sawit"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newName.trim()) void handleCreate();
+              }}
+              disabled={createBusy}
+            />
+            <input
+              type="text"
+              className="m1-project-create-input m1-project-create-input--desc"
+              placeholder="Deskripsi singkat (opsional)"
+              value={newDesc}
+              onChange={(e) => setNewDesc(e.target.value)}
+              disabled={createBusy}
+            />
+          </div>
+          <div className="m1-project-create-form__actions">
             <button
               type="button"
-              className="m1-input-action-btn"
+              className="m1-btn-cancel"
               onClick={() => {
-                void handleCopy();
+                setIsCreateOpen(false);
+                setNewName("");
+                setNewDesc("");
               }}
-              title={copied ? "ID tersalin ke clipboard!" : "Salin ID Proyek"}
-              aria-label="Salin ID Proyek"
+              disabled={createBusy}
             >
-              {copied ? (
-                <span className="m1-copy-feedback">
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#16a34a"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+              Batal
+            </button>
+            <button
+              type="button"
+              className="m1-btn-create"
+              onClick={() => void handleCreate()}
+              disabled={!newName.trim() || createBusy}
+            >
+              {createBusy ? (
+                <span className="m1-spinner-mini" aria-hidden="true" />
+              ) : null}
+              Buat proyek
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Project List / Selector */}
+      {loading ? (
+        <div className="m1-project-list-loading">
+          <span className="m1-spinner-mini" aria-hidden="true" />
+          <span>Memuat proyek…</span>
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="m1-project-empty">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <p>Belum ada proyek. Klik &quot;Proyek baru&quot; untuk memulai.</p>
+        </div>
+      ) : (
+        <div className="m1-project-list" role="listbox" aria-label="Daftar proyek pemetaan">
+          {projects.map((project) => (
+            <div
+              key={project.id}
+              role="option"
+              aria-selected={selectedProject?.id === project.id}
+              className={`m1-project-item ${selectedProject?.id === project.id ? "m1-project-item--selected" : ""}`}
+              onClick={() => onSelectProject(project)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectProject(project);
+                }
+              }}
+              tabIndex={0}
+            >
+              <div className="m1-project-item__info">
+                <div className="m1-project-item__name-row">
+                  <span className="m1-project-item__name">{project.name}</span>
+                  <span className="m1-project-item__id m1-tabular">{shortId(project.id)}</span>
+                </div>
+                {project.description && (
+                  <span className="m1-project-item__desc">{project.description}</span>
+                )}
+              </div>
+
+              {/* Delete button (only visible on hover) */}
+              {confirmDelete === project.id ? (
+                <div className="m1-project-item__confirm-delete">
+                  <button
+                    type="button"
+                    className="m1-btn-confirm-delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleDelete(project.id);
+                    }}
                   >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  Tersalin
-                </span>
+                    Hapus
+                  </button>
+                  <button
+                    type="button"
+                    className="m1-btn-cancel-delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmDelete(null);
+                    }}
+                  >
+                    Batal
+                  </button>
+                </div>
               ) : (
-                <span className="m1-copy-idle">
+                <button
+                  type="button"
+                  className="m1-project-item__delete-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDelete(project.id);
+                  }}
+                  title="Hapus proyek"
+                  aria-label={`Hapus proyek ${project.name}`}
+                >
                   <svg
-                    width="13"
-                    height="13"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -187,46 +274,15 @@ export const ProjectBar: FC<ProjectBarProps> = ({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                   </svg>
-                  Salin
-                </span>
+                </button>
               )}
-            </button>
-          )}
+            </div>
+          ))}
         </div>
-      </div>
-
-      {/* Validation or Info text */}
-      <div className="m1-project-bar__meta">
-        {isInvalid ? (
-          <p className="m1-project-bar__hint m1-project-bar__hint--error" role="alert">
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            ID harus berformat UUID yang valid, contoh: 550e8400-e29b-41d4-a716-446655440000.
-          </p>
-        ) : (
-          <p className="m1-project-bar__hint">
-            <span>
-              Tekan <strong>Enter</strong> atau klik <strong>Muat sesi</strong> untuk menyinkronkan
-              data. ID proyek terakhir tersimpan otomatis.
-            </span>
-          </p>
-        )}
-      </div>
+      )}
     </section>
   );
 };
