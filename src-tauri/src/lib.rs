@@ -41,13 +41,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-
             // Role 1 — Subprocess Supervisor & Isolation Engineer
             plugin_manager::executor::start_plugin_job,
             plugin_manager::executor::abort_plugin_job,
             plugin_manager::executor::get_job_status,
             plugin_manager::executor::get_job_result,
-
             // Plot import
             import_plots,
         ])
