@@ -557,13 +557,9 @@ pub(crate) fn build_execution_payload(
 /// ```
 pub(crate) fn parse_progress_line(line: &str) -> Option<JobProgress> {
     let trimmed = line.trim();
-    let json_slice = if let Some(rest) = trimmed.strip_prefix("PROGRESS:") {
-        rest
-    } else if let Some(rest) = trimmed.strip_prefix("progress:") {
-        rest
-    } else {
-        return None;
-    };
+    let json_slice = trimmed
+        .strip_prefix("PROGRESS:")
+        .or_else(|| trimmed.strip_prefix("progress:"))?;
     serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
 }
 
