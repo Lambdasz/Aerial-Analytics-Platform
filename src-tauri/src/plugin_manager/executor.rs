@@ -19,73 +19,10 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use uuid::Uuid;
 
-use super::error::CommandError;
+use super::error::{CommandError, PluginError};
 use super::models::{ExecutionPayload, ExecutionTarget, StandardJobResultDto, VerifiedArtifactDto};
-
-// ---------------------------------------------------------------------------
-// 1. ERROR TYPE
-// ---------------------------------------------------------------------------
-
-/// Domain-level error for the execution supervisor.
-/// All public functions return `Result<_, ExecutorError>` — zero panics allowed.
-#[derive(Debug, Error)]
-pub enum ExecutorError {
-    #[error("Job '{0}' not found in active tracker")]
-    JobNotFound(String),
-
-    #[error("Plugin '{0}' is disabled or not registered")]
-    PluginUnavailable(String),
-
-    #[error("Execution timed out after {0} seconds")]
-    Timeout(u64),
-
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
-
-    #[error("Job '{0}' is not in Completed state")]
-    NotCompleted(String),
-
-    #[error("Artifact file not found on disk: {0}")]
-    ArtifactMissing(String),
-
-    #[error("Process spawn failed: {0}")]
-    SpawnFailed(String),
-
-    #[error("Security violation: {0}")]
-    SecurityViolation(String),
-}
-
-impl ExecutorError {
-    /// String error code for client-side programmatic matching in TypeScript
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::JobNotFound(_) => "JOB_NOT_FOUND",
-            Self::PluginUnavailable(_) => "PLUGIN_UNAVAILABLE",
-            Self::Timeout(_) => "EXECUTION_TIMEOUT",
-            Self::Io(_) => "IO_ERROR",
-            Self::Serde(_) => "SERIALIZATION_ERROR",
-            Self::NotCompleted(_) => "JOB_NOT_COMPLETED",
-            Self::ArtifactMissing(_) => "ARTIFACT_MISSING",
-            Self::SpawnFailed(_) => "SPAWN_FAILED",
-            Self::SecurityViolation(_) => "SECURITY_VIOLATION",
-        }
-    }
-}
-
-impl From<ExecutorError> for CommandError {
-    fn from(err: ExecutorError) -> Self {
-        CommandError {
-            code: err.code().to_string(),
-            message: err.to_string(),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // 2. DATA TRANSFER OBJECTS (DTOs)
@@ -370,10 +307,10 @@ pub async fn abort_plugin_job(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CommandError> {
     let mut tracker = state.jobs.write().await;
-    let record = tracker.jobs.get_mut(&job_id).ok_or_else(|| CommandError {
-        code: "JOB_NOT_FOUND".to_string(),
-        message: format!("Job '{}' not found in active tracker", job_id),
-    })?;
+    let record = tracker
+        .jobs
+        .get_mut(&job_id)
+        .ok_or_else(|| PluginError::JobNotFound(job_id.clone()))?;
 
     // Abort async supervisor task
     if let Some(ref handle) = record.abort_handle {
@@ -403,10 +340,10 @@ pub async fn get_job_status(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobStatusDto, CommandError> {
     let tracker = state.jobs.read().await;
-    let record = tracker.jobs.get(&job_id).ok_or_else(|| CommandError {
-        code: "JOB_NOT_FOUND".to_string(),
-        message: format!("Job '{}' not found in active tracker", job_id),
-    })?;
+    let record = tracker
+        .jobs
+        .get(&job_id)
+        .ok_or_else(|| PluginError::JobNotFound(job_id.clone()))?;
     Ok(record.status.clone())
 }
 
@@ -419,20 +356,17 @@ pub async fn get_job_result(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<StandardJobResultDto, CommandError> {
     let tracker = state.jobs.read().await;
-    let record = tracker.jobs.get(&job_id).ok_or_else(|| CommandError {
-        code: "JOB_NOT_FOUND".to_string(),
-        message: format!("Job '{}' not found in active tracker", job_id),
-    })?;
+    let record = tracker
+        .jobs
+        .get(&job_id)
+        .ok_or_else(|| PluginError::JobNotFound(job_id.clone()))?;
 
     match &record.status {
         JobStatusDto::Completed { .. } => record.result.clone().ok_or_else(|| CommandError {
             code: "RESULT_MISSING".to_string(),
             message: format!("Job '{}' is completed but result is missing", job_id),
         }),
-        _ => Err(CommandError {
-            code: "JOB_NOT_COMPLETED".to_string(),
-            message: format!("Job '{}' has not completed successfully", job_id),
-        }),
+        _ => Err(PluginError::NotCompleted(job_id).into()),
     }
 }
 
@@ -463,7 +397,7 @@ pub(crate) fn build_execution_payload(
     job_id: &str,
     output_dir: &Path,
     req: &StartJobRequestDto,
-) -> Result<ExecutionPayload, ExecutorError> {
+) -> Result<ExecutionPayload, PluginError> {
     let target = ExecutionTarget {
         granularity: "single_image".to_string(),
         image_path: req.target_image_path.clone(),
@@ -534,7 +468,7 @@ pub(crate) struct PluginExecutionTarget {
 }
 
 /// Locates a plugin's directory and manifest by `plugin_id`.
-pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget, ExecutorError> {
+pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget, PluginError> {
     let possible_roots = [
         PathBuf::from("plugins"),
         PathBuf::from("../plugins"),
@@ -615,7 +549,7 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
         }
     }
 
-    Err(ExecutorError::PluginUnavailable(plugin_id.to_string()))
+    Err(PluginError::PluginUnavailable(plugin_id.to_string()))
 }
 
 /// Forcibly terminates a plugin's entire process tree.
@@ -648,7 +582,7 @@ pub(crate) async fn resolve_executable(
     runtime_type: &str,
     payload_path: &Path,
     result_path: &Path,
-) -> Result<tokio::process::Command, ExecutorError> {
+) -> Result<tokio::process::Command, PluginError> {
     match runtime_type {
         "python" => {
             // Check for local virtual environment Python
@@ -668,7 +602,7 @@ pub(crate) async fn resolve_executable(
 
             let script_path = plugin_dir.join(entrypoint);
             if !script_path.exists() {
-                return Err(ExecutorError::SpawnFailed(format!(
+                return Err(PluginError::SpawnFailed(format!(
                     "Plugin Python entrypoint script not found: {:?}",
                     script_path
                 )));
@@ -703,7 +637,7 @@ pub(crate) async fn resolve_executable(
             }
 
             if !bin_path.exists() {
-                return Err(ExecutorError::SpawnFailed(format!(
+                return Err(PluginError::SpawnFailed(format!(
                     "Plugin binary entrypoint not found: {:?}",
                     bin_path
                 )));
@@ -726,7 +660,7 @@ pub(crate) async fn resolve_executable(
 
             Ok(cmd)
         }
-        other => Err(ExecutorError::SpawnFailed(format!(
+        other => Err(PluginError::SpawnFailed(format!(
             "Unsupported runtime type: '{}'",
             other
         ))),
@@ -742,7 +676,7 @@ pub(crate) async fn supervise_execution(
     timeout_secs: u64,
     app: tauri::AppHandle,
     jobs_tracker: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
-) -> Result<StandardJobResultDto, ExecutorError> {
+) -> Result<StandardJobResultDto, PluginError> {
     use tokio::io::AsyncBufReadExt;
     use tokio::time::{timeout, Duration};
 
@@ -750,11 +684,11 @@ pub(crate) async fn supervise_execution(
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| ExecutorError::SpawnFailed("Failed to capture stdout pipe".into()))?;
+        .ok_or_else(|| PluginError::SpawnFailed("Failed to capture stdout pipe".into()))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| ExecutorError::SpawnFailed("Failed to capture stderr pipe".into()))?;
+        .ok_or_else(|| PluginError::SpawnFailed("Failed to capture stderr pipe".into()))?;
 
     // Drain stderr in background to prevent buffer deadlock
     let stderr_handle = tokio::spawn(async move {
@@ -814,9 +748,9 @@ pub(crate) async fn supervise_execution(
             if let Some(pid) = child_pid {
                 kill_process_tree(pid);
             }
-            Err(ExecutorError::Timeout(timeout_secs))
+            Err(PluginError::Timeout(timeout_secs))
         }
-        Ok(Err(io_err)) => Err(ExecutorError::Io(io_err)),
+        Ok(Err(io_err)) => Err(PluginError::Io(io_err.to_string())),
         Ok(Ok(status)) => {
             let stderr_output = stderr_handle.await.unwrap_or_default();
             if status.success() {
@@ -825,7 +759,7 @@ pub(crate) async fn supervise_execution(
                 // Plugin may have written a structured failure execution_result.json before exit 1
                 read_and_validate_result(&result_path, &output_dir)
             } else {
-                Err(ExecutorError::SpawnFailed(format!(
+                Err(PluginError::SpawnFailed(format!(
                     "Plugin process failed with status {}. Stderr: {}",
                     status,
                     stderr_output.trim()
@@ -839,9 +773,9 @@ pub(crate) async fn supervise_execution(
 pub(crate) fn read_and_validate_result(
     result_path: &Path,
     output_dir: &Path,
-) -> Result<StandardJobResultDto, ExecutorError> {
+) -> Result<StandardJobResultDto, PluginError> {
     if !result_path.exists() {
-        return Err(ExecutorError::ArtifactMissing(format!(
+        return Err(PluginError::ArtifactMissing(format!(
             "Result file not found: {:?}",
             result_path
         )));
@@ -870,7 +804,7 @@ pub(crate) fn read_and_validate_result(
             };
 
             if !fp.exists() {
-                return Err(ExecutorError::ArtifactMissing(format!(
+                return Err(PluginError::ArtifactMissing(format!(
                     "Artifact '{}' file not found at: {:?}",
                     key, fp
                 )));
@@ -880,14 +814,14 @@ pub(crate) fn read_and_validate_result(
             match (output_dir.canonicalize(), fp.canonicalize()) {
                 (Ok(canonical_dir), Ok(canonical_art)) => {
                     if !canonical_art.starts_with(&canonical_dir) {
-                        return Err(ExecutorError::SecurityViolation(format!(
+                        return Err(PluginError::SecurityViolation(format!(
                             "Artifact '{}' escapes sandboxed output directory: {:?}",
                             key, fp
                         )));
                     }
                 }
                 _ => {
-                    return Err(ExecutorError::SecurityViolation(format!(
+                    return Err(PluginError::SecurityViolation(format!(
                         "Failed to verify sandbox canonical boundaries for artifact '{}': {:?}",
                         key, fp
                     )));
