@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Plugin Manifest Definition (Conforms to schemas/plugin.schema.json)
@@ -239,4 +239,89 @@ pub struct HealthStatusDto {
     pub version: String,
     pub details: Option<serde_json::Value>,
     pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Bridge: Core Drone EXIF Metadata -> Plugin Execution Target
+// ---------------------------------------------------------------------------
+
+/// Converts Module 1's decoded drone EXIF metadata into the `target` block of an
+/// `ExecutionPayload` (see `super::executor::ExecutionTarget`).
+///
+/// **Pure function** — no filesystem I/O, no mutation. `TryFrom` (not `From`) because
+/// `exif.format` is optional; a missing/unrecognized format has no valid MIME mapping
+/// and must be surfaced as an explicit error rather than defaulted silently.
+impl TryFrom<(&Path, &crate::models::ImageMetadata)> for super::executor::ExecutionTarget {
+    type Error = String;
+
+    fn try_from(
+        (image_path, exif): (&Path, &crate::models::ImageMetadata),
+    ) -> Result<Self, String> {
+        let mime_type = match exif.format {
+            Some(crate::models::ImageFormat::Jpeg) => "image/jpeg",
+            Some(crate::models::ImageFormat::Dng) => "image/tiff",
+            None => {
+                return Err(
+                    "Image format is unknown; cannot determine MIME type for execution target"
+                        .to_string(),
+                )
+            }
+        };
+
+        Ok(super::executor::ExecutionTarget {
+            granularity: "single_image".to_string(),
+            image_path: image_path.to_string_lossy().into_owned(),
+            mime_type: mime_type.to_string(),
+            metadata: serde_json::to_value(exif).ok(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod exif_bridge_tests {
+    use super::super::executor::ExecutionTarget;
+    use crate::models::{ImageFormat, ImageMetadata};
+    use std::path::Path;
+
+    #[test]
+    fn jpeg_exif_maps_to_image_jpeg_target() {
+        let exif = ImageMetadata {
+            format: Some(ImageFormat::Jpeg),
+            ..Default::default()
+        };
+        let path = Path::new("/data/images/drone_01.jpg");
+
+        let target = ExecutionTarget::try_from((path, &exif)).unwrap();
+
+        assert_eq!(target.granularity, "single_image");
+        assert_eq!(target.image_path, "/data/images/drone_01.jpg");
+        assert_eq!(target.mime_type, "image/jpeg");
+        assert!(target.metadata.is_some());
+    }
+
+    #[test]
+    fn dng_exif_maps_to_image_tiff_target() {
+        let exif = ImageMetadata {
+            format: Some(ImageFormat::Dng),
+            ..Default::default()
+        };
+        let path = Path::new("/data/images/drone_02.dng");
+
+        let target = ExecutionTarget::try_from((path, &exif)).unwrap();
+
+        assert_eq!(target.mime_type, "image/tiff");
+    }
+
+    #[test]
+    fn missing_format_is_rejected_explicitly() {
+        let exif = ImageMetadata {
+            format: None,
+            ..Default::default()
+        };
+        let path = Path::new("/data/images/unknown.bin");
+
+        let result = ExecutionTarget::try_from((path, &exif));
+
+        assert!(result.is_err());
+    }
 }
