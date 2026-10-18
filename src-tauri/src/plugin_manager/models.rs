@@ -1,3 +1,4 @@
+use crate::models::metadata::ImageMetadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -325,3 +326,46 @@ mod exif_bridge_tests {
         assert!(result.is_err());
     }
 }
+
+// 1. Standard Job Result Dto (Kanonikal)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StandardJobResultDto {
+    pub execution_id: String,
+    pub status: String,
+    pub artifacts: HashMap<String, String>,
+    pub metrics: HashMap<String, f64>,
+}
+
+// 2. Execution Target
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionTarget {
+    pub file_path: String,
+    pub gps_latitude: Option<f64>,
+    pub gps_longitude: Option<f64>,
+    pub altitude: Option<f64>,
+    pub camera_make: Option<String>,
+    pub camera_model: Option<String>,
+}
+
+// 3. Execution Payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionPayload {
+    pub execution_id: String,
+    pub target: ExecutionTarget,
+    pub parameters: HashMap<String, serde_json::Value>,
+}
+
+// 4. Implementasi Trait From untuk Bridge Data
+impl<'a> From<(&'a Path, &'a ImageMetadata)> for ExecutionTarget {
+    fn from((path, metadata): (&'a Path, &'a ImageMetadata)) -> Self {
+        Self {
+            file_path: path.to_string_lossy().into_owned(),
+            gps_latitude: metadata.gps_latitude,
+            gps_longitude: metadata.gps_longitude,
+            altitude: metadata.gps_altitude_m,
+            camera_make: metadata.make.clone(),
+            camera_model: metadata.camera_model_name.clone(),
+        }
+    }
+}
+
