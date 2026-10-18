@@ -552,6 +552,29 @@ pub(crate) fn parse_progress_line(line: &str) -> Option<JobProgress> {
     serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
 }
 
+/// Decides whether a newly parsed progress update should be emitted.
+///
+/// **Pure function** — no I/O, no locking, no clock reads of its own
+/// (`now` is passed in). Emits when the `(percent, stage)` pair differs
+/// from the last emitted update, or when at least `min_interval` has
+/// elapsed since the last emission — whichever comes first. This keeps a
+/// chatty plugin from flooding the shared `jobs_tracker` write-lock and
+/// the Tauri IPC channel with redundant or high-frequency progress lines.
+pub(crate) fn should_emit_progress(
+    last: Option<(u8, &str, std::time::Instant)>,
+    next: &JobProgress,
+    now: std::time::Instant,
+    min_interval: std::time::Duration,
+) -> bool {
+    match last {
+        None => true,
+        Some((last_pct, last_stage, last_at)) => {
+            (last_pct, last_stage) != (next.percent, next.stage.as_str())
+                || now.duration_since(last_at) >= min_interval
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 6. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
 // ---------------------------------------------------------------------------
@@ -797,22 +820,41 @@ pub(crate) async fn supervise_execution(
         String::from_utf8_lossy(&buf).into_owned()
     });
 
+    // Throttle window for progress updates: a chatty plugin writing many
+    // PROGRESS: lines per second must not flood the shared jobs_tracker
+    // write-lock or the Tauri IPC channel.
+    const PROGRESS_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
     let supervise_fut = async {
         let mut lines = tokio::io::BufReader::new(stdout).lines();
+        let mut last_emitted: Option<(u8, String, std::time::Instant)> = None;
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(progress) = parse_progress_line(&line) {
-                // Update tracker status in memory
-                {
-                    let mut tracker = jobs_tracker.write().await;
-                    if let Some(record) = tracker.jobs.get_mut(&job_id) {
-                        record.status = JobStatusDto::Running {
-                            progress_pct: progress.percent,
-                            stage: progress.stage.clone(),
-                        };
+                let now = std::time::Instant::now();
+                let emit = should_emit_progress(
+                    last_emitted
+                        .as_ref()
+                        .map(|(pct, stage, at)| (*pct, stage.as_str(), *at)),
+                    &progress,
+                    now,
+                    PROGRESS_MIN_INTERVAL,
+                );
+
+                if emit {
+                    // Update tracker status in memory
+                    {
+                        let mut tracker = jobs_tracker.write().await;
+                        if let Some(record) = tracker.jobs.get_mut(&job_id) {
+                            record.status = JobStatusDto::Running {
+                                progress_pct: progress.percent,
+                                stage: progress.stage.clone(),
+                            };
+                        }
                     }
+                    // Emit to Tauri IPC event stream
+                    emit_job_progress(&app, &progress).ok();
+                    last_emitted = Some((progress.percent, progress.stage.clone(), now));
                 }
-                // Emit to Tauri IPC event stream
-                emit_job_progress(&app, &progress).ok();
             }
         }
         child.wait().await
@@ -1001,6 +1043,71 @@ mod tests {
     fn test_parse_progress_line_malformed_json() {
         let line = "PROGRESS: {broken json}";
         assert!(parse_progress_line(line).is_none());
+    }
+
+    #[test]
+    fn test_should_emit_progress_first_update_always_emits() {
+        let next = JobProgress {
+            job_id: "exec_test".to_string(),
+            percent: 10,
+            stage: "preprocessing".to_string(),
+        };
+        assert!(should_emit_progress(
+            None,
+            &next,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(200)
+        ));
+    }
+
+    #[test]
+    fn test_should_emit_progress_suppresses_duplicate_within_interval() {
+        let last_at = std::time::Instant::now();
+        let same = JobProgress {
+            job_id: "exec_test".to_string(),
+            percent: 45,
+            stage: "evaluating".to_string(),
+        };
+        let now = last_at; // zero elapsed time, well within the interval
+        assert!(!should_emit_progress(
+            Some((45, "evaluating", last_at)),
+            &same,
+            now,
+            std::time::Duration::from_millis(200)
+        ));
+    }
+
+    #[test]
+    fn test_should_emit_progress_emits_on_changed_stage_even_within_interval() {
+        let last_at = std::time::Instant::now();
+        let changed = JobProgress {
+            job_id: "exec_test".to_string(),
+            percent: 46,
+            stage: "saving_mask".to_string(),
+        };
+        assert!(should_emit_progress(
+            Some((45, "evaluating", last_at)),
+            &changed,
+            last_at,
+            std::time::Duration::from_millis(200)
+        ));
+    }
+
+    #[test]
+    fn test_should_emit_progress_emits_after_interval_elapses_even_if_unchanged() {
+        let last_at = std::time::Instant::now();
+        let same = JobProgress {
+            job_id: "exec_test".to_string(),
+            percent: 45,
+            stage: "evaluating".to_string(),
+        };
+        let later = last_at + std::time::Duration::from_millis(250);
+        assert!(should_emit_progress(
+            Some((45, "evaluating", last_at)),
+            &same,
+            later,
+            std::time::Duration::from_millis(200)
+        ));
     }
 
     #[test]
