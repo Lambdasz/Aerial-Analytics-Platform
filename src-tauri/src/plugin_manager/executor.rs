@@ -437,18 +437,7 @@ pub async fn abort_plugin_job(
 
     // Forcibly terminate child OS process tree
     if let Some(pid) = record.child_pid {
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
-        #[cfg(unix)]
-        {
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
-        }
+        kill_process_tree(pid);
     }
 
     // Clean up partial sandboxed output files
@@ -661,6 +650,29 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
     Err(ExecutorError::PluginUnavailable(plugin_id.to_string()))
 }
 
+/// Forcibly terminates a plugin's entire process tree.
+///
+/// On Unix, the child is spawned as its own process group leader (see
+/// `resolve_executable`), so signaling the negated PID targets the whole
+/// group — including grandchildren (e.g. Python `multiprocessing` workers
+/// or OpenCV thread pools) that would otherwise survive as orphaned
+/// zombies if only the direct child PID were signaled. On Windows,
+/// `taskkill /T` already walks the process tree.
+pub(crate) fn kill_process_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &format!("-{}", pid)])
+            .output();
+    }
+}
+
 /// Prepares the cross-platform Tokio process command for the plugin entrypoint.
 pub(crate) async fn resolve_executable(
     plugin_dir: &Path,
@@ -703,6 +715,13 @@ pub(crate) async fn resolve_executable(
                 .current_dir(plugin_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            #[cfg(unix)]
+            {
+                // Make the child its own process group leader so
+                // kill_process_tree() can signal the whole group (covers
+                // grandchild workers) instead of only this direct PID.
+                cmd.process_group(0);
+            }
 
             Ok(cmd)
         }
@@ -730,6 +749,12 @@ pub(crate) async fn resolve_executable(
                 .current_dir(plugin_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            #[cfg(unix)]
+            {
+                // See the python branch above: new process group so the
+                // full tree can be signaled on abort/timeout.
+                cmd.process_group(0);
+            }
 
             Ok(cmd)
         }
@@ -800,18 +825,7 @@ pub(crate) async fn supervise_execution(
             // Execution timed out: forcibly kill child process
             let _ = child.kill().await;
             if let Some(pid) = child_pid {
-                #[cfg(windows)]
-                {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(["/F", "/T", "/PID", &pid.to_string()])
-                        .output();
-                }
-                #[cfg(unix)]
-                {
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .output();
-                }
+                kill_process_tree(pid);
             }
             Err(ExecutorError::Timeout(timeout_secs))
         }
