@@ -116,6 +116,71 @@ pub struct InputsSpec {
 }
 
 // ---------------------------------------------------------------------------
+// Execution Payload & Result (Conforms to schemas/execution_payload.schema.json
+// and schemas/execution_result.schema.json)
+// ---------------------------------------------------------------------------
+
+/// Target image descriptor within an `ExecutionPayload`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExecutionTarget {
+    /// Matches `inputs.json` granularity: `"single_image"`, `"batch"`, etc.
+    pub granularity: String,
+    /// Absolute filesystem path to the source image.
+    pub image_path: String,
+    /// MIME type of the image.
+    pub mime_type: String,
+    /// Optional decoded metadata (resolution, GPS, altitude, timestamp).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Internal payload written to disk and passed to the plugin via `--input`.
+///
+/// Matches the `execution_payload.schema.json` canonical schema.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExecutionPayload {
+    pub execution_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Absolute path to the sandboxed output directory.
+    pub output_dir: String,
+    pub target: ExecutionTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aoi: Option<serde_json::Value>,
+    pub parameters: HashMap<String, serde_json::Value>,
+}
+
+/// A single verified artifact produced by the plugin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VerifiedArtifactDto {
+    /// Absolute path to the file on physical disk (already verified to exist).
+    pub file_path: String,
+    /// MIME type: `"image/png"`, `"application/geo+json"`, `"image/tiff"`, `"text/csv"`.
+    pub format: String,
+    /// Georeferenced bounding box `[min_lon, min_lat, max_lon, max_lat]` for GIS projection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<Vec<f64>>,
+}
+
+/// Full analytical output — delivered to Modules 3, 5, 6, 7, 9, 10, 11.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StandardJobResultDto {
+    /// Matches the `job_id` of the originating request.
+    pub job_id: String,
+    /// Wall-clock duration of the subprocess in milliseconds.
+    pub execution_time_ms: u64,
+    /// Exit status: `"success"` | `"warning"` | `"failure"`.
+    pub status: String,
+    /// Scalar metrics for dashboards (e.g. `{"vegetation_coverage_pct": 68.4}`).
+    pub metrics: HashMap<String, serde_json::Value>,
+    /// Verified artifact descriptors with layer visualization hints.
+    pub artifacts: HashMap<String, VerifiedArtifactDto>,
+    /// Diagnostic message if `status` is `"failure"` or `"warning"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Plugin State Persistence Models (plugin_state.json)
 // ---------------------------------------------------------------------------
 
@@ -246,12 +311,12 @@ pub struct HealthStatusDto {
 // ---------------------------------------------------------------------------
 
 /// Converts Module 1's decoded drone EXIF metadata into the `target` block of an
-/// `ExecutionPayload` (see `super::executor::ExecutionTarget`).
+/// `ExecutionPayload` (see `ExecutionTarget`, defined above in this module).
 ///
 /// **Pure function** — no filesystem I/O, no mutation. `TryFrom` (not `From`) because
 /// `exif.format` is optional; a missing/unrecognized format has no valid MIME mapping
 /// and must be surfaced as an explicit error rather than defaulted silently.
-impl TryFrom<(&Path, &crate::models::ImageMetadata)> for super::executor::ExecutionTarget {
+impl TryFrom<(&Path, &crate::models::ImageMetadata)> for ExecutionTarget {
     type Error = String;
 
     fn try_from(
@@ -268,7 +333,7 @@ impl TryFrom<(&Path, &crate::models::ImageMetadata)> for super::executor::Execut
             }
         };
 
-        Ok(super::executor::ExecutionTarget {
+        Ok(ExecutionTarget {
             granularity: "single_image".to_string(),
             image_path: image_path.to_string_lossy().into_owned(),
             mime_type: mime_type.to_string(),
@@ -279,7 +344,7 @@ impl TryFrom<(&Path, &crate::models::ImageMetadata)> for super::executor::Execut
 
 #[cfg(test)]
 mod exif_bridge_tests {
-    use super::super::executor::ExecutionTarget;
+    use super::ExecutionTarget;
     use crate::models::{ImageFormat, ImageMetadata};
     use std::path::Path;
 

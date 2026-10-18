@@ -23,6 +23,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::error::CommandError;
+use super::models::{ExecutionPayload, ExecutionTarget, StandardJobResultDto, VerifiedArtifactDto};
 
 // ---------------------------------------------------------------------------
 // 1. ERROR TYPE
@@ -156,69 +157,13 @@ pub enum JobStatusDto {
     Aborted,
 }
 
-/// A single verified artifact produced by the plugin.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct VerifiedArtifactDto {
-    /// Absolute path to the file on physical disk (already verified to exist).
-    pub file_path: String,
-    /// MIME type: `"image/png"`, `"application/geo+json"`, `"image/tiff"`, `"text/csv"`.
-    pub format: String,
-    /// Georeferenced bounding box `[min_lon, min_lat, max_lon, max_lat]` for GIS projection.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bounds: Option<Vec<f64>>,
-}
-
-/// Full analytical output — delivered to Modules 3, 5, 6, 7, 9, 10, 11.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StandardJobResultDto {
-    /// Matches the `job_id` of the originating request.
-    pub job_id: String,
-    /// Wall-clock duration of the subprocess in milliseconds.
-    pub execution_time_ms: u64,
-    /// Exit status: `"success"` | `"warning"` | `"failure"`.
-    pub status: String,
-    /// Scalar metrics for dashboards (e.g. `{"vegetation_coverage_pct": 68.4}`).
-    pub metrics: HashMap<String, serde_json::Value>,
-    /// Verified artifact descriptors with layer visualization hints.
-    pub artifacts: HashMap<String, VerifiedArtifactDto>,
-    /// Diagnostic message if `status` is `"failure"` or `"warning"`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Internal payload written to disk and passed to the plugin via `--input`.
-///
-/// Matches the `execution_payload.schema.json` canonical schema.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExecutionPayload {
-    pub execution_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    /// Absolute path to the sandboxed output directory.
-    pub output_dir: String,
-    pub target: ExecutionTarget,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aoi: Option<serde_json::Value>,
-    pub parameters: HashMap<String, serde_json::Value>,
-}
-
-/// Target image descriptor within an `ExecutionPayload`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExecutionTarget {
-    /// Matches `inputs.json` granularity: `"single_image"`, `"batch"`, etc.
-    pub granularity: String,
-    /// Absolute filesystem path to the source image.
-    pub image_path: String,
-    /// MIME type of the image.
-    pub mime_type: String,
-    /// Optional decoded metadata (resolution, GPS, altitude, timestamp).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-}
-
 // ---------------------------------------------------------------------------
 // 3. ACTIVE JOB TRACKER (Shared State)
 // ---------------------------------------------------------------------------
+//
+// `VerifiedArtifactDto`, `StandardJobResultDto`, `ExecutionPayload`, and
+// `ExecutionTarget` live in `super::models` (Role 3's Data Bridge deliverable)
+// — imported above — so this module only owns job-tracking/IPC-transport DTOs.
 
 /// Internal record stored per active or completed job.
 #[derive(Debug, Clone)]
