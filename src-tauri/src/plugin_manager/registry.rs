@@ -163,17 +163,25 @@ pub async fn check_plugin_health(
 
 /// Pure predicate to check if a plugin's input specification is compatible with a given target.
 ///
-/// Evaluates MIME type match, granularity match, AOI support, and GPS requirement.
+/// Evaluates MIME type match, granularity match, AOI support, and all metadata requirements (GPS, Altitude).
 pub fn is_compatible(spec: &InputsSpec, target: &TargetDescriptorDto) -> bool {
     let mime_match = spec
         .supported_mime_types
         .iter()
-        .any(|m| m == &target.mime_type);
-    let granularity_match = spec.granularity == target.granularity;
+        .any(|m| m.eq_ignore_ascii_case(&target.mime_type));
+    let granularity_match = spec.granularity.eq_ignore_ascii_case(&target.granularity);
     let aoi_valid = !target.has_aoi || spec.supports_aoi;
-    let gps_valid = !spec.requires_metadata.contains(&"gps".to_string()) || target.has_gps;
+    let metadata_valid = spec.requires_metadata.iter().all(|req| {
+        if req.eq_ignore_ascii_case("gps") {
+            target.has_gps
+        } else if req.eq_ignore_ascii_case("altitude") {
+            target.has_altitude
+        } else {
+            false
+        }
+    });
 
-    mime_match && granularity_match && aoi_valid && gps_valid
+    mime_match && granularity_match && aoi_valid && metadata_valid
 }
 
 /// Parses and strictly validates manifest JSON string against `plugin.schema.json`.
@@ -202,4 +210,145 @@ pub(crate) fn validate_subcontracts(
 pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, PluginError> {
     let _ = plugins_dir;
     todo!("discover_plugins: scan plugins directory and load valid bundles")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin_manager::models::{InputsSpec, TargetDescriptorDto};
+
+    fn default_inputs_spec() -> InputsSpec {
+        InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec!["image/jpeg".to_string(), "image/tiff".to_string()],
+            requires_metadata: Vec::new(),
+            optional_metadata: Vec::new(),
+            supports_aoi: true,
+            aoi_format: None,
+        }
+    }
+
+    fn default_target_descriptor() -> TargetDescriptorDto {
+        TargetDescriptorDto {
+            granularity: "single_image".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            has_gps: true,
+            has_altitude: true,
+            has_aoi: false,
+        }
+    }
+
+    #[test]
+    fn test_is_compatible_mime_case_insensitive() {
+        let spec = default_inputs_spec();
+        let mut target = default_target_descriptor();
+        target.mime_type = "IMAGE/JPEG".to_string();
+
+        assert!(
+            is_compatible(&spec, &target),
+            "MIME matching must be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_is_compatible_mime_mismatch() {
+        let spec = default_inputs_spec();
+        let mut target = default_target_descriptor();
+        target.mime_type = "image/png".to_string();
+
+        assert!(!is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_granularity_case_insensitive() {
+        let spec = default_inputs_spec();
+        let mut target = default_target_descriptor();
+        target.granularity = "SINGLE_IMAGE".to_string();
+
+        assert!(is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_granularity_mismatch() {
+        let spec = default_inputs_spec();
+        let mut target = default_target_descriptor();
+        target.granularity = "batch".to_string();
+
+        assert!(!is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_aoi_support() {
+        let mut spec = default_inputs_spec();
+        spec.supports_aoi = false;
+
+        let mut target = default_target_descriptor();
+        target.has_aoi = true;
+
+        assert!(
+            !is_compatible(&spec, &target),
+            "Target with AOI must be rejected if plugin does not support AOI"
+        );
+
+        target.has_aoi = false;
+        assert!(is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_gps_metadata_enforced() {
+        let mut spec = default_inputs_spec();
+        spec.requires_metadata = vec!["gps".to_string()];
+
+        let mut target = default_target_descriptor();
+        target.has_gps = false;
+        assert!(
+            !is_compatible(&spec, &target),
+            "Plugin requiring GPS must reject target without GPS"
+        );
+
+        target.has_gps = true;
+        assert!(is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_altitude_metadata_enforced() {
+        let mut spec = default_inputs_spec();
+        spec.requires_metadata = vec!["altitude".to_string()];
+
+        let mut target = default_target_descriptor();
+        target.has_altitude = false;
+        assert!(
+            !is_compatible(&spec, &target),
+            "Plugin requiring altitude must reject target without altitude"
+        );
+
+        target.has_altitude = true;
+        assert!(is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_combined_metadata_requirements() {
+        let mut spec = default_inputs_spec();
+        spec.requires_metadata = vec!["GPS".to_string(), "ALTITUDE".to_string()];
+
+        let mut target = default_target_descriptor();
+        target.has_gps = true;
+        target.has_altitude = false;
+        assert!(!is_compatible(&spec, &target));
+
+        target.has_altitude = true;
+        assert!(is_compatible(&spec, &target));
+    }
+
+    #[test]
+    fn test_is_compatible_unsupported_metadata_rejected() {
+        let mut spec = default_inputs_spec();
+        spec.requires_metadata = vec!["hyperspectral".to_string()];
+
+        let target = default_target_descriptor();
+        assert!(
+            !is_compatible(&spec, &target),
+            "Unknown or unsupported metadata requirements must be rejected"
+        );
+    }
 }
