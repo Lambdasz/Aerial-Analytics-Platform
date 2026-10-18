@@ -334,16 +334,15 @@
 }
 
 .m1-project-bar__icon-wrap {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  background-color: #eff6ff;
-  color: #2563eb;
+  background: linear-gradient(135deg, #f97316, #fb923c);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border: 1px solid #dbeafe;
 }
 
 .m1-project-bar__title {
@@ -1760,7 +1759,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: linear-gradient(135deg, #6366f1, #818cf8);
+  background: linear-gradient(135deg, #f97316, #fb923c);
   color: #fff;
   flex-shrink: 0;
 }
