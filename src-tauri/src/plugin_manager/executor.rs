@@ -290,7 +290,7 @@ pub async fn start_plugin_job(
             code: "IO_ERROR".to_string(),
             message: format!("Failed to create sandboxed output directory: {}", e),
         })?;
-    let output_dir = temp_dir.into_path();
+    let output_dir = temp_dir.keep();
 
     // 5. Build canonical execution payload and write to payload.json
     let payload = build_execution_payload(&job_id, &output_dir, &request)?;
