@@ -95,6 +95,7 @@ pub async fn update_plugin_config(
 /// Reads and parses `plugin_state.json` from disk.
 ///
 /// Returns empty default store if the state file does not yet exist.
+#[allow(dead_code)]
 pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, PluginError> {
     let _ = state_path;
     todo!("load_plugin_state: read and deserialize plugin_state.json")
@@ -103,6 +104,7 @@ pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, P
 /// Atomically persists current plugin states to `plugin_state.json`.
 ///
 /// Writes to a temporary file (`.tmp`) first, then performs an atomic rename.
+#[allow(dead_code)]
 pub(crate) fn save_plugin_state(
     state_path: &Path,
     state: &PluginStateStore,
@@ -114,6 +116,7 @@ pub(crate) fn save_plugin_state(
 /// Verifies a ZIP entry path against Zip-Slip path traversal vulnerability.
 ///
 /// Enforces enclosed names and verifies the target path remains within `dest_dir`.
+#[allow(dead_code)]
 pub(crate) fn verify_and_extract_entry(
     entry: &mut zip::read::ZipFile,
     dest_dir: &Path,
@@ -131,5 +134,56 @@ pub(crate) fn verify_and_extract_entry(
             "Path escapes sandbox: {}",
             entry.name()
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn test_verify_and_extract_entry_safe() {
+        let mut buffer = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
+            writer
+                .start_file("valid/file.txt", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"safe payload").unwrap();
+            writer.finish().unwrap();
+        }
+        let dir = tempdir().unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
+        let mut entry = archive.by_index(0).unwrap();
+        let res = verify_and_extract_entry(&mut entry, dir.path());
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), dir.path().join("valid/file.txt"));
+    }
+
+    #[test]
+    fn test_verify_and_extract_entry_zip_slip() {
+        let mut buffer = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
+            writer
+                .start_file("../evil.sh", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"evil payload").unwrap();
+            writer.finish().unwrap();
+        }
+        let dir = tempdir().unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
+        let mut entry = archive.by_index(0).unwrap();
+        let res = verify_and_extract_entry(&mut entry, dir.path());
+        assert!(res.is_err());
+        match res.unwrap_err() {
+            PluginError::SecurityViolation(msg) => {
+                assert!(msg.contains("Zip-Slip") || msg.contains("escapes"));
+            }
+            other => panic!("Expected SecurityViolation, got {:?}", other),
+        }
     }
 }

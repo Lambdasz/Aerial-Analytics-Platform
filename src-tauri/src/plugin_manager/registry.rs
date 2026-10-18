@@ -12,7 +12,7 @@
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::error::{CommandError, PluginError};
 use super::models::{
@@ -201,6 +201,7 @@ pub fn is_compatible(spec: &InputsSpec, target: &TargetDescriptorDto) -> bool {
 /// Parses and strictly validates manifest JSON string against `plugin.schema.json`.
 ///
 /// **Pure function** — deterministic parse; zero mutation, zero side effects.
+#[allow(dead_code)]
 pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManifest, PluginError> {
     let _ = raw_json;
     todo!("parse_and_validate_manifest: parse and validate manifest.json")
@@ -210,6 +211,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
 ///
 /// **Pre-condition**: Files referenced in manifest exist.  
 /// **Post-condition**: All 3 sub-contracts parsed and schema-validated.
+#[allow(dead_code)]
 pub(crate) fn validate_subcontracts(
     dir: &Path,
     manifest: &PluginManifest,
@@ -221,6 +223,7 @@ pub(crate) fn validate_subcontracts(
 /// Scans the `plugins/` directory and builds a vector of valid `PluginBundle`s.
 ///
 /// Fault-tolerant: Corrupt or unreadable plugin folders are logged and skipped.
+#[allow(dead_code)]
 pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, PluginError> {
     let _ = plugins_dir;
     todo!("discover_plugins: scan plugins directory and load valid bundles")
@@ -230,6 +233,7 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
 mod tests {
     use super::*;
     use crate::plugin_manager::models::{InputsSpec, TargetDescriptorDto};
+    use std::path::PathBuf;
 
     fn default_inputs_spec() -> InputsSpec {
         InputsSpec {

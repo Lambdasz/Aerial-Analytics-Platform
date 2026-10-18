@@ -1,4 +1,4 @@
-mod plugin_manager;
+pub mod plugin_manager;
 
 use plugin_manager::executor::ActiveJobTracker;
 use plugin_manager::registry::PluginRegistry;
