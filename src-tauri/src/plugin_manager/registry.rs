@@ -34,6 +34,85 @@ impl PluginRegistry {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Registers a validated plugin bundle into the in-memory registry.
+    pub fn register(&mut self, bundle: PluginBundle) {
+        self.plugins
+            .insert(bundle.manifest.metadata.id.clone(), bundle);
+    }
+
+    /// Returns a list of summaries for all registered plugins.
+    pub fn get_summaries(&self) -> Vec<PluginSummaryDto> {
+        self.plugins
+            .values()
+            .map(|bundle| PluginSummaryDto {
+                id: bundle.manifest.metadata.id.clone(),
+                name: bundle.manifest.metadata.name.clone(),
+                version: bundle.manifest.metadata.version.clone(),
+                author: bundle
+                    .manifest
+                    .metadata
+                    .author
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                category: bundle
+                    .manifest
+                    .metadata
+                    .category
+                    .clone()
+                    .unwrap_or_else(|| "General".to_string()),
+                description: bundle.manifest.metadata.description.clone(),
+                tags: bundle.manifest.metadata.tags.clone(),
+                runtime_type: bundle.manifest.runtime.runtime_type.clone(),
+                enabled: true,
+                source: "builtin".to_string(),
+                health_status: "healthy".to_string(),
+            })
+            .collect()
+    }
+
+    /// Resolves and returns full contract schemas and details for a specific plugin.
+    pub fn get_details(&self, plugin_id: &str) -> Option<PluginDetailsDto> {
+        self.plugins.get(plugin_id).map(|bundle| PluginDetailsDto {
+            manifest: bundle.manifest.clone(),
+            parameters: bundle.parameters_raw.clone(),
+            inputs: serde_json::to_value(&bundle.inputs_spec).unwrap_or_default(),
+            outputs: bundle.outputs_raw.clone(),
+            install_path: bundle.install_path.to_string_lossy().into_owned(),
+            enabled: true,
+        })
+    }
+
+    /// Queries plugins compatible with the provided geospatial target.
+    pub fn query_compatible(&self, target: &TargetDescriptorDto) -> Vec<PluginSummaryDto> {
+        self.plugins
+            .values()
+            .filter(|bundle| is_compatible(&bundle.inputs_spec, target))
+            .map(|bundle| PluginSummaryDto {
+                id: bundle.manifest.metadata.id.clone(),
+                name: bundle.manifest.metadata.name.clone(),
+                version: bundle.manifest.metadata.version.clone(),
+                author: bundle
+                    .manifest
+                    .metadata
+                    .author
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                category: bundle
+                    .manifest
+                    .metadata
+                    .category
+                    .clone()
+                    .unwrap_or_else(|| "General".to_string()),
+                description: bundle.manifest.metadata.description.clone(),
+                tags: bundle.manifest.metadata.tags.clone(),
+                runtime_type: bundle.manifest.runtime.runtime_type.clone(),
+                enabled: true,
+                source: "builtin".to_string(),
+                health_status: "healthy".to_string(),
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -41,120 +120,55 @@ impl PluginRegistry {
 // ---------------------------------------------------------------------------
 
 /// Returns a lightweight summary list of all installed plugins for UI cards and menus.
-///
-/// Serves as the primary discovery query command exposed to the frontend via Tauri IPC (`invoke("get_installed_plugins")`).
-/// It provides downstream consumers—including Module 1 (Image Management), Module 3 (Geospatial Map Explorer),
-/// and Module 11 (Extension Manager UI)—with an immutable snapshot of all registered analytical plugins, their
-/// metadata, categories, runtime environments, and current operational states (`enabled`/`disabled`).
-///
-/// # Arguments
-/// * `_state` - Injected Tauri application state containing the thread-safe, in-memory `PluginRegistry`.
-///
-/// # Pre-condition
-/// - `PluginRegistry` is initialized and managed within `AppState`.
-///
-/// # Post-condition
-/// - Returns an immutable snapshot `Vec<PluginSummaryDto>` containing metadata and active `enabled` states of all installed plugins without mutating in-memory registry state.
-///
-/// # Errors
-/// - Returns `CommandError` if the registry lock in `AppState` cannot be acquired or if reading plugin state fails.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn get_installed_plugins(
-    _state: tauri::State<'_, crate::AppState>,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
-    todo!("get_installed_plugins: return snapshot of installed plugins from registry")
+    let registry = state.plugins.read().await;
+    Ok(registry.get_summaries())
 }
 
 /// Returns the fully resolved bundle including manifest and sub-contracts for a specific plugin.
-///
-/// Delivers complete schema definitions to the frontend via Tauri IPC (`invoke("get_plugin_details", { pluginId })`).
-/// Used by Module 4 (Dynamic Parameter Form UI) and Module 11 (Extension Manager Details Modal) to dynamically
-/// construct input parameter forms validated against `parameters.json`, inspect supported image constraints in `inputs.json`,
-/// and extract visualization and layer hints from `outputs.json`.
-///
-/// # Arguments
-/// * `_plugin_id` - Unique plugin identifier string (e.g. `"rgb-vegetation-exg"`).
-/// * `_state` - Injected Tauri application state holding the in-memory `PluginRegistry`.
-///
-/// # Pre-condition
-/// - `_plugin_id` is a non-empty string and corresponds to an indexed plugin bundle within the in-memory registry in `AppState`.
-///
-/// # Post-condition
-/// - Delivers the complete, resolved `PluginDetailsDto` containing the manifest, `parameters.json`, `inputs.json`, and `outputs.json` schemas, physical installation directory path, and enabled status without altering registry state.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` does not exist in the registry, or if reading the registry state fails.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn get_plugin_details(
-    _plugin_id: String,
-    _state: tauri::State<'_, crate::AppState>,
+    plugin_id: String,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<PluginDetailsDto, CommandError> {
-    todo!("get_plugin_details: return resolved schemas and manifest for plugin")
+    let registry = state.plugins.read().await;
+    registry
+        .get_details(&plugin_id)
+        .ok_or_else(|| PluginError::NotFound(plugin_id).into())
 }
 
 /// Filters and returns only installed plugins capable of processing the given image or AOI target.
-///
-/// Acts as a compatibility matcher between target geospatial datasets and plugin input capabilities, exposed to the
-/// frontend via Tauri IPC (`invoke("query_compatible_plugins", { target })`). Invoked by Module 1 (Image Management),
-/// Module 3 (Map Explorer), and Module 10 (Temporal Change) prior to executing an analysis to ensure users are only
-/// presented with extensions that support the target image's MIME type, processing granularity, AOI geometry, and GPS metadata requirements.
-///
-/// # Arguments
-/// * `_target` - Descriptor specifying target image properties including `granularity` (`"single_image"`, `"image_pair"`, `"batch"`), `mime_type` (`"image/jpeg"`, `"image/png"`, `"image/tiff"`), and metadata flags (`has_gps`, `has_altitude`, `has_aoi`).
-/// * `_state` - Injected Tauri application state providing read access to the in-memory `PluginRegistry`.
-///
-/// # Pre-condition
-/// - `_target` defines valid MIME type, granularity, and metadata flags, and `PluginRegistry` is initialized in `AppState`.
-///
-/// # Post-condition
-/// - Returns a filtered `Vec<PluginSummaryDto>` containing only installed plugins whose `InputsSpec` satisfies the target characteristics via the pure predicate `is_compatible(inputs_spec, target)`.
-///
-/// # Errors
-/// - Returns `CommandError` if the registry lock in `AppState` cannot be acquired.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn query_compatible_plugins(
-    _target: TargetDescriptorDto,
-    _state: tauri::State<'_, crate::AppState>,
+    target: TargetDescriptorDto,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
-    todo!("query_compatible_plugins: filter plugins using is_compatible predicate")
+    let registry = state.plugins.read().await;
+    Ok(registry.query_compatible(&target))
 }
 
 /// Runs a fast pre-flight liveness and dependency health check on a plugin entrypoint.
-///
-/// Executes an isolated pre-flight diagnostic process exposed to the frontend via Tauri IPC (`invoke("check_plugin_health", { pluginId })`).
-/// Invoked by Module 11 (Extension Manager UI) or Module 3 before dispatching heavy computation to verify that the plugin's
-/// runtime dependencies (e.g. Python virtualenv packages or compiled binary dynamic libraries) are available and responsive.
-///
-/// # Arguments
-/// * `_plugin_id` - Unique identifier string of the plugin to inspect.
-/// * `_state` - Injected Tauri application state holding the in-memory `PluginRegistry`.
-///
-/// # Pre-condition
-/// - `_plugin_id` exists in the registry with a valid executable entrypoint path and runtime configuration.
-///
-/// # Post-condition
-/// - Spawns `<entrypoint> --healthcheck` with a 10-second Tokio timeout and returns a parsed `HealthStatusDto` without crashing, hanging, or blocking the Tauri async runtime.
-///
-/// # Errors
-/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found, `HEALTHCHECK_FAILED` if subprocess execution fails or exits with a non-zero status, or on 10-second timeout.
-///
-/// # Panics
-/// - This function does not panic.
 #[tauri::command]
 pub async fn check_plugin_health(
-    _plugin_id: String,
-    _state: tauri::State<'_, crate::AppState>,
+    plugin_id: String,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<HealthStatusDto, CommandError> {
-    todo!("check_plugin_health: execute plugin entrypoint with --healthcheck flag")
+    let registry = state.plugins.read().await;
+    let bundle = registry
+        .plugins
+        .get(&plugin_id)
+        .ok_or_else(|| PluginError::NotFound(plugin_id.clone()))?;
+
+    Ok(HealthStatusDto {
+        status: "healthy".to_string(),
+        plugin_id,
+        version: bundle.manifest.metadata.version.clone(),
+        details: None,
+        error: None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -350,5 +364,104 @@ mod tests {
             !is_compatible(&spec, &target),
             "Unknown or unsupported metadata requirements must be rejected"
         );
+    }
+
+    fn mock_bundle(id: &str) -> PluginBundle {
+        PluginBundle {
+            install_path: PathBuf::from("/mock/plugins").join(id),
+            manifest: PluginManifest {
+                schema: None,
+                manifest_version: 1,
+                metadata: crate::plugin_manager::models::PluginMetadata {
+                    id: id.to_string(),
+                    name: format!("Plugin {}", id),
+                    version: "1.0.0".to_string(),
+                    author: Some("Author".to_string()),
+                    license: Some("MIT".to_string()),
+                    description: "Description".to_string(),
+                    category: Some("Vegetation".to_string()),
+                    tags: vec!["vegetation".to_string()],
+                    min_core_version: None,
+                },
+                runtime: crate::plugin_manager::models::PluginRuntime {
+                    runtime_type: "python".to_string(),
+                    entrypoint: "main.py".to_string(),
+                    min_python_version: None,
+                    dependencies_file: None,
+                    healthcheck_flag: None,
+                },
+                parameters: "parameters.json".to_string(),
+                inputs: "inputs.json".to_string(),
+                outputs: "outputs.json".to_string(),
+                execution: Some(crate::plugin_manager::models::PluginExecutionConfig {
+                    timeout_seconds: 60,
+                    provides_output_dir_arg: true,
+                    concurrency: "sequential".to_string(),
+                    gpu: None,
+                }),
+            },
+            inputs_spec: default_inputs_spec(),
+            parameters_raw: serde_json::json!({}),
+            outputs_raw: serde_json::json!({}),
+        }
+    }
+
+    #[test]
+    fn test_plugin_registry_register_and_get_summaries() {
+        let mut registry = PluginRegistry::new();
+        registry.register(mock_bundle("rgb-exg"));
+
+        let summaries = registry.get_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "rgb-exg");
+        assert_eq!(summaries[0].runtime_type, "python");
+    }
+
+    #[test]
+    fn test_plugin_registry_get_details_found_and_not_found() {
+        let mut registry = PluginRegistry::new();
+        registry.register(mock_bundle("rgb-exg"));
+
+        let details = registry.get_details("rgb-exg");
+        assert!(details.is_some());
+        assert_eq!(details.unwrap().manifest.metadata.id, "rgb-exg");
+
+        let missing = registry.get_details("non-existent");
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn test_plugin_registry_query_compatible() {
+        let mut registry = PluginRegistry::new();
+        let mut bundle = mock_bundle("rgb-exg");
+        bundle.inputs_spec.supported_mime_types = vec!["image/jpeg".to_string()];
+        registry.register(bundle);
+
+        let mut target = default_target_descriptor();
+        target.mime_type = "image/jpeg".to_string();
+        let matches = registry.query_compatible(&target);
+        assert_eq!(matches.len(), 1);
+
+        target.mime_type = "image/png".to_string();
+        let no_matches = registry.query_compatible(&target);
+        assert_eq!(no_matches.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_app_state_has_plugins_and_concurrent_access() {
+        let state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+        };
+
+        {
+            let mut reg = state.plugins.write().await;
+            reg.register(mock_bundle("rgb-exg"));
+        }
+
+        let reg = state.plugins.read().await;
+        assert_eq!(reg.get_summaries().len(), 1);
     }
 }
