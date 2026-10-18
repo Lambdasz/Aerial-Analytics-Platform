@@ -716,12 +716,7 @@ pub fn update_project(
     let now = Utc::now();
     let rows = conn.execute(
         "UPDATE project SET name = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
-        params![
-            name,
-            description,
-            now.to_rfc3339(),
-            project_id.to_string()
-        ],
+        params![name, description, now.to_rfc3339(), project_id.to_string()],
     )?;
     if rows == 0 {
         return Err(SessionError::ProjectNotFound { project_id });
@@ -774,8 +769,7 @@ fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
     let updated_at: String = row.get(4)?;
 
     Ok(Project {
-        id: Uuid::parse_str(&id)
-            .map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
+        id: Uuid::parse_str(&id).map_err(|e| conversion_err(0, rusqlite::types::Type::Text, e))?,
         name,
         description,
         created_at: created_at

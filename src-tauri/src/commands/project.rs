@@ -61,10 +61,7 @@ pub fn update_project(
 
 /// Deletes a project and all its sessions.
 #[tauri::command]
-pub fn delete_project(
-    state: tauri::State<AppState>,
-    project_id: Uuid,
-) -> Result<(), CommandError> {
+pub fn delete_project(state: tauri::State<AppState>, project_id: Uuid) -> Result<(), CommandError> {
     let conn = state.db.lock().map_err(lock_err)?;
     Ok(flight_session::delete_project(&conn, project_id)?)
 }

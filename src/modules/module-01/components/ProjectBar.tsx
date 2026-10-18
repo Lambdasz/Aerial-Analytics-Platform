@@ -170,9 +170,7 @@ export const ProjectBar: FC<ProjectBarProps> = ({ selectedProject, onSelectProje
               onClick={() => void handleCreate()}
               disabled={!newName.trim() || createBusy}
             >
-              {createBusy ? (
-                <span className="m1-spinner-mini" aria-hidden="true" />
-              ) : null}
+              {createBusy ? <span className="m1-spinner-mini" aria-hidden="true" /> : null}
               Buat proyek
             </button>
           </div>
