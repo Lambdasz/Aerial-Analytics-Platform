@@ -283,6 +283,12 @@ pub struct TargetDescriptorDto {
     pub has_gps: bool,
     pub has_altitude: bool,
     pub has_aoi: bool,
+    #[serde(default = "default_true")]
+    pub has_resolution: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Fully resolved plugin bundle DTO delivered to frontend forms and modals.

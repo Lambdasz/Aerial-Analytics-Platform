@@ -190,6 +190,8 @@ pub fn is_compatible(spec: &InputsSpec, target: &TargetDescriptorDto) -> bool {
             target.has_gps
         } else if req.eq_ignore_ascii_case("altitude") {
             target.has_altitude
+        } else if req.eq_ignore_ascii_case("resolution") {
+            target.has_resolution
         } else {
             false
         }
@@ -253,6 +255,7 @@ mod tests {
             has_gps: true,
             has_altitude: true,
             has_aoi: false,
+            has_resolution: true,
         }
     }
 
@@ -367,6 +370,75 @@ mod tests {
         assert!(
             !is_compatible(&spec, &target),
             "Unknown or unsupported metadata requirements must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_is_compatible_resolution_metadata_enforced() {
+        let mut spec = default_inputs_spec();
+        spec.requires_metadata = vec!["resolution".to_string()];
+
+        let mut target = default_target_descriptor();
+        target.has_resolution = false;
+        assert!(
+            !is_compatible(&spec, &target),
+            "Plugin requiring resolution must reject target without resolution"
+        );
+
+        target.has_resolution = true;
+        assert!(
+            is_compatible(&spec, &target),
+            "Plugin requiring resolution must accept target with resolution"
+        );
+    }
+
+    #[test]
+    fn test_is_compatible_real_plugins_compatible() {
+        // Real plugins in plugins/ directory require ["resolution"] or ["resolution", "gps"]
+        let veg_spec = InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec![
+                "image/jpeg".to_string(),
+                "image/png".to_string(),
+                "image/tiff".to_string(),
+            ],
+            requires_metadata: vec!["resolution".to_string()],
+            optional_metadata: vec![
+                "gps".to_string(),
+                "altitude".to_string(),
+                "timestamp".to_string(),
+            ],
+            supports_aoi: true,
+            aoi_format: Some("geojson_polygon".to_string()),
+        };
+
+        let mut target = default_target_descriptor();
+        target.has_resolution = true;
+        target.has_gps = true;
+        target.has_altitude = true;
+        target.mime_type = "image/jpeg".to_string();
+
+        assert!(
+            is_compatible(&veg_spec, &target),
+            "Standard drone image target must be compatible with vegetation detection plugin"
+        );
+
+        let landcover_spec = InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec![
+                "image/jpeg".to_string(),
+                "image/png".to_string(),
+                "image/tiff".to_string(),
+            ],
+            requires_metadata: vec!["resolution".to_string(), "gps".to_string()],
+            optional_metadata: vec!["altitude".to_string(), "timestamp".to_string()],
+            supports_aoi: true,
+            aoi_format: Some("geojson_polygon".to_string()),
+        };
+
+        assert!(
+            is_compatible(&landcover_spec, &target),
+            "Target with resolution and GPS must be compatible with landcover classification plugin"
         );
     }
 
