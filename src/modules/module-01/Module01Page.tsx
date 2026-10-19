@@ -913,7 +913,7 @@ function Module01PageInner() {
       />
 
       <RenameSessionDialog
-        key={renameTarget?.id ?? "none"}
+        key={`rename-${renameTarget?.id ?? "none"}`}
         session={renameTarget}
         isOpen={renameTarget !== null}
         onClose={() => setRenameTarget(null)}
@@ -922,7 +922,7 @@ function Module01PageInner() {
       />
 
       <AssignImageDialog
-        key={assignTarget?.id ?? "none"}
+        key={`assign-${assignTarget?.id ?? "none"}`}
         session={assignTarget}
         isOpen={assignTarget !== null}
         onClose={() => setAssignTarget(null)}
