@@ -29,8 +29,8 @@ export const CreateSessionDialog: FC<CreateDialogProps> = ({ isOpen, onClose, on
     <Dialog
       isOpen={isOpen}
       onClose={handleClose}
+      onClosed={() => setName("")}
       title="Buat Sesi Baru"
-      icon="add"
       className="m1-custom-dialog"
       portalClassName="m1-dialog-portal"
       canEscapeKeyClose={!busy}
@@ -98,7 +98,6 @@ export const RenameSessionDialog: FC<RenameDialogProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Ganti Nama Sesi"
-      icon="edit"
       className="m1-custom-dialog"
       portalClassName="m1-dialog-portal"
       canEscapeKeyClose={!busy}
@@ -165,7 +164,6 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Tambah Gambar ke Sesi"
-      icon="media"
       className="m1-custom-dialog"
       portalClassName="m1-dialog-portal"
       canEscapeKeyClose={!busy}
@@ -173,6 +171,10 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
     >
       <form onSubmit={handleSubmit}>
         <div className="m1-dialog-content">
+          <FormGroup label="Nama Sesi Target" labelFor="m1-assign-session-name">
+            <InputGroup id="m1-assign-session-name" value={session?.name ?? ""} readOnly disabled />
+          </FormGroup>
+
           <FormGroup label="ID Sesi Target" labelFor="m1-assign-session-id">
             <InputGroup id="m1-assign-session-id" value={session?.id ?? ""} readOnly disabled />
           </FormGroup>

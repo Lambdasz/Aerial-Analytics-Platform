@@ -1,25 +1,34 @@
 import { useState, useRef, useEffect, type FC } from "react";
 import type { Session } from "../sessionCommands";
-import { shortId, formatSessionDateRange, getSessionProgressInfo } from "../sessionStats";
+import {
+  shortId,
+  formatSingleDate,
+  formatTimestamp,
+  getSessionStage,
+  hasImageRange,
+  type SessionStage,
+} from "../sessionStats";
+
+const STEP_LABELS = ["Sesi dibuat", "Citra ditambahkan", "Selesai & diarsipkan"] as const;
 
 interface SessionCardProps {
   session: Session;
-  isHighlighted: boolean;
   onRename: (session: Session) => void;
   onToggleStatus: (session: Session) => void;
   onAssignImage: (session: Session) => void;
   onDelete: (session: Session) => void;
+  onOpenDetail: (session: Session) => void;
   onCopyId: (id: string) => void;
   busy: boolean;
 }
 
 export const SessionCard: FC<SessionCardProps> = ({
   session,
-  isHighlighted,
   onRename,
   onToggleStatus,
   onAssignImage,
   onDelete,
+  onOpenDetail,
   onCopyId,
   busy,
 }) => {
@@ -41,13 +50,14 @@ export const SessionCard: FC<SessionCardProps> = ({
     };
   }, [isMenuOpen]);
 
-  const formattedDateRange = formatSessionDateRange(session.dateStart, session.dateEnd);
-  const progressInfo = getSessionProgressInfo(session);
+  const stage = getSessionStage(session);
+  const hasImages = hasImageRange(session);
+  const isActive = session.status === "active";
 
   return (
     <article
       id={`m1-session-card-${session.id}`}
-      className={`m1-session-card ${isHighlighted ? "m1-session-card--highlighted" : ""}`}
+      className={`m1-session-card ${isActive ? "m1-session-card--active" : ""}`}
       style={{
         zIndex: isMenuOpen ? 50 : 1,
         position: "relative",
@@ -59,12 +69,10 @@ export const SessionCard: FC<SessionCardProps> = ({
         <div className="m1-session-card__header">
           <span
             className={`m1-session-card__tag ${
-              session.status === "active"
-                ? "m1-session-card__tag--active"
-                : "m1-session-card__tag--archived"
+              isActive ? "m1-session-card__tag--active" : "m1-session-card__tag--archived"
             }`}
           >
-            {session.status === "active" ? "Aktif" : "Diarsipkan"}
+            {isActive ? "Aktif" : "Diarsipkan"}
           </span>
 
           <div className="m1-card-menu-wrapper" ref={menuRef}>
@@ -245,47 +253,129 @@ export const SessionCard: FC<SessionCardProps> = ({
           </button>
         </div>
 
-        {/* Tanggal / Durasi */}
-        <p className="m1-session-card__date-range m1-tabular">
-          {formattedDateRange || "Waktu belum tercatat"}
-        </p>
+        {/* Facts */}
+        <dl className="m1-session-card__facts m1-tabular">
+          <div className="m1-session-card__fact">
+            <dt>Dibuat pada</dt>
+            <dd>{formatTimestamp(session.createdAt, true)}</dd>
+          </div>
+          <div className="m1-session-card__fact">
+            <dt>Diperbarui pada</dt>
+            <dd>{formatTimestamp(session.updatedAt, true)}</dd>
+          </div>
+          <div className="m1-session-card__fact">
+            <dt>Tanggal mulai</dt>
+            {hasImages ? (
+              <dd>{formatSingleDate(session.dateStart, true)}</dd>
+            ) : (
+              <dd className="m1-session-card__fact-empty">Belum ada citra</dd>
+            )}
+          </div>
+          <div className="m1-session-card__fact">
+            <dt>Tanggal selesai</dt>
+            {hasImages ? (
+              <dd>{formatSingleDate(session.dateEnd, true)}</dd>
+            ) : (
+              <dd className="m1-session-card__fact-empty">Belum ada citra</dd>
+            )}
+          </div>
+        </dl>
 
-        {/* Progress Section (TaskFlow Dashboard Style) */}
-        <div className="m1-session-card__progress-section">
-          <div className="m1-session-card__progress-label">
-            <span className="m1-progress-title">Progress</span>
-            <span
-              className={`m1-progress-percent m1-tabular ${
-                session.status === "archived" ? "m1-progress-percent--archived" : ""
-              }`}
+        {/* Image strip */}
+        <div className="m1-session-card__images">
+          <span className="m1-session-card__images-label">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
             >
-              {progressInfo.percent}%
-            </span>
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <circle cx="9" cy="10" r="1.6" />
+              <path d="m21 16-5-5-8 8" />
+            </svg>
+            <span>Citra</span>
+          </span>
+          <span className="m1-session-card__images-count m1-tabular">
+            {hasImages ? "Terhubung" : "0 berkas"}
+          </span>
+        </div>
+
+        {/* Stepper: Tahap sesi */}
+        <div className="m1-session-card__stepper">
+          <div className="m1-session-card__stepper-head">
+            <span>Tahap sesi</span>
+            <span className="m1-tabular">{stage} dari 3</span>
           </div>
-          <div
-            className="m1-progress-track"
-            role="progressbar"
-            aria-valuenow={progressInfo.percent}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label="Progres kesiapan sesi"
-          >
-            <div
-              className={`m1-progress-fill ${
-                session.status === "archived" ? "m1-progress-fill--archived" : ""
-              }`}
-              style={{ width: `${progressInfo.percent}%` }}
-            />
-          </div>
-          <div className="m1-progress-meta">
-            <span className="m1-progress-meta__text">{progressInfo.label}</span>
-          </div>
+          <ol className="m1-session-card__steps" aria-label="Tahap sesi">
+            {STEP_LABELS.map((label, index) => {
+              const step = (index + 1) as SessionStage;
+              // An archived session has finished every step, including the last one.
+              const state =
+                step < stage || (step === stage && session.status === "archived")
+                  ? "done"
+                  : step === stage
+                    ? "current"
+                    : "upcoming";
+              return (
+                <li
+                  key={label}
+                  className={`m1-session-card__step m1-session-card__step--${state}`}
+                  aria-current={state === "current" ? "step" : undefined}
+                >
+                  <span className="m1-session-card__step-dot">
+                    {state === "done" && (
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        role="img"
+                        aria-label="Selesai"
+                      >
+                        <path d="m5 12 5 5L20 7" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="m1-session-card__step-label">{label}</span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
       </div>
 
-      {/* Card Footer: Info gambar + Tombol tambah */}
+      {/* Footer actions */}
       <footer className="m1-session-card__footer">
-        <span className="m1-session-card__images-count m1-tabular">Foto &amp; telemetri</span>
+        <button
+          type="button"
+          className="m1-session-card__detail-btn"
+          onClick={() => onOpenDetail(session)}
+        >
+          <span>Lihat detail</span>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M5 12h14m0 0-6-6m6 6-6 6" />
+          </svg>
+        </button>
 
         <button
           type="button"
@@ -294,20 +384,20 @@ export const SessionCard: FC<SessionCardProps> = ({
           disabled={busy}
         >
           <svg
-            width="13"
-            height="13"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2.5"
+            strokeWidth="2.2"
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden="true"
           >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
+            <path d="M12 15V4m0 0L8 8m4-4 4 4" />
+            <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
           </svg>
-          <span>Tambah gambar</span>
+          <span>Tambah citra</span>
         </button>
       </footer>
     </article>

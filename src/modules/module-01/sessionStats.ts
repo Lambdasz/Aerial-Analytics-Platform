@@ -10,8 +10,13 @@ export interface SessionStats {
   periodLabel: string;
   durationLabel: string;
   latestSession: Session | null;
-  latestSessionDateLabel: string;
+  /** Date part of the latest activity, e.g. "19 Okt 2026" (or "—"). */
+  latestActivityDateLabel: string;
+  /** Time part of the latest activity, e.g. "09.55" (or "" when none). */
+  latestActivityTimeLabel: string;
 }
+
+export type SessionStage = 1 | 2 | 3;
 
 export interface TimelinePosition {
   leftPercent: number;
@@ -63,6 +68,16 @@ export function parseCameraDate(isoStr: string): Date {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
+/**
+ * Parses a timezone-aware backend timestamp (`createdAt`/`updatedAt`, UTC with a `Z` suffix) into
+ * the user's local time. Unlike `parseCameraDate`, which deliberately ignores any offset because
+ * camera times are naive, this honours the offset.
+ */
+export function parseTimestamp(isoStr: string): Date {
+  const parsed = new Date(isoStr.replace(/(\.\d{3})\d+/, "$1"));
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 const idDateFormatter = new Intl.DateTimeFormat("id-ID", {
   day: "numeric",
   month: "short",
@@ -74,6 +89,13 @@ const idTimeFormatter = new Intl.DateTimeFormat("id-ID", {
   minute: "2-digit",
   hourCycle: "h23",
 });
+
+/** Format a timezone-aware backend timestamp in the user's local time. */
+export function formatTimestamp(isoStr: string, includeTime = false): string {
+  const d = parseTimestamp(isoStr);
+  const datePart = idDateFormatter.format(d);
+  return includeTime ? `${datePart}, ${idTimeFormatter.format(d).replace(":", ".")}` : datePart;
+}
 
 /** Format a single camera date into Indonesian readable format */
 export function formatSingleDate(isoStr: string, includeTime = false): string {
@@ -88,34 +110,40 @@ export function formatSingleDate(isoStr: string, includeTime = false): string {
   }
 }
 
-/** Format session start and end into a readable Indonesian date range */
-export function formatSessionDateRange(startIso: string, endIso: string): string {
+/** Format the time part of a backend timestamp (local time) as "HH.mm" (Indonesian style). */
+export function formatSingleTime(isoStr: string): string {
   try {
-    const start = parseCameraDate(startIso);
-    const end = parseCameraDate(endIso);
-
-    const isSameDay =
-      start.getFullYear() === end.getFullYear() &&
-      start.getMonth() === end.getMonth() &&
-      start.getDate() === end.getDate();
-
-    const isSameTime = start.getTime() === end.getTime();
-
-    if (isSameTime) {
-      return formatSingleDate(startIso, true);
-    }
-
-    if (isSameDay) {
-      const datePart = idDateFormatter.format(start);
-      const startTime = idTimeFormatter.format(start).replace(":", ".");
-      const endTime = idTimeFormatter.format(end).replace(":", ".");
-      return `${datePart}, ${startTime} – ${endTime}`;
-    }
-
-    return `${idDateFormatter.format(start)} – ${idDateFormatter.format(end)}`;
+    return idTimeFormatter.format(parseTimestamp(isoStr)).replace(":", ".");
   } catch {
-    return `${startIso} – ${endIso}`;
+    return "";
   }
+}
+
+/**
+ * Human-readable age of a timestamp relative to `nowMs`, e.g. "Hari ini" or "7 hari yang lalu".
+ * Takes `nowMs` explicitly so the function stays pure.
+ */
+export function formatRelativeDays(isoStr: string, nowMs: number): string {
+  const DAY_MS = 1000 * 60 * 60 * 24;
+  const then = parseTimestamp(isoStr);
+  if (Number.isNaN(then.getTime())) return "—";
+  // Compare local calendar days, not elapsed 24h blocks: 23:00 yesterday is not "today".
+  const startOfDay = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.max(0, Math.round((startOfDay(new Date(nowMs)) - startOfDay(then)) / DAY_MS));
+  return days === 0 ? "Hari ini" : `${days} hari yang lalu`;
+}
+
+/** Calendar-day span label ("N hari") and date label for an inclusive [min, max] epoch range. */
+function describeRange(minEpoch: number, maxEpoch: number) {
+  const minDate = new Date(minEpoch);
+  const maxDate = new Date(maxEpoch);
+  const dayStart = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = Math.round((dayStart(maxDate) - dayStart(minDate)) / (1000 * 60 * 60 * 24)) + 1;
+  const periodLabel =
+    days === 1
+      ? idDateFormatter.format(minDate)
+      : `${idDateFormatter.format(minDate)} – ${idDateFormatter.format(maxDate)}`;
+  return { periodLabel, durationLabel: `${days} hari` };
 }
 
 /**
@@ -134,7 +162,8 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
       periodLabel: "—",
       durationLabel: "Belum ada sesi",
       latestSession: null,
-      latestSessionDateLabel: "—",
+      latestActivityDateLabel: "—",
+      latestActivityTimeLabel: "",
     };
   }
 
@@ -144,6 +173,7 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
   let overallMaxEpoch = Number.NEGATIVE_INFINITY;
   let latestSession: Session | null = null;
   let latestEndEpoch = Number.NEGATIVE_INFINITY;
+  let hasImageData = false;
 
   for (const session of sessions) {
     if (session.status === "active") {
@@ -152,63 +182,40 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
       archivedCount += 1;
     }
 
-    const startEpoch = parseCameraDate(session.dateStart).getTime();
-    const endEpoch = parseCameraDate(session.dateEnd).getTime();
+    const activityEpoch = parseTimestamp(session.updatedAt).getTime();
 
-    if (startEpoch < overallMinEpoch) {
-      overallMinEpoch = startEpoch;
-    }
-    if (endEpoch > overallMaxEpoch) {
-      overallMaxEpoch = endEpoch;
+    // The shooting range only reflects sessions with connected images.
+    if (hasImageRange(session)) {
+      hasImageData = true;
+      overallMinEpoch = Math.min(overallMinEpoch, parseCameraDate(session.dateStart).getTime());
+      overallMaxEpoch = Math.max(overallMaxEpoch, parseCameraDate(session.dateEnd).getTime());
     }
 
-    if (endEpoch > latestEndEpoch) {
-      latestEndEpoch = endEpoch;
+    if (activityEpoch > latestEndEpoch) {
+      latestEndEpoch = activityEpoch;
       latestSession = session;
     }
   }
 
-  // Ensure valid range even if dates were invalid
-  if (!Number.isFinite(overallMinEpoch) || !Number.isFinite(overallMaxEpoch)) {
-    const now = Date.now();
-    overallMinEpoch = now;
-    overallMaxEpoch = now;
-  }
+  const { periodLabel, durationLabel } = hasImageData
+    ? describeRange(overallMinEpoch, overallMaxEpoch)
+    : { periodLabel: "Belum ada citra", durationLabel: "—" };
 
-  const diffDays = Math.max(
-    1,
-    Math.round((overallMaxEpoch - overallMinEpoch) / (1000 * 60 * 60 * 24)) + 1,
-  );
-
-  const minDate = new Date(overallMinEpoch);
-  const maxDate = new Date(overallMaxEpoch);
-
-  const isSameDay =
-    minDate.getFullYear() === maxDate.getFullYear() &&
-    minDate.getMonth() === maxDate.getMonth() &&
-    minDate.getDate() === maxDate.getDate();
-
-  const periodLabel = isSameDay
-    ? idDateFormatter.format(minDate)
-    : `${idDateFormatter.format(minDate)} – ${idDateFormatter.format(maxDate)}`;
-
-  const durationLabel = `${diffDays} hari`;
-
-  const latestSessionDateLabel = latestSession
-    ? formatSingleDate(latestSession.dateEnd, true)
-    : "—";
+  const latestActivityDateLabel = latestSession ? formatTimestamp(latestSession.updatedAt) : "—";
+  const latestActivityTimeLabel = latestSession ? formatSingleTime(latestSession.updatedAt) : "";
 
   return {
     totalSessions: sessions.length,
     activeCount,
     archivedCount,
     totalImages: undefined, // Backend has no image list command yet
-    overallMinEpoch,
-    overallMaxEpoch,
+    overallMinEpoch: hasImageData ? overallMinEpoch : 0,
+    overallMaxEpoch: hasImageData ? overallMaxEpoch : 0,
     periodLabel,
     durationLabel,
     latestSession,
-    latestSessionDateLabel,
+    latestActivityDateLabel,
+    latestActivityTimeLabel,
   };
 }
 
@@ -246,40 +253,34 @@ export function calculateTimelinePosition(
   return { leftPercent, widthPercent };
 }
 
-export interface SessionProgressInfo {
-  percent: number;
-  label: string;
+/**
+ * True when the session has connected images. The Session type has no image count, so this infers
+ * it from the backend invariant: an empty session has `dateStart = dateEnd = createdAt` (naive UTC).
+ * Any other range, including a single image or images sharing one timestamp, means images exist.
+ */
+export function hasImageRange(session: Session): boolean {
+  const start = parseCameraDate(session.dateStart);
+  const end = parseCameraDate(session.dateEnd);
+  const created = parseTimestamp(session.createdAt).getTime();
+  const startAsUtc = Date.UTC(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate(),
+    start.getHours(),
+    start.getMinutes(),
+    start.getSeconds(),
+  );
+  const isPlaceholderRange =
+    start.getTime() === end.getTime() && Math.abs(startAsUtc - created) < 2000;
+  return !isPlaceholderRange;
 }
 
 /**
- * Derives the workflow readiness progress and status message for a session.
- * - Freshly created (no distinct image timestamps): 20% ("Sesi dibuat · Menunggu citra")
- * - Connected images (distinct date range detected): 70% ("Citra terhubung · Siap dianalisis")
- * - Archived session: 100% ("Selesai · Sesi diarsipkan")
+ * Lifecycle step shown in the session card stepper:
+ * 1 = Sesi dibuat, 2 = Citra ditambahkan, 3 = Selesai & diarsipkan (archived).
  */
-export function getSessionProgressInfo(session: Session): SessionProgressInfo {
-  if (session.status === "archived") {
-    return {
-      percent: 100,
-      label: "Selesai | Sesi diarsipkan",
-    };
-  }
-
-  const start = parseCameraDate(session.dateStart).getTime();
-  const end = parseCameraDate(session.dateEnd).getTime();
-
-  // Jika waktu mulai dan akhir berbeda, berarti ada rentang foto dengan timestamp EXIF riil
-  const hasImageRange = !Number.isNaN(start) && !Number.isNaN(end) && start !== end;
-
-  if (hasImageRange) {
-    return {
-      percent: 70,
-      label: "Citra terhubung · Siap dianalisis",
-    };
-  }
-
-  return {
-    percent: 20,
-    label: "Sesi dibuat | Menunggu citra",
-  };
+export function getSessionStage(session: Session): SessionStage {
+  if (session.status === "archived") return 3;
+  // An active session is past "Sesi dibuat" by definition: it waits on images (2) or on archiving (3).
+  return hasImageRange(session) ? 3 : 2;
 }

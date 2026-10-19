@@ -28,8 +28,9 @@ import { type Project, countImagesByProject } from "./projectCommands";
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
 import { SummaryBoxes } from "./components/SummaryBoxes";
-import { ProjectBar } from "./components/ProjectBar";
+import { ProjectPicker } from "./components/ProjectPicker";
 import { SessionCard } from "./components/SessionCard";
+import { SessionDetail } from "./components/SessionDetail";
 import {
   CreateSessionDialog,
   RenameSessionDialog,
@@ -43,7 +44,9 @@ const PAGE_SIZE = 9;
 const STORAGE_KEY = "m1_last_project_id";
 
 type StatusFilter = "all" | "active" | "archived";
+const DEFAULT_STATUS_FILTER: StatusFilter = "active";
 type SortOrder = "newest" | "oldest" | "name";
+type View = { kind: "list" } | { kind: "detail"; sessionId: string };
 
 function Module01PageInner() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(() => {
@@ -80,11 +83,11 @@ function Module01PageInner() {
 
   // Search, filter, and sorting
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [isSortOpen, setIsSortOpen] = useState(false);
   const sortContainerRef = useRef<HTMLDivElement | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [requestedPage, setCurrentPage] = useState(1);
 
   // Close sort dropdown when clicked outside
   useEffect(() => {
@@ -102,8 +105,8 @@ function Module01PageInner() {
     };
   }, [isSortOpen]);
 
-  // Interaction: Card highlight
-  const [highlightedSessionId, setHighlightedSessionId] = useState<string | null>(null);
+  // In-page navigation (no router): list screen or a session's detail screen
+  const [view, setView] = useState<View>({ kind: "list" });
 
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -151,6 +154,12 @@ function Module01PageInner() {
     return commandErrorMessage(err);
   }, []);
 
+  // Latest selected project, so a slow refetch for a previous project can be discarded.
+  const projectIdRef = useRef(projectId);
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
+
   // Load sessions from backend
   const fetchSessions = useCallback(
     async (pid: string, isInitial = false) => {
@@ -165,16 +174,17 @@ function Module01PageInner() {
 
       try {
         const result = await getSessionsByProject(pid.trim());
+        if (projectIdRef.current !== pid) return;
         setSessions(result);
         // Also fetch image count
         try {
           const count = await countImagesByProject(pid.trim());
-          setTotalImages(count);
+          if (projectIdRef.current === pid) setTotalImages(count);
         } catch {
-          setTotalImages(undefined);
+          if (projectIdRef.current === pid) setTotalImages(undefined);
         }
       } catch (err) {
-        setError(formatError(err));
+        if (projectIdRef.current === pid) setError(formatError(err));
       } finally {
         setLoading(false);
         setBusy(false);
@@ -222,18 +232,44 @@ function Module01PageInner() {
   }, [projectId, formatError]);
 
   // Handle Project selection
-  const handleSelectProject = useCallback((project: Project) => {
-    setSelectedProject(project);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-    } catch {
-      // Ignore localStorage errors
-    }
-    setLoading(true);
-    setSearchQuery("");
-    setStatusFilter("all");
-    setCurrentPage(1);
-  }, []);
+  const handleSelectProject = useCallback(
+    (project: Project) => {
+      setSelectedProject(project);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+      } catch {
+        // Ignore localStorage errors
+      }
+      // Re-picking the open project does not re-run the load effect, so don't wait on it.
+      setLoading(project.id !== projectId);
+      setSearchQuery("");
+      setStatusFilter(DEFAULT_STATUS_FILTER);
+      setCurrentPage(1);
+      setView({ kind: "list" });
+    },
+    [projectId],
+  );
+
+  // Project deleted from the picker: clear the selection if it was the active project
+  const handleProjectDeleted = useCallback(
+    (deletedId: string) => {
+      if (selectedProject?.id !== deletedId) return;
+      setSelectedProject(null);
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // Ignore localStorage errors
+      }
+      setSessions([]);
+      setTotalImages(undefined);
+      setLoading(false);
+      setSearchQuery("");
+      setStatusFilter(DEFAULT_STATUS_FILTER);
+      setCurrentPage(1);
+      setView({ kind: "list" });
+    },
+    [selectedProject],
+  );
 
   // Manual load sessions button
   const handleLoadSessions = () => {
@@ -390,43 +426,21 @@ function Module01PageInner() {
     return result;
   }, [sessions, searchQuery, statusFilter, sortOrder]);
 
+  // Detail view: derived from `view`, so it falls back to the list when the session is gone
+  const detailSession =
+    view.kind === "detail" ? (sessions.find((s) => s.id === view.sessionId) ?? null) : null;
+
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredSessions.length / PAGE_SIZE));
+  // The list can shrink under the requested page (archive, delete, refetch): clamp, don't go blank.
+  const currentPage = Math.min(requestedPage, totalPages);
   const paginatedSessions = useMemo(() => {
     const startIdx = (currentPage - 1) * PAGE_SIZE;
     return filteredSessions.slice(startIdx, startIdx + PAGE_SIZE);
   }, [filteredSessions, currentPage]);
 
-  // Focus & highlight latest session card
-  const handleFocusLatestSession = (sessionId: string) => {
-    // Ensure session is visible under filter
-    setStatusFilter("all");
-    setSearchQuery("");
-
-    // Find which page contains this session
-    const index = sessions.findIndex((s) => s.id === sessionId);
-    if (index !== -1) {
-      const page = Math.floor(index / PAGE_SIZE) + 1;
-      setCurrentPage(page);
-    }
-
-    setHighlightedSessionId(sessionId);
-
-    // Scroll into view
-    setTimeout(() => {
-      const el = document.getElementById(`m1-session-card-${sessionId}`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 100);
-
-    setTimeout(() => {
-      setHighlightedSessionId(null);
-    }, 2500);
-  };
-
   return (
-    <main className="m1-page" aria-labelledby="m1-page-heading">
+    <main className="m1-page" aria-labelledby={detailSession ? undefined : "m1-page-heading"}>
       {/* Pure React Toast notification for feedback */}
       {toastMessage && (
         <div className="m1-custom-toast" role="status" aria-live="polite">
@@ -452,56 +466,9 @@ function Module01PageInner() {
         {busy ? "Sedang memproses…" : ""}
       </div>
 
-      {/* ── 1. Page Header (White Rounded Panel) ──────────────────── */}
-      <header className="m1-white-panel m1-header-panel">
-        <div className="m1-header__info">
-          <div className="m1-header__tag-row">
-            <span className="m1-header__tag">Modul 1</span>
-          </div>
-          <h1 id="m1-page-heading" className="m1-header__title">
-            Sesi Penerbangan
-          </h1>
-          <p className="m1-header__subtitle">
-            Kelola sesi pengambilan data citra udara drone dan pengelompokan gambar dalam proyek
-            pemetaan.
-          </p>
-        </div>
-
-        <div className="m1-header__actions">
-          <button
-            type="button"
-            className="m1-primary-pill-btn"
-            onClick={() => setIsCreateOpen(true)}
-            disabled={!selectedProject || busy}
-            title={!selectedProject ? "Pilih proyek terlebih dahulu" : "Buat sesi baru"}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            <span>Sesi baru</span>
-          </button>
-        </div>
-      </header>
-
-      {/* ── Error Banner ───────────────────────────────────────────── */}
+      {/* Error banner: shared by the list and detail views */}
       {error && (
-        <Callout
-          intent={Intent.DANGER}
-          icon="error"
-          title="Galat"
-          style={{ marginBottom: 20, borderRadius: 8 }}
-        >
+        <Callout intent={Intent.DANGER} icon="error" title="Galat" style={{ borderRadius: 8 }}>
           <div
             style={{
               display: "flex",
@@ -516,393 +483,484 @@ function Module01PageInner() {
         </Callout>
       )}
 
-      {/* ── 2. Empat Card Berwarna di dalam Kontainer Putih ──────── */}
-      <section className="m1-white-panel m1-summary-panel">
-        <SummaryBoxes stats={stats} onFocusLatestSession={handleFocusLatestSession} />
-      </section>
-
-      {/* ── 3. Proyek Pemetaan (White Rounded Panel) ───────────── */}
-      <section className="m1-white-panel m1-project-panel">
-        <ProjectBar
-          selectedProject={selectedProject}
-          onSelectProject={handleSelectProject}
-          busy={busy || loading}
+      {detailSession ? (
+        <SessionDetail
+          key={detailSession.id}
+          session={detailSession}
+          projectName={selectedProject?.name ?? ""}
+          busy={busy}
+          onBack={() => setView({ kind: "list" })}
+          onToggleStatus={(s) => {
+            void handleToggleStatus(s);
+          }}
+          onAssignImage={(s) => setAssignTarget(s)}
+          onCopyId={(id) => {
+            void handleCopyId(id);
+          }}
         />
-      </section>
+      ) : (
+        <>
+          {/* ── 1. Page Header (White Rounded Panel) ──────────────────── */}
+          <header className="m1-white-panel m1-header-panel">
+            <div className="m1-header__info">
+              <div className="m1-header__tag-row">
+                <span className="m1-header__tag">Modul 1</span>
+              </div>
+              <h1 id="m1-page-heading" className="m1-header__title">
+                Sesi Penerbangan
+              </h1>
+              <p className="m1-header__subtitle">
+                Kelola sesi pengambilan data citra udara drone dan pengelompokan gambar dalam proyek
+                pemetaan.
+              </p>
+            </div>
 
-      {/* ── 4. Kontainer Putih Besar: Semua Sesi + Grid Card + Pagination ── */}
-      <section className="m1-white-panel m1-sessions-container">
-        {/* Filter, Search & Controls Bar */}
-        <div className="m1-controls-bar" aria-label="Kontrol filter dan pencarian">
-          <div className="m1-controls-bar__left">
-            <h2 className="m1-controls-bar__heading">
-              Daftar Sesi
-              {sessions.length > 0 && (
-                <span className="m1-controls-bar__badge m1-tabular">
-                  {filteredSessions.length}{" "}
-                  {filteredSessions.length !== sessions.length ? `dari ${sessions.length}` : ""}
-                </span>
-              )}
-            </h2>
-          </div>
-
-          <div className="m1-controls-bar__right">
-            {/* Professional Search Bar */}
-            <div className="m1-search-box">
-              <svg
-                className="m1-search-icon"
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="text"
-                className="m1-search-input"
-                placeholder="Cari sesi penerbangan…"
-                value={searchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                disabled={loading || sessions.length === 0}
-                aria-label="Cari nama sesi penerbangan"
+            <div className="m1-header__actions">
+              <ProjectPicker
+                selectedProject={selectedProject}
+                onSelect={handleSelectProject}
+                onProjectDeleted={handleProjectDeleted}
+                onError={setError}
+                onToast={showToast}
               />
-              {searchQuery && (
-                <button
-                  type="button"
-                  className="m1-search-clear"
-                  onClick={() => handleSearchChange("")}
-                  title="Hapus pencarian"
-                  aria-label="Hapus teks pencarian"
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              )}
-            </div>
-
-            {/* Professional Capsule Status Filters (tanpa titik kecil) */}
-            <div className="m1-filter-capsule" role="tablist" aria-label="Filter status sesi">
               <button
                 type="button"
-                role="tab"
-                aria-selected={statusFilter === "all"}
-                className={`m1-filter-pill ${statusFilter === "all" ? "m1-filter-pill--active" : ""}`}
-                onClick={() => handleStatusFilterChange("all")}
-                disabled={loading || sessions.length === 0}
-              >
-                <span>Semua</span>
-                <span className="m1-filter-pill__count m1-tabular">{sessions.length}</span>
-              </button>
-
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter === "active"}
-                className={`m1-filter-pill ${statusFilter === "active" ? "m1-filter-pill--active" : ""}`}
-                onClick={() => handleStatusFilterChange("active")}
-                disabled={loading || sessions.length === 0}
-              >
-                <span>Aktif</span>
-                <span className="m1-filter-pill__count m1-tabular">{stats.activeCount}</span>
-              </button>
-
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter === "archived"}
-                className={`m1-filter-pill ${statusFilter === "archived" ? "m1-filter-pill--active" : ""}`}
-                onClick={() => handleStatusFilterChange("archived")}
-                disabled={loading || sessions.length === 0}
-              >
-                <span>Diarsipkan</span>
-                <span className="m1-filter-pill__count m1-tabular">{stats.archivedCount}</span>
-              </button>
-            </div>
-
-            {/* Professional Sort Dropdown (Zero-jump pure dropdown) */}
-            <div className="m1-sort-container" ref={sortContainerRef}>
-              <button
-                type="button"
-                className={`m1-sort-btn ${isSortOpen ? "m1-sort-btn--active" : ""}`}
-                onClick={() => setIsSortOpen((prev) => !prev)}
-                disabled={loading || sessions.length === 0}
-                title="Urutkan daftar sesi"
-                aria-label="Urutkan daftar sesi"
-                aria-haspopup="true"
-                aria-expanded={isSortOpen}
+                className="m1-primary-pill-btn"
+                onClick={() => setIsCreateOpen(true)}
+                disabled={!selectedProject || busy}
+                title={!selectedProject ? "Pilih proyek terlebih dahulu" : "Buat sesi baru"}
               >
                 <svg
-                  className="m1-sort-icon"
                   width="14"
                   height="14"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth="2.2"
+                  strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <line x1="4" y1="6" x2="20" y2="6" />
-                  <line x1="7" y1="12" x2="17" y2="12" />
-                  <line x1="10" y1="18" x2="14" y2="18" />
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                <span className="m1-sort-label">
-                  {sortOrder === "newest"
-                    ? "Terbaru"
-                    : sortOrder === "oldest"
-                      ? "Terlama"
-                      : "Nama A–Z"}
-                </span>
-                <svg
-                  className={`m1-sort-chevron ${isSortOpen ? "m1-sort-chevron--open" : ""}`}
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
+                <span>Sesi baru</span>
               </button>
-
-              {isSortOpen && (
-                <div className="m1-sort-dropdown-menu" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`m1-sort-item ${sortOrder === "newest" ? "m1-sort-item--active" : ""}`}
-                    onClick={() => {
-                      handleSortOrderChange("newest");
-                      setIsSortOpen(false);
-                    }}
-                  >
-                    <span className="m1-sort-check">
-                      {sortOrder === "newest" ? (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : null}
-                    </span>
-                    <span>Terbaru</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`m1-sort-item ${sortOrder === "oldest" ? "m1-sort-item--active" : ""}`}
-                    onClick={() => {
-                      handleSortOrderChange("oldest");
-                      setIsSortOpen(false);
-                    }}
-                  >
-                    <span className="m1-sort-check">
-                      {sortOrder === "oldest" ? (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : null}
-                    </span>
-                    <span>Terlama</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`m1-sort-item ${sortOrder === "name" ? "m1-sort-item--active" : ""}`}
-                    onClick={() => {
-                      handleSortOrderChange("name");
-                      setIsSortOpen(false);
-                    }}
-                  >
-                    <span className="m1-sort-check">
-                      {sortOrder === "name" ? (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : null}
-                    </span>
-                    <span>Nama A–Z</span>
-                  </button>
-                </div>
-              )}
             </div>
-          </div>
-        </div>
+          </header>
 
-        {/* ── Main Content / Cards List / States ─────────────────────── */}
-        {loading ? (
-          <div className="m1-session-grid" aria-busy="true">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="m1-skeleton-card" />
-            ))}
-          </div>
-        ) : !selectedProject ? (
-          <div className="m1-state-container">
-            <NonIdealState
-              icon="folder-open"
-              title="Pilih atau Buat Proyek"
-              description="Pilih proyek dari daftar di atas, atau buat proyek baru untuk mulai mengelola sesi penerbangan."
-            />
-          </div>
-        ) : sessions.length === 0 ? (
-          <div className="m1-state-container">
-            <NonIdealState
-              icon="inbox"
-              title="Belum ada sesi penerbangan"
-              description="Proyek ini belum memiliki sesi. Buat sesi baru untuk mulai mengorganisasi penerbangan drone."
-              action={
-                <Button
-                  intent={Intent.PRIMARY}
-                  icon="plus"
-                  text="Sesi baru"
-                  onClick={() => setIsCreateOpen(true)}
-                />
-              }
-            />
-          </div>
-        ) : filteredSessions.length === 0 ? (
-          <div className="m1-state-container">
-            <NonIdealState
-              icon="search"
-              title="Tidak ada sesi yang cocok"
-              description="Tidak ditemukan sesi penerbangan yang memenuhi kriteria pencarian atau filter status."
-              action={
-                <Button
-                  text="Reset filter"
-                  onClick={() => {
-                    handleSearchChange("");
-                    handleStatusFilterChange("all");
-                  }}
-                />
-              }
-            />
-          </div>
-        ) : (
-          <>
-            <div
-              className="m1-session-grid"
-              role="region"
-              aria-label="Daftar kartu sesi penerbangan"
-            >
-              {paginatedSessions.map((session) => (
-                <SessionCard
-                  key={session.id}
-                  session={session}
-                  isHighlighted={highlightedSessionId === session.id}
-                  onRename={(s) => setRenameTarget(s)}
-                  onToggleStatus={(s) => {
-                    void handleToggleStatus(s);
-                  }}
-                  onAssignImage={(s) => setAssignTarget(s)}
-                  onDelete={(s) => setDeleteTarget(s)}
-                  onCopyId={(id) => {
-                    void handleCopyId(id);
-                  }}
-                  busy={busy}
-                />
-              ))}
-            </div>
+          {/* ── 2. Empat Card Berwarna di dalam Kontainer Putih ──────── */}
+          {selectedProject && (
+            <section className="m1-white-panel m1-summary-panel">
+              <SummaryBoxes
+                projectName={selectedProject.name}
+                projectDescription={selectedProject.description}
+                projectCreatedAt={selectedProject.createdAt}
+                stats={stats}
+              />
+            </section>
+          )}
 
-            {/* ── Pagination (Only if > 9 sessions) ──────────────────── */}
-            {filteredSessions.length > PAGE_SIZE && (
-              <nav className="m1-pagination-bar" aria-label="Navigasi halaman sesi">
-                <span className="m1-pagination-bar__info m1-tabular">
-                  Menampilkan {(currentPage - 1) * PAGE_SIZE + 1}–
-                  {Math.min(currentPage * PAGE_SIZE, filteredSessions.length)} dari{" "}
-                  {filteredSessions.length} sesi
-                </span>
+          {/* ── 4. Kontainer Putih Besar: Semua Sesi + Grid Card + Pagination ── */}
+          <section className="m1-white-panel m1-sessions-container">
+            {/* Filter, Search & Controls Bar */}
+            <div className="m1-controls-bar" aria-label="Kontrol filter dan pencarian">
+              <div className="m1-controls-bar__left">
+                <h2 className="m1-controls-bar__heading">
+                  Daftar Sesi
+                  {sessions.length > 0 && (
+                    <span className="m1-controls-bar__badge m1-tabular">
+                      {filteredSessions.length}{" "}
+                      {filteredSessions.length !== sessions.length ? `dari ${sessions.length}` : ""}
+                    </span>
+                  )}
+                </h2>
+              </div>
 
-                <div className="m1-pagination-bar__buttons">
-                  <button
-                    type="button"
-                    className="m1-page-num-btn"
-                    disabled={currentPage <= 1 || busy}
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                    aria-label="Halaman sebelumnya"
+              <div className="m1-controls-bar__right">
+                {/* Professional Search Bar */}
+                <div className="m1-search-box">
+                  <svg
+                    className="m1-search-icon"
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
                   >
-                    <span className="bp5-icon bp5-icon-chevron-left" />
-                  </button>
-
-                  {Array.from({ length: totalPages }).map((_, idx) => {
-                    const pageNum = idx + 1;
-                    return (
-                      <button
-                        key={pageNum}
-                        type="button"
-                        className={`m1-page-num-btn ${currentPage === pageNum ? "m1-page-num-btn--active" : ""}`}
-                        onClick={() => setCurrentPage(pageNum)}
-                        disabled={busy}
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    className="m1-search-input"
+                    placeholder="Cari sesi penerbangan…"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    disabled={loading || sessions.length === 0}
+                    aria-label="Cari nama sesi penerbangan"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="m1-search-clear"
+                      onClick={() => handleSearchChange("")}
+                      title="Hapus pencarian"
+                      aria-label="Hapus teks pencarian"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+
+                {/* Professional Capsule Status Filters (tanpa titik kecil) */}
+                <div className="m1-filter-capsule" role="tablist" aria-label="Filter status sesi">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={statusFilter === "active"}
+                    className={`m1-filter-pill ${statusFilter === "active" ? "m1-filter-pill--active" : ""}`}
+                    onClick={() => handleStatusFilterChange("active")}
+                    disabled={loading || sessions.length === 0}
+                  >
+                    <span>Aktif</span>
+                    <span className="m1-filter-pill__count m1-tabular">{stats.activeCount}</span>
+                  </button>
 
                   <button
                     type="button"
-                    className="m1-page-num-btn"
-                    disabled={currentPage >= totalPages || busy}
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                    aria-label="Halaman berikutnya"
+                    role="tab"
+                    aria-selected={statusFilter === "archived"}
+                    className={`m1-filter-pill ${statusFilter === "archived" ? "m1-filter-pill--active" : ""}`}
+                    onClick={() => handleStatusFilterChange("archived")}
+                    disabled={loading || sessions.length === 0}
                   >
-                    <span className="bp5-icon bp5-icon-chevron-right" />
+                    <span>Diarsipkan</span>
+                    <span className="m1-filter-pill__count m1-tabular">{stats.archivedCount}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={statusFilter === "all"}
+                    className={`m1-filter-pill ${statusFilter === "all" ? "m1-filter-pill--active" : ""}`}
+                    onClick={() => handleStatusFilterChange("all")}
+                    disabled={loading || sessions.length === 0}
+                  >
+                    <span>Semua</span>
+                    <span className="m1-filter-pill__count m1-tabular">{sessions.length}</span>
                   </button>
                 </div>
-              </nav>
+
+                {/* Professional Sort Dropdown (Zero-jump pure dropdown) */}
+                <div className="m1-sort-container" ref={sortContainerRef}>
+                  <button
+                    type="button"
+                    className={`m1-sort-btn ${isSortOpen ? "m1-sort-btn--active" : ""}`}
+                    onClick={() => setIsSortOpen((prev) => !prev)}
+                    disabled={loading || sessions.length === 0}
+                    title="Urutkan daftar sesi"
+                    aria-label="Urutkan daftar sesi"
+                    aria-haspopup="true"
+                    aria-expanded={isSortOpen}
+                  >
+                    <svg
+                      className="m1-sort-icon"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <line x1="4" y1="6" x2="20" y2="6" />
+                      <line x1="7" y1="12" x2="17" y2="12" />
+                      <line x1="10" y1="18" x2="14" y2="18" />
+                    </svg>
+                    <span className="m1-sort-label">
+                      {sortOrder === "newest"
+                        ? "Terbaru"
+                        : sortOrder === "oldest"
+                          ? "Terlama"
+                          : "Nama A–Z"}
+                    </span>
+                    <svg
+                      className={`m1-sort-chevron ${isSortOpen ? "m1-sort-chevron--open" : ""}`}
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+
+                  {isSortOpen && (
+                    <div className="m1-sort-dropdown-menu" role="menu">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={`m1-sort-item ${sortOrder === "newest" ? "m1-sort-item--active" : ""}`}
+                        onClick={() => {
+                          handleSortOrderChange("newest");
+                          setIsSortOpen(false);
+                        }}
+                      >
+                        <span className="m1-sort-check">
+                          {sortOrder === "newest" ? (
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          ) : null}
+                        </span>
+                        <span>Terbaru</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={`m1-sort-item ${sortOrder === "oldest" ? "m1-sort-item--active" : ""}`}
+                        onClick={() => {
+                          handleSortOrderChange("oldest");
+                          setIsSortOpen(false);
+                        }}
+                      >
+                        <span className="m1-sort-check">
+                          {sortOrder === "oldest" ? (
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          ) : null}
+                        </span>
+                        <span>Terlama</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={`m1-sort-item ${sortOrder === "name" ? "m1-sort-item--active" : ""}`}
+                        onClick={() => {
+                          handleSortOrderChange("name");
+                          setIsSortOpen(false);
+                        }}
+                      >
+                        <span className="m1-sort-check">
+                          {sortOrder === "name" ? (
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          ) : null}
+                        </span>
+                        <span>Nama A–Z</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Main Content / Cards List / States ─────────────────────── */}
+            {loading ? (
+              <div className="m1-session-grid" aria-busy="true">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="m1-skeleton-card" />
+                ))}
+              </div>
+            ) : !selectedProject ? (
+              <div className="m1-state-container">
+                <NonIdealState
+                  icon="folder-open"
+                  title="Pilih atau Buat Proyek"
+                  description="Pilih proyek dari daftar di atas, atau buat proyek baru untuk mulai mengelola sesi penerbangan."
+                />
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="m1-state-container">
+                <NonIdealState
+                  icon="inbox"
+                  title="Belum ada sesi penerbangan"
+                  description="Proyek ini belum memiliki sesi. Buat sesi baru untuk mulai mengorganisasi penerbangan drone."
+                  action={
+                    <Button
+                      intent={Intent.PRIMARY}
+                      icon="plus"
+                      text="Buat sesi pertama"
+                      onClick={() => setIsCreateOpen(true)}
+                    />
+                  }
+                />
+              </div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="m1-state-container">
+                <NonIdealState
+                  icon="search"
+                  title="Tidak ada sesi yang cocok"
+                  description="Tidak ditemukan sesi penerbangan yang memenuhi kriteria pencarian atau filter status."
+                  action={
+                    <Button
+                      text="Reset filter"
+                      onClick={() => {
+                        handleSearchChange("");
+                        handleStatusFilterChange(DEFAULT_STATUS_FILTER);
+                      }}
+                    />
+                  }
+                />
+              </div>
+            ) : (
+              <>
+                <div
+                  className="m1-session-grid"
+                  role="region"
+                  aria-label="Daftar kartu sesi penerbangan"
+                >
+                  {paginatedSessions.map((session) => (
+                    <SessionCard
+                      key={session.id}
+                      session={session}
+                      onRename={(s) => setRenameTarget(s)}
+                      onToggleStatus={(s) => {
+                        void handleToggleStatus(s);
+                      }}
+                      onAssignImage={(s) => setAssignTarget(s)}
+                      onDelete={(s) => setDeleteTarget(s)}
+                      onOpenDetail={(s) => setView({ kind: "detail", sessionId: s.id })}
+                      onCopyId={(id) => {
+                        void handleCopyId(id);
+                      }}
+                      busy={busy}
+                    />
+                  ))}
+                  {currentPage === totalPages && (
+                    <button
+                      type="button"
+                      className="m1-new-session-tile"
+                      onClick={() => setIsCreateOpen(true)}
+                      disabled={busy}
+                    >
+                      <span className="m1-new-session-tile__icon" aria-hidden="true">
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </span>
+                      <span>Buat sesi baru</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* ── Pagination (Only if > 9 sessions) ──────────────────── */}
+                {filteredSessions.length > PAGE_SIZE && (
+                  <nav className="m1-pagination-bar" aria-label="Navigasi halaman sesi">
+                    <span className="m1-pagination-bar__info m1-tabular">
+                      Menampilkan {(currentPage - 1) * PAGE_SIZE + 1}–
+                      {Math.min(currentPage * PAGE_SIZE, filteredSessions.length)} dari{" "}
+                      {filteredSessions.length} sesi
+                    </span>
+
+                    <div className="m1-pagination-bar__buttons">
+                      <button
+                        type="button"
+                        className="m1-page-num-btn"
+                        disabled={currentPage <= 1 || busy}
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        aria-label="Halaman sebelumnya"
+                      >
+                        <span className="bp5-icon bp5-icon-chevron-left" />
+                      </button>
+
+                      {Array.from({ length: totalPages }).map((_, idx) => {
+                        const pageNum = idx + 1;
+                        return (
+                          <button
+                            key={pageNum}
+                            type="button"
+                            className={`m1-page-num-btn ${currentPage === pageNum ? "m1-page-num-btn--active" : ""}`}
+                            onClick={() => setCurrentPage(pageNum)}
+                            disabled={busy}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+
+                      <button
+                        type="button"
+                        className="m1-page-num-btn"
+                        disabled={currentPage >= totalPages || busy}
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        aria-label="Halaman berikutnya"
+                      >
+                        <span className="bp5-icon bp5-icon-chevron-right" />
+                      </button>
+                    </div>
+                  </nav>
+                )}
+              </>
             )}
-          </>
-        )}
-      </section>
+          </section>
+        </>
+      )}
 
       {/* ── Dialogs ────────────────────────────────────────────────── */}
       <CreateSessionDialog
