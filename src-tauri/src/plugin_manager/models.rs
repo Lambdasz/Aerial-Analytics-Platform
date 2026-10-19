@@ -258,6 +258,9 @@ pub struct PluginBundle {
     pub inputs_raw: serde_json::Value,
     pub parameters_raw: serde_json::Value,
     pub outputs_raw: serde_json::Value,
+    pub enabled: bool,
+    pub source: String,
+    pub health_status: String,
 }
 
 /// Lightweight summary DTO for UI lists, dropdowns, and cards (Modules 1, 3, 11).

@@ -41,6 +41,16 @@ impl PluginRegistry {
             .insert(bundle.manifest.metadata.id.clone(), bundle);
     }
 
+    /// Updates the active/inactive status of a plugin.
+    pub fn set_status(&mut self, plugin_id: &str, enabled: bool) -> Result<(), PluginError> {
+        let bundle = self
+            .plugins
+            .get_mut(plugin_id)
+            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+        bundle.enabled = enabled;
+        Ok(())
+    }
+
     /// Returns a list of summaries for all registered plugins.
     pub fn get_summaries(&self) -> Vec<PluginSummaryDto> {
         self.plugins
@@ -64,9 +74,9 @@ impl PluginRegistry {
                 description: bundle.manifest.metadata.description.clone(),
                 tags: bundle.manifest.metadata.tags.clone(),
                 runtime_type: bundle.manifest.runtime.runtime_type.clone(),
-                enabled: true,
-                source: "builtin".to_string(),
-                health_status: "healthy".to_string(),
+                enabled: bundle.enabled,
+                source: bundle.source.clone(),
+                health_status: bundle.health_status.clone(),
             })
             .collect()
     }
@@ -83,7 +93,7 @@ impl PluginRegistry {
             },
             outputs: bundle.outputs_raw.clone(),
             install_path: bundle.install_path.to_string_lossy().into_owned(),
-            enabled: true,
+            enabled: bundle.enabled,
         })
     }
 
@@ -91,7 +101,7 @@ impl PluginRegistry {
     pub fn query_compatible(&self, target: &TargetDescriptorDto) -> Vec<PluginSummaryDto> {
         self.plugins
             .values()
-            .filter(|bundle| is_compatible(&bundle.inputs_spec, target))
+            .filter(|bundle| bundle.enabled && is_compatible(&bundle.inputs_spec, target))
             .map(|bundle| PluginSummaryDto {
                 id: bundle.manifest.metadata.id.clone(),
                 name: bundle.manifest.metadata.name.clone(),
@@ -111,9 +121,9 @@ impl PluginRegistry {
                 description: bundle.manifest.metadata.description.clone(),
                 tags: bundle.manifest.metadata.tags.clone(),
                 runtime_type: bundle.manifest.runtime.runtime_type.clone(),
-                enabled: true,
-                source: "builtin".to_string(),
-                health_status: "healthy".to_string(),
+                enabled: bundle.enabled,
+                source: bundle.source.clone(),
+                health_status: bundle.health_status.clone(),
             })
             .collect()
     }
@@ -488,6 +498,9 @@ mod tests {
             }),
             parameters_raw: serde_json::json!({}),
             outputs_raw: serde_json::json!({}),
+            enabled: true,
+            source: "builtin".to_string(),
+            health_status: "healthy".to_string(),
         }
     }
 
@@ -587,5 +600,50 @@ mod tests {
             details.inputs.get("aoi_format").is_none(),
             "inputs in details must not contain null aoi_format"
         );
+    }
+
+    #[test]
+    fn test_plugin_registry_set_status_updates_enabled() {
+        let mut registry = PluginRegistry::new();
+        registry.register(mock_bundle("rgb-exg"));
+
+        assert!(registry.get_details("rgb-exg").unwrap().enabled);
+        assert!(registry.get_summaries()[0].enabled);
+
+        let res = registry.set_status("rgb-exg", false);
+        assert!(res.is_ok());
+
+        assert!(!registry.get_details("rgb-exg").unwrap().enabled);
+        assert!(!registry.get_summaries()[0].enabled);
+    }
+
+    #[test]
+    fn test_plugin_registry_set_status_returns_not_found_for_missing_plugin() {
+        let mut registry = PluginRegistry::new();
+        let res = registry.set_status("unknown-id", false);
+        assert!(matches!(res, Err(PluginError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_query_compatible_excludes_disabled_plugins() {
+        let mut registry = PluginRegistry::new();
+        let mut bundle = mock_bundle("rgb-exg");
+        bundle.inputs_spec.supported_mime_types = vec!["image/jpeg".to_string()];
+        registry.register(bundle);
+
+        let mut target = default_target_descriptor();
+        target.mime_type = "image/jpeg".to_string();
+
+        assert_eq!(registry.query_compatible(&target).len(), 1);
+
+        registry.set_status("rgb-exg", false).unwrap();
+        assert_eq!(
+            registry.query_compatible(&target).len(),
+            0,
+            "Disabled plugins must be excluded from compatibility query results"
+        );
+
+        registry.set_status("rgb-exg", true).unwrap();
+        assert_eq!(registry.query_compatible(&target).len(), 1);
     }
 }

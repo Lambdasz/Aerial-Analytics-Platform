@@ -55,6 +55,7 @@ pub fn run() {
             plugin_manager::registry::get_plugin_details,
             plugin_manager::registry::query_compatible_plugins,
             plugin_manager::registry::check_plugin_health,
+            plugin_manager::lifecycle::set_plugin_status,
             // Plot import
             import_plots,
         ])

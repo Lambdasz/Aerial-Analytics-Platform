@@ -68,11 +68,12 @@ pub async fn remove_plugin(
 /// - This function does not panic.
 #[tauri::command]
 pub async fn set_plugin_status(
-    _plugin_id: String,
-    _enabled: bool,
-    _state: tauri::State<'_, crate::AppState>,
+    plugin_id: String,
+    enabled: bool,
+    state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CommandError> {
-    todo!("set_plugin_status: update enabled flag and persist to plugin_state.json")
+    let mut registry = state.plugins.write().await;
+    registry.set_status(&plugin_id, enabled).map_err(Into::into)
 }
 
 /// Updates and persists custom parameter overrides configured by the user.
