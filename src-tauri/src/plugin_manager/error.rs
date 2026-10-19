@@ -113,12 +113,6 @@ impl From<zip::result::ZipError> for PluginError {
     }
 }
 
-impl From<serde_json::Error> for PluginError {
-    fn from(err: serde_json::Error) -> Self {
-        PluginError::Serialization(err.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,13 +188,23 @@ mod tests {
     }
 
     #[test]
-    fn test_serde_json_error_conversion_maps_to_serialization() {
+    fn test_explicit_serialization_error_and_context_preservation() {
         let bad_json = "{ invalid_json: ";
         let serde_err = serde_json::from_str::<serde_json::Value>(bad_json).unwrap_err();
-        let plugin_err: PluginError = serde_err.into();
-
+        // Explicit conversion required; blanket From<serde_json::Error> is intentionally omitted
+        // to prevent silent context loss across manifest and subcontract loading paths.
+        let plugin_err = PluginError::Serialization(serde_err.to_string());
         assert_eq!(plugin_err.code(), "SERIALIZATION_ERROR");
-        assert!(matches!(plugin_err, PluginError::Serialization(_)));
+
+        let manifest_err = PluginError::ManifestInvalid {
+            path: "manifest.json".to_string(),
+            message: serde_err.to_string(),
+        };
+        assert_eq!(manifest_err.code(), "MANIFEST_INVALID");
+        assert!(manifest_err.to_string().contains("manifest.json"));
+
+        let cmd_err: CommandError = plugin_err.into();
+        assert_eq!(cmd_err.code, "SERIALIZATION_ERROR");
     }
 
     #[test]

@@ -782,7 +782,12 @@ pub(crate) fn read_and_validate_result(
     }
 
     let raw = std::fs::read_to_string(result_path)?;
-    let val: serde_json::Value = serde_json::from_str(&raw)?;
+    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        PluginError::Serialization(format!(
+            "Failed to parse result artifact at {:?}: {}",
+            result_path, e
+        ))
+    })?;
 
     let job_id = val["execution_id"].as_str().unwrap_or_default().to_string();
     let status = val["status"].as_str().unwrap_or("failure").to_string();
