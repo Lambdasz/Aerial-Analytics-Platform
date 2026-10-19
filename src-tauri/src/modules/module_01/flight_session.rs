@@ -389,12 +389,15 @@ pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
 ///
 /// # Errors
 ///
-/// [`SessionError::Db`] if the insert fails.
+/// * [`SessionError::ProjectNotFound`] if `project_id` does not match any existing project.
+/// * [`SessionError::Db`] if the insert fails.
 pub fn create_session(
     conn: &Connection,
     project_id: Uuid,
     name: Option<String>,
 ) -> Result<Session, SessionError> {
+    get_project(conn, project_id)?;
+
     let now = Utc::now();
     let session = Session {
         id: Uuid::new_v4(),
@@ -724,24 +727,37 @@ pub fn update_project(
     get_project(conn, project_id)
 }
 
-/// Deletes a project and all its sessions.
+/// Deletes a project, its sessions, and all associated images atomically.
+///
+/// # Errors
+///
+/// Returns [`SessionError::ProjectNotFound`] if the project does not exist.
 ///
 /// # Purity
 ///
 /// Impure.
 pub fn delete_project(conn: &Connection, project_id: Uuid) -> Result<(), SessionError> {
-    // Delete all sessions belonging to this project first
-    conn.execute(
-        "DELETE FROM session WHERE project_id = ?1",
-        params![project_id.to_string()],
-    )?;
-    let rows = conn.execute(
-        "DELETE FROM project WHERE id = ?1",
-        params![project_id.to_string()],
-    )?;
-    if rows == 0 {
-        return Err(SessionError::ProjectNotFound { project_id });
-    }
+    get_project(conn, project_id)?;
+
+    with_immediate_transaction(conn, |conn| {
+        conn.execute(
+            "DELETE FROM image WHERE session_id IN (SELECT id FROM session WHERE project_id = ?1)",
+            params![project_id.to_string()],
+        )?;
+        conn.execute(
+            "DELETE FROM session WHERE project_id = ?1",
+            params![project_id.to_string()],
+        )?;
+        let rows = conn.execute(
+            "DELETE FROM project WHERE id = ?1",
+            params![project_id.to_string()],
+        )?;
+        if rows == 0 {
+            return Err(SessionError::ProjectNotFound { project_id });
+        }
+        Ok(())
+    })?;
+
     Ok(())
 }
 
@@ -927,25 +943,6 @@ fn uuid_col(row: &Row, idx: usize) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&raw).map_err(|e| conversion_err(idx, rusqlite::types::Type::Text, e))
 }
 
-/// Formats a `NaiveDateTime` as ISO 8601 with `T` separator so that
-/// `NaiveDateTime::parse_from_str` (and its `FromStr` impl) can round-trip it.
-///
-/// `NaiveDateTime::to_string()` uses a space separator (`2026-10-01 02:30:18`),
-/// which `NaiveDateTime::from_str` rejects — hence the explicit format here.
-fn naive_to_iso(dt: &NaiveDateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.f").to_string()
-}
-
-/// Parses a `NaiveDateTime` from a DB string, tolerating both `T` and space
-/// separators (guards against legacy rows written with `to_string()`).
-fn parse_naive(s: &str, col: usize) -> rusqlite::Result<NaiveDateTime> {
-    // Try the standard FromStr first (expects `T` separator).
-    s.parse::<NaiveDateTime>()
-        // Fall back to the space-separated format produced by Display.
-        .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
-        .map_err(|e| conversion_err(col, rusqlite::types::Type::Text, e))
-}
-
 fn row_to_session(row: &Row) -> rusqlite::Result<Session> {
     let name: String = row.get(2)?;
     let date_start: String = row.get(3)?;
@@ -1109,6 +1106,10 @@ mod tests {
         conn
     }
 
+    fn test_project(conn: &Connection) -> Project {
+        create_project(conn, "Test Project".to_string(), None).expect("create test project")
+    }
+
     #[test]
     fn image_from_metadata_maps_all_fields() {
         let image_id = Uuid::new_v4();
@@ -1152,7 +1153,8 @@ mod tests {
     #[test]
     fn insert_and_get_image_round_trip() {
         let conn = memory_db();
-        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
         let image = image_from_metadata(
             Uuid::new_v4(),
             session.id,
@@ -1168,7 +1170,8 @@ mod tests {
     #[test]
     fn incomplete_image_persists_with_nulls() {
         let conn = memory_db();
-        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
         let image = image_from_metadata(
             Uuid::new_v4(),
             session.id,
@@ -1588,8 +1591,8 @@ mod tests {
     #[test]
     fn session_create_get_round_trip() {
         let conn = memory_db();
-        let created =
-            create_session(&conn, Uuid::new_v4(), Some("Trip".to_string())).expect("create");
+        let project = test_project(&conn);
+        let created = create_session(&conn, project.id, Some("Trip".to_string())).expect("create");
         let fetched = get_session(&conn, created.id).expect("get");
         assert_eq!(fetched.id, created.id);
         // Stored at second precision; the in-memory value keeps nanoseconds.
@@ -1602,7 +1605,8 @@ mod tests {
     #[test]
     fn recalculate_derives_range_from_stored_images() {
         let conn = memory_db();
-        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
         let dated = |path: &str, dt: &str| {
             let mut meta = full_metadata();
             meta.date_time_original = dt.parse().ok();
@@ -1644,7 +1648,8 @@ mod tests {
         // is how an image can outlive its session.
         conn.execute("PRAGMA foreign_keys = OFF", [])
             .expect("pragma");
-        let live = create_session(&conn, Uuid::new_v4(), None).expect("live");
+        let project = test_project(&conn);
+        let live = create_session(&conn, project.id, None).expect("live");
         // The image still points at a session that no longer exists.
         let image = image_from_metadata(
             Uuid::new_v4(),
@@ -1666,7 +1671,8 @@ mod tests {
         // transaction can undo it when the recalculation then fails.
         conn.execute("PRAGMA foreign_keys = OFF", [])
             .expect("pragma");
-        let original = create_session(&conn, Uuid::new_v4(), None).expect("original");
+        let project = test_project(&conn);
+        let original = create_session(&conn, project.id, None).expect("original");
         let image = image_from_metadata(
             Uuid::new_v4(),
             original.id,
@@ -1684,8 +1690,9 @@ mod tests {
     #[test]
     fn emptied_session_resets_its_range_to_created_at() {
         let conn = memory_db();
-        let source = create_session(&conn, Uuid::new_v4(), None).expect("source");
-        let target = create_session(&conn, Uuid::new_v4(), None).expect("target");
+        let project = test_project(&conn);
+        let source = create_session(&conn, project.id, None).expect("source");
+        let target = create_session(&conn, project.id, None).expect("target");
         let mut meta = full_metadata();
         meta.date_time_original = "2026-09-18T07:12:00".parse().ok();
         let image = image_from_metadata(Uuid::new_v4(), source.id, "/a.jpg".to_string(), &meta);
@@ -1713,5 +1720,160 @@ mod tests {
             moved.date_start,
             "2026-09-18T07:12:00".parse::<NaiveDateTime>().unwrap()
         );
+    }
+
+    #[test]
+    fn project_crud_round_trip() {
+        let conn = memory_db();
+        let created = create_project(&conn, "Survey Alpha".to_string(), Some("Desc".to_string()))
+            .expect("create");
+        assert_eq!(created.name, "Survey Alpha");
+        assert_eq!(created.description.as_deref(), Some("Desc"));
+
+        let fetched = get_project(&conn, created.id).expect("get");
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.name, "Survey Alpha");
+        assert_eq!(fetched.description.as_deref(), Some("Desc"));
+
+        let listed = list_projects(&conn).expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, created.id);
+
+        let updated = update_project(
+            &conn,
+            created.id,
+            "Survey Beta".to_string(),
+            Some("New Desc".to_string()),
+        )
+        .expect("update");
+        assert_eq!(updated.name, "Survey Beta");
+        assert_eq!(updated.description.as_deref(), Some("New Desc"));
+
+        delete_project(&conn, created.id).expect("delete");
+        let after_delete = get_project(&conn, created.id);
+        assert!(matches!(
+            after_delete,
+            Err(SessionError::ProjectNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn project_not_found_on_get_update_delete() {
+        let conn = memory_db();
+        let missing = Uuid::new_v4();
+
+        assert!(matches!(
+            get_project(&conn, missing),
+            Err(SessionError::ProjectNotFound { project_id }) if project_id == missing
+        ));
+        assert!(matches!(
+            update_project(&conn, missing, "Name".to_string(), None),
+            Err(SessionError::ProjectNotFound { project_id }) if project_id == missing
+        ));
+        assert!(matches!(
+            delete_project(&conn, missing),
+            Err(SessionError::ProjectNotFound { project_id }) if project_id == missing
+        ));
+    }
+
+    #[test]
+    fn create_session_rejects_missing_project() {
+        let conn = memory_db();
+        let missing = Uuid::new_v4();
+        let err = create_session(&conn, missing, None).unwrap_err();
+        assert!(matches!(
+            err,
+            SessionError::ProjectNotFound { project_id } if project_id == missing
+        ));
+    }
+
+    #[test]
+    fn delete_project_atomically_cascades_sessions_and_images() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let s1 = create_session(&conn, project.id, None).expect("s1");
+        let s2 = create_session(&conn, project.id, None).expect("s2");
+
+        let img1 = image_from_metadata(
+            Uuid::new_v4(),
+            s1.id,
+            "/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        let img2 = image_from_metadata(
+            Uuid::new_v4(),
+            s2.id,
+            "/b.jpg".to_string(),
+            &full_metadata(),
+        );
+        insert_image(&conn, &img1).expect("img1");
+        insert_image(&conn, &img2).expect("img2");
+
+        delete_project(&conn, project.id).expect("delete project");
+
+        assert!(matches!(
+            get_project(&conn, project.id),
+            Err(SessionError::ProjectNotFound { .. })
+        ));
+        assert!(matches!(
+            get_session(&conn, s1.id),
+            Err(SessionError::NotFound { .. })
+        ));
+        assert!(matches!(
+            get_session(&conn, s2.id),
+            Err(SessionError::NotFound { .. })
+        ));
+        assert!(matches!(
+            get_image(&conn, img1.id),
+            Err(SessionError::ImageNotFound { .. })
+        ));
+        assert!(matches!(
+            get_image(&conn, img2.id),
+            Err(SessionError::ImageNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn count_images_by_project_aggregates_across_sessions() {
+        let conn = memory_db();
+        let p1 = test_project(&conn);
+        let p2 = test_project(&conn);
+
+        let s1 = create_session(&conn, p1.id, None).expect("s1");
+        let s2 = create_session(&conn, p1.id, None).expect("s2");
+        let s3 = create_session(&conn, p2.id, None).expect("s3");
+
+        let img1 = image_from_metadata(
+            Uuid::new_v4(),
+            s1.id,
+            "/1.jpg".to_string(),
+            &full_metadata(),
+        );
+        let img2 = image_from_metadata(
+            Uuid::new_v4(),
+            s1.id,
+            "/2.jpg".to_string(),
+            &full_metadata(),
+        );
+        let img3 = image_from_metadata(
+            Uuid::new_v4(),
+            s2.id,
+            "/3.jpg".to_string(),
+            &full_metadata(),
+        );
+        let img4 = image_from_metadata(
+            Uuid::new_v4(),
+            s3.id,
+            "/4.jpg".to_string(),
+            &full_metadata(),
+        );
+
+        insert_image(&conn, &img1).expect("img1");
+        insert_image(&conn, &img2).expect("img2");
+        insert_image(&conn, &img3).expect("img3");
+        insert_image(&conn, &img4).expect("img4");
+
+        assert_eq!(count_images_by_project(&conn, p1.id).expect("count p1"), 3);
+        assert_eq!(count_images_by_project(&conn, p2.id).expect("count p2"), 1);
     }
 }

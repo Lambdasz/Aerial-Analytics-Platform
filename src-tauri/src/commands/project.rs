@@ -1,5 +1,3 @@
-#![allow(unused_variables)]
-
 use uuid::Uuid;
 
 use crate::models::Project;
