@@ -111,7 +111,7 @@ pub struct InputsSpec {
     pub optional_metadata: Vec<String>,
     #[serde(default)]
     pub supports_aoi: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aoi_format: Option<String>,
 }
 
@@ -255,6 +255,7 @@ pub struct PluginBundle {
     pub install_path: PathBuf,
     pub manifest: PluginManifest,
     pub inputs_spec: InputsSpec,
+    pub inputs_raw: serde_json::Value,
     pub parameters_raw: serde_json::Value,
     pub outputs_raw: serde_json::Value,
 }

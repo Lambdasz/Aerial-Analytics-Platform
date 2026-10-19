@@ -76,7 +76,11 @@ impl PluginRegistry {
         self.plugins.get(plugin_id).map(|bundle| PluginDetailsDto {
             manifest: bundle.manifest.clone(),
             parameters: bundle.parameters_raw.clone(),
-            inputs: serde_json::to_value(&bundle.inputs_spec).unwrap_or_default(),
+            inputs: if bundle.inputs_raw.is_null() {
+                serde_json::to_value(&bundle.inputs_spec).unwrap_or_default()
+            } else {
+                bundle.inputs_raw.clone()
+            },
             outputs: bundle.outputs_raw.clone(),
             install_path: bundle.install_path.to_string_lossy().into_owned(),
             enabled: true,
@@ -477,6 +481,11 @@ mod tests {
                 }),
             },
             inputs_spec: default_inputs_spec(),
+            inputs_raw: serde_json::json!({
+                "granularity": "single_image",
+                "supported_mime_types": ["image/jpeg", "image/tiff"],
+                "supports_aoi": true
+            }),
             parameters_raw: serde_json::json!({}),
             outputs_raw: serde_json::json!({}),
         }
@@ -539,5 +548,44 @@ mod tests {
 
         let reg = state.plugins.read().await;
         assert_eq!(reg.get_summaries().len(), 1);
+    }
+
+    #[test]
+    fn test_inputs_spec_serialization_omits_none_aoi_format() {
+        let spec = InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec!["image/jpeg".to_string()],
+            requires_metadata: vec!["resolution".to_string()],
+            optional_metadata: vec![],
+            supports_aoi: false,
+            aoi_format: None,
+        };
+
+        let val = serde_json::to_value(&spec).expect("serialize InputsSpec");
+        assert!(
+            val.get("aoi_format").is_none(),
+            "None aoi_format must not be serialized as null (must be omitted according to inputs.schema.json)"
+        );
+    }
+
+    #[test]
+    fn test_plugin_details_preserves_raw_inputs_without_schema_violation() {
+        let mut registry = PluginRegistry::new();
+        let mut bundle = mock_bundle("test-plugin");
+        bundle.inputs_raw = serde_json::json!({
+            "granularity": "single_image",
+            "supported_mime_types": ["image/jpeg"]
+        });
+        registry.register(bundle);
+
+        let details = registry.get_details("test-plugin").expect("get_details");
+        assert_eq!(
+            details.inputs.get("granularity").and_then(|v| v.as_str()),
+            Some("single_image")
+        );
+        assert!(
+            details.inputs.get("aoi_format").is_none(),
+            "inputs in details must not contain null aoi_format"
+        );
     }
 }
