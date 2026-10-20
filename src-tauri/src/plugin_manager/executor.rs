@@ -150,10 +150,25 @@ pub async fn start_plugin_job(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
     // 1. Verify plugin is registered and enabled (Execution Gating)
-    {
+    let target = {
         let registry = state.plugins.read().await;
         verify_plugin_executable(&request.plugin_id, &registry)?;
-    }
+        let bundle = registry
+            .plugins
+            .get(&request.plugin_id)
+            .ok_or_else(|| PluginError::PluginUnavailable(request.plugin_id.clone()))?;
+        PluginExecutionTarget {
+            plugin_dir: bundle.install_path.clone(),
+            entrypoint: bundle.manifest.runtime.entrypoint.clone(),
+            runtime_type: bundle.manifest.runtime.runtime_type.clone(),
+            timeout_seconds: bundle
+                .manifest
+                .execution
+                .as_ref()
+                .map(|e| e.timeout_seconds)
+                .unwrap_or(60),
+        }
+    };
 
     // 2. Verify target image exists on physical disk
     let target_img = PathBuf::from(&request.target_image_path);
@@ -163,9 +178,6 @@ pub async fn start_plugin_job(
             message: format!("Target image file not found: {:?}", target_img),
         });
     }
-
-    // 3. Locate plugin entrypoint and execution configuration
-    let target = find_plugin_info(&request.plugin_id)?;
 
     // 3. Generate unique execution ID
     let job_id = generate_job_id();
@@ -491,6 +503,7 @@ pub(crate) struct PluginExecutionTarget {
 }
 
 /// Locates a plugin's directory and manifest by `plugin_id`.
+#[allow(dead_code)]
 pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget, PluginError> {
     let possible_roots = [
         PathBuf::from("plugins"),
