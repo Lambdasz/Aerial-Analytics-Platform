@@ -1,25 +1,39 @@
 {
-  "_note": "Kontrak SpatialResult (Bagian 8.6 dokumen desain) — dikirim dari plugin analitik (Module 4/7/8, Tauri/Python) ke Module 3 (fitur Spatial Result Visualization / Person 4). Module 3 tidak perlu tahu bagaimana hasil ini dihitung, hanya perlu source, geometry, dan properties.",
-  "action": "load_spatial_result",
-  "payload": {
-    "layer_id": "result_tree_001",
-    "layer_name": "Deteksi Pohon - Sektor A",
-    "display_preference": {
-      "type": "point",
-      "color": "#FF0000",
-      "icon": "tree_marker"
-    },
-    "spatial_results": [
-      {
-        "source": "tree_detection_v1",
-        "geometry": { "type": "Point", "coordinates": [116.4567, -1.2345] },
-        "properties": { "tree_id": "T-001", "confidence": 0.93, "height_est_m": 12.5 }
+  "$schema": "https://aerial-analytics.local/schemas/execution_payload.v1.json",
+  "execution_id": "exec_kariangau_001",
+  "session_id": "session_kariangau_01",
+  "output_dir": "/tmp/aerial_analytics/runs/exec_kariangau_001",
+  "target": {
+    "granularity": "single_image",
+    "image_path": "/data/drone/DJI_20260914_0001.JPG",
+    "mime_type": "image/jpeg",
+    "metadata": {
+      "resolution": [4000, 3000],
+      "gps": {
+        "lat": -1.2215,
+        "lon": 116.8595
       },
-      {
-        "source": "tree_detection_v1",
-        "geometry": { "type": "Point", "coordinates": [116.4568, -1.2346] },
-        "properties": { "tree_id": "T-002", "confidence": 0.88, "height_est_m": 10.2 }
-      }
-    ]
+      "altitude": 120.0,
+      "timestamp": "2026-09-14T08:00:00Z"
+    }
+  },
+  "aoi": {
+    "type": "geojson_polygon",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [116.858, -1.223],
+          [116.861, -1.223],
+          [116.861, -1.2205],
+          [116.858, -1.2205],
+          [116.858, -1.223]
+        ]
+      ]
+    }
+  },
+  "parameters": {
+    "vegetation_index": "ExG",
+    "threshold": 0.5
   }
 }

@@ -124,11 +124,11 @@ fn test_characterization_layer_operations() {
 
 #[test]
 fn test_characterization_deserialize_dummy_sp_result() {
-    let json_str = include_str!("../src/modules/module_03/example_data/dummy_sp_result.json");
+    let json_str = include_str!("../resources/sample-data/module3/spatial_results.json");
     let commands: Result<Vec<MapLayerCommand>, _> = serde_json::from_str(json_str);
     assert!(
         commands.is_ok(),
-        "dummy_sp_result.json harus valid MapLayerCommand"
+        "spatial_results.json harus valid MapLayerCommand"
     );
     let cmds = commands.unwrap();
     assert_eq!(cmds.len(), 6);
