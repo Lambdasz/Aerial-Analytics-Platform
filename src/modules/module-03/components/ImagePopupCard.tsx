@@ -3,7 +3,7 @@ import { Icon } from "@blueprintjs/core";
 import { useMap } from "react-leaflet";
 import { useImageSync } from "../store/ImageSyncContext";
 import type { DroneImageMetadata } from "../types/marker";
-import "./ImagePopupCard.css";
+import "./style/ImagePopupCard.css";
 
 interface ImagePopupCardProps {
   image: DroneImageMetadata;

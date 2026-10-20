@@ -1,5 +1,12 @@
-import { ModulePlaceholder } from "../../shell/ModulePlaceholder";
+import { MapCanvas } from "./components/MapCanvas";
+import { ImageSyncProvider } from "./store/ImageSyncContext";
 
 export function Module03Page() {
-  return <ModulePlaceholder moduleNumber={3} title="Aerial Image Map Explorer" />;
+  return (
+    <ImageSyncProvider>
+      <div className="app-container" style={{ width: "100%", height: "100%" }}>
+        <MapCanvas />
+      </div>
+    </ImageSyncProvider>
+  );
 }

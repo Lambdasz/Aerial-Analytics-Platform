@@ -9,7 +9,7 @@ import {
   ImageOverlay,
 } from "react-leaflet";
 import type { LatLngBoundsExpression } from "leaflet";
-import orthoBounds from "../dummy_image/bounds.json";
+import orthoBounds from "../photo/formated/bounds.json";
 
 import { useImageMarkers } from "./useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
@@ -22,7 +22,7 @@ import { MapTypeThumbnail } from "./MapTypeThumbnail";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 
-import "./MapCanvas.css";
+import "./style/MapCanvas.css";
 
 // =========================
 // SPATIAL RESULT LAYER

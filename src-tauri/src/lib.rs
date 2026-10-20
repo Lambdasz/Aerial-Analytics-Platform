@@ -364,8 +364,8 @@
 //! **Status**: Not yet implemented.
 
 mod commands;
-mod map_controller;
-mod modules;
+pub mod map_controller;
+pub mod modules;
 mod plot;
 mod plugin_manager;
 

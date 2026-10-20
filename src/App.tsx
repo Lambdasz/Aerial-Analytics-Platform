@@ -1,15 +1,8 @@
-import { MapCanvas } from "./map/components/MapCanvas";
-import { ImageSyncProvider } from "./map/store/ImageSyncContext";
+import { Module03Page } from "./modules/module-03/Module03Page";
 import "./App.css";
 
 function App() {
-  return (
-    <ImageSyncProvider>
-      <div className="app-container">
-        <MapCanvas />
-      </div>
-    </ImageSyncProvider>
-  );
+  return <Module03Page />;
 }
 
 export default App;

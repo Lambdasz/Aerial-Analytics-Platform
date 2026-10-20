@@ -1,20 +1,7 @@
-//! Aerial Image Map Explorer — backend controller (Module 3).
-//!
-//! Provides the server-side logic for the interactive geospatial
-//! environment: image location markers, AOI management, layer
-//! queries, and spatial measurements.
-//!
-//! # Status
-//!
-//! This module is currently a placeholder. The submodule declarations
-//! below will be enabled as the Module 3 backend is implemented.
+//! Facade re-export untuk kompatibilitas penuh kode yang memanggil map_controller.
 
-// Anda dapat mendeklarasikan submodule di sini, contoh:
-pub mod commands;
+pub use crate::modules::module_03::*;
 
-pub mod error;
-pub mod layer;
-pub mod layer_commands;
-pub mod sp_measurement;
-pub mod r#type;
-pub mod types;
+pub mod sp_measurement {
+    pub use crate::modules::module_03::sp_measurement::*;
+}
