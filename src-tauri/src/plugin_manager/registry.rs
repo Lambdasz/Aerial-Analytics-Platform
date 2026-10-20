@@ -782,6 +782,7 @@ mod tests {
             jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::plugin_manager::executor::ActiveJobTracker::new(),
             )),
+            state_path: None,
         };
 
         {

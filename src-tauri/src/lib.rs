@@ -11,6 +11,8 @@ pub struct AppState {
     pub plugins: Arc<RwLock<PluginRegistry>>,
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
+    /// Optional path to plugin_state.json for state persistence.
+    pub state_path: Option<std::path::PathBuf>,
 }
 
 // Learn more about Tauri commands at
@@ -72,6 +74,7 @@ pub fn run() {
         .manage(AppState {
             plugins: Arc::new(RwLock::new(registry)),
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+            state_path: None,
         })
         .invoke_handler(tauri::generate_handler![
             greet,
