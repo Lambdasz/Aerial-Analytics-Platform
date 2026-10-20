@@ -34,13 +34,43 @@ async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
 
 pub mod models;
 
+/// Discovers and registers plugins from a specified directory.
+pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
+    let mut registry = PluginRegistry::new();
+    if let Ok(bundles) = plugin_manager::registry::discover_plugins(dir) {
+        for bundle in bundles {
+            registry.register(bundle);
+        }
+    }
+    registry
+}
+
+/// Bootstraps discovery across candidate directory locations at application startup.
+pub fn init_plugin_registry() -> PluginRegistry {
+    let candidate_dirs = [
+        std::path::PathBuf::from("plugins"),
+        std::path::PathBuf::from("../plugins"),
+        std::path::PathBuf::from("../../plugins"),
+    ];
+
+    for dir in &candidate_dirs {
+        if dir.is_dir() {
+            return init_plugin_registry_from_dir(dir);
+        }
+    }
+
+    PluginRegistry::new()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let registry = init_plugin_registry();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
-            plugins: Arc::new(RwLock::new(PluginRegistry::new())),
+            plugins: Arc::new(RwLock::new(registry)),
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
         })
         .invoke_handler(tauri::generate_handler![
@@ -61,4 +91,49 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_plugin_registry_from_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        assert_eq!(registry.get_summaries().len(), 1);
+        assert_eq!(registry.get_summaries()[0].id, "my-test-plugin");
+    }
+
+    #[test]
+    fn test_init_plugin_registry_discovers_builtin_plugins() {
+        let registry = init_plugin_registry();
+        // Repository has plugins/ directory with real plugins
+        assert!(
+            registry.plugins.contains_key("rgb-vegetation-detection"),
+            "Built-in plugins should be discovered on startup"
+        );
+    }
 }
