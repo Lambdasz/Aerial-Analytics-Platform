@@ -10,6 +10,7 @@
 import { invokeMap } from "./error";
 import type { AoiFeature, Coordinate, Polygon } from "./types/aoi";
 import type { AnnotationFeature, LayerState } from "./types/layer";
+import type { DroneImageMetadata } from "./types/marker";
 
 /**
  * Calculates the great-circle distance between two points (Haversine).
@@ -105,4 +106,20 @@ export function createAnnotation(args: {
     geometry: args.geometry,
     createdAt: args.createdAt,
   });
+}
+
+export function getProjectImageMarkers(): Promise<DroneImageMetadata[]> {
+  return invokeMap<DroneImageMetadata[]>("get_project_image_markers");
+}
+
+export function getInitialMapLayers(): Promise<LayerState[]> {
+  return invokeMap<LayerState[]>("get_initial_map_layers");
+}
+
+export function getSampleAoi(): Promise<AoiFeature[]> {
+  return invokeMap<AoiFeature[]>("get_sample_aoi");
+}
+
+export function getSampleAnnotations(): Promise<AnnotationFeature[]> {
+  return invokeMap<AnnotationFeature[]>("get_sample_annotations");
 }

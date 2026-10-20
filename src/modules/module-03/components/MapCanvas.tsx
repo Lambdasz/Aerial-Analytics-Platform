@@ -8,8 +8,7 @@ import {
   Polygon,
   ImageOverlay,
 } from "react-leaflet";
-import type { LatLngBoundsExpression } from "leaflet";
-import orthoBounds from "../photo/formated/bounds.json";
+import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
 
 import { useImageMarkers } from "./useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
@@ -135,7 +134,7 @@ const ManagedMapLayers: React.FC<{
             <ImageOverlay
               key={layer.layer_id}
               url="/drone_ortho.jpg"
-              bounds={orthoBounds as LatLngBoundsExpression}
+              bounds={DEFAULT_MAP_VIEW.bounds}
               opacity={layer.opacity}
               zIndex={layer.z_index}
             />
@@ -169,10 +168,14 @@ const ManagedMapLayers: React.FC<{
             <Polygon
               key={layer.layer_id}
               positions={[
-                [-1.2465, 116.8925],
-                [-1.2465, 116.894],
-                [-1.248, 116.894],
-                [-1.248, 116.8925],
+                [-1.221, 116.8575],
+                [-1.2208, 116.8582],
+                [-1.2212, 116.859],
+                [-1.222, 116.8592],
+                [-1.2228, 116.8586],
+                [-1.2225, 116.8578],
+                [-1.2218, 116.857],
+                [-1.221, 116.8575],
               ]}
               pathOptions={{
                 opacity: layer.opacity,
@@ -191,10 +194,14 @@ const ManagedMapLayers: React.FC<{
             <Polygon
               key={layer.layer_id}
               positions={[
-                [-1.247, 116.8928],
-                [-1.247, 116.8932],
-                [-1.2474, 116.8932],
-                [-1.2474, 116.8928],
+                [-1.2212, 116.8595],
+                [-1.221, 116.8605],
+                [-1.2216, 116.861],
+                [-1.2225, 116.8612],
+                [-1.2232, 116.8608],
+                [-1.223, 116.86],
+                [-1.2222, 116.8592],
+                [-1.2212, 116.8595],
               ]}
               pathOptions={{
                 opacity: layer.opacity,
@@ -320,8 +327,8 @@ export const MapCanvas: React.FC = () => {
           ========================= */}
 
         <MapContainer
-          center={[-1.247, 116.893]}
-          zoom={16}
+          center={DEFAULT_MAP_VIEW.center}
+          zoom={DEFAULT_MAP_VIEW.zoom}
           minZoom={3}
           maxZoom={21}
           className="leaflet-map-container"

@@ -1,34 +1,33 @@
 import { useState, useEffect } from "react";
 import type { DroneImageMetadata } from "../types/marker";
+import { getProjectImageMarkers } from "../api";
 
-// Generate dummy data around the center of Balikpapan (from MapCanvas: -1.247000, 116.893000)
-const generateDummyMarkers = (count: number): DroneImageMetadata[] => {
-  const baseLat = -1.247;
-  const baseLng = 116.893;
-
-  return Array.from({ length: count }).map((_, i) => ({
-    image_id: `IMG_${String(i).padStart(4, "0")}`,
-    file_name: `DJI_${String(i).padStart(4, "0")}.JPG`,
-    latitude: baseLat + (Math.random() - 0.5) * 0.01,
-    longitude: baseLng + (Math.random() - 0.5) * 0.01,
-    altitude_agl: 100 + Math.random() * 50, // 100-150m AGL
-    heading_deg: Math.floor(Math.random() * 360),
-    thumbnail_url: `https://picsum.photos/seed/${i}/300/200`, // random image placeholder
-  }));
-};
-
+/**
+ * Hook penyedia marker foto drone proyek dari backend Rust secara deterministik.
+ * Menggantikan generator acak lokal dengan data georeferensi orthomosaic Kariangau.
+ */
 export const useImageMarkers = (count: number = 200) => {
   const [markers, setMarkers] = useState<ReadonlyArray<DroneImageMetadata>>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate fetching from Rust backend
-    const timer = setTimeout(() => {
-      setMarkers(generateDummyMarkers(count));
-      setIsLoading(false);
-    }, 500);
+    let cancelled = false;
 
-    return () => clearTimeout(timer);
+    getProjectImageMarkers()
+      .then((data) => {
+        if (cancelled) return;
+        setMarkers(data.slice(0, count));
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Gagal memuat project image markers dari backend:", err);
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [count]);
 
   return { markers, isLoading };

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useMap } from "react-leaflet";
 import { Button, Tooltip } from "@blueprintjs/core";
 import * as L from "leaflet";
+import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
 import { useImageMarkers } from "./useImageMarkers";
 import "./style/MapViewControlBar.css";
 
@@ -29,9 +30,9 @@ export const MapViewControlBar: React.FC = () => {
     map.fitBounds(bounds, { padding: [40, 40], animate: true, duration: 1.5 });
   };
 
-  // Reset North / Kembali ke tengah
+  // Reset North / Kembali ke tengah orthomosaic Kariangau
   const handleResetNorth = () => {
-    map.flyTo([-1.247, 116.893], 16, { animate: true, duration: 1.5 });
+    map.flyTo(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, { animate: true, duration: 1.5 });
   };
 
   // HTML5 Native Fullscreen
