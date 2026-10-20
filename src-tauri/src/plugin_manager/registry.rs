@@ -170,19 +170,246 @@ pub async fn check_plugin_health(
     plugin_id: String,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<HealthStatusDto, CommandError> {
-    let registry = state.plugins.read().await;
-    let bundle = registry
-        .plugins
-        .get(&plugin_id)
-        .ok_or_else(|| PluginError::NotFound(plugin_id.clone()))?;
+    check_plugin_health_internal(&plugin_id, &state)
+        .await
+        .map_err(Into::into)
+}
 
-    Ok(HealthStatusDto {
-        status: "healthy".to_string(),
-        plugin_id,
-        version: bundle.manifest.metadata.version.clone(),
-        details: None,
-        error: None,
-    })
+/// Internal helper for running health checks against a plugin entrypoint and updating in-memory status.
+pub(crate) async fn check_plugin_health_internal(
+    plugin_id: &str,
+    app_state: &crate::AppState,
+) -> Result<HealthStatusDto, PluginError> {
+    let bundle = {
+        let registry = app_state.plugins.read().await;
+        registry
+            .plugins
+            .get(plugin_id)
+            .cloned()
+            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?
+    };
+
+    let result = execute_healthcheck(&bundle).await;
+
+    // Update in-memory health status
+    {
+        let mut registry = app_state.plugins.write().await;
+        if let Some(b) = registry.plugins.get_mut(plugin_id) {
+            b.health_status = result.status.clone();
+        }
+    }
+
+    Ok(result)
+}
+
+/// Executes the pre-flight entrypoint health check subprocess (`<entrypoint> --healthcheck`) with a 10s timeout.
+pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDto {
+    let plugin_id = bundle.manifest.metadata.id.clone();
+    let version = bundle.manifest.metadata.version.clone();
+    let plugin_dir = &bundle.install_path;
+    let entrypoint = &bundle.manifest.runtime.entrypoint;
+    let healthcheck_flag = bundle
+        .manifest
+        .runtime
+        .healthcheck_flag
+        .as_deref()
+        .unwrap_or("--healthcheck");
+
+    let mut cmd = match bundle.manifest.runtime.runtime_type.as_str() {
+        "python" => {
+            let venv_python = if cfg!(windows) {
+                plugin_dir.join(".venv").join("Scripts").join("python.exe")
+            } else {
+                plugin_dir.join(".venv").join("bin").join("python")
+            };
+
+            let interpreter = if venv_python.exists() {
+                venv_python
+            } else if cfg!(windows) {
+                std::path::PathBuf::from("python")
+            } else {
+                std::path::PathBuf::from("python3")
+            };
+
+            let script_path = plugin_dir.join(entrypoint);
+            if !script_path.exists() {
+                return HealthStatusDto {
+                    status: "unhealthy".to_string(),
+                    plugin_id,
+                    version,
+                    details: None,
+                    error: Some(format!(
+                        "Plugin Python entrypoint script not found: {:?}",
+                        script_path
+                    )),
+                };
+            }
+
+            let mut command = tokio::process::Command::new(interpreter);
+            command
+                .arg(&script_path)
+                .arg(healthcheck_flag)
+                .current_dir(plugin_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            command
+        }
+        "binary" => {
+            let mut bin_path = plugin_dir.join(entrypoint);
+            if cfg!(windows) && !entrypoint.ends_with(".exe") {
+                let exe_candidate = plugin_dir.join(format!("{}.exe", entrypoint));
+                if exe_candidate.exists() {
+                    bin_path = exe_candidate;
+                }
+            }
+
+            if !bin_path.exists() {
+                return HealthStatusDto {
+                    status: "unhealthy".to_string(),
+                    plugin_id,
+                    version,
+                    details: None,
+                    error: Some(format!(
+                        "Plugin binary entrypoint not found: {:?}",
+                        bin_path
+                    )),
+                };
+            }
+
+            let mut command = tokio::process::Command::new(&bin_path);
+            command
+                .arg(healthcheck_flag)
+                .current_dir(plugin_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            command
+        }
+        other => {
+            return HealthStatusDto {
+                status: "unhealthy".to_string(),
+                plugin_id,
+                version,
+                details: None,
+                error: Some(format!(
+                    "Unsupported runtime type for healthcheck: '{}'",
+                    other
+                )),
+            };
+        }
+    };
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthStatusDto {
+                status: "unhealthy".to_string(),
+                plugin_id,
+                version,
+                details: None,
+                error: Some(format!("Failed to spawn healthcheck subprocess: {}", e)),
+            };
+        }
+    };
+
+    let child_pid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        if let Some(mut out) = stdout {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf).await;
+            buf
+        } else {
+            Vec::new()
+        }
+    });
+
+    let stderr_task = tokio::spawn(async move {
+        if let Some(mut err) = stderr {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            let _ = err.read_to_end(&mut buf).await;
+            buf
+        } else {
+            Vec::new()
+        }
+    });
+
+    let wait_res = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()).await;
+
+    match wait_res {
+        Err(_) => {
+            let _ = child.kill().await;
+            if let Some(pid) = child_pid {
+                crate::plugin_manager::executor::kill_process_tree(pid);
+            }
+            HealthStatusDto {
+                status: "unhealthy".to_string(),
+                plugin_id,
+                version,
+                details: None,
+                error: Some("Healthcheck execution timed out after 10 seconds".to_string()),
+            }
+        }
+        Ok(Err(io_err)) => HealthStatusDto {
+            status: "unhealthy".to_string(),
+            plugin_id,
+            version,
+            details: None,
+            error: Some(format!("I/O error waiting on healthcheck: {}", io_err)),
+        },
+        Ok(Ok(status)) => {
+            let stdout_bytes = stdout_task.await.unwrap_or_default();
+            let stderr_bytes = stderr_task.await.unwrap_or_default();
+            let stdout_str = String::from_utf8_lossy(&stdout_bytes);
+            let stderr_str = String::from_utf8_lossy(&stderr_bytes);
+
+            if status.success() {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
+                    let status_str = json_val["status"].as_str().unwrap_or("healthy").to_string();
+                    HealthStatusDto {
+                        status: status_str,
+                        plugin_id,
+                        version,
+                        details: Some(json_val),
+                        error: None,
+                    }
+                } else {
+                    HealthStatusDto {
+                        status: "healthy".to_string(),
+                        plugin_id,
+                        version,
+                        details: None,
+                        error: None,
+                    }
+                }
+            } else {
+                let error_msg =
+                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stderr_str) {
+                        json_val["error"]
+                            .as_str()
+                            .unwrap_or(&stderr_str)
+                            .to_string()
+                    } else if !stderr_str.trim().is_empty() {
+                        stderr_str.trim().to_string()
+                    } else if !stdout_str.trim().is_empty() {
+                        stdout_str.trim().to_string()
+                    } else {
+                        format!("Healthcheck process exited with status: {}", status)
+                    };
+
+                HealthStatusDto {
+                    status: "unhealthy".to_string(),
+                    plugin_id,
+                    version,
+                    details: None,
+                    error: Some(error_msg),
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,5 +1442,131 @@ mod tests {
         let res = discover_plugins(fake_path);
         assert!(res.is_ok());
         assert_eq!(res.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_check_plugin_health_internal_missing_plugin() {
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: None,
+        };
+
+        let err = check_plugin_health_internal("missing-plugin", &app_state)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PluginError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_healthcheck_python_healthy() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+        let script_path = plugin_dir.join("main.py");
+        std::fs::write(
+            &script_path,
+            r#"
+import sys, json
+if "--healthcheck" in sys.argv:
+    print(json.dumps({"status": "healthy", "python_version": "3.10"}))
+    sys.exit(0)
+sys.exit(1)
+"#,
+        )
+        .unwrap();
+
+        let mut bundle = mock_bundle("test-health");
+        bundle.install_path = plugin_dir.to_path_buf();
+        bundle.manifest.runtime.entrypoint = "main.py".to_string();
+
+        let status = execute_healthcheck(&bundle).await;
+        assert_eq!(status.status, "healthy");
+        assert_eq!(status.plugin_id, "test-health");
+        assert!(status.details.is_some());
+        assert!(status.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_execute_healthcheck_python_unhealthy() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+        let script_path = plugin_dir.join("main.py");
+        std::fs::write(
+            &script_path,
+            r#"
+import sys
+if "--healthcheck" in sys.argv:
+    sys.stderr.write("Missing OpenCV dependency\n")
+    sys.exit(1)
+sys.exit(1)
+"#,
+        )
+        .unwrap();
+
+        let mut bundle = mock_bundle("test-unhealthy");
+        bundle.install_path = plugin_dir.to_path_buf();
+        bundle.manifest.runtime.entrypoint = "main.py".to_string();
+
+        let status = execute_healthcheck(&bundle).await;
+        assert_eq!(status.status, "unhealthy");
+        assert!(status.error.is_some());
+        assert!(status.error.unwrap().contains("Missing OpenCV"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_healthcheck_missing_entrypoint() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut bundle = mock_bundle("test-missing-entry");
+        bundle.install_path = temp_dir.path().to_path_buf();
+        bundle.manifest.runtime.entrypoint = "nonexistent.py".to_string();
+
+        let status = execute_healthcheck(&bundle).await;
+        assert_eq!(status.status, "unhealthy");
+        assert!(status.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_check_plugin_health_updates_in_memory_bundle_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+        let script_path = plugin_dir.join("main.py");
+        std::fs::write(
+            &script_path,
+            r#"
+import sys, json
+if "--healthcheck" in sys.argv:
+    print(json.dumps({"status": "healthy"}))
+    sys.exit(0)
+"#,
+        )
+        .unwrap();
+
+        let mut bundle = mock_bundle("test-update-health");
+        bundle.install_path = plugin_dir.to_path_buf();
+        bundle.manifest.runtime.entrypoint = "main.py".to_string();
+        bundle.health_status = "unknown".to_string();
+
+        let mut registry = PluginRegistry::new();
+        registry.register(bundle);
+
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: None,
+        };
+
+        let res = check_plugin_health_internal("test-update-health", &app_state).await;
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap().status, "healthy");
+
+        let reg = app_state.plugins.read().await;
+        assert_eq!(
+            reg.plugins.get("test-update-health").unwrap().health_status,
+            "healthy"
+        );
     }
 }
