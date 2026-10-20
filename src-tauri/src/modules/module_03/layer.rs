@@ -1,37 +1,29 @@
 pub use super::types::layer_type::*;
 use super::types::sp_result_type::SpatialGeometry;
 
-/// Mengubah status visibility sebuah layer.
-///
-/// Fungsi menerima LayerState dan mengembalikan state baru.
+/// Mengubah status visibility sebuah layer secara fungsional murni.
 pub fn toggle_layer_visibility(
-    mut layer: LayerState,
+    layer: LayerState,
     is_visible: bool,
 ) -> Result<LayerState, LayerError> {
-    layer.is_visible = is_visible;
-
-    Ok(layer)
+    Ok(LayerState {
+        is_visible,
+        ..layer
+    })
 }
 
-/// Mengubah opacity sebuah layer.
-///
-/// Nilai opacity harus berada pada rentang 0.0 sampai 1.0.
-pub fn set_layer_opacity(mut layer: LayerState, opacity: f64) -> Result<LayerState, LayerError> {
+/// Mengubah opacity sebuah layer secara fungsional murni.
+pub fn set_layer_opacity(layer: LayerState, opacity: f64) -> Result<LayerState, LayerError> {
     if !(0.0..=1.0).contains(&opacity) {
         return Err(LayerError::InvalidOpacity);
     }
 
-    layer.opacity = opacity;
-
-    Ok(layer)
+    Ok(LayerState { opacity, ..layer })
 }
 
-/// Mengubah urutan layer pada stack.
-///
-/// `from_index` adalah posisi layer sebelum dipindahkan.
-/// `to_index` adalah posisi tujuan layer.
+/// Mengubah urutan layer pada stack secara fungsional.
 pub fn reorder_layer_stack(
-    mut layers: Vec<LayerState>,
+    layers: Vec<LayerState>,
     from_index: usize,
     to_index: usize,
 ) -> Result<Vec<LayerState>, LayerError> {
@@ -39,15 +31,20 @@ pub fn reorder_layer_stack(
         return Err(LayerError::InvalidIndex);
     }
 
-    let layer = layers.remove(from_index);
-    layers.insert(to_index, layer);
+    let mut working = layers;
+    let layer = working.remove(from_index);
+    working.insert(to_index, layer);
 
-    // Perbarui z_index berdasarkan urutan layer setelah reorder.
-    for (index, layer) in layers.iter_mut().enumerate() {
-        layer.z_index = index;
-    }
+    let reordered = working
+        .into_iter()
+        .enumerate()
+        .map(|(index, l)| LayerState {
+            z_index: index,
+            ..l
+        })
+        .collect();
 
-    Ok(layers)
+    Ok(reordered)
 }
 
 /// Mengambil layer berdasarkan kategori.

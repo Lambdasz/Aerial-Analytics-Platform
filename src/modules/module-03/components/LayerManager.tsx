@@ -8,6 +8,8 @@ import {
   setLayerOpacity,
   filterLayersByCategory,
   createAnnotation,
+  getInitialMapLayers,
+  getSampleAnnotations,
 } from "../api";
 
 const INITIAL_LAYERS: LayerState[] = [
@@ -107,6 +109,34 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   React.useEffect(() => {
     onLayersChange?.(layers);
   }, [layers, onLayersChange]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    getInitialMapLayers()
+      .then((data) => {
+        if (!cancelled && data.length > 0) {
+          setLayers(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Gagal memuat initial layers dari backend:", err);
+      });
+
+    getSampleAnnotations()
+      .then((data) => {
+        if (!cancelled && data.length > 0) {
+          setAnnotations(data);
+        }
+      })
+      .catch((err) => {
+        console.error("Gagal memuat sample annotations dari backend:", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // =========================
   // LAYER MANAGEMENT
