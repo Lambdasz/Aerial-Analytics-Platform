@@ -199,6 +199,44 @@ pub(crate) async fn check_plugin_health_internal(
         }
     }
 
+    // Persist healthcheck status to plugin_state.json if state_path is configured or default exists
+    let state_path_opt = app_state.state_path.clone().or_else(|| {
+        let candidate = crate::plugin_manager::lifecycle::default_state_path();
+        if candidate.exists() {
+            Some(candidate)
+        } else {
+            None
+        }
+    });
+
+    if let Some(state_path) = state_path_opt {
+        let mut store =
+            crate::plugin_manager::lifecycle::load_plugin_state(&state_path).unwrap_or_default();
+        store.updated_at = chrono::Utc::now().to_rfc3339();
+        let record = store
+            .plugins
+            .entry(plugin_id.to_string())
+            .or_insert_with(|| crate::plugin_manager::models::PluginStateRecord {
+                version: bundle.manifest.metadata.version.clone(),
+                source: if bundle.source == "user" {
+                    crate::plugin_manager::models::PluginSource::User
+                } else {
+                    crate::plugin_manager::models::PluginSource::Builtin
+                },
+                enabled: bundle.enabled,
+                installed_at: chrono::Utc::now().to_rfc3339(),
+                last_healthcheck: None,
+                custom_parameters: serde_json::json!({}),
+                stats: Default::default(),
+            });
+        record.last_healthcheck = Some(crate::plugin_manager::models::CachedHealthcheck {
+            status: result.status.clone(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+            message: result.error.clone(),
+        });
+        let _ = crate::plugin_manager::lifecycle::save_plugin_state(&state_path, &store);
+    }
+
     Ok(result)
 }
 
@@ -252,6 +290,10 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
                 .current_dir(plugin_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            #[cfg(unix)]
+            {
+                command.process_group(0);
+            }
             command
         }
         "binary" => {
@@ -282,6 +324,10 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
                 .current_dir(plugin_dir)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
+            #[cfg(unix)]
+            {
+                command.process_group(0);
+            }
             command
         }
         other => {
@@ -345,6 +391,8 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
             if let Some(pid) = child_pid {
                 crate::plugin_manager::executor::kill_process_tree(pid);
             }
+            stdout_task.abort();
+            stderr_task.abort();
             HealthStatusDto {
                 status: "unhealthy".to_string(),
                 plugin_id,
@@ -368,13 +416,21 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
 
             if status.success() {
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
-                    let status_str = json_val["status"].as_str().unwrap_or("healthy").to_string();
+                    let status_str = json_val
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("healthy")
+                        .to_string();
+                    let err_msg = json_val
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .map(ToString::to_string);
                     HealthStatusDto {
                         status: status_str,
                         plugin_id,
                         version,
                         details: Some(json_val),
-                        error: None,
+                        error: err_msg,
                     }
                 } else {
                     HealthStatusDto {
@@ -386,25 +442,39 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
                     }
                 }
             } else {
-                let error_msg =
-                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stderr_str) {
-                        json_val["error"]
-                            .as_str()
-                            .unwrap_or(&stderr_str)
-                            .to_string()
-                    } else if !stderr_str.trim().is_empty() {
-                        stderr_str.trim().to_string()
-                    } else if !stdout_str.trim().is_empty() {
-                        stdout_str.trim().to_string()
-                    } else {
-                        format!("Healthcheck process exited with status: {}", status)
-                    };
+                let (error_msg, details) = if let Ok(json_val) =
+                    serde_json::from_str::<serde_json::Value>(&stderr_str)
+                {
+                    let err = json_val
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or(&stderr_str)
+                        .to_string();
+                    (err, Some(json_val))
+                } else if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str)
+                {
+                    let err = json_val
+                        .get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or(&stdout_str)
+                        .to_string();
+                    (err, Some(json_val))
+                } else if !stderr_str.trim().is_empty() {
+                    (stderr_str.trim().to_string(), None)
+                } else if !stdout_str.trim().is_empty() {
+                    (stdout_str.trim().to_string(), None)
+                } else {
+                    (
+                        format!("Healthcheck process exited with status: {}", status),
+                        None,
+                    )
+                };
 
                 HealthStatusDto {
                     status: "unhealthy".to_string(),
                     plugin_id,
                     version,
-                    details: None,
+                    details,
                     error: Some(error_msg),
                 }
             }
@@ -439,6 +509,20 @@ pub fn is_compatible(spec: &InputsSpec, target: &TargetDescriptorDto) -> bool {
     });
 
     mime_match && granularity_match && aoi_valid && metadata_valid
+}
+
+/// Checks whether a path string is a safe relative path that does not escape its parent sandbox.
+fn is_safe_relative_path(p: &str) -> bool {
+    let path = Path::new(p);
+    if path.is_absolute() {
+        return false;
+    }
+    !path.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+        )
+    })
 }
 
 /// Parses and strictly validates manifest JSON string against `plugin.schema.json`.
@@ -494,6 +578,29 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
         });
     }
 
+    const VALID_CATEGORIES: &[&str] = &[
+        "vegetation",
+        "tree_detection",
+        "tree_counting",
+        "land_cover",
+        "temporal",
+        "elevation",
+        "analytics",
+        "utility",
+        "general",
+    ];
+    if let Some(ref cat) = manifest.metadata.category {
+        if !VALID_CATEGORIES.contains(&cat.as_str()) {
+            return Err(PluginError::ManifestInvalid {
+                path: "manifest.json".to_string(),
+                message: format!(
+                    "Invalid category '{}', must be one of: {:?}",
+                    cat, VALID_CATEGORIES
+                ),
+            });
+        }
+    }
+
     let rt = manifest.runtime.runtime_type.as_str();
     if rt != "python" && rt != "binary" && rt != "wasm" {
         return Err(PluginError::ManifestInvalid {
@@ -505,22 +612,32 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
         });
     }
 
-    if manifest.runtime.entrypoint.trim().is_empty() {
-        return Err(PluginError::ManifestInvalid {
-            path: "manifest.json".to_string(),
-            message: "runtime.entrypoint must not be empty".to_string(),
-        });
-    }
-
-    if manifest.parameters.trim().is_empty()
-        || manifest.inputs.trim().is_empty()
-        || manifest.outputs.trim().is_empty()
+    if manifest.runtime.entrypoint.trim().is_empty()
+        || !is_safe_relative_path(&manifest.runtime.entrypoint)
     {
         return Err(PluginError::ManifestInvalid {
             path: "manifest.json".to_string(),
-            message: "subcontract paths (parameters, inputs, outputs) must not be empty"
-                .to_string(),
+            message: format!(
+                "runtime.entrypoint '{}' must be a safe non-empty relative path without parent traversal",
+                manifest.runtime.entrypoint
+            ),
         });
+    }
+
+    for (name, path_str) in [
+        ("parameters", &manifest.parameters),
+        ("inputs", &manifest.inputs),
+        ("outputs", &manifest.outputs),
+    ] {
+        if path_str.trim().is_empty() || !is_safe_relative_path(path_str) {
+            return Err(PluginError::ManifestInvalid {
+                path: "manifest.json".to_string(),
+                message: format!(
+                    "Subcontract '{}' path '{}' must be a safe non-empty relative path without parent traversal",
+                    name, path_str
+                ),
+            });
+        }
     }
 
     Ok(manifest)
@@ -535,6 +652,12 @@ pub(crate) fn validate_subcontracts(
     dir: &Path,
     manifest: &PluginManifest,
 ) -> Result<(serde_json::Value, InputsSpec, serde_json::Value), PluginError> {
+    if !is_safe_relative_path(&manifest.parameters) {
+        return Err(PluginError::SubcontractInvalid {
+            path: manifest.parameters.clone(),
+            message: "Parameters path escapes sandbox".to_string(),
+        });
+    }
     let params_path = dir.join(&manifest.parameters);
     if !params_path.exists() {
         return Err(PluginError::SubcontractInvalid {
@@ -552,17 +675,85 @@ pub(crate) fn validate_subcontracts(
             path: manifest.parameters.clone(),
             message: format!("Failed to parse parameters JSON: {}", e),
         })?;
-    if params_val
+
+    let params_arr = params_val
         .get("parameters")
         .and_then(|p| p.as_array())
-        .is_none()
-    {
-        return Err(PluginError::SubcontractInvalid {
+        .ok_or_else(|| PluginError::SubcontractInvalid {
             path: manifest.parameters.clone(),
             message: "Parameters definition must contain a 'parameters' array".to_string(),
-        });
+        })?;
+
+    const VALID_PARAM_TYPES: &[&str] = &["number", "boolean", "select", "string"];
+    for (idx, p) in params_arr.iter().enumerate() {
+        let p_obj = p
+            .as_object()
+            .ok_or_else(|| PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter at index {} must be an object", idx),
+            })?;
+
+        let name = p_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter at index {} missing required 'name'", idx),
+            }
+        })?;
+
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter '{}' must match pattern ^[a-z0-9_]+$", name),
+            });
+        }
+
+        if p_obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter '{}' missing required non-empty 'label'", name),
+            });
+        }
+
+        let p_type = p_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter '{}' missing required 'type'", name),
+            }
+        })?;
+
+        if !VALID_PARAM_TYPES.contains(&p_type) {
+            return Err(PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!(
+                    "Parameter '{}' has invalid type '{}', expected one of: {:?}",
+                    name, p_type, VALID_PARAM_TYPES
+                ),
+            });
+        }
+
+        if !p_obj.contains_key("default") {
+            return Err(PluginError::SubcontractInvalid {
+                path: manifest.parameters.clone(),
+                message: format!("Parameter '{}' missing required 'default' value", name),
+            });
+        }
     }
 
+    if !is_safe_relative_path(&manifest.inputs) {
+        return Err(PluginError::SubcontractInvalid {
+            path: manifest.inputs.clone(),
+            message: "Inputs path escapes sandbox".to_string(),
+        });
+    }
     let inputs_path = dir.join(&manifest.inputs);
     if !inputs_path.exists() {
         return Err(PluginError::SubcontractInvalid {
@@ -580,6 +771,7 @@ pub(crate) fn validate_subcontracts(
             path: manifest.inputs.clone(),
             message: format!("Failed to parse inputs specification: {}", e),
         })?;
+
     if inputs_spec.supported_mime_types.is_empty() {
         return Err(PluginError::SubcontractInvalid {
             path: manifest.inputs.clone(),
@@ -587,6 +779,48 @@ pub(crate) fn validate_subcontracts(
         });
     }
 
+    const VALID_GRANULARITIES: &[&str] = &[
+        "single_image",
+        "image_pair",
+        "batch",
+        "session",
+        "flight_session",
+        "multi_image",
+    ];
+    if !VALID_GRANULARITIES.contains(&inputs_spec.granularity.as_str()) {
+        return Err(PluginError::SubcontractInvalid {
+            path: manifest.inputs.clone(),
+            message: format!(
+                "Invalid granularity '{}', expected one of: {:?}",
+                inputs_spec.granularity, VALID_GRANULARITIES
+            ),
+        });
+    }
+
+    const VALID_MIME_TYPES: &[&str] = &[
+        "image/jpeg",
+        "image/png",
+        "image/tiff",
+        "application/x-geotiff",
+    ];
+    for mime in &inputs_spec.supported_mime_types {
+        if !VALID_MIME_TYPES.contains(&mime.to_ascii_lowercase().as_str()) {
+            return Err(PluginError::SubcontractInvalid {
+                path: manifest.inputs.clone(),
+                message: format!(
+                    "Unsupported MIME type '{}', expected one of: {:?}",
+                    mime, VALID_MIME_TYPES
+                ),
+            });
+        }
+    }
+
+    if !is_safe_relative_path(&manifest.outputs) {
+        return Err(PluginError::SubcontractInvalid {
+            path: manifest.outputs.clone(),
+            message: "Outputs path escapes sandbox".to_string(),
+        });
+    }
     let outputs_path = dir.join(&manifest.outputs);
     if !outputs_path.exists() {
         return Err(PluginError::SubcontractInvalid {
@@ -609,6 +843,39 @@ pub(crate) fn validate_subcontracts(
             path: manifest.outputs.clone(),
             message: "Outputs definition must be a JSON object".to_string(),
         });
+    }
+
+    if let Some(metrics_arr) = outputs_val.get("metrics").and_then(|m| m.as_array()) {
+        const VALID_METRIC_TYPES: &[&str] = &["float", "integer", "string", "boolean"];
+        for (idx, m) in metrics_arr.iter().enumerate() {
+            let m_obj = m
+                .as_object()
+                .ok_or_else(|| PluginError::SubcontractInvalid {
+                    path: manifest.outputs.clone(),
+                    message: format!("Metric at index {} must be an object", idx),
+                })?;
+            let key = m_obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: manifest.outputs.clone(),
+                    message: format!("Metric at index {} missing required 'key'", idx),
+                }
+            })?;
+            let m_type = m_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: manifest.outputs.clone(),
+                    message: format!("Metric '{}' missing required 'type'", key),
+                }
+            })?;
+            if !VALID_METRIC_TYPES.contains(&m_type) {
+                return Err(PluginError::SubcontractInvalid {
+                    path: manifest.outputs.clone(),
+                    message: format!(
+                        "Metric '{}' has invalid type '{}', expected one of: {:?}",
+                        key, m_type, VALID_METRIC_TYPES
+                    ),
+                });
+            }
+        }
     }
 
     Ok((params_val, inputs_spec, outputs_val))
@@ -1568,5 +1835,248 @@ if "--healthcheck" in sys.argv:
             reg.plugins.get("test-update-health").unwrap().health_status,
             "healthy"
         );
+    }
+
+    #[tokio::test]
+    async fn test_execute_healthcheck_parses_json_error_on_success_status() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+        let script_path = plugin_dir.join("main.py");
+        std::fs::write(
+            &script_path,
+            r#"
+import sys, json
+if "--healthcheck" in sys.argv:
+    print(json.dumps({"status": "unhealthy", "error": "Model weights missing"}))
+    sys.exit(0)
+"#,
+        )
+        .unwrap();
+
+        let mut bundle = mock_bundle("test-unhealthy-zero-exit");
+        bundle.install_path = plugin_dir.to_path_buf();
+        bundle.manifest.runtime.entrypoint = "main.py".to_string();
+
+        let status = execute_healthcheck(&bundle).await;
+        assert_eq!(status.status, "unhealthy");
+        assert_eq!(status.error.as_deref(), Some("Model weights missing"));
+    }
+
+    #[tokio::test]
+    async fn test_check_plugin_health_flushes_to_state_store() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+        let script_path = plugin_dir.join("main.py");
+        std::fs::write(
+            &script_path,
+            r#"
+import sys, json
+if "--healthcheck" in sys.argv:
+    print(json.dumps({"status": "healthy"}))
+    sys.exit(0)
+"#,
+        )
+        .unwrap();
+
+        let mut bundle = mock_bundle("test-health-persist");
+        bundle.install_path = plugin_dir.to_path_buf();
+        bundle.manifest.runtime.entrypoint = "main.py".to_string();
+
+        let mut registry = PluginRegistry::new();
+        registry.register(bundle);
+
+        let state_path = temp_dir.path().join("plugin_state.json");
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: Some(state_path.clone()),
+        };
+
+        let res = check_plugin_health_internal("test-health-persist", &app_state).await;
+        assert!(res.is_ok());
+
+        assert!(
+            state_path.exists(),
+            "State file must exist after health check"
+        );
+        let store = crate::plugin_manager::lifecycle::load_plugin_state(&state_path).unwrap();
+        let record = store
+            .plugins
+            .get("test-health-persist")
+            .expect("record should exist");
+        let hc = record
+            .last_healthcheck
+            .as_ref()
+            .expect("last_healthcheck should be set");
+        assert_eq!(hc.status, "healthy");
+    }
+
+    #[test]
+    fn test_parse_and_validate_manifest_rejects_path_traversal() {
+        let raw = r#"{
+            "manifest_version": 1,
+            "metadata": {
+                "id": "rgb-traversal",
+                "name": "Traversal Test",
+                "version": "1.0.0",
+                "description": "Test"
+            },
+            "runtime": {
+                "type": "python",
+                "entrypoint": "../outside/main.py"
+            },
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
+        }"#;
+        let err = parse_and_validate_manifest(raw).unwrap_err();
+        assert!(matches!(err, PluginError::ManifestInvalid { .. }));
+
+        let raw_abs = r#"{
+            "manifest_version": 1,
+            "metadata": {
+                "id": "rgb-traversal",
+                "name": "Traversal Test",
+                "version": "1.0.0",
+                "description": "Test"
+            },
+            "runtime": {
+                "type": "python",
+                "entrypoint": "main.py"
+            },
+            "parameters": "/etc/shadow",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
+        }"#;
+        let err = parse_and_validate_manifest(raw_abs).unwrap_err();
+        assert!(matches!(err, PluginError::ManifestInvalid { .. }));
+    }
+
+    #[test]
+    fn test_parse_and_validate_manifest_rejects_invalid_category() {
+        let raw = r#"{
+            "manifest_version": 1,
+            "metadata": {
+                "id": "rgb-cat-test",
+                "name": "Category Test",
+                "version": "1.0.0",
+                "description": "Test",
+                "category": "crypto_mining"
+            },
+            "runtime": {
+                "type": "python",
+                "entrypoint": "main.py"
+            },
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
+        }"#;
+        let err = parse_and_validate_manifest(raw).unwrap_err();
+        assert!(matches!(err, PluginError::ManifestInvalid { .. }));
+    }
+
+    #[test]
+    fn test_validate_subcontracts_enforces_parameters_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+
+        // Parameter missing required 'type' and 'default'
+        std::fs::write(
+            plugin_dir.join("parameters.json"),
+            r#"{"parameters": [{"name": "thresh", "label": "Threshold"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        let manifest = PluginManifest {
+            schema: None,
+            manifest_version: 1,
+            metadata: crate::plugin_manager::models::PluginMetadata {
+                id: "test-plugin".to_string(),
+                name: "Test".to_string(),
+                version: "1.0.0".to_string(),
+                author: None,
+                license: None,
+                description: "Test".to_string(),
+                category: None,
+                tags: vec![],
+                min_core_version: None,
+            },
+            runtime: crate::plugin_manager::models::PluginRuntime {
+                runtime_type: "python".to_string(),
+                entrypoint: "main.py".to_string(),
+                min_python_version: None,
+                dependencies_file: None,
+                healthcheck_flag: None,
+            },
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
+            execution: None,
+        };
+
+        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
+        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
+    }
+
+    #[test]
+    fn test_validate_subcontracts_enforces_inputs_granularity_and_mime() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path();
+
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        // Invalid granularity
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "invalid_granularity", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        let manifest = PluginManifest {
+            schema: None,
+            manifest_version: 1,
+            metadata: crate::plugin_manager::models::PluginMetadata {
+                id: "test-plugin".to_string(),
+                name: "Test".to_string(),
+                version: "1.0.0".to_string(),
+                author: None,
+                license: None,
+                description: "Test".to_string(),
+                category: None,
+                tags: vec![],
+                min_core_version: None,
+            },
+            runtime: crate::plugin_manager::models::PluginRuntime {
+                runtime_type: "python".to_string(),
+                entrypoint: "main.py".to_string(),
+                min_python_version: None,
+                dependencies_file: None,
+                healthcheck_flag: None,
+            },
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
+            execution: None,
+        };
+
+        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
+        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
+
+        // Invalid MIME type
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["text/plain"]}"#,
+        )
+        .unwrap();
+        let err_mime = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
+        assert!(matches!(err_mime, PluginError::SubcontractInvalid { .. }));
     }
 }
