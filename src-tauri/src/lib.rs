@@ -36,7 +36,7 @@ async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
 
 pub mod models;
 
-/// Discovers and registers plugins from a specified directory.
+/// Discovers and registers plugins from a specified directory, restoring persisted state if present.
 pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
     if let Ok(bundles) = plugin_manager::registry::discover_plugins(dir) {
@@ -44,6 +44,12 @@ pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
             registry.register(bundle);
         }
     }
+
+    let state_file = dir.join("plugin_state.json");
+    if let Ok(store) = plugin_manager::lifecycle::load_plugin_state(&state_file) {
+        plugin_manager::lifecycle::apply_state_to_registry(&mut registry, &store);
+    }
+
     registry
 }
 
@@ -66,6 +72,7 @@ pub fn init_plugin_registry() -> PluginRegistry {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let state_path = plugin_manager::lifecycle::default_state_path();
     let registry = init_plugin_registry();
 
     tauri::Builder::default()
@@ -74,7 +81,7 @@ pub fn run() {
         .manage(AppState {
             plugins: Arc::new(RwLock::new(registry)),
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
-            state_path: None,
+            state_path: Some(state_path),
         })
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -138,5 +145,74 @@ mod tests {
             registry.plugins.contains_key("rgb-vegetation-detection"),
             "Built-in plugins should be discovered on startup"
         );
+    }
+
+    #[test]
+    fn test_init_plugin_registry_from_dir_restores_persisted_enabled_and_health_state() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(
+            plugin_dir.join("parameters.json"),
+            r#"{"parameters": [{"name": "p1", "label": "P1", "type": "number", "default": 1}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        // Write persisted plugin state where my-test-plugin is disabled and unhealthy
+        let state_json = r#"{
+            "schema_version": 1,
+            "updated_at": "2026-10-20T10:00:00Z",
+            "plugins": {
+                "my-test-plugin": {
+                    "version": "1.0.0",
+                    "source": "builtin",
+                    "enabled": false,
+                    "installed_at": "2026-10-20T09:00:00Z",
+                    "last_healthcheck": {
+                        "status": "unhealthy",
+                        "checked_at": "2026-10-20T09:30:00Z",
+                        "message": "Missing dependencies"
+                    },
+                    "custom_parameters": {},
+                    "stats": {
+                        "execution_count": 0,
+                        "last_executed_at": null
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(temp_dir.path().join("plugin_state.json"), state_json).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        let details = registry
+            .get_details("my-test-plugin")
+            .expect("plugin should be registered");
+        assert!(
+            !details.enabled,
+            "Persisted enabled: false must be restored on startup"
+        );
+
+        let summaries = registry.get_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert!(!summaries[0].enabled);
+        assert_eq!(summaries[0].health_status, "unhealthy");
     }
 }

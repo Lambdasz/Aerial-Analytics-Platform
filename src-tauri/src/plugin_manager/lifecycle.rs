@@ -119,14 +119,40 @@ pub(crate) async fn set_plugin_status_internal(
     save_plugin_state(&state_path, &store)
 }
 
+/// Applies persisted state records to an in-memory plugin registry.
+pub(crate) fn apply_state_to_registry(
+    registry: &mut super::registry::PluginRegistry,
+    store: &PluginStateStore,
+) {
+    for (id, record) in &store.plugins {
+        if let Some(bundle) = registry.plugins.get_mut(id) {
+            bundle.enabled = record.enabled;
+            bundle.source = match record.source {
+                super::models::PluginSource::Builtin => "builtin".to_string(),
+                super::models::PluginSource::User => "user".to_string(),
+            };
+            if let Some(ref hc) = record.last_healthcheck {
+                bundle.health_status = hc.status.clone();
+            }
+        }
+    }
+}
+
 /// Fallback default path for plugin_state.json if none is specified in AppState.
 pub(crate) fn default_state_path() -> PathBuf {
-    let candidate = PathBuf::from("plugins").join("plugin_state.json");
-    if candidate.parent().map(|p| p.is_dir()).unwrap_or(false) {
-        candidate
-    } else {
-        PathBuf::from("plugin_state.json")
+    let candidate_dirs = [
+        PathBuf::from("plugins"),
+        PathBuf::from("../plugins"),
+        PathBuf::from("../../plugins"),
+    ];
+
+    for dir in &candidate_dirs {
+        if dir.is_dir() {
+            return dir.join("plugin_state.json");
+        }
     }
+
+    PathBuf::from("plugins").join("plugin_state.json")
 }
 
 /// Updates and persists custom parameter overrides configured by the user.
