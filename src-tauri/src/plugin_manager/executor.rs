@@ -149,7 +149,13 @@ pub async fn start_plugin_job(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
-    // 1. Verify target image exists on physical disk
+    // 1. Verify plugin is registered and enabled (Execution Gating)
+    {
+        let registry = state.plugins.read().await;
+        verify_plugin_executable(&request.plugin_id, &registry)?;
+    }
+
+    // 2. Verify target image exists on physical disk
     let target_img = PathBuf::from(&request.target_image_path);
     if !target_img.exists() {
         return Err(CommandError {
@@ -158,7 +164,7 @@ pub async fn start_plugin_job(
         });
     }
 
-    // 2. Locate plugin entrypoint and execution configuration
+    // 3. Locate plugin entrypoint and execution configuration
     let target = find_plugin_info(&request.plugin_id)?;
 
     // 3. Generate unique execution ID
@@ -388,6 +394,23 @@ pub fn emit_job_progress(
 // ---------------------------------------------------------------------------
 // 5. PURE FUNCTIONS (pub(crate) — no side effects, fully unit-testable)
 // ---------------------------------------------------------------------------
+
+/// Execution gating predicate verifying that a plugin is both registered in the registry and currently enabled.
+pub(crate) fn verify_plugin_executable(
+    plugin_id: &str,
+    registry: &crate::plugin_manager::registry::PluginRegistry,
+) -> Result<(), PluginError> {
+    let bundle = registry
+        .plugins
+        .get(plugin_id)
+        .ok_or_else(|| PluginError::PluginUnavailable(plugin_id.to_string()))?;
+
+    if !bundle.enabled {
+        return Err(PluginError::PluginUnavailable(plugin_id.to_string()));
+    }
+
+    Ok(())
+}
 
 /// Constructs the `ExecutionPayload` struct for a given job request.
 ///
@@ -1119,5 +1142,116 @@ mod tests {
         let err = read_and_validate_result(&result_path, out_dir);
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().code(), "SECURITY_VIOLATION");
+    }
+
+    #[test]
+    fn test_execution_gating_unregistered_plugin_rejected() {
+        let registry = crate::plugin_manager::registry::PluginRegistry::new();
+        let err = verify_plugin_executable("nonexistent-plugin", &registry).unwrap_err();
+        assert_eq!(err.code(), "PLUGIN_UNAVAILABLE");
+    }
+
+    #[test]
+    fn test_execution_gating_disabled_plugin_rejected() {
+        let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
+        let bundle = crate::plugin_manager::models::PluginBundle {
+            install_path: PathBuf::from("/mock/test"),
+            manifest: crate::plugin_manager::models::PluginManifest {
+                schema: None,
+                manifest_version: 1,
+                metadata: crate::plugin_manager::models::PluginMetadata {
+                    id: "disabled-plugin".to_string(),
+                    name: "Disabled".to_string(),
+                    version: "1.0.0".to_string(),
+                    author: None,
+                    license: None,
+                    description: "Desc".to_string(),
+                    category: None,
+                    tags: vec![],
+                    min_core_version: None,
+                },
+                runtime: crate::plugin_manager::models::PluginRuntime {
+                    runtime_type: "python".to_string(),
+                    entrypoint: "main.py".to_string(),
+                    min_python_version: None,
+                    dependencies_file: None,
+                    healthcheck_flag: None,
+                },
+                parameters: "parameters.json".to_string(),
+                inputs: "inputs.json".to_string(),
+                outputs: "outputs.json".to_string(),
+                execution: None,
+            },
+            inputs_spec: crate::plugin_manager::models::InputsSpec {
+                granularity: "single_image".to_string(),
+                supported_mime_types: vec!["image/jpeg".to_string()],
+                requires_metadata: vec![],
+                optional_metadata: vec![],
+                supports_aoi: false,
+                aoi_format: None,
+            },
+            inputs_raw: serde_json::json!({}),
+            parameters_raw: serde_json::json!({}),
+            outputs_raw: serde_json::json!({}),
+            enabled: false,
+            source: "builtin".to_string(),
+            health_status: "unknown".to_string(),
+        };
+        registry.register(bundle);
+
+        let err = verify_plugin_executable("disabled-plugin", &registry).unwrap_err();
+        assert_eq!(err.code(), "PLUGIN_UNAVAILABLE");
+    }
+
+    #[test]
+    fn test_execution_gating_enabled_plugin_accepted() {
+        let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
+        let bundle = crate::plugin_manager::models::PluginBundle {
+            install_path: PathBuf::from("/mock/test"),
+            manifest: crate::plugin_manager::models::PluginManifest {
+                schema: None,
+                manifest_version: 1,
+                metadata: crate::plugin_manager::models::PluginMetadata {
+                    id: "enabled-plugin".to_string(),
+                    name: "Enabled".to_string(),
+                    version: "1.0.0".to_string(),
+                    author: None,
+                    license: None,
+                    description: "Desc".to_string(),
+                    category: None,
+                    tags: vec![],
+                    min_core_version: None,
+                },
+                runtime: crate::plugin_manager::models::PluginRuntime {
+                    runtime_type: "python".to_string(),
+                    entrypoint: "main.py".to_string(),
+                    min_python_version: None,
+                    dependencies_file: None,
+                    healthcheck_flag: None,
+                },
+                parameters: "parameters.json".to_string(),
+                inputs: "inputs.json".to_string(),
+                outputs: "outputs.json".to_string(),
+                execution: None,
+            },
+            inputs_spec: crate::plugin_manager::models::InputsSpec {
+                granularity: "single_image".to_string(),
+                supported_mime_types: vec!["image/jpeg".to_string()],
+                requires_metadata: vec![],
+                optional_metadata: vec![],
+                supports_aoi: false,
+                aoi_format: None,
+            },
+            inputs_raw: serde_json::json!({}),
+            parameters_raw: serde_json::json!({}),
+            outputs_raw: serde_json::json!({}),
+            enabled: true,
+            source: "builtin".to_string(),
+            health_status: "unknown".to_string(),
+        };
+        registry.register(bundle);
+
+        let res = verify_plugin_executable("enabled-plugin", &registry);
+        assert!(res.is_ok());
     }
 }
