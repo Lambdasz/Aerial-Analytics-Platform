@@ -6,6 +6,7 @@ pub mod error;
 pub mod geometry;
 pub mod layer;
 pub mod layer_commands;
+pub mod sample_data_commands;
 pub mod sp_measurement;
 pub mod sp_result;
 pub mod r#type;

@@ -2,10 +2,12 @@
 
 pub mod aoi_type;
 pub mod layer_type;
+pub mod marker_type;
 pub mod sp_result_type;
 
 pub use aoi_type::*;
 pub use layer_type::*;
+pub use marker_type::*;
 pub use sp_result_type::*;
 
 // Modul kompatibilitas ke belakang untuk kode yang mengimpor sp_measurement_type

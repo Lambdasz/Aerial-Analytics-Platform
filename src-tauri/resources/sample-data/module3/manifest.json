@@ -1,0 +1,10 @@
+{
+  "files": {
+    "layers.json": "4397432918d91d5cc080079e0452e8d2d518bb00b7584edab8a1c240891f65b8",
+    "aoi.json": "ba3bbd668ad43d168da45e1e7e21dc71062c41e926ae50a02960cde20d168590",
+    "annotations.json": "135ec2271757b0a57cc9051e9b7c0e1298b39027295e29df1b4466966802b3d2",
+    "spatial_results.json": "4adaddceba651f74b39ff7b42b753bd097266d5f03363b717a8a3ce2a057a2a7",
+    "markers.json": "a90280efa0e18c78b8dbd393f3affc22be310c96901306050b74cb304844142d",
+    "images/drone_ortho.jpg": "b5895546a502b83802daf21e8fa707fc41b190e7171a2d325b225e7612e09495"
+  }
+}

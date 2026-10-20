@@ -1,0 +1,1802 @@
+[
+  {
+    "image_id": "img_kariangau_001",
+    "file_name": "DJI_20260914_0001.JPG",
+    "latitude": -1.223986,
+    "longitude": 116.856453,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_002",
+    "file_name": "DJI_20260914_0002.JPG",
+    "latitude": -1.223759,
+    "longitude": 116.856472,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_003",
+    "file_name": "DJI_20260914_0003.JPG",
+    "latitude": -1.22345,
+    "longitude": 116.856518,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_004",
+    "file_name": "DJI_20260914_0004.JPG",
+    "latitude": -1.223171,
+    "longitude": 116.856459,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_005",
+    "file_name": "DJI_20260914_0005.JPG",
+    "latitude": -1.222955,
+    "longitude": 116.856453,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_006",
+    "file_name": "DJI_20260914_0006.JPG",
+    "latitude": -1.222712,
+    "longitude": 116.856501,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_007",
+    "file_name": "DJI_20260914_0007.JPG",
+    "latitude": -1.222468,
+    "longitude": 116.85647,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_008",
+    "file_name": "DJI_20260914_0008.JPG",
+    "latitude": -1.222143,
+    "longitude": 116.856504,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_009",
+    "file_name": "DJI_20260914_0009.JPG",
+    "latitude": -1.221923,
+    "longitude": 116.856509,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_010",
+    "file_name": "DJI_20260914_0010.JPG",
+    "latitude": -1.221601,
+    "longitude": 116.856451,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_011",
+    "file_name": "DJI_20260914_0011.JPG",
+    "latitude": -1.221338,
+    "longitude": 116.85652,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_012",
+    "file_name": "DJI_20260914_0012.JPG",
+    "latitude": -1.221121,
+    "longitude": 116.856466,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_013",
+    "file_name": "DJI_20260914_0013.JPG",
+    "latitude": -1.220796,
+    "longitude": 116.856484,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_014",
+    "file_name": "DJI_20260914_0014.JPG",
+    "latitude": -1.22062,
+    "longitude": 116.85646,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_015",
+    "file_name": "DJI_20260914_0015.JPG",
+    "latitude": -1.220281,
+    "longitude": 116.85651,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_016",
+    "file_name": "DJI_20260914_0016.JPG",
+    "latitude": -1.220022,
+    "longitude": 116.856523,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_017",
+    "file_name": "DJI_20260914_0017.JPG",
+    "latitude": -1.219786,
+    "longitude": 116.856547,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_018",
+    "file_name": "DJI_20260914_0018.JPG",
+    "latitude": -1.219538,
+    "longitude": 116.856505,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_019",
+    "file_name": "DJI_20260914_0019.JPG",
+    "latitude": -1.21923,
+    "longitude": 116.856512,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_020",
+    "file_name": "DJI_20260914_0020.JPG",
+    "latitude": -1.218964,
+    "longitude": 116.856508,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_021",
+    "file_name": "DJI_20260914_0021.JPG",
+    "latitude": -1.21898,
+    "longitude": 116.857121,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_022",
+    "file_name": "DJI_20260914_0022.JPG",
+    "latitude": -1.21929,
+    "longitude": 116.857146,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_023",
+    "file_name": "DJI_20260914_0023.JPG",
+    "latitude": -1.219568,
+    "longitude": 116.85714,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_024",
+    "file_name": "DJI_20260914_0024.JPG",
+    "latitude": -1.219829,
+    "longitude": 116.857144,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_025",
+    "file_name": "DJI_20260914_0025.JPG",
+    "latitude": -1.220039,
+    "longitude": 116.857153,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_026",
+    "file_name": "DJI_20260914_0026.JPG",
+    "latitude": -1.220329,
+    "longitude": 116.857138,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_027",
+    "file_name": "DJI_20260914_0027.JPG",
+    "latitude": -1.220602,
+    "longitude": 116.85721,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_028",
+    "file_name": "DJI_20260914_0028.JPG",
+    "latitude": -1.220827,
+    "longitude": 116.857178,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_029",
+    "file_name": "DJI_20260914_0029.JPG",
+    "latitude": -1.221138,
+    "longitude": 116.85719,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_030",
+    "file_name": "DJI_20260914_0030.JPG",
+    "latitude": -1.221402,
+    "longitude": 116.857155,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_031",
+    "file_name": "DJI_20260914_0031.JPG",
+    "latitude": -1.221583,
+    "longitude": 116.857181,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_032",
+    "file_name": "DJI_20260914_0032.JPG",
+    "latitude": -1.221889,
+    "longitude": 116.857185,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_033",
+    "file_name": "DJI_20260914_0033.JPG",
+    "latitude": -1.222124,
+    "longitude": 116.857194,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_034",
+    "file_name": "DJI_20260914_0034.JPG",
+    "latitude": -1.222448,
+    "longitude": 116.85712,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_035",
+    "file_name": "DJI_20260914_0035.JPG",
+    "latitude": -1.222703,
+    "longitude": 116.857143,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_036",
+    "file_name": "DJI_20260914_0036.JPG",
+    "latitude": -1.222976,
+    "longitude": 116.857211,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_037",
+    "file_name": "DJI_20260914_0037.JPG",
+    "latitude": -1.223173,
+    "longitude": 116.857148,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_038",
+    "file_name": "DJI_20260914_0038.JPG",
+    "latitude": -1.223458,
+    "longitude": 116.857156,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_039",
+    "file_name": "DJI_20260914_0039.JPG",
+    "latitude": -1.223695,
+    "longitude": 116.857163,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_040",
+    "file_name": "DJI_20260914_0040.JPG",
+    "latitude": -1.224024,
+    "longitude": 116.857141,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_041",
+    "file_name": "DJI_20260914_0041.JPG",
+    "latitude": -1.223994,
+    "longitude": 116.85781,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_042",
+    "file_name": "DJI_20260914_0042.JPG",
+    "latitude": -1.223728,
+    "longitude": 116.857873,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_043",
+    "file_name": "DJI_20260914_0043.JPG",
+    "latitude": -1.223484,
+    "longitude": 116.857805,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_044",
+    "file_name": "DJI_20260914_0044.JPG",
+    "latitude": -1.223161,
+    "longitude": 116.857834,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_045",
+    "file_name": "DJI_20260914_0045.JPG",
+    "latitude": -1.222988,
+    "longitude": 116.857788,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_046",
+    "file_name": "DJI_20260914_0046.JPG",
+    "latitude": -1.222723,
+    "longitude": 116.857846,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_047",
+    "file_name": "DJI_20260914_0047.JPG",
+    "latitude": -1.222392,
+    "longitude": 116.857826,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_048",
+    "file_name": "DJI_20260914_0048.JPG",
+    "latitude": -1.222202,
+    "longitude": 116.857821,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_049",
+    "file_name": "DJI_20260914_0049.JPG",
+    "latitude": -1.221845,
+    "longitude": 116.857836,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_050",
+    "file_name": "DJI_20260914_0050.JPG",
+    "latitude": -1.221584,
+    "longitude": 116.857869,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_051",
+    "file_name": "DJI_20260914_0051.JPG",
+    "latitude": -1.221417,
+    "longitude": 116.857855,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_052",
+    "file_name": "DJI_20260914_0052.JPG",
+    "latitude": -1.221087,
+    "longitude": 116.857837,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_053",
+    "file_name": "DJI_20260914_0053.JPG",
+    "latitude": -1.220865,
+    "longitude": 116.857847,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_054",
+    "file_name": "DJI_20260914_0054.JPG",
+    "latitude": -1.220618,
+    "longitude": 116.857827,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_055",
+    "file_name": "DJI_20260914_0055.JPG",
+    "latitude": -1.22032,
+    "longitude": 116.857879,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_056",
+    "file_name": "DJI_20260914_0056.JPG",
+    "latitude": -1.220015,
+    "longitude": 116.85781,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_057",
+    "file_name": "DJI_20260914_0057.JPG",
+    "latitude": -1.219789,
+    "longitude": 116.857801,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_058",
+    "file_name": "DJI_20260914_0058.JPG",
+    "latitude": -1.219485,
+    "longitude": 116.85787,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_059",
+    "file_name": "DJI_20260914_0059.JPG",
+    "latitude": -1.219283,
+    "longitude": 116.857847,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_060",
+    "file_name": "DJI_20260914_0060.JPG",
+    "latitude": -1.218989,
+    "longitude": 116.857799,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_061",
+    "file_name": "DJI_20260914_0061.JPG",
+    "latitude": -1.218974,
+    "longitude": 116.858504,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_062",
+    "file_name": "DJI_20260914_0062.JPG",
+    "latitude": -1.219235,
+    "longitude": 116.858503,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_063",
+    "file_name": "DJI_20260914_0063.JPG",
+    "latitude": -1.219576,
+    "longitude": 116.858482,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_064",
+    "file_name": "DJI_20260914_0064.JPG",
+    "latitude": -1.219838,
+    "longitude": 116.858543,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_065",
+    "file_name": "DJI_20260914_0065.JPG",
+    "latitude": -1.220015,
+    "longitude": 116.858533,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_066",
+    "file_name": "DJI_20260914_0066.JPG",
+    "latitude": -1.220335,
+    "longitude": 116.858456,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_067",
+    "file_name": "DJI_20260914_0067.JPG",
+    "latitude": -1.220541,
+    "longitude": 116.858545,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_068",
+    "file_name": "DJI_20260914_0068.JPG",
+    "latitude": -1.220884,
+    "longitude": 116.858499,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_069",
+    "file_name": "DJI_20260914_0069.JPG",
+    "latitude": -1.221148,
+    "longitude": 116.858526,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_070",
+    "file_name": "DJI_20260914_0070.JPG",
+    "latitude": -1.221342,
+    "longitude": 116.858463,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_071",
+    "file_name": "DJI_20260914_0071.JPG",
+    "latitude": -1.221634,
+    "longitude": 116.858505,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_072",
+    "file_name": "DJI_20260914_0072.JPG",
+    "latitude": -1.221918,
+    "longitude": 116.858537,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_073",
+    "file_name": "DJI_20260914_0073.JPG",
+    "latitude": -1.222166,
+    "longitude": 116.858471,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_074",
+    "file_name": "DJI_20260914_0074.JPG",
+    "latitude": -1.222417,
+    "longitude": 116.858523,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_075",
+    "file_name": "DJI_20260914_0075.JPG",
+    "latitude": -1.222714,
+    "longitude": 116.858481,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_076",
+    "file_name": "DJI_20260914_0076.JPG",
+    "latitude": -1.222898,
+    "longitude": 116.858515,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_077",
+    "file_name": "DJI_20260914_0077.JPG",
+    "latitude": -1.223217,
+    "longitude": 116.858502,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_078",
+    "file_name": "DJI_20260914_0078.JPG",
+    "latitude": -1.223512,
+    "longitude": 116.858472,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_079",
+    "file_name": "DJI_20260914_0079.JPG",
+    "latitude": -1.223753,
+    "longitude": 116.858509,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_080",
+    "file_name": "DJI_20260914_0080.JPG",
+    "latitude": -1.224027,
+    "longitude": 116.858472,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_081",
+    "file_name": "DJI_20260914_0081.JPG",
+    "latitude": -1.224043,
+    "longitude": 116.85918,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_082",
+    "file_name": "DJI_20260914_0082.JPG",
+    "latitude": -1.223764,
+    "longitude": 116.859207,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_083",
+    "file_name": "DJI_20260914_0083.JPG",
+    "latitude": -1.223438,
+    "longitude": 116.859124,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_084",
+    "file_name": "DJI_20260914_0084.JPG",
+    "latitude": -1.223237,
+    "longitude": 116.859184,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_085",
+    "file_name": "DJI_20260914_0085.JPG",
+    "latitude": -1.222976,
+    "longitude": 116.85913,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_086",
+    "file_name": "DJI_20260914_0086.JPG",
+    "latitude": -1.222641,
+    "longitude": 116.859174,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_087",
+    "file_name": "DJI_20260914_0087.JPG",
+    "latitude": -1.222424,
+    "longitude": 116.859195,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_088",
+    "file_name": "DJI_20260914_0088.JPG",
+    "latitude": -1.222127,
+    "longitude": 116.859136,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_089",
+    "file_name": "DJI_20260914_0089.JPG",
+    "latitude": -1.221935,
+    "longitude": 116.85916,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_090",
+    "file_name": "DJI_20260914_0090.JPG",
+    "latitude": -1.221639,
+    "longitude": 116.859163,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_091",
+    "file_name": "DJI_20260914_0091.JPG",
+    "latitude": -1.221346,
+    "longitude": 116.859184,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_092",
+    "file_name": "DJI_20260914_0092.JPG",
+    "latitude": -1.221057,
+    "longitude": 116.859127,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_093",
+    "file_name": "DJI_20260914_0093.JPG",
+    "latitude": -1.220852,
+    "longitude": 116.859151,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_094",
+    "file_name": "DJI_20260914_0094.JPG",
+    "latitude": -1.220543,
+    "longitude": 116.859142,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_095",
+    "file_name": "DJI_20260914_0095.JPG",
+    "latitude": -1.220347,
+    "longitude": 116.859162,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_096",
+    "file_name": "DJI_20260914_0096.JPG",
+    "latitude": -1.22006,
+    "longitude": 116.859145,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_097",
+    "file_name": "DJI_20260914_0097.JPG",
+    "latitude": -1.219814,
+    "longitude": 116.859209,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_098",
+    "file_name": "DJI_20260914_0098.JPG",
+    "latitude": -1.219532,
+    "longitude": 116.859203,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_099",
+    "file_name": "DJI_20260914_0099.JPG",
+    "latitude": -1.219258,
+    "longitude": 116.859122,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_100",
+    "file_name": "DJI_20260914_0100.JPG",
+    "latitude": -1.21895,
+    "longitude": 116.8592,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_101",
+    "file_name": "DJI_20260914_0101.JPG",
+    "latitude": -1.218953,
+    "longitude": 116.859876,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_102",
+    "file_name": "DJI_20260914_0102.JPG",
+    "latitude": -1.219228,
+    "longitude": 116.8598,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_103",
+    "file_name": "DJI_20260914_0103.JPG",
+    "latitude": -1.219528,
+    "longitude": 116.859805,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_104",
+    "file_name": "DJI_20260914_0104.JPG",
+    "latitude": -1.219799,
+    "longitude": 116.859789,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_105",
+    "file_name": "DJI_20260914_0105.JPG",
+    "latitude": -1.220065,
+    "longitude": 116.859882,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_106",
+    "file_name": "DJI_20260914_0106.JPG",
+    "latitude": -1.220339,
+    "longitude": 116.859862,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_107",
+    "file_name": "DJI_20260914_0107.JPG",
+    "latitude": -1.220583,
+    "longitude": 116.859826,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_108",
+    "file_name": "DJI_20260914_0108.JPG",
+    "latitude": -1.220796,
+    "longitude": 116.859883,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_109",
+    "file_name": "DJI_20260914_0109.JPG",
+    "latitude": -1.2211,
+    "longitude": 116.859855,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_110",
+    "file_name": "DJI_20260914_0110.JPG",
+    "latitude": -1.221403,
+    "longitude": 116.859813,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_111",
+    "file_name": "DJI_20260914_0111.JPG",
+    "latitude": -1.221585,
+    "longitude": 116.859841,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_112",
+    "file_name": "DJI_20260914_0112.JPG",
+    "latitude": -1.221891,
+    "longitude": 116.859858,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_113",
+    "file_name": "DJI_20260914_0113.JPG",
+    "latitude": -1.222202,
+    "longitude": 116.859842,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_114",
+    "file_name": "DJI_20260914_0114.JPG",
+    "latitude": -1.222421,
+    "longitude": 116.859869,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_115",
+    "file_name": "DJI_20260914_0115.JPG",
+    "latitude": -1.222718,
+    "longitude": 116.859879,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_116",
+    "file_name": "DJI_20260914_0116.JPG",
+    "latitude": -1.222989,
+    "longitude": 116.859802,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_117",
+    "file_name": "DJI_20260914_0117.JPG",
+    "latitude": -1.223201,
+    "longitude": 116.859851,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_118",
+    "file_name": "DJI_20260914_0118.JPG",
+    "latitude": -1.2235,
+    "longitude": 116.859795,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_119",
+    "file_name": "DJI_20260914_0119.JPG",
+    "latitude": -1.223698,
+    "longitude": 116.859808,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_120",
+    "file_name": "DJI_20260914_0120.JPG",
+    "latitude": -1.223991,
+    "longitude": 116.859845,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_121",
+    "file_name": "DJI_20260914_0121.JPG",
+    "latitude": -1.224008,
+    "longitude": 116.860508,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_122",
+    "file_name": "DJI_20260914_0122.JPG",
+    "latitude": -1.223735,
+    "longitude": 116.860543,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_123",
+    "file_name": "DJI_20260914_0123.JPG",
+    "latitude": -1.223503,
+    "longitude": 116.860522,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_124",
+    "file_name": "DJI_20260914_0124.JPG",
+    "latitude": -1.223237,
+    "longitude": 116.86049,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_125",
+    "file_name": "DJI_20260914_0125.JPG",
+    "latitude": -1.22293,
+    "longitude": 116.86048,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_126",
+    "file_name": "DJI_20260914_0126.JPG",
+    "latitude": -1.222703,
+    "longitude": 116.860525,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_127",
+    "file_name": "DJI_20260914_0127.JPG",
+    "latitude": -1.222464,
+    "longitude": 116.860496,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_128",
+    "file_name": "DJI_20260914_0128.JPG",
+    "latitude": -1.222108,
+    "longitude": 116.86055,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_129",
+    "file_name": "DJI_20260914_0129.JPG",
+    "latitude": -1.221937,
+    "longitude": 116.860471,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_130",
+    "file_name": "DJI_20260914_0130.JPG",
+    "latitude": -1.221655,
+    "longitude": 116.860543,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_131",
+    "file_name": "DJI_20260914_0131.JPG",
+    "latitude": -1.22133,
+    "longitude": 116.860538,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_132",
+    "file_name": "DJI_20260914_0132.JPG",
+    "latitude": -1.221118,
+    "longitude": 116.860466,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_133",
+    "file_name": "DJI_20260914_0133.JPG",
+    "latitude": -1.220809,
+    "longitude": 116.86052,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_134",
+    "file_name": "DJI_20260914_0134.JPG",
+    "latitude": -1.220568,
+    "longitude": 116.860549,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_135",
+    "file_name": "DJI_20260914_0135.JPG",
+    "latitude": -1.2203,
+    "longitude": 116.860451,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_136",
+    "file_name": "DJI_20260914_0136.JPG",
+    "latitude": -1.220021,
+    "longitude": 116.86048,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_137",
+    "file_name": "DJI_20260914_0137.JPG",
+    "latitude": -1.219773,
+    "longitude": 116.860544,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_138",
+    "file_name": "DJI_20260914_0138.JPG",
+    "latitude": -1.219563,
+    "longitude": 116.860462,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_139",
+    "file_name": "DJI_20260914_0139.JPG",
+    "latitude": -1.219302,
+    "longitude": 116.860505,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_140",
+    "file_name": "DJI_20260914_0140.JPG",
+    "latitude": -1.219023,
+    "longitude": 116.86051,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_141",
+    "file_name": "DJI_20260914_0141.JPG",
+    "latitude": -1.218978,
+    "longitude": 116.861137,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_142",
+    "file_name": "DJI_20260914_0142.JPG",
+    "latitude": -1.21925,
+    "longitude": 116.861143,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_143",
+    "file_name": "DJI_20260914_0143.JPG",
+    "latitude": -1.219527,
+    "longitude": 116.861207,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_144",
+    "file_name": "DJI_20260914_0144.JPG",
+    "latitude": -1.219755,
+    "longitude": 116.861126,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_145",
+    "file_name": "DJI_20260914_0145.JPG",
+    "latitude": -1.22006,
+    "longitude": 116.861144,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_146",
+    "file_name": "DJI_20260914_0146.JPG",
+    "latitude": -1.220365,
+    "longitude": 116.861194,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_147",
+    "file_name": "DJI_20260914_0147.JPG",
+    "latitude": -1.220565,
+    "longitude": 116.861143,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_148",
+    "file_name": "DJI_20260914_0148.JPG",
+    "latitude": -1.220818,
+    "longitude": 116.861172,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_149",
+    "file_name": "DJI_20260914_0149.JPG",
+    "latitude": -1.221112,
+    "longitude": 116.861118,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_150",
+    "file_name": "DJI_20260914_0150.JPG",
+    "latitude": -1.221411,
+    "longitude": 116.861205,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_151",
+    "file_name": "DJI_20260914_0151.JPG",
+    "latitude": -1.221591,
+    "longitude": 116.861171,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_152",
+    "file_name": "DJI_20260914_0152.JPG",
+    "latitude": -1.221861,
+    "longitude": 116.861175,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_153",
+    "file_name": "DJI_20260914_0153.JPG",
+    "latitude": -1.222193,
+    "longitude": 116.861129,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_154",
+    "file_name": "DJI_20260914_0154.JPG",
+    "latitude": -1.22244,
+    "longitude": 116.861207,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_155",
+    "file_name": "DJI_20260914_0155.JPG",
+    "latitude": -1.222655,
+    "longitude": 116.861203,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_156",
+    "file_name": "DJI_20260914_0156.JPG",
+    "latitude": -1.222907,
+    "longitude": 116.861138,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_157",
+    "file_name": "DJI_20260914_0157.JPG",
+    "latitude": -1.223236,
+    "longitude": 116.861127,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_158",
+    "file_name": "DJI_20260914_0158.JPG",
+    "latitude": -1.223446,
+    "longitude": 116.861205,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_159",
+    "file_name": "DJI_20260914_0159.JPG",
+    "latitude": -1.223746,
+    "longitude": 116.861179,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_160",
+    "file_name": "DJI_20260914_0160.JPG",
+    "latitude": -1.224035,
+    "longitude": 116.86121,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_161",
+    "file_name": "DJI_20260914_0161.JPG",
+    "latitude": -1.223964,
+    "longitude": 116.861881,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_162",
+    "file_name": "DJI_20260914_0162.JPG",
+    "latitude": -1.223706,
+    "longitude": 116.861871,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_163",
+    "file_name": "DJI_20260914_0163.JPG",
+    "latitude": -1.223521,
+    "longitude": 116.861857,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_164",
+    "file_name": "DJI_20260914_0164.JPG",
+    "latitude": -1.223227,
+    "longitude": 116.861876,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_165",
+    "file_name": "DJI_20260914_0165.JPG",
+    "latitude": -1.222917,
+    "longitude": 116.86187,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_166",
+    "file_name": "DJI_20260914_0166.JPG",
+    "latitude": -1.222653,
+    "longitude": 116.86181,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_167",
+    "file_name": "DJI_20260914_0167.JPG",
+    "latitude": -1.222392,
+    "longitude": 116.861794,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_168",
+    "file_name": "DJI_20260914_0168.JPG",
+    "latitude": -1.222121,
+    "longitude": 116.861869,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_169",
+    "file_name": "DJI_20260914_0169.JPG",
+    "latitude": -1.221922,
+    "longitude": 116.861865,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_170",
+    "file_name": "DJI_20260914_0170.JPG",
+    "latitude": -1.221636,
+    "longitude": 116.861814,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_171",
+    "file_name": "DJI_20260914_0171.JPG",
+    "latitude": -1.221339,
+    "longitude": 116.861806,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_172",
+    "file_name": "DJI_20260914_0172.JPG",
+    "latitude": -1.221153,
+    "longitude": 116.861803,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_173",
+    "file_name": "DJI_20260914_0173.JPG",
+    "latitude": -1.220859,
+    "longitude": 116.86187,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_174",
+    "file_name": "DJI_20260914_0174.JPG",
+    "latitude": -1.220532,
+    "longitude": 116.861811,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_175",
+    "file_name": "DJI_20260914_0175.JPG",
+    "latitude": -1.220302,
+    "longitude": 116.861823,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_176",
+    "file_name": "DJI_20260914_0176.JPG",
+    "latitude": -1.220005,
+    "longitude": 116.861837,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_177",
+    "file_name": "DJI_20260914_0177.JPG",
+    "latitude": -1.219746,
+    "longitude": 116.861795,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_178",
+    "file_name": "DJI_20260914_0178.JPG",
+    "latitude": -1.219479,
+    "longitude": 116.861801,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_179",
+    "file_name": "DJI_20260914_0179.JPG",
+    "latitude": -1.219217,
+    "longitude": 116.86181,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_180",
+    "file_name": "DJI_20260914_0180.JPG",
+    "latitude": -1.219039,
+    "longitude": 116.861827,
+    "altitude_agl": 120.0,
+    "heading_deg": 0.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_181",
+    "file_name": "DJI_20260914_0181.JPG",
+    "latitude": -1.218977,
+    "longitude": 116.862481,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_182",
+    "file_name": "DJI_20260914_0182.JPG",
+    "latitude": -1.219253,
+    "longitude": 116.862501,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_183",
+    "file_name": "DJI_20260914_0183.JPG",
+    "latitude": -1.219538,
+    "longitude": 116.862508,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_184",
+    "file_name": "DJI_20260914_0184.JPG",
+    "latitude": -1.219814,
+    "longitude": 116.862521,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_185",
+    "file_name": "DJI_20260914_0185.JPG",
+    "latitude": -1.220102,
+    "longitude": 116.862543,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_186",
+    "file_name": "DJI_20260914_0186.JPG",
+    "latitude": -1.220312,
+    "longitude": 116.862522,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_187",
+    "file_name": "DJI_20260914_0187.JPG",
+    "latitude": -1.220555,
+    "longitude": 116.862517,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_188",
+    "file_name": "DJI_20260914_0188.JPG",
+    "latitude": -1.220856,
+    "longitude": 116.862457,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_189",
+    "file_name": "DJI_20260914_0189.JPG",
+    "latitude": -1.221089,
+    "longitude": 116.862483,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_190",
+    "file_name": "DJI_20260914_0190.JPG",
+    "latitude": -1.221387,
+    "longitude": 116.862535,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_191",
+    "file_name": "DJI_20260914_0191.JPG",
+    "latitude": -1.22161,
+    "longitude": 116.86248,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_192",
+    "file_name": "DJI_20260914_0192.JPG",
+    "latitude": -1.221914,
+    "longitude": 116.862491,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_193",
+    "file_name": "DJI_20260914_0193.JPG",
+    "latitude": -1.222168,
+    "longitude": 116.86248,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_194",
+    "file_name": "DJI_20260914_0194.JPG",
+    "latitude": -1.222458,
+    "longitude": 116.862492,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_195",
+    "file_name": "DJI_20260914_0195.JPG",
+    "latitude": -1.22264,
+    "longitude": 116.862518,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_196",
+    "file_name": "DJI_20260914_0196.JPG",
+    "latitude": -1.222907,
+    "longitude": 116.862512,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_197",
+    "file_name": "DJI_20260914_0197.JPG",
+    "latitude": -1.22323,
+    "longitude": 116.862505,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_198",
+    "file_name": "DJI_20260914_0198.JPG",
+    "latitude": -1.223524,
+    "longitude": 116.862479,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_199",
+    "file_name": "DJI_20260914_0199.JPG",
+    "latitude": -1.223744,
+    "longitude": 116.862508,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  },
+  {
+    "image_id": "img_kariangau_200",
+    "file_name": "DJI_20260914_0200.JPG",
+    "latitude": -1.223985,
+    "longitude": 116.862496,
+    "altitude_agl": 120.0,
+    "heading_deg": 180.0,
+    "thumbnail_url": "/drone_ortho.jpg"
+  }
+]

@@ -1,0 +1,24 @@
+[
+  {
+    "type": "Feature",
+    "properties": {
+      "aoi_id": "aoi_kariangau_001",
+      "name": "Area Analisis Utama Kariangau",
+      "calculated_area_sq_m": 92924.37,
+      "perimeter_m": 1224.4,
+      "created_at": "2026-09-14T08:00:00Z"
+    },
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [116.8580, -1.2230],
+          [116.8610, -1.2230],
+          [116.8610, -1.2205],
+          [116.8580, -1.2205],
+          [116.8580, -1.2230]
+        ]
+      ]
+    }
+  }
+]
