@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .area import count_trees_in_area, point_in_polygons, parse_polygons, polygon_area_m2
+from .area import count_trees_in_area, parse_polygons, point_in_polygons, polygon_area_m2
 from .counting import count_trees
 from .density import calculate_tree_density
 from .errors import PluginExecutionError
@@ -37,7 +37,10 @@ class RunParameters(BaseModel):
 
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     density_unit: DensityUnit = "per_ha"
-    detector: str = "stub"
+    detector: str = "opencv_watershed"
+    model_path: str = ""
+    backbone: str = "resnet101"
+    probability_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     iou_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     tile_size: int = Field(default=1024, gt=0)
     gsd_cm: float = Field(default=3.0, gt=0.0)
@@ -65,9 +68,7 @@ def parse_payload(payload: Mapping[str, Any]) -> RunRequest:
         raise PluginExecutionError("Image metadata must contain 'gps' and 'resolution'")
 
     image_path = str(target.get("image_path", ""))
-    image_id = str(
-        metadata.get("image_id") or os.path.splitext(os.path.basename(image_path))[0]
-    )
+    image_id = str(metadata.get("image_id") or os.path.splitext(os.path.basename(image_path))[0])
     georef = ImageGeoreference(
         center=GeoCoordinate(latitude=gps["lat"], longitude=gps["lon"]),
         gsd_m=float(metadata.get("gsd_m") or parameters.gsd_cm / 100),
@@ -94,11 +95,20 @@ def parse_payload(payload: Mapping[str, Any]) -> RunRequest:
 
 
 def model_config_of(parameters: RunParameters) -> dict[str, Any]:
-    """The ``model_config`` argument for ``detect_trees``."""
+    """The ``model_config`` argument for ``detect_trees``.
+
+    Every parameter a detector needs must be listed here: a parameter that exists in
+    parameters.json but not in this dict reaches the user's form and is then silently
+    ignored, which looks like the model malfunctioning.
+    """
     return {
         "detector": parameters.detector,
+        "gsd_cm": parameters.gsd_cm,
         "iou_threshold": parameters.iou_threshold,
         "tile_size": parameters.tile_size,
+        "model_path": parameters.model_path,
+        "backbone": parameters.backbone,
+        "probability_threshold": parameters.probability_threshold,
     }
 
 

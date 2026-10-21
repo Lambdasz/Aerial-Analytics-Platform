@@ -4,7 +4,7 @@
   "metadata": {
     "id": "tree-detection-counting",
     "name": "Tree Detection & Counting",
-    "version": "0.1.0",
+    "version": "0.4.0",
     "author": "PBL Team 2026 - Modul 7",
     "license": "MIT",
     "description": "Detects individual tree crowns in RGB aerial imagery, filters them by confidence, maps them to WGS84 coordinates, and reports tree counts and density.",

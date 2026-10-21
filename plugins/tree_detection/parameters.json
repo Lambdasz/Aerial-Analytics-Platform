@@ -23,9 +23,34 @@
       "name": "detector",
       "label": "Detection Model",
       "type": "select",
-      "options": ["stub"],
-      "default": "stub",
-      "description": "Detection backend. 'stub' returns no detections and only exercises the pipeline; real models are added in treedet/detectors.py."
+      "options": ["opencv_watershed", "deeplabv3plus", "stub"],
+      "default": "opencv_watershed",
+      "description": "Detection backend. 'opencv_watershed' is the built-in classical crown detector (Excess Green, Otsu, distance-transform peaks) and needs no weights. 'deeplabv3plus' is the agreed deep-learning model and needs model_path, torch and segmentation-models-pytorch. 'stub' returns no detections and only exercises the pipeline."
+    },
+    {
+      "name": "model_path",
+      "label": "DeepLabV3+ Checkpoint (.pth)",
+      "type": "string",
+      "default": "",
+      "description": "Absolute path to the trained DeepLabV3+ weights. Required by 'deeplabv3plus'; ignored by the other detectors."
+    },
+    {
+      "name": "backbone",
+      "label": "DeepLabV3+ Backbone",
+      "type": "select",
+      "options": ["resnet101", "xception"],
+      "default": "resnet101",
+      "description": "Encoder of the checkpoint. Must be the encoder used during training, otherwise the weights cannot be loaded."
+    },
+    {
+      "name": "probability_threshold",
+      "label": "Canopy Probability Threshold",
+      "type": "number",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "description": "A pixel counts as tree canopy above this model probability ('deeplabv3plus' only). Lower it to catch thinner crowns, raise it if bare soil is detected as trees."
     },
     {
       "name": "iou_threshold",

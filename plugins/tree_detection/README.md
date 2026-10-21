@@ -9,9 +9,10 @@ menghitung jumlah dan kepadatan pohon.
 - **Runtime:** Python ≥ 3.10
 - **Kontrak antar-modul:** [CONTRACT.md](CONTRACT.md) (baca ini kalau kamu dari Modul 2, 3, 9, 10, atau 11)
 
-> **Status:** kerangka. Semua fitur sudah berjalan dan teruji, **kecuali model deteksinya**.
-> Detector bawaan (`stub`) selalu mengembalikan 0 deteksi, dan hasilnya diberi status `warning`
-> supaya tidak disangka hasil nyata. Lihat [Menambah model deteksi](#menambah-model-deteksi).
+> **Status:** dua detector nyata terdaftar. `opencv_watershed` (default) memakai pengolahan citra
+> klasik dan langsung jalan tanpa bobot model. `deeplabv3plus` sudah terpasang di registry, tetapi
+> baru bisa dipakai kalau checkpoint hasil pelatihan, torch, dan segmentation-models-pytorch tersedia.
+> `stub` tetap ada dan hasilnya diberi status `warning` supaya tidak disangka hasil nyata.
 
 ## Struktur
 
@@ -29,7 +30,7 @@ plugins/tree_detection/
 ├── treedet/                 # Logika inti (fungsi murni)
 │   ├── models.py            # Model data bersama (Pydantic v2, immutable)
 │   ├── errors.py            # PluginExecutionError dan turunannya
-│   ├── detectors.py         # Registry model deteksi (tempat menambah model)
+│   ├── detectors.py         # Registry + detector opencv_watershed dan deeplabv3plus
 │   ├── detection.py         # Fitur 1: detect_trees (+ deduplikasi antar-tile)
 │   ├── counting.py          # Fitur 2: count_trees
 │   ├── filtering.py         # Fitur 3: filter_by_confidence
@@ -38,7 +39,8 @@ plugins/tree_detection/
 │   ├── density.py           # Fitur 6: calculate_tree_density
 │   ├── review.py            # Fitur 7: apply_review
 │   ├── output.py            # Fitur 8: build_plugin_output → execution_result
-│   └── pipeline.py          # Payload → fitur-fitur di atas
+│   ├── pipeline.py          # Payload → fitur-fitur di atas
+│   └── integration.py       # Konektor M9/M10: ringkasan per plot, pembanding dua run
 └── tests/                   # Unit test & end-to-end test (unittest)
 ```
 
@@ -74,12 +76,26 @@ jadi kalau dijalankan apa adanya hasilnya adalah `status: "failure"` dengan pesa
 `Image not found`. Itu disengaja dan membuktikan plugin gagal dengan rapi tanpa crash.
 Ganti `target.image_path` dengan gambar asli untuk mencoba alur sukses.
 
+## Detektor
+
+| `detector`         | Butuh                                                                    | Kapan dipakai                                           |
+| :----------------- | :----------------------------------------------------------------------- | :------------------------------------------------------ |
+| `opencv_watershed` | numpy, opencv-python-headless                                            | default; citra RGB biasa, hasil sama untuk input sama   |
+| `deeplabv3plus`    | torch, segmentation-models-pytorch, checkpoint `.pth` dari hasil latihan | setelah bobot tersedia; encoder ResNet101 atau Xception |
+| `stub`             | -                                                                        | menguji pipeline tanpa deteksi                          |
+
+`--healthcheck` melaporkan torch dan segmentation-models-pytorch sebagai `optional_dependencies`:
+kalau keduanya hilang plugin tetap sehat, karena detector default tidak memakainya.
+
 ## Test
 
 ```bash
 cd plugins/tree_detection
 python -m unittest discover -s tests -v
 ```
+
+50 test: 20 untuk delapan fitur dan alur payload, 21 untuk detector `opencv_watershed` dan
+`deeplabv3plus` di atas citra sintetis, 9 untuk konektor M9/M10.
 
 Test mencakup kedelapan fitur, termasuk kasus batas dari spesifikasi: tidak ada deteksi
 (`0`, bukan error), threshold di luar 0–1 (ditolak Pydantic), luas 0 (`ZeroAreaError`),

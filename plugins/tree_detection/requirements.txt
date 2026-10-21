@@ -1,4 +1,17 @@
 # Python dependencies for the Tree Detection & Counting plugin (Module 7).
-# Add the detection model's packages here once the model is chosen
-# (e.g. numpy, opencv-python-headless, rasterio, pyproj, torch).
+# Keep this list minimal: it is installed by Module 2 before the plugin can run.
+
+# Data contracts and validation (treedet/models.py, treedet/pipeline.py).
 pydantic>=2,<3
+
+# Default detector 'opencv_watershed' (treedet/detectors.py).
+# The headless build is enough: the plugin never opens a window.
+numpy>=1.26
+opencv-python-headless>=4.8
+
+# Only needed by the optional 'deeplabv3plus' detector (treedet/detectors.py). The
+# default detector never imports them, so they stay commented out: torch alone is
+# about 2 GB and the platform installs this file before the plugin can run.
+# Enable both (and a trained checkpoint) to use that model:
+# segmentation-models-pytorch>=0.3
+# torch>=2.0

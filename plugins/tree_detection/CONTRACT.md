@@ -1,8 +1,9 @@
 # Kontrak Modul 7: Tree Detection & Counting
 
 > Untuk: tim Modul 2 (Plugin Manager), 3 (Map Explorer), 9 (Area & Plot), 10 (Temporal), dan 11 (Dashboard).
-> Status: **draf v0.1.0, belum final**. Bagian [Perlu disepakati](#6-perlu-disepakati) menunggu jawaban
-> dari tim terkait. Nama field di dokumen ini sama persis dengan yang dipakai kode.
+> Status: **v0.4.0**. Dua detector nyata terdaftar (`opencv_watershed` sebagai default dan
+> `deeplabv3plus`). Bagian [Perlu disepakati](#6-perlu-disepakati) masih menunggu jawaban tim
+> terkait. Nama field di dokumen ini sama persis dengan yang dipakai kode.
 
 Dokumen ini menjelaskan apa yang Modul 7 **terima** dan **hasilkan**. Modul lain tidak perlu
 membaca kode Python Modul 7 untuk memakainya.
@@ -34,32 +35,39 @@ Kalau plugin gagal (gambar hilang, GeoJSON rusak, dan sebagainya), plugin **teta
 
 Mengikuti `schemas/execution_payload.schema.json`. Field yang dipakai Modul 7:
 
-| Field payload                         | Wajib  | Sumber    | Dipakai untuk                                                                 |
-| :------------------------------------ | :----: | :-------- | :---------------------------------------------------------------------------- |
-| `execution_id`                        |   ya   | M2        | nama file artefak & `execution_id` hasil                                      |
-| `session_id`                          | tidak  | M1/M2     | `project_id` di metadata hasil                                                |
-| `output_dir`                          |   ya   | M2        | folder tempat artefak ditulis                                                 |
-| `target.image_path`                   |   ya   | M1        | gambar RGB (`.jpg` `.jpeg` `.png` `.tif` `.tiff`)                             |
-| `target.metadata.gps` `{lat, lon}`    | **ya** | M1        | posisi pusat gambar (WGS84)                                                   |
-| `target.metadata.resolution` `[w, h]` | **ya** | M1        | ukuran gambar dalam piksel                                                    |
-| `target.metadata.gsd_m`               | tidak* | M1        | meter per piksel                                                              |
-| `target.metadata.rotation_deg`        | tidak  | M1        | rotasi searah jarum jam dari utara ke tepi atas gambar, default `0`           |
-| `target.metadata.image_id`            | tidak  | M1        | id gambar; default: nama file tanpa ekstensi                                  |
-| `aoi.geometry`                        | tidak  | M3        | GeoJSON `Polygon`/`MultiPolygon` WGS84; hanya pohon di dalamnya yang dihitung |
-| `parameters.*`                        |   ya   | M2 (form) | lihat tabel parameter di bawah                                                |
+| Field payload                         |  Wajib  | Sumber    | Dipakai untuk                                                                 |
+| :------------------------------------ | :-----: | :-------- | :---------------------------------------------------------------------------- |
+| `execution_id`                        |   ya    | M2        | nama file artefak & `execution_id` hasil                                      |
+| `session_id`                          |  tidak  | M1/M2     | `project_id` di metadata hasil                                                |
+| `output_dir`                          |   ya    | M2        | folder tempat artefak ditulis                                                 |
+| `target.image_path`                   |   ya    | M1        | gambar RGB (`.jpg` `.jpeg` `.png` `.tif` `.tiff`)                             |
+| `target.metadata.gps` `{lat, lon}`    | **ya**  | M1        | posisi pusat gambar (WGS84)                                                   |
+| `target.metadata.resolution` `[w, h]` | **ya**  | M1        | ukuran gambar dalam piksel                                                    |
+| `target.metadata.gsd_m`               | tidak\* | M1        | meter per piksel                                                              |
+| `target.metadata.rotation_deg`        |  tidak  | M1        | rotasi searah jarum jam dari utara ke tepi atas gambar, default `0`           |
+| `target.metadata.image_id`            |  tidak  | M1        | id gambar; default: nama file tanpa ekstensi                                  |
+| `aoi.geometry`                        |  tidak  | M3        | GeoJSON `Polygon`/`MultiPolygon` WGS84; hanya pohon di dalamnya yang dihitung |
+| `parameters.*`                        |   ya    | M2 (form) | lihat tabel parameter di bawah                                                |
 
 \* Kalau `gsd_m` tidak ada, dipakai parameter `gsd_cm` (default 3 cm/px).
 
 **Parameter** (`parameters.json`, dirender Modul 2 sebagai form):
 
-| `name`                 | Tipe        | Default  | Keterangan                                        |
-| :--------------------- | :---------- | :------- | :------------------------------------------------ |
-| `confidence_threshold` | number 0–1  | `0.5`    | deteksi di bawah nilai ini dibuang                |
-| `density_unit`         | select      | `per_ha` | `per_ha` atau `per_m2`                            |
-| `detector`             | select      | `stub`   | model deteksi; `stub` = placeholder (0 deteksi)   |
-| `iou_threshold`        | number 0–1  | `0.5`    | batas tumpang tindih untuk deduplikasi antar-tile |
-| `tile_size`            | number (px) | `1024`   | ukuran tile inferensi                             |
-| `gsd_cm`               | number      | `3.0`    | cadangan kalau metadata tidak punya `gsd_m`       |
+| `name`                  | Tipe        | Default            | Keterangan                                             |
+| :---------------------- | :---------- | :----------------- | :----------------------------------------------------- |
+| `confidence_threshold`  | number 0–1  | `0.5`              | deteksi di bawah nilai ini dibuang                     |
+| `density_unit`          | select      | `per_ha`           | `per_ha` atau `per_m2`                                 |
+| `detector`              | select      | `opencv_watershed` | `opencv_watershed`, `deeplabv3plus`, atau `stub`       |
+| `model_path`            | string      | `""`               | checkpoint `.pth`; wajib untuk `deeplabv3plus`         |
+| `backbone`              | select      | `resnet101`        | `resnet101` atau `xception`; harus sama dengan latihan |
+| `probability_threshold` | number 0–1  | `0.5`              | piksel dianggap tajuk di atas nilai ini (DeepLabV3+)   |
+| `iou_threshold`         | number 0–1  | `0.5`              | batas tumpang tindih untuk deduplikasi antar-tile      |
+| `tile_size`             | number (px) | `1024`             | ukuran tile inferensi                                  |
+| `gsd_cm`                | number      | `3.0`              | cadangan kalau metadata tidak punya `gsd_m`            |
+
+`opencv_watershed` tidak membaca `model_path`, `backbone`, atau `probability_threshold`. Detector
+`deeplabv3plus` menolak berjalan tanpa checkpoint, bukan mengembalikan 0 pohon, supaya hasil kosong
+tidak tertukar dengan kebun yang memang kosong.
 
 ## 3. Output
 
@@ -96,10 +104,10 @@ Satu `Feature` per pohon yang dihitung. Koordinat `[longitude, latitude]` dalam 
   "features": [
     {
       "type": "Feature",
-      "id": "DJI_0042-deepforest-0001",
+      "id": "DJI_0042-deeplabv3plus-0001",
       "geometry": { "type": "Point", "coordinates": [116.8535, -1.2445] },
       "properties": {
-        "detection_id": "DJI_0042-deepforest-0001",
+        "detection_id": "DJI_0042-deeplabv3plus-0001",
         "confidence": 0.93,
         "area_m2": 18.4,
         "bbox_px": [1990.0, 1490.0, 2010.0, 1510.0]
@@ -145,8 +153,8 @@ Sesuai model `PluginOutput` di laporan progres Modul 7 (`treedet/models.py`):
   },
   "geojson": "<string berisi tree_points di atas>",
   "metadata": {
-    "plugin_version": "0.1.0",
-    "model_name": "deepforest",
+    "plugin_version": "0.4.0",
+    "model_name": "deeplabv3plus",
     "model_version": null,
     "executed_at": "2026-09-21T09:15:00+00:00",
     "device": "cpu",
@@ -166,8 +174,8 @@ Status `PluginOutput` dipetakan ke skema resmi: `success → success`, `partial 
 | :-------------------- | :--------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **M2** Plugin Manager | CLI di bagian 1; `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` | semua lolos validasi `check-jsonschema` terhadap `schemas/`                                                                                                                                                                                                                                                                       |
 | **M3** Map Explorer   | artefak `tree_points`                                                              | layer_hint `point_marker`. Contoh M3 di `docs/examples/spatial-result.example.json` memakai format `spatial_results`; M3 cukup mengubah tiap `Feature` menjadi `{source, geometry, properties}` dengan `source = "tree-detection-counting"`. `height_est_m` **tidak** tersedia karena citra RGB tunggal tidak memberi info tinggi |
-| **M9** Area & Plot    | `tree_points` atau `plugin_output.detections[].center`                             | hitung per plot dengan point-in-polygon terhadap `Plot.rings` milik M9. Alternatif: M2 menjalankan Modul 7 dengan `aoi` = satu plot, lalu `tree_count` = pohon di plot tersebut                                                                                                                                                   |
-| **M10** Temporal      | metrik `tree_count` dari dua eksekusi (tanggal berbeda)                            | bandingkan hanya jika `confidence_threshold`, `detector`, dan AOI sama                                                                                                                                                                                                                                                            |
+| **M9** Area & Plot    | `tree_points` atau `plugin_output.detections[].center`                             | hitung per plot dengan point-in-polygon terhadap `Plot.rings` milik M9, atau panggil `plot_summaries` dengan seluruh daftar plot. Alternatif: M2 menjalankan Modul 7 dengan `aoi` = satu plot, lalu `tree_count` = pohon di plot tersebut                                                                                         |
+| **M10** Temporal      | metrik `tree_count` dari dua eksekusi (tanggal berbeda)                            | bandingkan hanya jika `confidence_threshold`, `detector`, dan AOI sama; `compare_plot_summaries` menjumlahkan selisih per `plot_id`                                                                                                                                                                                               |
 | **M11** Dashboard     | semua `metrics` + `plugin_output.statistics`                                       | label & satuan tersedia di `outputs.json`                                                                                                                                                                                                                                                                                         |
 
 ## 5. Fungsi publik di dalam plugin
@@ -185,6 +193,9 @@ progres Modul 7. Semuanya murni, kecuali `detect_trees`.
 | 6 Tree Density          | `calculate_tree_density(tree_count, area_m2, unit="per_ha") -> DensityOutput`              |
 | 7 Detection Review      | `apply_review(detections, corrections) -> ReviewOutput`                                    |
 | 8 Plugin Output         | `build_plugin_output(detections, count, density, locations, run_metadata) -> PluginOutput` |
+| Konektor M9             | `plot_summaries(tree_points, plot_boundaries, unit="per_ha") -> tuple[dict, ...]`          |
+| Konektor M10            | `compare_plot_summaries(before, after) -> tuple[dict, ...]`                                |
+| Pembaca artefak         | `tree_points_of(tree_points_geojson) -> tuple[GeoCoordinate, ...]`                         |
 
 Perbedaan dari laporan progres, beserta alasannya:
 
@@ -201,17 +212,20 @@ Perbedaan dari laporan progres, beserta alasannya:
 
 ## 6. Perlu disepakati
 
-|  #  | Pertanyaan                                                                                                                                                                                     | Dengan    | Usulan Modul 7                                                                         |
-| :-: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------- | :------------------------------------------------------------------------------------- |
-|  1  | Apakah M1 bisa mengisi `gsd_m`, `rotation_deg`, dan `image_id` di `target.metadata`? GSD bisa dihitung dari ketinggian relatif + focal length + ukuran sensor; rotasi dari `gimbal_yaw_degree` | M1, M2    | ya, dengan nama field persis seperti tabel input                                       |
-|  2  | Hitung per plot: agregasi titik di M9, atau M2 menjalankan Modul 7 per plot?                                                                                                                   | M2, M9    | agregasi di M9 (satu eksekusi untuk semua plot)                                        |
-|  3  | Detection Review butuh tempat menyimpan koreksi user dan cara mengirimnya ke plugin. Ini perlu Tauri command baru di core                                                                      | M2        | M2 menambah command simpan koreksi; Modul 7 menerima path file koreksi lewat parameter |
-|  4  | Siapa yang mengubah GeoJSON ke format `spatial_results` M3?                                                                                                                                    | M3        | M3 (plugin tetap mengeluarkan GeoJSON standar)                                         |
-|  5  | Model deteksi yang dipakai (klasik OpenCV atau deep learning seperti DeepForest)?                                                                                                              | dosen/tim | ditentukan Modul 7; tidak mengubah kontrak ini                                         |
-|  6  | Plugin ditaruh di repo ini (`plugins/tree_detection/`) atau repo terpisah? `CONTRIBUTING.md` menyebut plugin analitik ada di repo terpisah                                                     | tim       | sementara di repo ini, mengikuti `plugins/mock`                                        |
+|  #  | Pertanyaan                                                                                                                                                                                     | Dengan    | Usulan Modul 7                                                                                                                       |
+| :-: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------------------------------------- |
+|  1  | Apakah M1 bisa mengisi `gsd_m`, `rotation_deg`, dan `image_id` di `target.metadata`? GSD bisa dihitung dari ketinggian relatif + focal length + ukuran sensor; rotasi dari `gimbal_yaw_degree` | M1, M2    | ya, dengan nama field persis seperti tabel input                                                                                     |
+|  2  | Hitung per plot: agregasi titik di M9, atau M2 menjalankan Modul 7 per plot?                                                                                                                   | M2, M9    | agregasi di M9 (satu eksekusi untuk semua plot)                                                                                      |
+|  3  | Detection Review butuh tempat menyimpan koreksi user dan cara mengirimnya ke plugin. Ini perlu Tauri command baru di core                                                                      | M2        | M2 menambah command simpan koreksi; Modul 7 menerima path file koreksi lewat parameter                                               |
+|  4  | Siapa yang mengubah GeoJSON ke format `spatial_results` M3?                                                                                                                                    | M3        | M3 (plugin tetap mengeluarkan GeoJSON standar)                                                                                       |
+|  5  | Model deteksi yang dipakai (klasik OpenCV atau deep learning seperti DeepLabV3+)?                                                                                                              | dosen/tim | diputuskan DeepLabV3+ dengan encoder ResNet101 atau Xception; `opencv_watershed` tetap default sampai checkpoint hasil pelatihan ada |
+|  6  | Plugin ditaruh di repo ini (`plugins/tree_detection/`) atau repo terpisah? `CONTRIBUTING.md` menyebut plugin analitik ada di repo terpisah                                                     | tim       | sementara di repo ini, mengikuti `plugins/mock`                                                                                      |
 
 ## 7. Riwayat versi
 
-| Versi | Tanggal    | Perubahan                                                         |
-| :---- | :--------- | :---------------------------------------------------------------- |
-| 0.1.0 | 2026-09-21 | Draf awal: kerangka plugin, kontrak input/output, detector `stub` |
+| Versi | Tanggal    | Perubahan                                                                                                        |
+| :---- | :--------- | :--------------------------------------------------------------------------------------------------------------- |
+| 0.4.0 | 2026-10-21 | Konektor M9/M10 (`plot_summaries`, `compare_plot_summaries`, `tree_points_of`); metrik dan artefak tidak berubah |
+| 0.3.0 | 2026-10-21 | Detector `deeplabv3plus` dengan `model_path`, `backbone`, `probability_threshold`                                |
+| 0.2.0 | 2026-10-18 | `opencv_watershed` menjadi detector default; `manifest.json` naik ke 0.2.0                                       |
+| 0.1.0 | 2026-09-21 | Draf awal: kerangka plugin, kontrak input/output, detector `stub`                                                |

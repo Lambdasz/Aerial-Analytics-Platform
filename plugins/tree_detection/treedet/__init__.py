@@ -11,6 +11,12 @@ Public functions (one per feature in the Module 7 specification):
 - ``apply_review``            Feature 7 - Detection Review
 - ``build_plugin_output``     Feature 8 - Plugin-Compatible Output
 
+Connectors for other modules (they work on the files the plugin writes):
+
+- ``tree_points_of``          read the ``tree_points`` GeoJSON artifact
+- ``plot_summaries``          per-plot count, area and density for Module 9
+- ``compare_plot_summaries``  per-plot count change for Module 10
+
 Everything except ``detect_trees`` is a pure function: same input, same
 output, no I/O. ``detect_trees`` reads the image through the chosen detector.
 """
@@ -20,6 +26,7 @@ from .counting import count_trees
 from .density import calculate_tree_density
 from .detection import deduplicate, detect_trees
 from .filtering import filter_by_confidence
+from .integration import compare_plot_summaries, plot_summaries, tree_points_of
 from .location import locate_detections, map_tree_locations
 from .output import build_plugin_output, to_execution_result
 from .review import apply_review
@@ -28,6 +35,7 @@ __all__ = [
     "apply_review",
     "build_plugin_output",
     "calculate_tree_density",
+    "compare_plot_summaries",
     "count_trees",
     "count_trees_in_area",
     "deduplicate",
@@ -35,6 +43,8 @@ __all__ = [
     "filter_by_confidence",
     "locate_detections",
     "map_tree_locations",
+    "plot_summaries",
     "polygon_area_m2",
     "to_execution_result",
+    "tree_points_of",
 ]

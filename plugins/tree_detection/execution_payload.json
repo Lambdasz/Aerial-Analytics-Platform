@@ -37,7 +37,7 @@
   "parameters": {
     "confidence_threshold": 0.5,
     "density_unit": "per_ha",
-    "detector": "stub",
+    "detector": "opencv_watershed",
     "iou_threshold": 0.5,
     "tile_size": 1024,
     "gsd_cm": 3.0

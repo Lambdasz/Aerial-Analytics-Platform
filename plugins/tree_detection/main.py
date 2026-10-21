@@ -37,9 +37,13 @@ def load_manifest_metadata() -> Tuple[str, str]:
 
 
 def check_dependencies() -> Tuple[bool, Dict[str, str]]:
-    """Verify that required third-party modules can be imported."""
-    # Add the detection model's packages here once chosen (e.g. "numpy", "cv2", "torch").
-    required_modules: List[str] = ["pydantic"]
+    """Verify that required third-party modules can be imported.
+
+    The default detector reads the image with numpy and OpenCV, so both belong here:
+    without them the plugin cannot detect anything, and a healthcheck that hides that
+    would show the plugin as active on a machine where a run is guaranteed to fail.
+    """
+    required_modules: List[str] = ["pydantic", "numpy", "cv2"]
 
     statuses: Dict[str, str] = {}
     for module_name in required_modules:
@@ -52,6 +56,22 @@ def check_dependencies() -> Tuple[bool, Dict[str, str]]:
     return all_ok, statuses
 
 
+def check_optional_dependencies() -> Dict[str, str]:
+    """Modules only the 'deeplabv3plus' detector needs.
+
+    Reported but never fatal: the other detectors run without them, so a machine
+    without torch is still healthy until someone selects that model.
+    """
+    statuses: Dict[str, str] = {}
+    for module_name in ("torch", "segmentation_models_pytorch"):
+        try:
+            importlib.import_module(module_name)
+            statuses[module_name] = "available"
+        except ImportError as err:
+            statuses[module_name] = f"missing: {err}"
+    return statuses
+
+
 def handle_healthcheck() -> None:
     plugin_id, version = load_manifest_metadata()
     deps_ok, deps_status = check_dependencies()
@@ -61,6 +81,7 @@ def handle_healthcheck() -> None:
         "version": version,
         "python_version": sys.version.split()[0],
         "dependencies": deps_status,
+        "optional_dependencies": check_optional_dependencies(),
     }
     if not deps_ok:
         health_info["error"] = (
