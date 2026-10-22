@@ -20,3 +20,31 @@ export const DEFAULT_MAP_VIEW = {
     [-1.2186297002884836, 116.863202751651],
   ] as [[number, number], [number, number]],
 } as const;
+
+export const BASEMAPS = {
+  osm: {
+    name: "OpenStreetMap",
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxNativeZoom: 19,
+  },
+  satellite: {
+    name: "Esri Satellite",
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    attribution:
+      "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
+    maxNativeZoom: 18,
+  },
+  positron: {
+    name: "CartoDB Positron",
+    url: `https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${
+      import.meta.env.VITE_CARTO_API_KEY || ""
+    }`,
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxNativeZoom: 19,
+  },
+} as const;
+
+export type BasemapKey = keyof typeof BASEMAPS;

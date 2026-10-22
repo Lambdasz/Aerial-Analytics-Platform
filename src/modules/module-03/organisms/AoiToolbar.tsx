@@ -17,11 +17,12 @@ function generateAoiId(): string {
 
 import * as L from "leaflet";
 
-interface AoiDemoToolbarProps {
+export interface AoiToolbarProps {
   map: L.Map | null;
 }
+export type AoiDemoToolbarProps = AoiToolbarProps;
 
-export const AoiDemoToolbar: React.FC<AoiDemoToolbarProps> = ({ map }) => {
+export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
   const { aoi, draftPolygon, isDrawing, isSaving, startDrawing, stopDrawing, clearAoi, saveAoi } =
     useAOI();
 
@@ -240,3 +241,5 @@ export const AoiDemoToolbar: React.FC<AoiDemoToolbarProps> = ({ map }) => {
     </Card>
   );
 };
+
+export const AoiDemoToolbar = AoiToolbar;

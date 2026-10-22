@@ -1,8 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Button, Tag, Slider, HTMLSelect } from "@blueprintjs/core";
-
 import type { LayerState, AnnotationFeature } from "../types/layer";
-
 import {
   toggleLayerVisibility,
   setLayerOpacity,
@@ -11,6 +8,9 @@ import {
   getInitialMapLayers,
   getSampleAnnotations,
 } from "../services/api";
+import { LayerCategoryFilter } from "../molecules/LayerCategoryFilter";
+import { LayerItem } from "../molecules/LayerItem";
+import { AnnotationForm } from "../molecules/AnnotationForm";
 
 const INITIAL_LAYERS: LayerState[] = [
   {
@@ -65,43 +65,33 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   onLayersChange,
 }) => {
   const [layers, setLayers] = useState<LayerState[]>(INITIAL_LAYERS);
-
   const [selectedCategory, setSelectedCategory] = useState("All");
-
   const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
-
   const [annotationText, setAnnotationText] = useState("");
-
   const [latitude, setLatitude] = useState("");
-
   const [longitude, setLongitude] = useState("");
 
   // =========================
   // CATEGORY LIST
   // =========================
-
   const categories = useMemo(() => {
     const uniqueCategories = Array.from(new Set(layers.map((layer) => layer.category)));
-
     return ["All", ...uniqueCategories];
   }, [layers]);
 
   // =========================
   // FILTERED LAYERS
   // =========================
-
   const visibleLayers = useMemo(() => {
     if (selectedCategory === "All") {
       return layers;
     }
-
     return layers.filter((layer) => layer.category === selectedCategory);
   }, [layers, selectedCategory]);
 
   // =========================
-  // SEND ANNOTATIONS TO PARENT
+  // SEND ANNOTATIONS & LAYERS TO PARENT
   // =========================
-
   React.useEffect(() => {
     onAnnotationsChange?.(annotations);
   }, [annotations, onAnnotationsChange]);
@@ -141,11 +131,9 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
   // LAYER MANAGEMENT
   // =========================
-
   const handleToggleVisibility = async (layer: LayerState) => {
     try {
       const updatedLayer = await toggleLayerVisibility(layer, !layer.is_visible);
-
       setLayers((currentLayers) =>
         currentLayers.map((item) =>
           item.layer_id === updatedLayer.layer_id ? updatedLayer : item,
@@ -159,7 +147,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   const handleSetOpacity = async (layer: LayerState, value: number) => {
     try {
       const updatedLayer = await setLayerOpacity(layer, value);
-
       setLayers((currentLayers) =>
         currentLayers.map((item) =>
           item.layer_id === updatedLayer.layer_id ? updatedLayer : item,
@@ -172,7 +159,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
   const handleCategoryChange = async (category: string) => {
     setSelectedCategory(category);
-
     if (category === "All") {
       return;
     }
@@ -187,7 +173,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
   // SPATIAL ANNOTATION
   // =========================
-
   const handleCreateAnnotation = async () => {
     if (!annotationText.trim() || !latitude || !longitude) {
       console.error("Teks dan koordinat wajib diisi.");
@@ -219,7 +204,6 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       });
 
       setAnnotations((current) => [...current, annotation]);
-
       setAnnotationText("");
       setLatitude("");
       setLongitude("");
@@ -228,278 +212,43 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
     }
   };
 
-  // =========================
-  // RENDER
-  // =========================
-
   return (
     <div style={{ paddingBottom: "20px" }}>
-      {/* =========================
-          CATEGORY FILTER
-          ========================= */}
-
-      <div
-        style={{
-          marginBottom: "16px",
+      <LayerCategoryFilter
+        categories={categories}
+        selectedCategory={selectedCategory}
+        onSelectCategory={(category) => {
+          void handleCategoryChange(category);
         }}
-      >
-        <div
-          style={{
-            fontSize: "12px",
-            fontWeight: 600,
-            marginBottom: "6px",
+      />
+
+      {visibleLayers.map((layer) => (
+        <LayerItem
+          key={layer.layer_id}
+          layer={layer}
+          onToggleVisibility={(l) => {
+            void handleToggleVisibility(l);
           }}
-        >
-          Filter Kategori
-        </div>
-
-        <HTMLSelect
-          fill
-          className="apple-select"
-          value={selectedCategory}
-          onChange={(event) => {
-            void handleCategoryChange(event.target.value);
-          }}
-        >
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category}
-            </option>
-          ))}
-        </HTMLSelect>
-      </div>
-
-      {/* =========================
-          LAYER LIST
-          ========================= */}
-
-      {visibleLayers.map((layer) => {
-        return (
-          <div
-            key={layer.layer_id}
-            style={{
-              marginBottom: "16px",
-              padding: "16px",
-              background: "var(--color-gallery-white)",
-              borderRadius: "var(--radius-cards)",
-              boxShadow: "var(--shadow-subtle)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "10px",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontWeight: 600,
-                    marginBottom: "4px",
-                  }}
-                >
-                  {layer.layer_name}
-                </div>
-
-                <Tag
-                  minimal
-                  round
-                  style={{
-                    background: "var(--color-control-gray)",
-                    color: "var(--color-ink)",
-                    fontSize: "11px",
-                    fontWeight: 500,
-                  }}
-                >
-                  {layer.category}
-                </Tag>
-              </div>
-
-              <Button
-                icon={layer.is_visible ? "eye-open" : "eye-off"}
-                text={layer.is_visible ? "ON" : "OFF"}
-                minimal={!layer.is_visible}
-                style={{
-                  borderRadius: "var(--radius-buttons)",
-                  background: layer.is_visible ? "var(--color-control-gray)" : "transparent",
-                  boxShadow: "none",
-                  color: layer.is_visible ? "var(--color-apple-blue)" : "var(--color-slate)",
-                  fontWeight: 600,
-                }}
-                onClick={() => {
-                  void handleToggleVisibility(layer);
-                }}
-              />
-            </div>
-
-            {/* Opacity */}
-
-            <div
-              style={{
-                marginTop: "10px",
-                padding: "0 8px",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: "4px",
-                  fontSize: "12px",
-                }}
-              >
-                <span>Opacity</span>
-
-                <span>{Math.round(layer.opacity * 100)}%</span>
-              </div>
-
-              <Slider
-                min={0}
-                max={1}
-                stepSize={0.1}
-                labelStepSize={0.5}
-                value={layer.opacity}
-                onChange={(value) => {
-                  void handleSetOpacity(layer, value);
-                }}
-              />
-            </div>
-          </div>
-        );
-      })}
-
-      {/* =========================
-          SPATIAL ANNOTATION
-          ========================= */}
-
-      <div
-        style={{
-          marginTop: "20px",
-          paddingTop: "16px",
-          borderTop: "1px solid var(--color-hairline-silver)",
-        }}
-      >
-        <div
-          style={{
-            marginBottom: "10px",
-            background: "var(--color-gallery-white)",
-            boxShadow: "var(--shadow-subtle)",
-            borderRadius: "12px",
-            padding: "8px 12px",
-          }}
-        >
-          <textarea
-            placeholder="Tulis catatan annotation..."
-            value={annotationText}
-            onChange={(event) => setAnnotationText(event.target.value)}
-            style={{
-              width: "100%",
-              minHeight: "60px",
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              color: "var(--color-ink)",
-              fontSize: "14px",
-              fontFamily: "var(--font-sf-pro-text)",
-              resize: "vertical",
-            }}
-          />
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: "8px",
-            marginBottom: "12px",
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              background: "var(--color-gallery-white)",
-              boxShadow: "var(--shadow-subtle)",
-              borderRadius: "12px",
-              padding: "8px 12px",
-            }}
-          >
-            <input
-              type="number"
-              placeholder="Latitude"
-              value={latitude}
-              onChange={(event) => setLatitude(event.target.value)}
-              style={{
-                width: "100%",
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                color: "var(--color-ink)",
-                fontSize: "14px",
-                fontFamily: "var(--font-sf-pro-text)",
-              }}
-            />
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              background: "var(--color-gallery-white)",
-              boxShadow: "var(--shadow-subtle)",
-              borderRadius: "12px",
-              padding: "8px 12px",
-            }}
-          >
-            <input
-              type="number"
-              placeholder="Longitude"
-              value={longitude}
-              onChange={(event) => setLongitude(event.target.value)}
-              style={{
-                width: "100%",
-                border: "none",
-                outline: "none",
-                background: "transparent",
-                color: "var(--color-ink)",
-                fontSize: "14px",
-                fontFamily: "var(--font-sf-pro-text)",
-              }}
-            />
-          </div>
-        </div>
-
-        <Button
-          icon="add"
-          text="Buat Annotation"
-          fill
-          onClick={() => {
-            void handleCreateAnnotation();
-          }}
-          style={{
-            borderRadius: "999px",
-            background: "var(--color-apple-blue)",
-            color: "#fff",
-            boxShadow: "none",
-            fontWeight: 600,
-            padding: "8px 16px",
+          onOpacityChange={(l, value) => {
+            void handleSetOpacity(l, value);
           }}
         />
-      </div>
+      ))}
 
-      {/* =========================
-          ANNOTATION LIST
-          ========================= */}
+      <AnnotationForm
+        annotationText={annotationText}
+        latitude={latitude}
+        longitude={longitude}
+        onTextChange={setAnnotationText}
+        onLatitudeChange={setLatitude}
+        onLongitudeChange={setLongitude}
+        onSubmit={() => {
+          void handleCreateAnnotation();
+        }}
+      />
 
       {annotations.length > 0 && (
-        <div
-          style={{
-            marginTop: "16px",
-          }}
-        >
+        <div style={{ marginTop: "16px" }}>
           <h6 className="bp5-heading">Annotation Dibuat</h6>
 
           {annotations.map((annotation) => {
@@ -516,13 +265,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                   boxShadow: "var(--shadow-subtle)",
                 }}
               >
-                <div
-                  style={{
-                    fontWeight: 600,
-                  }}
-                >
-                  {annotation.text}
-                </div>
+                <div style={{ fontWeight: 600 }}>{annotation.text}</div>
 
                 {isPoint && (
                   <small>

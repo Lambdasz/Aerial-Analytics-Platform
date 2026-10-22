@@ -1,7 +1,7 @@
 import React from "react";
 import { ImageGallerySidebar } from "./ImageGallerySidebar";
 import { LayerManager } from "./LayerManager";
-import { AoiDemoToolbar } from "./AoiDemoToolbar";
+import { AoiToolbar } from "./AoiToolbar";
 import { MapSearchBar } from "../molecules/MapSearchBar";
 import L from "leaflet";
 
@@ -148,7 +148,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
               onLayersChange={onLayersChange}
             />
           )}
-          {activeTab === "aoi" && <AoiDemoToolbar map={map} />}
+          {activeTab === "aoi" && <AoiToolbar map={map} />}
           {activeTab === "gallery" && <ImageGallerySidebar />}
         </div>
       </div>
