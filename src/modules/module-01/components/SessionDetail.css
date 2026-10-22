@@ -379,6 +379,23 @@
   color: var(--m1-text-main);
 }
 
+.m1-sd-row-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--m1-blue-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.m1-sd-row-btn:hover {
+  color: var(--m1-blue-hover);
+  text-decoration: underline;
+}
+
 .m1-sd-table-footer {
   display: flex;
   flex-wrap: wrap;
