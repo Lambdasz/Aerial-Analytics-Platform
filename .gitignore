@@ -35,8 +35,8 @@ target/
 **/target/
 plugins/**/bin/
 
-# Full-resolution sample photos (never commit these; the committed test
-# fixtures are metadata-only derivatives in src-tauri/tests/fixtures/)
+# Full-resolution sample photos and raw drone material: never commit
+# these (privacy + repo size).
 src-tauri/src/sampel/
 
 # Python cache & artifacts

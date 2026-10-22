@@ -223,10 +223,9 @@
 //!   plus the import request/report types).
 //! - `modules::module_01::metadata_extractor` — EXIF/XMP DJI metadata extraction
 //!   (`extract_metadata`), format sniffing, completeness checks, and the
-//!   plugin pre-flight projection. The EXIF layer is migrating to
-//!   `kamadak-exif`: a parallel kamadak path ([`read_exif`] + [`from_exif`])
-//!   currently runs behind a dual-parser oracle test until the hand-written
-//!   EXIF parser is retired.
+//!   plugin pre-flight projection. The EXIF layer is read through
+//!   `kamadak-exif`; the XMP DJI packet and dimension readers stay
+//!   hand-written.
 //! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
 //!   per-file classification, filesystem-aware name-conflict detection,
 //!   project-scope duplicate detection, and incomplete-metadata flags.
