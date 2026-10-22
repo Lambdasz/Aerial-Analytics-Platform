@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { Icon } from "@blueprintjs/core";
 import { LayerPayload } from "../types/map";
+import { groupLayersBySector } from "../lib/legendUtils";
 import "../styles/MapLegend.css";
 
 interface MapLegendProps {
@@ -10,23 +11,12 @@ interface MapLegendProps {
 export const MapLegend: React.FC<MapLegendProps> = ({ layers }) => {
   const [isOpen, setIsOpen] = React.useState(false);
 
-  // Only show legend items for non-image overlay layers
-  const legendItems = layers.filter((layer) => layer.display_preference.type !== "image_overlay");
-
   // Group by sector
   const groupedLayers = useMemo(() => {
-    const groups: Record<string, typeof legendItems> = {};
-    legendItems.forEach((layer) => {
-      const parts = layer.layer_name.split(" - ");
-      const sector = parts.length > 1 ? parts[1] : "Umum";
-      const name = parts[0];
-      if (!groups[sector]) groups[sector] = [];
-      groups[sector].push({ ...layer, layer_name: name });
-    });
-    return groups;
-  }, [legendItems]);
+    return groupLayersBySector(layers);
+  }, [layers]);
 
-  if (legendItems.length === 0) {
+  if (Object.keys(groupedLayers).length === 0) {
     return null;
   }
 

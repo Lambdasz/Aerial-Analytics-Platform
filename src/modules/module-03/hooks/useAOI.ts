@@ -22,6 +22,7 @@ import "@geoman-io/leaflet-geoman-free";
 
 import { createAoi } from "../services/api";
 import type { AoiFeature, Polygon } from "../types/aoi";
+import { latLngsToPolygon } from "../lib/geoJson";
 
 /** Public API surface returned by {@link useAOI}. */
 export interface UseAOIReturn {
@@ -49,21 +50,8 @@ export interface UseAOIReturn {
  * Leaflet uses `[lat, lng]`; GeoJSON uses `[lng, lat]`.
  */
 function layerToPolygon(layer: L.Layer): Polygon {
-  // Leaflet's Polygon.getLatLngs() returns LatLng[][] (array of rings)
   const latLngs = (layer as L.Polygon).getLatLngs() as L.LatLng[][];
-
-  return latLngs.map((ring) => {
-    const coords = ring.map((ll): [number, number] => [ll.lng, ll.lat]);
-    // Ensure the ring is closed (GeoJSON requirement)
-    if (
-      coords.length > 0 &&
-      (coords[0][0] !== coords[coords.length - 1][0] ||
-        coords[0][1] !== coords[coords.length - 1][1])
-    ) {
-      coords.push([...coords[0]]);
-    }
-    return coords;
-  });
+  return latLngsToPolygon(latLngs);
 }
 
 /**
