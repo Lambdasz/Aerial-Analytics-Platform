@@ -29,7 +29,23 @@ export function useSpatialResultLayers() {
       .then((commands) => {
         if (cancelled) return;
         const loadedLayers: LayerPayload[] = [];
-        commands.forEach(({ action, payload }) => {
+
+        // Urutkan layer agar poligon di bawah (1), garis di tengah (2), dan titik pohon paling atas (3)
+        const sortedCommands = [...commands].sort((a, b) => {
+          const getScore = (cmd: MapLayerCommand) => {
+            if (cmd.payload.display_preference.type === "image_overlay") return 0;
+            const hasPoint = cmd.payload.spatial_results.some((r) => r.geometry.type === "Point");
+            if (hasPoint) return 3;
+            const hasLine = cmd.payload.spatial_results.some(
+              (r) => r.geometry.type === "LineString" || r.geometry.type === "MultiLineString",
+            );
+            if (hasLine) return 2;
+            return 1; // Polygon
+          };
+          return getScore(a) - getScore(b);
+        });
+
+        sortedCommands.forEach(({ action, payload }) => {
           if (action !== "load_spatial_result") return;
 
           const existing = layersRef.current.get(payload.layer_id);

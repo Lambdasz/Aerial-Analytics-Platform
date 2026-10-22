@@ -21,7 +21,24 @@ export function buildFeatureLayer(
     case "Point": {
       const [lng, lat] = result.geometry.coordinates;
       if (display.type === "point") {
-        return L.circleMarker([lat, lng], { color: display.color, radius: 8 });
+        const marker = L.circleMarker([lat, lng], {
+          pane: "markerPane",
+          color: "#ffffff",
+          weight: 2,
+          fillColor: display.color,
+          fillOpacity: 0.9,
+          radius: 9,
+        });
+
+        marker.on("mouseover", () => {
+          marker.bringToFront();
+          marker.setStyle({ radius: 12, weight: 3 });
+        });
+        marker.on("mouseout", () => {
+          marker.setStyle({ radius: 9, weight: 2 });
+        });
+
+        return marker;
       }
       return L.marker([lat, lng]);
     }
@@ -30,21 +47,25 @@ export function buildFeatureLayer(
         ([lng, lat]) => [lat, lng] as [number, number],
       );
       const color = display.type === "point" ? display.color : "#ff3333";
-      return L.polyline(latlngs, { color });
+      return L.polyline(latlngs, { color, weight: 3 });
     }
     case "MultiLineString": {
       const lines = result.geometry.coordinates.map((line) =>
         line.map(([lng, lat]) => [lat, lng] as [number, number]),
       );
       const color = display.type === "point" ? display.color : "#ff3333";
-      return L.polyline(lines, { color });
+      return L.polyline(lines, { color, weight: 3 });
     }
     case "Polygon": {
       const rings = result.geometry.coordinates.map((ring) =>
         ring.map(([lng, lat]) => [lat, lng] as [number, number]),
       );
       const color = display.type === "point" ? display.color : "#3388ff";
-      return L.polygon(rings, { color });
+      return L.polygon(rings, {
+        color,
+        weight: 2,
+        fillOpacity: 0.25,
+      });
     }
     default:
       return null;
