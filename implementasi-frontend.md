@@ -465,19 +465,19 @@ Untuk menjaga kejujuran arsitektural:
 
 ### 7.4 Checklist Smoke Test Manual (13 Skenario Kunci)
 
-- [ ] Peta memuat basemap OSM dengan tepat di pusat koordinat Kariangau (`[-1.22147, 116.859588]`, zoom 16).
-- [ ] Basemap thumbnail switch (OSM ↔ Esri Satelit) bekerja mulus dan posisinya bergeser secara dinamis saat panel kiri diciutkan.
-- [ ] Marker foto drone (200-500 foto) tampil dengan arah panah rotasi SVG sesuai `heading_deg`.
-- [ ] Klik marker foto: popup `ImagePopupCard` muncul dengan telemetri akurat.
-- [ ] Tombol "Fokus" di popup memusatkan peta ke foto (`map.flyTo`).
-- [ ] Tombol "Galeri" di popup membuka tab Gallery di panel kiri.
-- [ ] Sinkronisasi dua arah: klik kartu galeri memusatkan peta (Alur A); klik marker di peta menggulir daftar galeri secara otomatis (Alur B).
-- [ ] Panel kiri: tombol hamburger menciutkan (0px) dan melebarkan (380px) panel kiri; perpindahan tab tidak mereset state.
-- [ ] Layer Manager: toggle visibilitas, slider opasitas, dan filter kategori layer berfungsi tanpa flicker.
-- [ ] Anotasi Spasial: validasi input angka dan batas koordinat (-90 s/d 90, -180 s/d 180); submit menambahkan marker anotasi pada peta.
-- [ ] AOI Tools: tombol "Draw AOI" mengaktifkan drawing mode Geoman; simpan AOI memanggil backend; tombol "Cancel" membersihkan gambar.
-- [ ] Kontrol Peta (MapViewControlBar): Zoom in/out, Fit Bounds (membidik seluruh foto), Reset North (kembali ke Kariangau), Fullscreen.
-- [ ] Legenda Peta: menampilkan pengelompokan layer per sektor dengan indikator warna yang cocok.
+- [x] Peta memuat basemap OSM dengan tepat di pusat koordinat Kariangau (`[-1.22147, 116.859588]`, zoom 16).
+- [x] Basemap thumbnail switch (OSM ↔ Esri Satelit) bekerja mulus dan posisinya bergeser secara dinamis saat panel kiri diciutkan.
+- [x] Marker foto drone (200-500 foto) tampil dengan arah panah rotasi SVG sesuai `heading_deg`.
+- [x] Klik marker foto: popup `ImagePopupCard` muncul dengan telemetri akurat.
+- [x] Tombol "Fokus" di popup memusatkan peta ke foto (`map.flyTo`).
+- [x] Tombol "Galeri" di popup membuka tab Gallery di panel kiri.
+- [x] Sinkronisasi dua arah: klik kartu galeri memusatkan peta (Alur A); klik marker di peta menggulir daftar galeri secara otomatis (Alur B).
+- [x] Panel kiri: tombol hamburger menciutkan (0px) dan melebarkan (380px) panel kiri; perpindahan tab tidak mereset state.
+- [x] Layer Manager: toggle visibilitas, slider opasitas, dan filter kategori layer berfungsi tanpa flicker.
+- [x] Anotasi Spasial: validasi input angka dan batas koordinat (-90 s/d 90, -180 s/d 180); submit menambahkan marker anotasi pada peta.
+- [x] AOI Tools: tombol "Draw AOI" mengaktifkan drawing mode Geoman; simpan AOI memanggil backend; tombol "Cancel" membersihkan gambar.
+- [x] Kontrol Peta (MapViewControlBar): Zoom in/out, Fit Bounds (membidik seluruh foto), Reset North (kembali ke Kariangau), Fullscreen.
+- [x] Legenda Peta: menampilkan pengelompokan layer per sektor dengan indikator warna yang cocok.
 
 ---
 
@@ -645,3 +645,36 @@ Sesuai aturan Conventional Commits dan pemisahan tegas antara pemindahan murni d
 1. **Alias Path `@/*`**: **TIDAK DITAMBAHKAN**. Semua impor lintas modul menggunakan path relatif (contoh: `import { MapExplorer } from "../modules/module-03"`). Dokumentasi README modul disesuaikan dengan path relatif.
 2. **Penegakan ESLint `no-restricted-imports`**: **DISETUJUI** dengan perluasan melarang atom/molekul memanggil `useMap` dari `react-leaflet`, melarang atom mengimpor molekul, dan melarang `lib/` mengimpor React/Leaflet.
 3. **Props Style `MapExplorerProps`**: **DIGABUNG** (_shallow merge_) dengan nilai default `{ width: "100%", height: "100%", position: "relative", ...style }`.
+
+---
+
+## 11. Riwayat Eksekusi & Status Akhir (Selesai Penuh)
+
+Seluruh tahapan refaktor arsitektur Atomic Design untuk Modul 03 telah diselesaikan dengan sukses secara bertahap dan mematuhi seluruh gerbang pre-commit.
+
+### 11.1 Riwayat Commit Atomik
+
+1. `9d4a73b`: `docs(module-03): add implementation plan for frontend atomic design refactor` (Tahap 0)
+2. `21456a2`: `refactor(module-03): reorganize directory structure into atomic design hierarchy` (Tahap 2)
+3. `b06a9e4`: `refactor(module-03): separate pure lib helpers and mutable leaflet builders` (Tahap 3)
+4. `416a8ec`: `refactor(module-03): decompose mixed components and rename aoi toolbar` (Tahap 4)
+5. `0001f3c`: `feat(module-03): create standalone MapExplorer composition root and public api` (Tahap 5)
+6. `1c2d191`: `chore(module-03): enforce atomic import boundaries in eslint and remove legacy shims` (Tahap 6)
+
+### 11.2 Hasil Gerbang Verifikasi Kualitas
+
+| Gerbang Pengujian         | Perintah                              |  Status  | Keterangan                                                      |
+| :------------------------ | :------------------------------------ | :------: | :-------------------------------------------------------------- |
+| **TypeScript Strict**     | `npx tsc --noEmit`                    | **PASS** | 0 error, typecheck modul dan seluruh project bersih.            |
+| **ESLint Flat Config**    | `npm run lint`                        | **PASS** | 0 error, 0 warning. Boundary rules berjalan aktif.              |
+| **Prettier Code Style**   | `npm run format:check`                | **PASS** | Semua file menggunakan code style Prettier.                     |
+| **Vite Production Build** | `npm run build`                       | **PASS** | 2510 modules transformed, bundling selesai dalam ~11s.          |
+| **Rust Clippy Gate**      | `npm run lint:rust`                   | **PASS** | 0 warning (`cargo clippy -D warnings`).                         |
+| **Rust Fmt Gate**         | `npm run format:rust:check`           | **PASS** | Code style Rust bersih.                                         |
+| **Uji Negatif ESLint**    | Disengaja pada MapSearchBar & geoJson | **PASS** | Terbukti memblokir impor terlarang dengan pesan error spesifik. |
+
+### 11.3 Status Akhir Repositori
+
+- **Branch**: `feat/uji-coba-kode-nuklir/modul3`
+- **Working tree**: Bersih (clean).
+- **Remote Push**: **TIDAK DILAKUKAN** sesuai instruksi keras pengguna ("tolong jangan di push ke github dulu ya !"). Seluruh commit tersimpan aman di lokal repository.
