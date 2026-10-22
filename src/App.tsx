@@ -1,4 +1,4 @@
-import { Module03Page } from "./modules/module-03/Module03Page";
+import { Module03Page } from "./modules/module-03";
 import "./App.css";
 
 function App() {
