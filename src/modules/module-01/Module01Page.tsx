@@ -89,6 +89,30 @@ function Module01PageInner() {
   const sortContainerRef = useRef<HTMLDivElement | null>(null);
   const [requestedPage, setCurrentPage] = useState(1);
 
+  // Sliding indicator for filter capsule
+  const activeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const archivedBtnRef = useRef<HTMLButtonElement | null>(null);
+  const allBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [sliderStyle, setSliderStyle] = useState<{ left: number; width: number }>({
+    left: 0,
+    width: 0,
+  });
+
+  useEffect(() => {
+    const target =
+      statusFilter === "active"
+        ? activeBtnRef.current
+        : statusFilter === "archived"
+          ? archivedBtnRef.current
+          : allBtnRef.current;
+    if (target) {
+      setSliderStyle({
+        left: target.offsetLeft,
+        width: target.offsetWidth,
+      });
+    }
+  }, [statusFilter, sessions.length]);
+
   // Close sort dropdown when clicked outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -629,9 +653,20 @@ function Module01PageInner() {
                   )}
                 </div>
 
-                {/* Professional Capsule Status Filters (tanpa titik kecil) */}
+                {/* Professional Capsule Status Filters (dengan animasi sliding indicator) */}
                 <div className="m1-filter-capsule" role="tablist" aria-label="Filter status sesi">
+                  {sliderStyle.width > 0 && (
+                    <div
+                      className="m1-filter-capsule__slider"
+                      style={{
+                        transform: `translateX(${sliderStyle.left}px)`,
+                        width: `${sliderStyle.width}px`,
+                      }}
+                      aria-hidden="true"
+                    />
+                  )}
                   <button
+                    ref={activeBtnRef}
                     type="button"
                     role="tab"
                     aria-selected={statusFilter === "active"}
@@ -644,6 +679,7 @@ function Module01PageInner() {
                   </button>
 
                   <button
+                    ref={archivedBtnRef}
                     type="button"
                     role="tab"
                     aria-selected={statusFilter === "archived"}
@@ -656,6 +692,7 @@ function Module01PageInner() {
                   </button>
 
                   <button
+                    ref={allBtnRef}
                     type="button"
                     role="tab"
                     aria-selected={statusFilter === "all"}
@@ -832,12 +869,27 @@ function Module01PageInner() {
                   title="Belum ada sesi penerbangan"
                   description="Proyek ini belum memiliki sesi. Buat sesi baru untuk mulai mengorganisasi penerbangan drone."
                   action={
-                    <Button
-                      intent={Intent.PRIMARY}
-                      icon="plus"
-                      text="Buat sesi pertama"
+                    <button
+                      type="button"
+                      className="m1-state-primary-btn"
                       onClick={() => setIsCreateOpen(true)}
-                    />
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <span>Buat sesi pertama</span>
+                    </button>
                   }
                 />
               </div>
