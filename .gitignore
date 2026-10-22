@@ -35,6 +35,10 @@ target/
 **/target/
 plugins/**/bin/
 
+# Full-resolution sample photos and raw drone material: never commit
+# these (privacy + repo size).
+src-tauri/src/sampel/
+
 # Python cache & artifacts
 __pycache__/
 *.py[cod]
