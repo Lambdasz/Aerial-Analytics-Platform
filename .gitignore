@@ -35,6 +35,10 @@ target/
 **/target/
 plugins/**/bin/
 
+# Full-resolution sample photos (never commit these; the committed test
+# fixtures are metadata-only derivatives in src-tauri/tests/fixtures/)
+src-tauri/src/sampel/
+
 # Python cache & artifacts
 __pycache__/
 *.py[cod]
