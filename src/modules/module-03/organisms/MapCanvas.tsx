@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { MapContainer, TileLayer, ScaleControl } from "react-leaflet";
 import type * as L from "leaflet";
 import { DEFAULT_MAP_VIEW, BASEMAPS, type BasemapKey } from "../config/mapConfig";
@@ -6,119 +6,79 @@ import { DEFAULT_MAP_VIEW, BASEMAPS, type BasemapKey } from "../config/mapConfig
 import { useImageMarkers } from "../hooks/useImageMarkers";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
-import { MapLeftPanel } from "./MapLeftPanel";
 import { SpatialResultLayer } from "./SpatialResultLayer";
 import { ManagedMapLayers } from "./ManagedMapLayers";
-import { MapLegend } from "../molecules/MapLegend";
-import { MapTypeThumbnail } from "../atoms/MapTypeThumbnail";
 import { AnnotationMarkers } from "../molecules/AnnotationMarkers";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 
-import "../styles/MapCanvas.css";
+export interface MapCanvasProps {
+  /** Basemap aktif yang sedang digunakan */
+  activeBasemap?: BasemapKey;
+  /** Daftar layer aktif dari Layer Manager */
+  layers?: LayerState[];
+  /** Daftar fitur anotasi spasial titik */
+  annotations?: AnnotationFeature[];
+  /** Callback ref saat instance Leaflet map siap */
+  onMapReady?: (map: L.Map | null) => void;
+  /** Callback saat daftar layer hasil spasial diperbarui */
+  onActiveLayersChange?: (layers: LayerPayload[]) => void;
+}
 
-export const MapCanvas: React.FC = () => {
-  const [activeBasemap, setActiveBasemap] = useState<BasemapKey>("osm");
-  const [activeLayers, setActiveLayers] = useState<LayerPayload[]>([]);
-  const [layers, setLayers] = useState<LayerState[]>([]);
-  const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
-  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
-
+/**
+ * Organism mesin peta Leaflet (MapContainer, TileLayer, ScaleControl, dan sub-layer).
+ */
+export const MapCanvas: React.FC<MapCanvasProps> = ({
+  activeBasemap = "osm",
+  layers = [],
+  annotations = [],
+  onMapReady,
+  onActiveLayersChange,
+}) => {
   const { markers } = useImageMarkers(500);
 
-  const toggleBasemap = () => {
-    setActiveBasemap((current) => (current === "osm" ? "satellite" : "osm"));
-  };
-
   return (
-    <div
-      className="map-wrapper"
-      style={{ position: "relative", width: "100%", height: "100vh", overflow: "hidden" }}
+    <MapContainer
+      center={DEFAULT_MAP_VIEW.center}
+      zoom={DEFAULT_MAP_VIEW.zoom}
+      minZoom={3}
+      maxZoom={21}
+      className="leaflet-map-container"
+      style={{ flex: 1, width: "100%", height: "100%" }}
+      zoomControl={false}
+      ref={onMapReady}
     >
+      <MapSyncHandler />
+
+      <SpatialResultLayer onLayersChange={onActiveLayersChange} />
+
       {/* =========================
-          LEFT SIDEBAR (TABS)
+          MAP CONTROLS
           ========================= */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          height: "100%",
-          zIndex: 1000,
-          pointerEvents: "none",
-        }}
-      >
-        <MapLeftPanel
-          map={mapInstance}
-          onAnnotationsChange={setAnnotations}
-          onLayersChange={setLayers}
-          isCollapsed={isSidebarCollapsed}
-          setIsCollapsed={setIsSidebarCollapsed}
-        />
-      </div>
+      <MapViewControlBar />
 
-      <div style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }}>
-        {/* =========================
-            GMAPS THUMBNAIL SWITCHER
-            ========================= */}
-        <MapTypeThumbnail
-          activeBasemap={activeBasemap}
-          onToggle={toggleBasemap}
-          isSidebarCollapsed={isSidebarCollapsed}
-        />
+      <ScaleControl position="bottomright" imperial={false} />
 
-        {/* =========================
-            SPATIAL RESULT LEGEND
-            ========================= */}
-        <MapLegend layers={activeLayers} />
+      {/* =========================
+          BASEMAP
+          ========================= */}
+      <TileLayer
+        key={activeBasemap}
+        url={BASEMAPS[activeBasemap].url}
+        attribution={BASEMAPS[activeBasemap].attribution}
+        maxZoom={22}
+        maxNativeZoom={BASEMAPS[activeBasemap].maxNativeZoom}
+      />
 
-        {/* =========================
-            MAP ENGINE
-            ========================= */}
-        <MapContainer
-          center={DEFAULT_MAP_VIEW.center}
-          zoom={DEFAULT_MAP_VIEW.zoom}
-          minZoom={3}
-          maxZoom={21}
-          className="leaflet-map-container"
-          style={{ flex: 1, width: "100%", height: "100%" }}
-          zoomControl={false}
-          ref={setMapInstance}
-        >
-          <MapSyncHandler />
+      {/* =========================
+          SPATIAL ANNOTATIONS
+          ========================= */}
+      <AnnotationMarkers annotations={annotations} />
 
-          <SpatialResultLayer onLayersChange={setActiveLayers} />
-
-          {/* =========================
-              MAP CONTROLS
-              ========================= */}
-          <MapViewControlBar />
-
-          <ScaleControl position="bottomright" imperial={false} />
-
-          {/* =========================
-              BASEMAP
-              ========================= */}
-          <TileLayer
-            key={activeBasemap}
-            url={BASEMAPS[activeBasemap].url}
-            attribution={BASEMAPS[activeBasemap].attribution}
-            maxZoom={22}
-            maxNativeZoom={BASEMAPS[activeBasemap].maxNativeZoom}
-          />
-
-          {/* =========================
-              SPATIAL ANNOTATIONS
-              ========================= */}
-          <AnnotationMarkers annotations={annotations} />
-
-          {/* =========================
-              IMAGE LOCATION MARKERS
-              ========================= */}
-          <ManagedMapLayers layers={layers} markers={markers} />
-        </MapContainer>
-      </div>
-    </div>
+      {/* =========================
+          IMAGE LOCATION MARKERS
+          ========================= */}
+      <ManagedMapLayers layers={layers} markers={markers} />
+    </MapContainer>
   );
 };
