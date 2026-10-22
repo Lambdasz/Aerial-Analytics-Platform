@@ -1,6 +1,5 @@
 import React from "react";
-import { Polygon, ImageOverlay } from "react-leaflet";
-import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
+import { Polygon } from "react-leaflet";
 import { DroneImageMarker } from "./DroneImageMarker";
 import type { LayerState } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
@@ -18,21 +17,6 @@ export const ManagedMapLayers: React.FC<ManagedMapLayersProps> = ({ layers, mark
       {sortedLayers.map((layer) => {
         if (!layer.is_visible) {
           return null;
-        }
-
-        // =========================
-        // ORTHOMOSAIC DRONE
-        // =========================
-        if (layer.layer_id === "orthomosaic_01") {
-          return (
-            <ImageOverlay
-              key={layer.layer_id}
-              url="/drone_ortho.jpg"
-              bounds={DEFAULT_MAP_VIEW.bounds}
-              opacity={layer.opacity}
-              zIndex={layer.z_index}
-            />
-          );
         }
 
         // =========================

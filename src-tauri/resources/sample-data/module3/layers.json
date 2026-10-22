@@ -11,7 +11,7 @@
     "layer_id": "orthomosaic_01",
     "layer_name": "Orthomosaic Drone",
     "category": "Drone Imagery",
-    "is_visible": true,
+    "is_visible": false,
     "opacity": 1.0,
     "z_index": 5
   },
@@ -19,7 +19,7 @@
     "layer_id": "flight_session_01",
     "layer_name": "Drone Imagery",
     "category": "Drone Imagery",
-    "is_visible": true,
+    "is_visible": false,
     "opacity": 1.0,
     "z_index": 10
   },
