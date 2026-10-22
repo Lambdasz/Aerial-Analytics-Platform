@@ -222,10 +222,9 @@
 //! - `models::image` — shared image types ([`models::ImageMetadata`], [`models::ImageFormat`],
 //!   plus the import request/report types).
 //! - `modules::module_01::metadata_extractor` — EXIF/XMP DJI metadata extraction
-//!   (`extract_metadata`), format sniffing, completeness checks, and the
-//!   plugin pre-flight projection. The EXIF layer is read through
-//!   `kamadak-exif`; the XMP DJI packet and dimension readers stay
-//!   hand-written.
+//!   (`extract_metadata`): camera/GPS tags, acquisition timestamp, pixel
+//!   dimensions, format sniffing, completeness checks, and the plugin
+//!   pre-flight projection.
 //! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
 //!   per-file classification, filesystem-aware name-conflict detection,
 //!   project-scope duplicate detection, and incomplete-metadata flags.
