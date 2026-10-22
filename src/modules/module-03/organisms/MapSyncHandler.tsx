@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { useMap } from "react-leaflet";
 import { useImageSync } from "../store/ImageSyncContext";
-import { useImageMarkers } from "./useImageMarkers";
+import { useImageMarkers } from "../hooks/useImageMarkers";
 
 export const MapSyncHandler: React.FC = () => {
   const map = useMap();

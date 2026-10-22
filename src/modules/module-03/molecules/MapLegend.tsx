@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Icon } from "@blueprintjs/core";
 import { LayerPayload } from "../types/map";
-import "./style/MapLegend.css";
+import "../styles/MapLegend.css";
 
 interface MapLegendProps {
   layers: LayerPayload[];

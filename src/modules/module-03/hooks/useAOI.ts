@@ -20,7 +20,7 @@ import type { Map as LeafletMap } from "leaflet";
 import type L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 
-import { createAoi } from "../api";
+import { createAoi } from "../services/api";
 import type { AoiFeature, Polygon } from "../types/aoi";
 
 /** Public API surface returned by {@link useAOI}. */

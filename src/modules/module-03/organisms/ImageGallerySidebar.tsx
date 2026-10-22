@@ -1,8 +1,8 @@
 import React, { useEffect, useRef } from "react";
 import { Spinner } from "@blueprintjs/core";
-import { useImageMarkers } from "./useImageMarkers";
+import { useImageMarkers } from "../hooks/useImageMarkers";
 import { useImageSync } from "../store/ImageSyncContext";
-import "./style/ImageGallerySidebar.css";
+import "../styles/ImageGallerySidebar.css";
 
 export const ImageGallerySidebar: React.FC = () => {
   const { markers, isLoading } = useImageMarkers(500);

@@ -10,7 +10,7 @@ import {
   createAnnotation,
   getInitialMapLayers,
   getSampleAnnotations,
-} from "../api";
+} from "../services/api";
 
 const INITIAL_LAYERS: LayerState[] = [
   {

@@ -10,18 +10,18 @@ import {
 } from "react-leaflet";
 import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
 
-import { useImageMarkers } from "./useImageMarkers";
+import { useImageMarkers } from "../hooks/useImageMarkers";
 import { DroneImageMarker } from "./DroneImageMarker";
 import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
 import { MapLeftPanel } from "./MapLeftPanel";
-import { useSpatialResultLayers } from "./useSpatialResultLayers";
-import { MapLegend } from "./MapLegend";
-import { MapTypeThumbnail } from "./MapTypeThumbnail";
+import { useSpatialResultLayers } from "../hooks/useSpatialResultLayers";
+import { MapLegend } from "../molecules/MapLegend";
+import { MapTypeThumbnail } from "../atoms/MapTypeThumbnail";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 
-import "./style/MapCanvas.css";
+import "../styles/MapCanvas.css";
 
 // =========================
 // SPATIAL RESULT LAYER

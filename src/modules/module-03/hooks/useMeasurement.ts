@@ -18,7 +18,7 @@
 
 import { useCallback, useState } from "react";
 
-import { measureArea, measureDistance, measurePerimeter } from "../api";
+import { measureArea, measureDistance, measurePerimeter } from "../services/api";
 import type { Coordinate, MeasurementResult, Polygon } from "../types/aoi";
 
 /** Measurement modes, or `null` when idle. */

@@ -2,7 +2,7 @@ import React from "react";
 import { ImageGallerySidebar } from "./ImageGallerySidebar";
 import { LayerManager } from "./LayerManager";
 import { AoiDemoToolbar } from "./AoiDemoToolbar";
-import { MapSearchBar } from "./MapSearchBar";
+import { MapSearchBar } from "../molecules/MapSearchBar";
 import L from "leaflet";
 
 import type { LayerState, AnnotationFeature } from "../types/layer";

@@ -3,8 +3,8 @@ import { useMap } from "react-leaflet";
 import { Button, Tooltip } from "@blueprintjs/core";
 import * as L from "leaflet";
 import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
-import { useImageMarkers } from "./useImageMarkers";
-import "./style/MapViewControlBar.css";
+import { useImageMarkers } from "../hooks/useImageMarkers";
+import "../styles/MapViewControlBar.css";
 
 export const MapViewControlBar: React.FC = () => {
   const map = useMap();

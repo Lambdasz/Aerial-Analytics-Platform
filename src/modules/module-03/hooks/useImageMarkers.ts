@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { DroneImageMetadata } from "../types/marker";
-import { getProjectImageMarkers } from "../api";
+import { getProjectImageMarkers } from "../services/api";
 
 /**
  * Hook penyedia marker foto drone proyek dari backend Rust secara deterministik.

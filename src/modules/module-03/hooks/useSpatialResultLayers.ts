@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
 import * as L from "leaflet";
-import { invokeMap } from "../error";
+import { invokeMap } from "../services/error";
 import type { MapLayerCommand, LayerPayload, SpatialResult, LayerDisplayMode } from "../types/map";
 
 function buildFeatureLayer(result: SpatialResult, display: LayerDisplayMode): L.Layer | null {
