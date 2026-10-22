@@ -19,17 +19,24 @@
 //! read file bytes
 //!   -> detect_format(header, extension)
 //!   -> read_dimensions(bytes, format)
-//!   -> parse_exif(bytes)
+//!   -> read_exif(bytes) + from_exif(&exif)
 //!   -> parse_xmp_dji(bytes)
 //!   -> merge_tags(exif, xmp, dimensions, format)
+//!
+//! The EXIF entities ([`read_exif`] + [`from_exif`]) are backed by the
+//! `kamadak-exif` library, so the module never hand-parses TIFF IFDs for
+//! tags. XMP DJI ([`parse_xmp_dji`]) and dimension reading
+//! ([`read_dimensions`]) stay hand-written — no library covers them.
 //! ```
 //!
 //! A missing individual tag is not an error: fields are simply left as
 //! `None` in [`ImageMetadata`]. A malformed XMP DJI packet counts as a
 //! missing tag, not a failure — optional telemetry never discards the rest
-//! of the extraction. [`MetadataError`] is reserved for cases where the
-//! file itself cannot be read, is not a supported image format, or has a
-//! present-but-corrupt EXIF segment.
+//! of the extraction. An EXIF block that is absent or too broken to
+//! salvage also leaves the tags default (`None`), not an error.
+//! [`MetadataError`] is reserved for cases where the file itself cannot
+//! be read, is not a supported image format, or has an unparseable
+//! dimension header.
 //!
 //! ## Module Contracts
 //!
@@ -41,6 +48,7 @@
 use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
+use exif::{In, Reader, Tag, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -140,20 +148,6 @@ struct PixelDimensions {
     pub height: u32,
 }
 
-/// A GPS coordinate expressed as degrees/minutes/seconds with a
-/// hemisphere reference, as stored in EXIF `GPSLatitude`/`GPSLongitude`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-struct GpsCoordinate {
-    /// Whole degrees component.
-    pub degrees: f64,
-    /// Minutes component.
-    pub minutes: f64,
-    /// Seconds component.
-    pub seconds: f64,
-    /// Hemisphere reference: `'N'`/`'S'` for latitude, `'E'`/`'W'` for longitude.
-    pub reference: char,
-}
-
 /// Report of which [`ImageMetadata`] fields could and could not be
 /// populated from a source image, consumed by Image Quality Checking (M1.5).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -170,8 +164,9 @@ pub(crate) struct MetadataCompleteness {
 ///
 /// Impure — the only function in this module that performs file I/O. It is
 /// defined as reading the file's bytes and then composing
-/// [`detect_format`], [`read_dimensions`], [`parse_exif`], [`parse_xmp_dji`],
-/// and [`merge_tags`] (see module-level docs for the exact pipeline).
+/// [`detect_format`], [`read_dimensions`], [`read_exif`]/[`from_exif`],
+/// [`parse_xmp_dji`], and [`merge_tags`] (see module-level docs for the
+/// exact pipeline).
 ///
 /// # Arguments
 ///
@@ -187,9 +182,12 @@ pub(crate) struct MetadataCompleteness {
 /// Returns [`MetadataError`] if the file cannot be read
 /// ([`MetadataError::Io`]), is not a supported format
 /// ([`MetadataError::UnsupportedFormat`], [`MetadataError::MagicMismatch`]),
-/// or has a present-but-corrupt EXIF segment
-/// ([`MetadataError::MalformedExif`]). A malformed XMP DJI packet is not an
-/// error: it leaves the flight-telemetry fields `None` like a missing tag.
+/// or has an unparseable dimension header
+/// ([`MetadataError::MalformedExif`]). A missing, present-but-corrupt or
+/// partially salvageable EXIF block is never an error: it composes into
+/// the tags that could be read (see [`read_exif`]). A malformed XMP DJI
+/// packet is not an error: it leaves the flight-telemetry fields `None`
+/// like a missing tag.
 pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataError> {
     let mut file = std::fs::File::open(path)?;
     let extension = path
@@ -224,7 +222,12 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
         }
     };
     let dimensions = read_dimensions(&bytes, format)?;
-    let exif = parse_exif(&bytes)?;
+    // Absent, corrupt or partially salvageable EXIF never fails the
+    // extraction (see `read_exif`): whatever was recovered composes into
+    // the tags, the rest stay `None`.
+    let exif = read_exif(&bytes)
+        .map(|exif| from_exif(&exif))
+        .unwrap_or_default();
     // Never fails: a malformed XMP packet leaves flight telemetry unset
     // instead of discarding the EXIF, GPS and dimensions above.
     let xmp = xmp_packet(&bytes, format)
@@ -385,21 +388,6 @@ fn entry_data<'a>(tiff: &'a [u8], entry: &'a IfdEntry) -> Option<&'a [u8]> {
     }
 }
 
-fn read_ascii(tiff: &[u8], entries: &[IfdEntry], tag: u16) -> Option<String> {
-    let entry = find_entry(entries, tag)?;
-    if entry.typ != 2 || entry.count == 0 {
-        return None;
-    }
-    let data = entry_data(tiff, entry)?;
-    let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-    let s = String::from_utf8_lossy(&data[..end]).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
-}
-
 fn read_u16_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16) -> Option<u16> {
     let entry = find_entry(entries, tag)?;
     let data = entry_data(tiff, entry)?;
@@ -421,52 +409,6 @@ fn read_u32_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16)
     }
 }
 
-fn rational_at(tiff: &[u8], endian: TiffEndian, off: usize) -> Option<f64> {
-    let num = u32_at(tiff, off, endian)? as f64;
-    let den = u32_at(tiff, off + 4, endian)? as f64;
-    if den == 0.0 {
-        return None;
-    }
-    let v = num / den;
-    if v.is_finite() {
-        Some(v)
-    } else {
-        None
-    }
-}
-
-fn read_rational(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16) -> Option<f64> {
-    let entry = find_entry(entries, tag)?;
-    if entry.typ != 5 || entry.count == 0 {
-        return None;
-    }
-    let data_off = if u64::from(entry.count) * 8 <= 4 {
-        // Never happens for RATIONAL (8 bytes each), kept for completeness.
-        return None;
-    } else {
-        entry.val_u32 as usize
-    };
-    rational_at(tiff, endian, data_off)
-}
-
-fn read_rationals3(
-    tiff: &[u8],
-    entries: &[IfdEntry],
-    endian: TiffEndian,
-    tag: u16,
-) -> Option<[f64; 3]> {
-    let entry = find_entry(entries, tag)?;
-    if entry.typ != 5 || entry.count != 3 {
-        return None;
-    }
-    let base = entry.val_u32 as usize;
-    Some([
-        rational_at(tiff, endian, base)?,
-        rational_at(tiff, endian, base + 8)?,
-        rational_at(tiff, endian, base + 16)?,
-    ])
-}
-
 /// Validates the TIFF header and returns `(endian, ifd0_offset)`.
 fn tiff_header(tiff: &[u8]) -> Option<(TiffEndian, usize)> {
     let magic = tiff.get(0..4)?;
@@ -481,10 +423,6 @@ fn tiff_header(tiff: &[u8]) -> Option<(TiffEndian, usize)> {
 
 fn malformed(msg: &str) -> MetadataError {
     MetadataError::MalformedExif(msg.to_string())
-}
-
-fn is_tiff(bytes: &[u8]) -> bool {
-    tiff_header(bytes).is_some()
 }
 
 /// Markers that stand alone, with no length field: `SOI`, `EOI`, `RSTn`,
@@ -549,134 +487,10 @@ fn jpeg_segments(bytes: &[u8]) -> impl Iterator<Item = Result<(u8, &[u8]), Metad
     })
 }
 
-/// Scans JPEG markers for the first APP1 `Exif\0\0` segment and returns the
-/// TIFF payload inside it.
-///
-/// Returns `Ok(None)` when there is no EXIF segment (not an error — a
-/// missing tag is `None`). Returns `Err(MalformedExif)` when an EXIF
-/// segment is present but truncated, or when the JPEG marker structure
-/// itself is truncated.
-fn find_exif_tiff(bytes: &[u8]) -> Result<Option<&[u8]>, MetadataError> {
-    for segment in jpeg_segments(bytes) {
-        let (code, seg) = segment?;
-        if code == 0xE1 && seg.len() > 6 && seg[..6] == [b'E', b'x', b'i', b'f', 0, 0] {
-            let tiff = &seg[6..];
-            if tiff_header(tiff).is_none() {
-                return Err(MetadataError::MalformedExif(
-                    "invalid EXIF TIFF header".to_string(),
-                ));
-            }
-            return Ok(Some(tiff));
-        }
-    }
-    Ok(None)
-}
-
-fn gps_decimal(
-    tiff: &[u8],
-    gps: &[IfdEntry],
-    endian: TiffEndian,
-    ref_tag: u16,
-    val_tag: u16,
-    negative_refs: [char; 2],
-) -> Option<f64> {
-    let reference = read_ascii(tiff, gps, ref_tag)?
-        .chars()
-        .next()
-        .unwrap_or('?');
-    let dms = read_rationals3(tiff, gps, endian, val_tag)?;
-    let coord = GpsCoordinate {
-        degrees: dms[0],
-        minutes: dms[1],
-        seconds: dms[2],
-        reference,
-    };
-    let mut decimal = dms_to_decimal(coord);
-    // `dms_to_decimal` already signs S/W; keep the sign only when the ref
-    // is one of the expected pair, otherwise treat an unknown ref as
-    // positive to avoid flipping on garbage.
-    if reference == negative_refs[0] || reference == negative_refs[1] {
-        decimal = -decimal.abs();
-    } else {
-        decimal = decimal.abs();
-    }
-    if decimal.is_finite() {
-        Some(decimal)
-    } else {
-        None
-    }
-}
-
-/// Fills [`RawExifTags`] from one TIFF payload (EXIF APP1 contents or a
-/// whole DNG file).
-fn parse_tiff_tags(tiff: &[u8]) -> Result<RawExifTags, MetadataError> {
-    let (endian, ifd0_off) = tiff_header(tiff).ok_or_else(|| malformed("bad TIFF header"))?;
-    if ifd0_off >= tiff.len() {
-        return Err(malformed("IFD0 offset out of bounds"));
-    }
-    let ifd0 = parse_ifd(tiff, endian, ifd0_off)?;
-    let mut out = RawExifTags {
-        make: read_ascii(tiff, &ifd0, 0x010F),
-        camera_model_name: read_ascii(tiff, &ifd0, 0x0110),
-        orientation: read_u16_val(tiff, &ifd0, endian, 0x0112),
-        ..RawExifTags::default()
-    };
-
-    // GPS sub-IFD (tag 0x8825 in IFD0).
-    // A pointer that leads nowhere (GPS data stripped, tag left behind) just
-    // leaves the GPS fields unset; it must not discard the rest.
-    if let Some(gps) = read_u32_val(tiff, &ifd0, endian, 0x8825)
-        .and_then(|off| parse_ifd(tiff, endian, off as usize).ok())
-    {
-        let lat = gps_decimal(tiff, &gps, endian, 1, 2, ['S', 's']);
-        let lon = gps_decimal(tiff, &gps, endian, 3, 4, ['W', 'w']);
-        // Out-of-range values are garbage, and exactly (0, 0) is the "no
-        // fix" placeholder some cameras write; neither is a real location.
-        let in_range = |v: Option<f64>, max: f64| v.filter(|v| v.abs() <= max);
-        let (lat, lon) = (in_range(lat, 90.0), in_range(lon, 180.0));
-        if lat != Some(0.0) || lon != Some(0.0) {
-            out.gps_latitude = lat;
-            out.gps_longitude = lon;
-        }
-        if let Some(alt) = read_rational(tiff, &gps, endian, 6) {
-            // GPSAltitudeRef: 0 = above sea level, 1 = below. The tag is
-            // type BYTE in most files, so read the first raw byte rather
-            // than going through the SHORT decoder.
-            let below = find_entry(&gps, 5).is_some_and(|e| {
-                let first = if u64::from(e.count).saturating_mul(type_size(e.typ).unwrap_or(1)) <= 4
-                {
-                    e.val_bytes[0]
-                } else {
-                    tiff.get(e.val_u32 as usize).copied().unwrap_or(0)
-                };
-                first == 1
-            });
-            out.gps_altitude_m = Some(if below { -alt } else { alt });
-        }
-    }
-
-    // Exif sub-IFD (tag 0x8769 in IFD0).
-    if let Some(exif) = read_u32_val(tiff, &ifd0, endian, 0x8769)
-        .and_then(|off| parse_ifd(tiff, endian, off as usize).ok())
-    {
-        out.date_time_original_raw = read_ascii(tiff, &exif, 0x9003);
-        out.exposure_time_s = read_rational(tiff, &exif, endian, 0x829A);
-        out.f_number = read_rational(tiff, &exif, endian, 0x829D).map(|v| v as f32);
-        out.iso = read_u16_val(tiff, &exif, endian, 0x8827)
-            .map(u32::from)
-            .or_else(|| read_u32_val(tiff, &exif, endian, 0x8827));
-        out.focal_length_mm = read_rational(tiff, &exif, endian, 0x920A).map(|v| v as f32);
-        out.focal_length_35mm = read_u16_val(tiff, &exif, endian, 0xA405);
-        out.flash = read_u16_val(tiff, &exif, endian, 0x9209);
-        out.white_balance = read_u16_val(tiff, &exif, endian, 0xA403);
-        out.metering_mode = read_u16_val(tiff, &exif, endian, 0x9207);
-        out.exposure_mode = read_u16_val(tiff, &exif, endian, 0xA402);
-        out.digital_zoom_ratio = read_rational(tiff, &exif, endian, 0xA404).map(|v| v as f32);
-        out.color_space = read_u16_val(tiff, &exif, endian, 0xA001);
-    }
-
-    Ok(out)
-}
+// ============================================================================
+// The EXIF layer is read by `kamadak-exif` (see [`read_exif`]); the XMP DJI
+// packet and the dimension readers below remain hand-written.
+// ============================================================================
 
 /// Whether `code` is a start-of-frame marker (SOF0–SOF15 minus DHT `0xC4`,
 /// JPG `0xC8` and DAC `0xCC`), so progressive, extended and arithmetic-coded
@@ -770,35 +584,267 @@ fn tiff_dimensions(tiff: &[u8]) -> Result<PixelDimensions, MetadataError> {
     }
 }
 
-/// Parses the EXIF segment of an image into [`RawExifTags`].
+// ============================================================================
+// The EXIF layer — kamadak-exif reads and parses the EXIF block itself
+// (JPEG APP1 or DNG TIFF), and the functions below give the raw fields
+// their meaning. XMP DJI and dimension reading stay hand-written: no
+// library covers them.
+// ============================================================================
+
+/// Reads the EXIF attributes of an image via `kamadak-exif` (the
+/// design-sketch `read_exif`).
+///
+/// kamadak locates and parses the EXIF block itself (the JPEG APP1
+/// `Exif\0\0` segment, or the TIFF payload of a DNG container) and
+/// returns the raw fields; every interpretation — DMS→decimal, string
+/// cleanup, sanity heuristics — stays in [`from_exif`].
+///
+/// # Purity
+///
+/// Pure over `bytes`.
+///
+/// # Returns
+///
+/// `Some(Exif)` when EXIF data is present, also for a partially
+/// parseable block: `continue_on_error(true)` salvages whatever kamadak
+/// could recover (e.g. valid tags survive a stale GPS pointer). `None`
+/// when the file carries no EXIF at all or the block is too broken for
+/// any recovery — in both cases the caller treats missing EXIF as
+/// absent tags, not an error. The XMP DJI packet is not an EXIF block
+/// and is not covered by this reader (see [`xmp_packet`]).
+fn read_exif(bytes: &[u8]) -> Option<exif::Exif> {
+    Reader::new()
+        .continue_on_error(true)
+        .read_from_container(&mut std::io::Cursor::new(bytes))
+        .or_else(|err| err.distill_partial_result(|_errors| {}))
+        .ok()
+}
+
+/// Converts raw kamadak EXIF fields into [`RawExifTags`] (the
+/// design-sketch `from_exif`).
+///
+/// kamadak hands over raw field values — `Rational` pairs, ASCII byte
+/// strings, plain integers — so everything that gives a value *meaning*
+/// happens here, reusing the module's own helpers: [`dms_magnitude`] +
+/// [`apply_hemisphere`] for degree/minute/second GPS coordinates with
+/// the hemisphere sign from the reference tag, [`clean_string`] for
+/// ASCII padding, and the GPS sanity heuristics established on real
+/// drone files:
+///
+/// * coordinates outside ±90°/±180° are dropped (corrupt data),
+/// * exactly (0, 0) is the "no fix" placeholder some cameras write,
+///   never a real location,
+/// * a `GPSAltitudeRef` of 1 signs the altitude below sea level.
+///
+/// # Purity
+///
+/// Pure: no bytes are parsed here (kamadak did that), only composed
+/// field values are interpreted. Total (never fails — absent tags stay
+/// `None`, badly typed values are skipped).
+fn from_exif(exif: &exif::Exif) -> RawExifTags {
+    let (latitude, longitude) = exif_gps_pair(exif);
+    RawExifTags {
+        make: exif_ascii(exif, Tag::Make),
+        camera_model_name: exif_ascii(exif, Tag::Model),
+        date_time_original_raw: exif_ascii(exif, Tag::DateTimeOriginal),
+        exposure_time_s: exif_rational(exif, Tag::ExposureTime),
+        f_number: exif_rational(exif, Tag::FNumber).map(|value| value as f32),
+        iso: exif_uint(exif, Tag::PhotographicSensitivity),
+        focal_length_mm: exif_rational(exif, Tag::FocalLength).map(|value| value as f32),
+        focal_length_35mm: exif_u16(exif, Tag::FocalLengthIn35mmFilm),
+        flash: exif_u16(exif, Tag::Flash),
+        white_balance: exif_u16(exif, Tag::WhiteBalance),
+        metering_mode: exif_u16(exif, Tag::MeteringMode),
+        exposure_mode: exif_u16(exif, Tag::ExposureMode),
+        digital_zoom_ratio: exif_rational(exif, Tag::DigitalZoomRatio).map(|value| value as f32),
+        color_space: exif_u16(exif, Tag::ColorSpace),
+        orientation: exif_u16(exif, Tag::Orientation),
+        gps_latitude: latitude,
+        gps_longitude: longitude,
+        // 0 = above sea level, 1 = below (only the exact reference byte 1
+        // negates).
+        gps_altitude_m: exif_rational(exif, Tag::GPSAltitude).map(|altitude| {
+            let below = exif_uint(exif, Tag::GPSAltitudeRef) == Some(1);
+            altitude_signed(altitude, Some(u8::from(below)))
+        }),
+    }
+}
+
+/// Numerator/denominator → decimal, `None` for a zero denominator or
+/// non-finite result.
+///
+/// # Purity
+///
+/// Pure, total.
+fn rational_to_f64(numerator: u32, denominator: u32) -> Option<f64> {
+    if denominator == 0 {
+        return None;
+    }
+    let value = f64::from(numerator) / f64::from(denominator);
+    value.is_finite().then_some(value)
+}
+
+/// Folds an EXIF ASCII value into one usable string ([`clean_string`]
+/// of the design sketch).
+///
+/// kamadak delivers ASCII as a list of NUL-separated elements, so a
+/// padded `"DJI\0\0\0"` arrives as `["DJI", "", ""]`: the first
+/// non-empty element after trimming wins, `None` when the field is
+/// blank. Takes raw bytes (not `String`) because that is what kamadak
+/// yields.
+///
+/// # Purity
+///
+/// Pure, total.
+fn clean_string(values: &[Vec<u8>]) -> Option<String> {
+    values.iter().find_map(|bytes| {
+        let text = String::from_utf8_lossy(bytes).trim().to_string();
+        (!text.is_empty()).then_some(text)
+    })
+}
+
+/// Applies a hemisphere reference to a decimal degree value
+/// ([`apply_hemisphere`] of the design sketch).
+///
+/// `reference` is the raw `GPSLatitudeRef`/`GPSLongitudeRef` string
+/// (`"N"`/`"S"`/`"E"`/`"W"`). South/west negate the magnitude; every
+/// other value — north, east, or garbage — stays positive, so a sign is
+/// never flipped on an unknown reference. `None` cannot be interpreted
+/// → `None` (the caller never reaches this case: the reference tag is
+/// required before a coordinate is accepted).
+///
+/// # Purity
+///
+/// Pure, total for `Some`, `None`-valued for `None`.
+fn apply_hemisphere(value: f64, reference: Option<&str>) -> Option<f64> {
+    let reference = reference?;
+    let is_south_or_west = reference
+        .chars()
+        .next()
+        .is_some_and(|character| matches!(character, 'S' | 's' | 'W' | 'w'));
+    let signed = if is_south_or_west {
+        -value.abs()
+    } else {
+        value.abs()
+    };
+    signed.is_finite().then_some(signed)
+}
+
+/// Applies the `GPSAltitudeRef` sign ([`altitude_signed`] of the design
+/// sketch): reference byte `1` means below sea level, anything else
+/// above.
+///
+/// # Purity
+///
+/// Pure, total.
+fn altitude_signed(value: f64, reference: Option<u8>) -> f64 {
+    match reference {
+        Some(1) => -value,
+        _ => value,
+    }
+}
+
+/// Unsigned integer at the first position of a field, accepting
+/// BYTE/SHORT/LONG uniformly (`Value::get_uint`), which covers the
+/// cameras that write `Orientation`/`ISO` as LONG.
 ///
 /// # Purity
 ///
 /// Pure.
+fn exif_uint(exif: &exif::Exif, tag: Tag) -> Option<u32> {
+    exif.get_field(tag, In::PRIMARY)?.value.get_uint(0)
+}
+
+/// [`exif_uint`] narrowed to a `u16` (LONGs beyond the range are
+/// dropped, not truncated).
 ///
-/// # Arguments
+/// # Purity
 ///
-/// * `bytes` — full contents of the source image file.
+/// Pure.
+fn exif_u16(exif: &exif::Exif, tag: Tag) -> Option<u16> {
+    u16::try_from(exif_uint(exif, tag)?).ok()
+}
+
+/// First RATIONAL of a field as a decimal value, `None` for any other
+/// value type.
 ///
-/// # Returns
+/// # Purity
 ///
-/// `Ok(RawExifTags)` with every tag that was present; missing tags are
-/// `None`.
-///
-/// # Errors
-///
-/// [`MetadataError::MalformedExif`] if an EXIF segment is present but its
-/// structure cannot be parsed.
-fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
-    // DNG files are TIFF containers: the whole file is the TIFF payload.
-    if is_tiff(bytes) {
-        return parse_tiff_tags(bytes);
+/// Pure.
+fn exif_rational(exif: &exif::Exif, tag: Tag) -> Option<f64> {
+    match &exif.get_field(tag, In::PRIMARY)?.value {
+        Value::Rational(ratios) if !ratios.is_empty() => {
+            rational_to_f64(ratios[0].num, ratios[0].denom)
+        }
+        _ => None,
     }
-    // JPEG: look for an APP1 Exif segment. Absence is not an error.
-    match find_exif_tiff(bytes)? {
-        Some(tiff) => parse_tiff_tags(tiff),
-        None => Ok(RawExifTags::default()),
+}
+
+/// First usable ASCII string of a field.
+///
+/// # Purity
+///
+/// Pure.
+fn exif_ascii(exif: &exif::Exif, tag: Tag) -> Option<String> {
+    match &exif.get_field(tag, In::PRIMARY)?.value {
+        Value::Ascii(values) => clean_string(values),
+        _ => None,
     }
+}
+
+/// The GPS decimal pair of an EXIF block, with the sanity heuristics
+/// established on real drone files: coordinate components outside the
+/// legal ranges are dropped, and exactly (0, 0) is rejected as the "no
+/// fix" placeholder some cameras write.
+///
+/// # Purity
+///
+/// Pure, total.
+fn exif_gps_pair(exif: &exif::Exif) -> (Option<f64>, Option<f64>) {
+    let latitude = exif_gps_decimal(exif, Tag::GPSLatitudeRef, Tag::GPSLatitude)
+        .filter(|value| value.abs() <= 90.0);
+    let longitude = exif_gps_decimal(exif, Tag::GPSLongitudeRef, Tag::GPSLongitude)
+        .filter(|value| value.abs() <= 180.0);
+    if latitude == Some(0.0) && longitude == Some(0.0) {
+        (None, None)
+    } else {
+        (latitude, longitude)
+    }
+}
+
+/// One GPS coordinate as a signed decimal degree value: the DMS triple
+/// of the value tag combined with the hemisphere reference of the
+/// reference tag (both required — the reference is the only source of
+/// the coordinate's sign, so a coordinate is never accepted without
+/// it).
+///
+/// # Purity
+///
+/// Pure.
+fn exif_gps_decimal(exif: &exif::Exif, reference_tag: Tag, value_tag: Tag) -> Option<f64> {
+    let Value::Rational(parts) = &exif.get_field(value_tag, In::PRIMARY)?.value else {
+        return None; // GPS coordinates are mandatory DMS triples
+    };
+    if parts.len() != 3 {
+        return None;
+    }
+    let degrees = rational_to_f64(parts[0].num, parts[0].denom)?;
+    let minutes = rational_to_f64(parts[1].num, parts[1].denom)?;
+    let seconds = rational_to_f64(parts[2].num, parts[2].denom)?;
+    let reference = exif_ascii(exif, reference_tag)?;
+    let magnitude = dms_magnitude(degrees, minutes, seconds);
+    apply_hemisphere(magnitude, Some(&reference))
+}
+
+/// Sums a degrees/minutes/seconds triple into an unsigned decimal-degree
+/// magnitude; the hemisphere sign is applied by [`apply_hemisphere`], the
+/// single signing point for GPS coordinates.
+///
+/// # Purity
+///
+/// Pure, total (absorbs negative components from corrupt writers).
+fn dms_magnitude(degrees: f64, minutes: f64, seconds: f64) -> f64 {
+    degrees.abs() + minutes.abs() / 60.0 + seconds.abs() / 3_600.0
 }
 
 /// Parses a DJI numeric attribute leniently.
@@ -1084,27 +1130,6 @@ fn read_dimensions(bytes: &[u8], format: ImageFormat) -> Result<PixelDimensions,
     }
 }
 
-/// Converts a degrees/minutes/seconds GPS coordinate to signed decimal degrees.
-///
-/// # Purity
-///
-/// Pure, total (never fails).
-///
-/// # Arguments
-///
-/// * `coord` — degrees/minutes/seconds value with a hemisphere reference.
-///
-/// # Returns
-///
-/// Decimal degrees, negative when `reference` is `'S'` or `'W'`.
-fn dms_to_decimal(coord: GpsCoordinate) -> f64 {
-    let decimal = coord.degrees.abs() + coord.minutes.abs() / 60.0 + coord.seconds.abs() / 3_600.0;
-    match coord.reference {
-        'S' | 's' | 'W' | 'w' => -decimal,
-        _ => decimal,
-    }
-}
-
 /// Parses an EXIF `DateTimeOriginal` string into a [`NaiveDateTime`].
 ///
 /// # Purity
@@ -1139,7 +1164,7 @@ fn parse_exif_datetime(raw: &str) -> Option<NaiveDateTime> {
 ///
 /// # Arguments
 ///
-/// * `exif` — EXIF tags from [`parse_exif`].
+/// * `exif` — EXIF tags from [`read_exif`] + [`from_exif`].
 /// * `xmp` — XMP DJI tags from [`parse_xmp_dji`].
 /// * `dimensions` — pixel dimensions from [`read_dimensions`].
 /// * `format` — image format from [`detect_format`].
@@ -1475,31 +1500,11 @@ mod tests {
     }
 
     #[test]
-    fn dms_signs_hemisphere() {
-        let n = GpsCoordinate {
-            degrees: 7.0,
-            minutes: 30.0,
-            seconds: 0.0,
-            reference: 'N',
-        };
-        let s = GpsCoordinate {
-            reference: 'S',
-            ..n
-        };
-        assert!((dms_to_decimal(n) - 7.5).abs() < 1e-9);
-        assert!((dms_to_decimal(s) + 7.5).abs() < 1e-9);
-        let e = GpsCoordinate {
-            degrees: 110.0,
-            minutes: 0.0,
-            seconds: 36.0,
-            reference: 'E',
-        };
-        let w = GpsCoordinate {
-            reference: 'W',
-            ..e
-        };
-        assert!((dms_to_decimal(e) - 110.01).abs() < 1e-9);
-        assert!((dms_to_decimal(w) + 110.01).abs() < 1e-9);
+    fn dms_magnitude_sums_degree_minute_second() {
+        assert!((dms_magnitude(7.0, 30.0, 0.0) - 7.5).abs() < 1e-9);
+        assert!((dms_magnitude(110.0, 0.0, 36.0) - 110.01).abs() < 1e-9);
+        // Negative components from corrupt writers are absorbed.
+        assert_eq!(dms_magnitude(-7.0, 30.0, 0.0), 7.5);
     }
 
     #[test]
@@ -1545,17 +1550,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_exif_absent_is_default_not_error() {
+    fn exif_absent_is_default_not_error() {
         let bytes = jpeg_with_sof(10, 10);
-        let tags = parse_exif(&bytes).expect("no EXIF -> default");
+        // No EXIF block: the reader reports None, and the composed tags
+        // are the defaults the pipeline stores — never an error.
+        assert!(read_exif(&bytes).is_none());
+        let tags = read_exif(&bytes)
+            .map(|exif| from_exif(&exif))
+            .unwrap_or_default();
         assert_eq!(tags, RawExifTags::default());
     }
 
     #[test]
-    fn parse_exif_truncated_segment_is_malformed() {
-        // SOI + APP1 header claiming more bytes than exist.
-        let bytes = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x20, b'E', b'x'];
-        assert!(parse_exif(&bytes).is_err());
+    fn unparseable_exif_block_composes_to_default_not_error() {
+        // SOI + APP1 `Exif\0\0` whose TIFF payload is cut off mid-IFD:
+        // nothing salvageable, but never an error — the tags compose to
+        // the same defaults as an absent tag.
+        let mut bytes = vec![
+            0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x20, b'E', b'x', b'i', b'f', 0, 0,
+        ];
+        bytes.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0xFF, 0xFF]);
+        let tags = read_exif(&bytes)
+            .map(|exif| from_exif(&exif))
+            .unwrap_or_default();
+        assert_eq!(tags, RawExifTags::default());
     }
 
     #[test]
@@ -1574,7 +1592,11 @@ mod tests {
         tiff.splice(entry_end..entry_end, gps);
         // The inserted entry pushes the out-of-line Make string back 12 bytes.
         tiff[18..22].copy_from_slice(&38u32.to_le_bytes());
-        let tags = parse_tiff_tags(&tiff).expect("a stale GPS pointer is not fatal");
+        // A stale GPS pointer is not fatal: kamadak's continue_on_error
+        // salvages the valid entries and the pipeline keeps their tags.
+        let tags = read_exif(&tiff)
+            .map(|exif| from_exif(&exif))
+            .unwrap_or_default();
         assert_eq!(tags.make.as_deref(), Some("TestCam"));
         assert_eq!(tags.gps_latitude, None);
     }
@@ -1592,9 +1614,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_exif_reads_make_from_tiff() {
+    fn exif_reads_make_from_tiff() {
         let bytes = tiff_le_with_make("TestCam");
-        let tags = parse_exif(&bytes).expect("make");
+        let exif = read_exif(&bytes).expect("make");
+        let tags = from_exif(&exif);
         assert_eq!(tags.make.as_deref(), Some("TestCam"));
     }
 
@@ -1703,20 +1726,8 @@ mod tests {
     }
 
     // Restored (deleted without justification in 5f09e0c): serde and
-    // default coverage for the module's plain data types.
-    #[test]
-    fn gps_coordinate_round_trips_through_serde() {
-        let coord = GpsCoordinate {
-            degrees: 1.0,
-            minutes: 16.0,
-            seconds: 12.5,
-            reference: 'S',
-        };
-        let json = serde_json::to_string(&coord).expect("serialize");
-        let decoded: GpsCoordinate = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(coord, decoded);
-    }
-
+    // default coverage for the module's plain data types. `GpsCoordinate`
+    // no longer exists (the kamadak-exif conversion replaced it).
     #[test]
     fn pixel_dimensions_round_trips_through_serde() {
         let dims = PixelDimensions {
@@ -2172,5 +2183,37 @@ mod tests {
     fn extract_metadata_missing_file_is_io_error() {
         let err = extract_metadata(Path::new("/nonexistent-dir-xyz/photo.jpg")).unwrap_err();
         assert!(matches!(err, MetadataError::Io(_)));
+    }
+
+    #[test]
+    fn rational_to_f64_converts_and_rejects_zero_denominator() {
+        assert_eq!(rational_to_f64(3, 2), Some(1.5));
+        assert_eq!(rational_to_f64(1, 0), None);
+        assert_eq!(rational_to_f64(0, 0), None);
+    }
+
+    #[test]
+    fn clean_string_takes_the_first_non_empty_ascii_element() {
+        // Padded make: "DJI\0\0\0" — kamadak splits it into elements.
+        let values: Vec<Vec<u8>> = vec![b"DJI".to_vec(), Vec::new(), Vec::new()];
+        assert_eq!(clean_string(&values), Some("DJI".to_string()));
+        assert_eq!(clean_string(&[b"   ".to_vec()]), None);
+        assert_eq!(clean_string(&[]), None);
+    }
+
+    #[test]
+    fn apply_hemisphere_signs_south_west_and_keeps_unknown_positive() {
+        assert_eq!(apply_hemisphere(7.5, Some("N")), Some(7.5));
+        assert_eq!(apply_hemisphere(7.5, Some("S")), Some(-7.5));
+        assert_eq!(apply_hemisphere(110.01, Some("w")), Some(-110.01));
+        assert_eq!(apply_hemisphere(110.01, Some("?")), Some(110.01));
+        assert_eq!(apply_hemisphere(110.01, None), None);
+    }
+
+    #[test]
+    fn altitude_signed_negates_only_for_reference_one() {
+        assert_eq!(altitude_signed(120.0, Some(1)), -120.0);
+        assert_eq!(altitude_signed(120.0, Some(0)), 120.0);
+        assert_eq!(altitude_signed(120.0, None), 120.0);
     }
 }
