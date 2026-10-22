@@ -22,6 +22,12 @@
 //!   -> parse_exif(bytes)
 //!   -> parse_xmp_dji(bytes)
 //!   -> merge_tags(exif, xmp, dimensions, format)
+//!
+//! A parallel `kamadak-exif` path ([`read_exif`] + [`from_exif`]) is being
+//! introduced behind a dual-parser oracle test (see the `oracle` tests):
+//! it replaces the hand-written EXIF layer above, while XMP DJI ([`parse_xmp_dji`])
+//! and dimension reading ([`read_dimensions`]) stay hand-written — no library
+//! covers them.
 //! ```
 //!
 //! A missing individual tag is not an error: fields are simply left as
@@ -41,6 +47,7 @@
 use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
 use chrono::NaiveDateTime;
+use exif::{In, Reader, Tag, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Seek, SeekFrom};
@@ -799,6 +806,269 @@ fn parse_exif(bytes: &[u8]) -> Result<RawExifTags, MetadataError> {
         Some(tiff) => parse_tiff_tags(tiff),
         None => Ok(RawExifTags::default()),
     }
+}
+
+// ============================================================================
+// kamadak-exif path — the design-sketch pair [`read_exif`] + [`from_exif`]
+// and their conversion helpers. Introduced as a parallel path behind the
+// dual-parser oracle test: the extraction pipeline still routes
+// [`parse_exif`] until the integration switch.
+// ============================================================================
+
+/// Reads the EXIF attributes of an image via `kamadak-exif` (the
+/// design-sketch `read_exif`).
+///
+/// kamadak locates and parses the EXIF block itself (the JPEG APP1
+/// `Exif\0\0` segment, or the TIFF payload of a DNG container) and
+/// returns the raw fields; every interpretation — DMS→decimal, string
+/// cleanup, sanity heuristics — stays in [`from_exif`].
+///
+/// # Purity
+///
+/// Pure over `bytes`.
+///
+/// # Returns
+///
+/// `Some(Exif)` when EXIF data is present, also for a partially
+/// parseable block: `continue_on_error(true)` salvages whatever kamadak
+/// could recover (parity with the legacy parser keeping valid tags on a
+/// stale GPS pointer). `None` when the file carries no EXIF at all
+/// (`stripped.jpg`) or the block is too broken for any recovery — in
+/// both cases the caller treats missing EXIF as absent tags, not an
+/// error.
+///
+/// # Integration
+///
+/// Dual-parser phase: consumed only by the oracle test until the
+/// pipeline switch. The XMP DJI packet is not an EXIF block and is not
+/// covered by this reader (see [`xmp_packet`]).
+fn read_exif(bytes: &[u8]) -> Option<exif::Exif> {
+    Reader::new()
+        .continue_on_error(true)
+        .read_from_container(&mut std::io::Cursor::new(bytes))
+        .or_else(|err| err.distill_partial_result(|_errors| {}))
+        .ok()
+}
+
+/// Converts raw kamadak EXIF fields into [`RawExifTags`] (the
+/// design-sketch `from_exif`).
+///
+/// kamadak hands over raw field values — `Rational` pairs, ASCII byte
+/// strings, plain integers — so everything that gives a value *meaning*
+/// happens here, reusing the module's own helpers:
+/// [`dms_to_decimal`] for degree/minute/second GPS coordinates with the
+/// hemisphere sign from the reference tag, [`clean_string`] for ASCII
+/// padding, and the GPS sanity heuristics established on real drone
+/// files:
+///
+/// * coordinates outside ±90°/±180° are dropped (corrupt data),
+/// * exactly (0, 0) is the "no fix" placeholder some cameras write,
+///   never a real location,
+/// * a `GPSAltitudeRef` of 1 signs the altitude below sea level.
+///
+/// # Purity
+///
+/// Pure: no bytes are parsed here (kamadak did that), only composed
+/// field values are interpreted. Total (never fails — absent tags stay
+/// `None`, badly typed values are skipped).
+fn from_exif(exif: &exif::Exif) -> RawExifTags {
+    let (latitude, longitude) = exif_gps_pair(exif);
+    RawExifTags {
+        make: exif_ascii(exif, Tag::Make),
+        camera_model_name: exif_ascii(exif, Tag::Model),
+        date_time_original_raw: exif_ascii(exif, Tag::DateTimeOriginal),
+        exposure_time_s: exif_rational(exif, Tag::ExposureTime),
+        f_number: exif_rational(exif, Tag::FNumber).map(|value| value as f32),
+        iso: exif_uint(exif, Tag::PhotographicSensitivity),
+        focal_length_mm: exif_rational(exif, Tag::FocalLength).map(|value| value as f32),
+        focal_length_35mm: exif_u16(exif, Tag::FocalLengthIn35mmFilm),
+        flash: exif_u16(exif, Tag::Flash),
+        white_balance: exif_u16(exif, Tag::WhiteBalance),
+        metering_mode: exif_u16(exif, Tag::MeteringMode),
+        exposure_mode: exif_u16(exif, Tag::ExposureMode),
+        digital_zoom_ratio: exif_rational(exif, Tag::DigitalZoomRatio).map(|value| value as f32),
+        color_space: exif_u16(exif, Tag::ColorSpace),
+        orientation: exif_u16(exif, Tag::Orientation),
+        gps_latitude: latitude,
+        gps_longitude: longitude,
+        // 0 = above sea level, 1 = below (legacy parity: only the exact
+        // reference byte 1 negates).
+        gps_altitude_m: exif_rational(exif, Tag::GPSAltitude).map(|altitude| {
+            let below = exif_uint(exif, Tag::GPSAltitudeRef) == Some(1);
+            altitude_signed(altitude, Some(u8::from(below)))
+        }),
+    }
+}
+
+/// Numerator/denominator → decimal, `None` for a zero denominator or
+/// non-finite result (parity with the legacy [`rational_at`]).
+///
+/// # Purity
+///
+/// Pure, total.
+fn rational_to_f64(numerator: u32, denominator: u32) -> Option<f64> {
+    if denominator == 0 {
+        return None;
+    }
+    let value = f64::from(numerator) / f64::from(denominator);
+    value.is_finite().then_some(value)
+}
+
+/// Folds an EXIF ASCII value into one usable string ([`clean_string`]
+/// of the design sketch).
+///
+/// kamadak delivers ASCII as a list of NUL-separated elements, so a
+/// padded `"DJI\0\0\0"` arrives as `["DJI", "", ""]`: the first
+/// non-empty element after trimming wins, `None` when the field is
+/// blank. Takes raw bytes (not `String`) because that is what kamadak
+/// yields.
+///
+/// # Purity
+///
+/// Pure, total.
+fn clean_string(values: &[Vec<u8>]) -> Option<String> {
+    values.iter().find_map(|bytes| {
+        let text = String::from_utf8_lossy(bytes).trim().to_string();
+        (!text.is_empty()).then_some(text)
+    })
+}
+
+/// Applies a hemisphere reference to a decimal degree value
+/// ([`apply_hemisphere`] of the design sketch).
+///
+/// `reference` is the raw `GPSLatitudeRef`/`GPSLongitudeRef` string
+/// (`"N"`/`"S"`/`"E"`/`"W"`). South/west negate the magnitude; every
+/// other value — north, east, or garbage — stays positive, matching
+/// the legacy behaviour of never flipping a sign on an unknown
+/// reference. `None` cannot be interpreted → `None` (the caller never
+/// reaches this case: the reference tag is required before a
+/// coordinate is accepted).
+///
+/// # Purity
+///
+/// Pure, total for `Some`, `None`-valued for `None`.
+fn apply_hemisphere(value: f64, reference: Option<&str>) -> Option<f64> {
+    let reference = reference?;
+    let is_south_or_west = reference
+        .chars()
+        .next()
+        .is_some_and(|character| matches!(character, 'S' | 's' | 'W' | 'w'));
+    let signed = if is_south_or_west {
+        -value.abs()
+    } else {
+        value.abs()
+    };
+    signed.is_finite().then_some(signed)
+}
+
+/// Applies the `GPSAltitudeRef` sign ([`altitude_signed`] of the design
+/// sketch): reference byte `1` means below sea level, anything else
+/// above.
+///
+/// # Purity
+///
+/// Pure, total.
+fn altitude_signed(value: f64, reference: Option<u8>) -> f64 {
+    match reference {
+        Some(1) => -value,
+        _ => value,
+    }
+}
+
+/// Unsigned integer at the first position of a field, accepting
+/// BYTE/SHORT/LONG uniformly (`Value::get_uint`), which is exactly the
+/// legacy tolerance for cameras that write `Orientation`/`ISO` as LONG.
+///
+/// # Purity
+///
+/// Pure.
+fn exif_uint(exif: &exif::Exif, tag: Tag) -> Option<u32> {
+    exif.get_field(tag, In::PRIMARY)?.value.get_uint(0)
+}
+
+/// [`exif_uint`] narrowed to a `u16` (legacy range tolerance: LONGs
+/// beyond the range are dropped, not truncated).
+///
+/// # Purity
+///
+/// Pure.
+fn exif_u16(exif: &exif::Exif, tag: Tag) -> Option<u16> {
+    u16::try_from(exif_uint(exif, tag)?).ok()
+}
+
+/// First RATIONAL of a field as a decimal value, `None` for any other
+/// value type (parity: the legacy reader only accepted RATIONAL here).
+///
+/// # Purity
+///
+/// Pure.
+fn exif_rational(exif: &exif::Exif, tag: Tag) -> Option<f64> {
+    match &exif.get_field(tag, In::PRIMARY)?.value {
+        Value::Rational(ratios) if !ratios.is_empty() => {
+            rational_to_f64(ratios[0].num, ratios[0].denom)
+        }
+        _ => None,
+    }
+}
+
+/// First usable ASCII string of a field.
+///
+/// # Purity
+///
+/// Pure.
+fn exif_ascii(exif: &exif::Exif, tag: Tag) -> Option<String> {
+    match &exif.get_field(tag, In::PRIMARY)?.value {
+        Value::Ascii(values) => clean_string(values),
+        _ => None,
+    }
+}
+
+/// The GPS decimal pair of an EXIF block, with the exact sanity
+/// heuristics of the legacy parser: coordinate components outside the
+/// legal ranges are dropped, and exactly (0, 0) is rejected as the "no
+/// fix" placeholder some cameras write.
+///
+/// # Purity
+///
+/// Pure, total.
+fn exif_gps_pair(exif: &exif::Exif) -> (Option<f64>, Option<f64>) {
+    let latitude = exif_gps_decimal(exif, Tag::GPSLatitudeRef, Tag::GPSLatitude)
+        .filter(|value| value.abs() <= 90.0);
+    let longitude = exif_gps_decimal(exif, Tag::GPSLongitudeRef, Tag::GPSLongitude)
+        .filter(|value| value.abs() <= 180.0);
+    if latitude == Some(0.0) && longitude == Some(0.0) {
+        (None, None)
+    } else {
+        (latitude, longitude)
+    }
+}
+
+/// One GPS coordinate as a signed decimal degree value: the DMS triple
+/// of the value tag combined with the hemisphere reference of the
+/// reference tag (both required — parity with the legacy [`gps_decimal`],
+/// which never accepted a coordinate without its reference).
+///
+/// # Purity
+///
+/// Pure.
+fn exif_gps_decimal(exif: &exif::Exif, reference_tag: Tag, value_tag: Tag) -> Option<f64> {
+    let Value::Rational(parts) = &exif.get_field(value_tag, In::PRIMARY)?.value else {
+        return None; // GPS coordinates are mandatory DMS triples
+    };
+    if parts.len() != 3 {
+        return None;
+    }
+    let degrees = rational_to_f64(parts[0].num, parts[0].denom)?;
+    let minutes = rational_to_f64(parts[1].num, parts[1].denom)?;
+    let seconds = rational_to_f64(parts[2].num, parts[2].denom)?;
+    let reference = exif_ascii(exif, reference_tag)?;
+    let coordinate = GpsCoordinate {
+        degrees,
+        minutes,
+        seconds,
+        reference: reference.chars().next().unwrap_or('?'),
+    };
+    apply_hemisphere(dms_to_decimal(coordinate), Some(&reference))
 }
 
 /// Parses a DJI numeric attribute leniently.
@@ -2172,5 +2442,67 @@ mod tests {
     fn extract_metadata_missing_file_is_io_error() {
         let err = extract_metadata(Path::new("/nonexistent-dir-xyz/photo.jpg")).unwrap_err();
         assert!(matches!(err, MetadataError::Io(_)));
+    }
+
+    // =====================================================================
+    // Dual-parser oracle (integration phase): the kamadak-exif path must
+    // produce exactly the same RawExifTags as the hand-written parser on
+    // real drone files before the legacy EXIF layer is deleted. Fixtures
+    // are metadata-only derivatives (cut at SOS) of the team's sample
+    // photos, so CI runs the comparison without the 5 MB originals.
+    // =====================================================================
+
+    const ORACLE_SAMPLES: [&str; 3] = ["DJI_0147.JPG", "IMG_8765_RGB.jpg", "stripped.jpg"];
+
+    fn oracle_fixture(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn oracle_kamadak_matches_legacy_parser() {
+        for name in ORACLE_SAMPLES {
+            let bytes = std::fs::read(oracle_fixture(name))
+                .unwrap_or_else(|err| panic!("{name}: fixture unreadable: {err}"));
+            let legacy =
+                parse_exif(&bytes).unwrap_or_else(|err| panic!("{name}: legacy parser: {err:?}"));
+            let fresh = read_exif(&bytes)
+                .map(|exif| from_exif(&exif))
+                .unwrap_or_default();
+            assert_eq!(legacy, fresh, "{name}: legacy and kamadak parsers disagree");
+        }
+    }
+
+    #[test]
+    fn rational_to_f64_converts_and_rejects_zero_denominator() {
+        assert_eq!(rational_to_f64(3, 2), Some(1.5));
+        assert_eq!(rational_to_f64(1, 0), None);
+        assert_eq!(rational_to_f64(0, 0), None);
+    }
+
+    #[test]
+    fn clean_string_takes_the_first_non_empty_ascii_element() {
+        // Padded make: "DJI\0\0\0" — kamadak splits it into elements.
+        let values: Vec<Vec<u8>> = vec![b"DJI".to_vec(), Vec::new(), Vec::new()];
+        assert_eq!(clean_string(&values), Some("DJI".to_string()));
+        assert_eq!(clean_string(&[b"   ".to_vec()]), None);
+        assert_eq!(clean_string(&[]), None);
+    }
+
+    #[test]
+    fn apply_hemisphere_signs_south_west_and_keeps_unknown_positive() {
+        assert_eq!(apply_hemisphere(7.5, Some("N")), Some(7.5));
+        assert_eq!(apply_hemisphere(7.5, Some("S")), Some(-7.5));
+        assert_eq!(apply_hemisphere(110.01, Some("w")), Some(-110.01));
+        assert_eq!(apply_hemisphere(110.01, Some("?")), Some(110.01));
+        assert_eq!(apply_hemisphere(110.01, None), None);
+    }
+
+    #[test]
+    fn altitude_signed_negates_only_for_reference_one() {
+        assert_eq!(altitude_signed(120.0, Some(1)), -120.0);
+        assert_eq!(altitude_signed(120.0, Some(0)), 120.0);
+        assert_eq!(altitude_signed(120.0, None), 120.0);
     }
 }
