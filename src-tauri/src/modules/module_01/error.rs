@@ -79,6 +79,10 @@ pub enum SessionError {
     #[error("session '{session_id}' not found")]
     NotFound { session_id: uuid::Uuid },
 
+    /// No project exists with the given id.
+    #[error("project '{project_id}' not found")]
+    ProjectNotFound { project_id: uuid::Uuid },
+
     /// `assign_image_to_session` was called with an image id that does not
     /// exist in the `image` table.
     #[error("image '{image_id}' not found")]
@@ -94,6 +98,7 @@ impl SessionError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotFound { .. } => "SESSION_NOT_FOUND",
+            Self::ProjectNotFound { .. } => "PROJECT_NOT_FOUND",
             Self::ImageNotFound { .. } => "IMAGE_NOT_FOUND",
             Self::Db(_) => "DB_ERROR",
         }
