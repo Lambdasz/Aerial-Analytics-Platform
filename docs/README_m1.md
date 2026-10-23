@@ -9,6 +9,8 @@ This module is Module 1's back-end for two responsibilities:
   `ImportReport`.
 - **Metadata extraction** (`metadata_extractor.rs`) — reads EXIF and XMP DJI
   tags from a single JPEG/DNG file into an `ImageMetadata` value.
+- **DNG preview** (`dng_preview.rs`) — returns the JPEG a DNG already stores,
+  so a browser can display a DNG without a raw decoder.
 
 It sits below the organisational hierarchy defined in
 `src-tauri/src/models/session.rs`:
@@ -22,9 +24,9 @@ Project
 ## Status
 
 Implemented. Import entry points, the extraction pipeline (format sniff, JPEG
-and DNG/TIFF parsers, XMP DJI scan, merge helpers), and the schema migration
-are all live and covered by unit tests. Nothing in this module has a Tauri
-command yet, so the UI reaches none of it directly.
+and DNG/TIFF parsers, XMP DJI scan, merge helpers), the DNG preview reader and
+the schema migration are all live and covered by unit tests. Nothing in this
+module has a Tauri command yet, so the UI reaches none of it directly.
 
 DNG dimensions come from the largest image not flagged reduced-resolution
 among IFD0 and its SubIFDs (tag 330), so a preview in IFD0 is not mistaken for
@@ -39,7 +41,7 @@ and called from any other module in this crate (`commands/`,
 
 ```rust
 use crate::modules::module_01::{
-    describe_completeness, extract_metadata, import_images, to_plugin_metadata,
+    describe_completeness, extract_metadata, import_images, read_dng, to_plugin_metadata,
     MetadataCompleteness, MetadataError,
 };
 ```
@@ -97,25 +99,94 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
 }
 ```
 
-Reads a single JPEG/DNG file from disk and extracts its full metadata. This
-is the only impure function in the module (the only one that touches the
-filesystem); it's defined as the composition:
+Reads a single JPEG/DNG file from disk and extracts its full metadata. It
+touches the filesystem (so does `read_dng`, which delegates to it); it's
+defined as the composition:
 
 ```text
 read file (JPEG: up to the SOS header; DNG: whole file)
   -> detect_format(header, extension)
   -> read_dimensions(bytes, format)
-  -> parse_exif(bytes)
+  -> read_exif(bytes) + from_exif(&exif)
   -> xmp_packet(bytes, format) -> parse_xmp_dji(packet)
   -> merge_tags(exif, xmp, dimensions, format)
 ```
 
 A tag missing from the file is not an error — the corresponding
-`ImageMetadata` field is simply `None`.
+`ImageMetadata` field is simply `None`. An EXIF block that is absent or too
+broken to salvage also composes into default tags instead of failing the
+extraction (`read_exif` runs kamadak-exif with `continue_on_error`, so a
+partially broken block keeps what could be parsed).
 
 - **Errors**: `MetadataError::Io` (file unreadable), `UnsupportedFormat` /
-  `MagicMismatch` (not a supported image), `MalformedExif` (a present EXIF
-  segment couldn't be parsed).
+  `MagicMismatch` (not a supported image), `MalformedExif` (an unparseable
+  dimension header).
+
+### `read_dng`
+
+```rust
+pub(crate) fn read_dng(path: &Path) -> Result<ImageMetadata, MetadataError> {
+    // ...
+}
+```
+
+Reads one DNG from disk and returns its metadata. This is how another module
+reads a DNG: the TIFF/IFD parsing stays inside this module, so no caller
+needs to know about byte order, IFD chains, or SubIFD offsets.
+
+The file is **sniffed before it is parsed**. A file that is not a DNG is
+rejected as the wrong format, not as a broken one: a JPEG handed to this
+function reports `MetadataError::UnsupportedFormat`, not the
+`MalformedExif` that parsing it would otherwise produce. The one exception
+is a `.dng` whose header is not TIFF at all, which reports
+`MetadataError::MagicMismatch` — the extension promised a DNG and the bytes
+did not deliver one. Absent tags are `None`, as everywhere else in this
+module.
+
+A plain TIFF named `.dng` is accepted, because the format sniff cannot tell
+a DNG from a TIFF and this module treats them the same. No DNG version check
+is performed. A DNG is read in full, because its IFD offsets can point
+anywhere in the file.
+
+- **Errors**: `MetadataError::UnsupportedFormat` (not a DNG), `MagicMismatch`
+  (a `.dng` without TIFF magic), `Io` (unreadable). A present EXIF segment
+  that is broken does not fail the read: whatever kamadak recovers composes
+  into the tags and the rest stay `None`.
+
+### `read_dng_preview`
+
+```rust
+pub(crate) fn read_dng_preview(path: &Path) -> Result<Vec<u8>, MetadataError> {
+    // ...
+}
+```
+
+Returns the JPEG a DNG already stores. A browser cannot put a `.dng` in an
+`<img>` tag, and the JPEG embedded in the file is the same preview the file
+manager shows. This returns those bytes **without decoding raw pixels** — there
+is no Bayer demosaic, no color matrix, and no full-resolution decode.
+
+The search order inside the file is:
+
+1. the DNG `PreviewImageStart`/`PreviewImageLength` pair (tags 50981/50982) on
+   IFD0,
+2. `JPEGInterchangeFormat`/`Length` (513/514) on IFD1,
+3. the same pair on IFD0,
+4. the reduced-resolution SubIFDs (tag 330).
+
+Every candidate that is not a standalone JPEG — a raw strip or a tiled
+payload — is ignored. The largest usable candidate wins, capped at 8 MiB. The
+file itself is capped at 80 MiB, because a DNG is read whole: its IFD offsets
+can point anywhere in the file.
+
+A DNG that stores only sensor data has no preview. That is reported as
+`MetadataError::PreviewUnavailable` (code `PREVIEW_UNAVAILABLE`), which is not
+a failure to read the file — the caller should say the preview is unavailable
+rather than report a broken image.
+
+- **Errors**: `MetadataError::UnsupportedFormat` (not a DNG), `MagicMismatch`
+  (a `.dng` without TIFF magic), `Io` (unreadable or over the size cap),
+  `PreviewUnavailable` (no embedded JPEG).
 
 ## Note on the XMP DJI scan
 
@@ -230,25 +301,26 @@ pub enum MetadataError {
     MalformedExif(String),
     MalformedXmp(String),
     NotImplemented { path: String },
+    PreviewUnavailable { path: String },
 }
 ```
 
 The one fully-public type in this module — the domain error for every
 metadata-extraction operation. Each variant has a `code()` method
 (`"IO_ERROR"`, `"UNSUPPORTED_FORMAT"`, `"MAGIC_MISMATCH"`,
-`"MALFORMED_EXIF"`, `"MALFORMED_XMP"`, `"NOT_IMPLEMENTED"`) for programmatic
-matching on the frontend, and converts via `From<MetadataError> for
-CommandError` so it can be returned directly from a `#[tauri::command]` and
-reach the frontend over IPC.
+`"MALFORMED_EXIF"`, `"MALFORMED_XMP"`, `"NOT_IMPLEMENTED"`,
+`"PREVIEW_UNAVAILABLE"`) for programmatic matching on the frontend, and
+converts via `From<MetadataError> for CommandError` so it can be returned
+directly from a `#[tauri::command]` and reach the frontend over IPC.
 
 ## Note on `ImportError::UnsupportedFormat`
 
 `image_importer::classify_file` (an internal helper behind `import_images`)
 also raises `ImportError::UnsupportedFormat` as a defensive fallback if the
 format detector fails in a way its own contract says can't happen (an
-`Io`/`MalformedExif`/`MalformedXmp` `MetadataError` from `detect_format`). In
-that case the reported `extension` isn't necessarily the real cause of the
-failure — see the doc comments on `classify_file` and
+`Io`/`MalformedExif`/`MalformedXmp`/`PreviewUnavailable` `MetadataError` from
+`detect_format`). In that case the reported `extension` isn't necessarily the
+real cause of the failure — see the doc comments on `classify_file` and
 `ImportError::UnsupportedFormat` for detail.
 
 ## Note on `ImportError::InvalidFileName`

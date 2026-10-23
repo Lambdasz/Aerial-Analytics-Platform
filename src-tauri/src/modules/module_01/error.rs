@@ -32,6 +32,14 @@ pub enum MetadataError {
     #[error("malformed XMP data: {0}")]
     MalformedXmp(String),
 
+    /// The file is a valid image but carries no stored preview image.
+    ///
+    /// This is not a corrupt file: some DNGs hold only Bayer sensor data and
+    /// no embedded JPEG. Callers should say the preview is unavailable rather
+    /// than report a failure to read the image.
+    #[error("no preview image available for '{path}'")]
+    PreviewUnavailable { path: String },
+
     /// Extraction is declared but not implemented yet.
     #[error("metadata extraction is not implemented for '{path}'")]
     NotImplemented { path: String },
@@ -46,6 +54,7 @@ impl MetadataError {
             Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
             Self::MalformedExif(_) => "MALFORMED_EXIF",
             Self::MalformedXmp(_) => "MALFORMED_XMP",
+            Self::PreviewUnavailable { .. } => "PREVIEW_UNAVAILABLE",
             Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
         }
     }
