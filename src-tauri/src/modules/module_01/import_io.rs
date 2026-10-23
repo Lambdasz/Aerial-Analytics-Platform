@@ -2,14 +2,15 @@
 //!
 //! [`crate::modules::module_01::image_importer::import_images`] decides *what*
 //! to import without touching the disk or the database. This module applies
-//! that plan: it scans the picked files, copies each accepted image into the
-//! app-owned library folder, reads metadata from **the copy**, records the
-//! row, and reports per-file failures without aborting the batch.
+//! that plan: it stages the picked files (one read each, hashed while the
+//! temporary copy is written), renames the accepted ones into the app-owned
+//! library folder, reads metadata from **the copy**, records the row, and
+//! reports per-file failures without aborting the batch.
 //!
 //! ```text
-//! scan_sources                     (read sources, hash them)
+//! stage_sources                    (read once: hash + temporary copy)
 //!   -> import_images + known_hashes_for_project  (pure plan)
-//!   -> copy_verified per file      (hash-checked atomic copy)
+//!   -> persist_staged per file     (first free name, atomic rename)
 //!   -> metadata from the copy      (JPEG / DNG)
 //!   -> one transaction: insert row(s) + recalc session range
 //! ```
@@ -34,14 +35,14 @@
 //!
 //! * A failed copy leaves no file and no row.
 //! * A failed insert deletes the copy, so no orphan file remains.
-//! * A copied file whose bytes no longer match the planned SHA-256 is
-//!   discarded ([`ImportError::SourceChanged`]): a file that changed between
-//!   planning and copying is never recorded under the old identity.
+//! * Each source is read once: hashing happens while the staged copy is
+//!   written, so the plan never re-reads the file.
 //! * An existing destination is never overwritten
 //!   ([`ImportError::DestinationExists`]).
 //! * A destination name that is already taken is imported under the first
 //!   free ` (n)` suffix instead of being skipped: drone cameras reuse
-//!   `DJI_0001.JPG` across flights.
+//!   `DJI_0001.JPG` across flights. A JPEG/DNG pair shares one suffix, and a
+//!   name claimed by a concurrent import is retried rather than failed.
 //! * Duplicate detection is re-checked inside the insert transaction, so two
 //!   imports running at once cannot store the same bytes twice.
 //! * One bad file never aborts the rest of the batch.
@@ -78,12 +79,12 @@ use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
 use super::error::SessionError;
 use super::flight_session::{
-    get_image, get_session, image_from_metadata, insert_images_and_recalculate,
+    all_image_paths, get_image, get_session, image_from_metadata, insert_images_and_recalculate,
     known_hashes_for_project, ExistingContent,
 };
 use super::image_importer::{
     classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
-    ConflictPolicy, NameFolding,
+    NameFolding,
 };
 use super::metadata_extractor::{extract_metadata, read_dng, to_plugin_metadata};
 
@@ -156,7 +157,7 @@ pub(crate) fn session_images_dir(
 /// # Arguments
 ///
 /// * `db` — shared SQLite connection. The lock is taken only for the hash
-///   query and for the insert transaction; copying and hashing run with the
+///   query and for the insert transaction; staging and recording run with the
 ///   lock released.
 /// * `library_root` — app-owned image library. The session folder below it is
 ///   created on demand.
@@ -176,8 +177,8 @@ pub(crate) fn session_images_dir(
 ///
 /// [`ImportFailure::Import`] when the request has no importable candidates
 /// ([`ImportError::NoImagesFound`]) or the session is unknown. Individual
-/// files that cannot be copied or recorded are reported in the result's
-/// `rejected` list, not as an error.
+/// files that cannot be staged, copied, or recorded are reported in the
+/// result's `rejected` list, not as an error.
 pub(crate) fn run_import(
     db: &Mutex<Connection>,
     library_root: &Path,
@@ -195,12 +196,18 @@ pub(crate) fn run_import(
         &session.project_id.to_string(),
         &session_id.to_string(),
     );
+    fs::create_dir_all(&dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create '{}': {err}", dest_dir.display()))
+    })?;
 
     let mut rejected = Vec::new();
-    let mut candidates = Vec::new();
-    for entry in scan_sources(sources, from_folder) {
+    let mut staging: std::collections::HashMap<String, StagedFile> =
+        std::collections::HashMap::new();
+    for entry in stage_sources(sources, from_folder, &dest_dir) {
         match entry {
-            Ok(candidate) => candidates.push(candidate),
+            Ok(staged) => {
+                staging.insert(staged.candidate.id.clone(), staged);
+            }
             Err(rejection) => rejected.push(rejection),
         }
     }
@@ -210,22 +217,19 @@ pub(crate) fn run_import(
         session: SessionTarget::Existing {
             id: session_id.to_string(),
         },
-        candidates,
+        candidates: staging
+            .values()
+            .map(|staged| staged.candidate.clone())
+            .collect(),
     };
-    let folding = folding_for_os();
     let known = {
         let conn = lock_db(db)?;
         known_hashes_for_project(&conn, session.project_id)?
     };
-    let existing_paths = list_existing(&dest_dir)?;
-    let mut report = import_images(
-        &request,
-        &known,
-        &existing_paths,
-        folding,
-        ConflictPolicy::AutoSuffix,
-    )?;
-    report.rejected = rejected;
+    let mut report = import_images(&request, &known)?;
+    let mut all_rejected = rejected;
+    all_rejected.append(&mut report.rejected);
+    report.rejected = all_rejected;
 
     import_planned(
         db,
@@ -233,7 +237,7 @@ pub(crate) fn run_import(
         session_id,
         &request,
         report,
-        folding,
+        &mut staging,
         &mut on_progress,
     )
 }
@@ -241,7 +245,7 @@ pub(crate) fn run_import(
 /// Copies and records every candidate the plan approved.
 ///
 /// Splits the result back into [`ImportReport`] fields: image ids become the
-/// persisted ids (not candidate ids), copy and record failures become
+/// persisted ids (not candidate ids), persist and record failures become
 /// `rejected`, a race-detected duplicate becomes a `duplicates` entry, and
 /// unpaired DNGs are collected in `not_analysis_ready`.
 fn import_planned(
@@ -250,7 +254,7 @@ fn import_planned(
     session_id: Uuid,
     request: &ImportRequest,
     report: ImportReport,
-    folding: NameFolding,
+    staging: &mut std::collections::HashMap<String, StagedFile>,
     on_progress: &mut impl FnMut(usize, usize, &str),
 ) -> Result<ImportReport, ImportFailure> {
     let mut report = report;
@@ -264,13 +268,7 @@ fn import_planned(
         .iter()
         .map(String::as_str)
         .collect();
-    // The planner settles the destination name (it may have added a suffix).
-    let names: std::collections::HashMap<&str, &str> = report
-        .assigned_names
-        .iter()
-        .map(|assigned| (assigned.candidate_id.as_str(), assigned.dest_name.as_str()))
-        .collect();
-    let pairs = pair_raw_siblings(&request.candidates, folding);
+    let pairs = pair_raw_siblings(&request.candidates, folding_for_os());
     let mut partner_of: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
     for (jpeg_id, dng_id) in &pairs {
         if approved.contains(jpeg_id.as_str()) && approved.contains(dng_id.as_str()) {
@@ -315,7 +313,7 @@ fn import_planned(
             db,
             dest_dir,
             session_id,
-            names: &names,
+            staging,
             state: &mut state,
         };
         let rejected_before = scope.rejected_len();
@@ -355,7 +353,6 @@ fn import_planned(
     report.rejected = rejected;
     report.duplicates = duplicates;
     remap_duplicate_ids(&mut report.duplicates, &image_ids);
-    remap_duplicate_ids(&mut report.pending_duplicates, &image_ids);
     Ok(report)
 }
 
@@ -366,20 +363,45 @@ struct ImportedFile {
     not_analysis_ready: bool,
 }
 
-/// The name the planner chose for a candidate, falling back to its basename.
-fn dest_name_for(
-    names: &std::collections::HashMap<&str, &str>,
-    candidate: &ImportCandidate,
-) -> Result<String, ImportError> {
-    match names.get(candidate.id.as_str()) {
-        Some(name) => Ok((*name).to_string()),
-        None => dest_basename(&candidate.file_name)
-            .map(str::to_string)
-            .ok_or_else(|| ImportError::InvalidFileName {
-                path: candidate.source_path.clone(),
-            }),
-    }
+/// A source file copied into a temporary file in the session folder.
+///
+/// Staging happens while the file is hashed, so each source is read once; the
+/// temporary file is then renamed into its final name if the plan accepts it.
+/// Dropping the value without persisting it deletes the temporary copy.
+#[derive(Debug)]
+struct StagedFile {
+    candidate: ImportCandidate,
+    temp: Option<NamedTempFile>,
 }
+
+/// The basename a staged file should get, or an invalid-name error.
+fn base_name_for(candidate: &ImportCandidate) -> Result<String, ImportError> {
+    dest_basename(&candidate.file_name)
+        .map(str::to_string)
+        .ok_or_else(|| ImportError::InvalidFileName {
+            path: candidate.source_path.clone(),
+        })
+}
+
+/// `base` with ` (n)` inserted before its extension (`n == 1` is `base`).
+fn suffixed_name(base: &str, n: u32) -> String {
+    if n <= 1 {
+        return base.to_string();
+    }
+    let path = Path::new(base);
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let extension = path
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    format!("{stem} ({n}){extension}")
+}
+
+/// How many suffixes to try before giving up on a destination name.
+const MAX_SUFFIX: u32 = 10_000;
 
 /// Accumulated results of a run, carried across helpers.
 struct RunState {
@@ -390,15 +412,11 @@ struct RunState {
 }
 
 /// Per-run context for the copy-and-record helpers.
-///
-/// Bundled so the helpers keep a readable argument list while staying free
-/// functions of the run, not of the database.
 struct ImportScope<'a> {
     db: &'a Mutex<Connection>,
     dest_dir: &'a Path,
     session_id: Uuid,
-    /// Candidate id -> destination basename chosen by the planner.
-    names: &'a std::collections::HashMap<&'a str, &'a str>,
+    staging: &'a mut std::collections::HashMap<String, StagedFile>,
     state: &'a mut RunState,
 }
 
@@ -413,17 +431,38 @@ impl ImportScope<'_> {
         self.state.duplicates.len()
     }
 
+    /// Moves a staged file out of the map, rejecting if it is missing.
+    fn take_staged(&mut self, candidate: &ImportCandidate) -> Result<StagedFile, ()> {
+        self.staging.remove(candidate.id.as_str()).ok_or_else(|| {
+            self.state.rejected.push(RejectedFile {
+                source_path: candidate.source_path.clone(),
+                reason: ImportError::CopyFailed {
+                    path: candidate.source_path.clone(),
+                    reason: "the staged copy is missing".to_string(),
+                },
+            });
+        })
+    }
+
     /// Copies and records one standalone image.
     fn single(&mut self, candidate: &ImportCandidate) -> Result<ImportedFile, ()> {
-        let dest_name = match dest_name_for(self.names, candidate) {
-            Ok(name) => name,
+        let base = match base_name_for(candidate) {
+            Ok(base) => base,
             Err(err) => {
                 self.state.rejected.push(reject(candidate, err));
                 return Err(());
             }
         };
-        let (format, copy) = match copy_candidate(candidate, self.dest_dir, &dest_name) {
-            Ok((format, copy)) => (format, copy),
+        let format = match classify_file(candidate) {
+            Ok(format) => format,
+            Err(err) => {
+                self.state.rejected.push(reject(candidate, err));
+                return Err(());
+            }
+        };
+        let mut staged = self.take_staged(candidate)?;
+        let copy = match persist_single(&mut staged, self.dest_dir, &base) {
+            Ok(copy) => copy,
             Err(err) => {
                 self.state.rejected.push(reject(candidate, err));
                 return Err(());
@@ -477,11 +516,11 @@ impl ImportScope<'_> {
     /// Copies and records a JPEG/DNG stem pair in one insertion.
     ///
     /// The JPEG is inserted first, then the DNG, both linked through
-    /// `raw_sibling_id`. If the DNG cannot be copied, the JPEG is still
+    /// `raw_sibling_id`. If the DNG cannot be persisted, the JPEG is still
     /// imported alone (it is analysis-ready by itself); if the JPEG cannot be
-    /// copied, the DNG is imported alone as not-analysis-ready. A pair where
-    /// one half turns out to be a duplicate is treated the same way: the other
-    /// half is imported on its own.
+    /// persisted, the DNG is imported alone as not-analysis-ready. A pair
+    /// where one half turns out to be a duplicate is treated the same way:
+    /// the other half is imported on its own.
     fn pair(
         &mut self,
         first: &ImportCandidate,
@@ -510,38 +549,66 @@ impl ImportScope<'_> {
             return Err(());
         }
 
-        let jpeg_name = match dest_name_for(self.names, jpeg) {
-            Ok(name) => name,
+        let jpeg_base = match base_name_for(jpeg) {
+            Ok(base) => base,
             Err(err) => {
                 self.state.rejected.push(reject(jpeg, err));
                 return self.single(dng).map(|imported| vec![imported]);
             }
         };
-        let dng_name = match dest_name_for(self.names, dng) {
-            Ok(name) => name,
+        let dng_base = match base_name_for(dng) {
+            Ok(base) => base,
             Err(err) => {
                 self.state.rejected.push(reject(dng, err));
                 return self.single(jpeg).map(|imported| vec![imported]);
             }
         };
 
-        let jpeg_copy = match copy_candidate(jpeg, self.dest_dir, &jpeg_name) {
-            Ok((_, copy)) => copy,
-            Err(err) => {
-                self.state.rejected.push(reject(jpeg, err));
-                // The raw file can still be imported on its own, but it will
-                // not be analysis-ready. Fall back to a standalone DNG import.
+        let mut jpeg_staged = match self.take_staged(jpeg) {
+            Ok(staged) => staged,
+            Err(()) => {
+                // A missing JPEG staging file must not take the DNG with it.
                 return self.single(dng).map(|imported| vec![imported]);
             }
         };
-        let dng_copy = match copy_candidate(dng, self.dest_dir, &dng_name) {
-            Ok((_, copy)) => copy,
-            Err(err) => {
-                self.state.rejected.push(reject(dng, err));
-                // JPEG alone: still a complete, analysis-ready image.
+        let mut dng_staged = match self.staging.remove(dng.id.as_str()) {
+            Some(staged) => staged,
+            None => {
+                // The JPEG is still usable; import it alone.
+                let copy = match persist_single(&mut jpeg_staged, self.dest_dir, &jpeg_base) {
+                    Ok(copy) => copy,
+                    Err(err) => {
+                        self.state.rejected.push(reject(jpeg, err));
+                        return Err(());
+                    }
+                };
                 return self
-                    .record_single_copy(&jpeg_copy, jpeg)
+                    .record_single_copy(&copy, jpeg)
                     .map(|imported| vec![imported]);
+            }
+        };
+
+        let (jpeg_copy, dng_copy) = match persist_pair(
+            &mut jpeg_staged,
+            &mut dng_staged,
+            self.dest_dir,
+            &jpeg_base,
+            &dng_base,
+        ) {
+            Ok(pair) => pair,
+            Err(err) => {
+                // `persist_pair` never leaves a half-persisted pair behind.
+                // If the JPEG landed, import it alone; if it did not, the DNG
+                // can still be imported alone as not-analysis-ready.
+                if let Some(copy) = err.copy {
+                    self.state.rejected.push(reject(dng, err.error));
+                    return self
+                        .record_single_copy(&copy, jpeg)
+                        .map(|imported| vec![imported]);
+                }
+                self.state.rejected.push(reject(jpeg, err.error));
+                self.staging.insert(dng.id.clone(), dng_staged);
+                return self.single(dng).map(|imported| vec![imported]);
             }
         };
 
@@ -623,7 +690,7 @@ impl ImportScope<'_> {
         ])
     }
 
-    /// Records an already-copied JPEG as a standalone image.
+    /// Records an already-persisted JPEG as a standalone image.
     fn record_single_copy(
         &mut self,
         copy: &CopiedFile,
@@ -685,94 +752,49 @@ struct CopiedFile {
     file_size: u64,
 }
 
-/// Copies one source into `dest_dir` as `dest_name`, verifying its SHA-256.
+/// A persist failure that still knows whether the other half of a pair made
+/// it to disk.
+struct PairPersistError {
+    error: ImportError,
+    /// The persisted JPEG, when the pair failed after that half landed.
+    copy: Option<CopiedFile>,
+}
+
+/// Renames one staged copy to `name` in `dest_dir`.
 ///
-/// # Purity
-///
-/// Impure — reads the source and writes a temporary file, which is renamed
-/// into place only after the hash matches.
-///
-/// # Errors
-///
-/// [`ImportError::CopyFailed`] for any I/O failure,
-/// [`ImportError::SourceChanged`] when the bytes hash differently from
-/// `candidate.content_hash` (nothing is left behind), and
-/// [`ImportError::DestinationExists`] when a file already occupies the
-/// destination.
-fn copy_candidate(
-    candidate: &ImportCandidate,
+/// On `DestinationExists` the staged file stays usable, so the caller can
+/// retry another suffix.
+fn persist_staged(
+    staged: &mut StagedFile,
     dest_dir: &Path,
-    dest_name: &str,
-) -> Result<(ImageFormat, CopiedFile), ImportError> {
-    let format = classify_file(candidate)?;
-    if dest_name.is_empty() || dest_name == "." || dest_name == ".." {
-        return Err(ImportError::InvalidFileName {
-            path: candidate.source_path.clone(),
+    name: &str,
+) -> Result<CopiedFile, ImportError> {
+    let source_path = staged.candidate.source_path.clone();
+    let Some(temp) = staged.temp.take() else {
+        return Err(ImportError::CopyFailed {
+            path: source_path,
+            reason: "the staged copy was already persisted".to_string(),
         });
-    }
-    fs::create_dir_all(dest_dir).map_err(|err| ImportError::CopyFailed {
-        path: candidate.source_path.clone(),
-        reason: format!("could not create '{}': {err}", dest_dir.display()),
-    })?;
-
-    let mut temp = NamedTempFile::new_in(dest_dir).map_err(|err| ImportError::CopyFailed {
-        path: candidate.source_path.clone(),
-        reason: format!("could not create a temporary file: {err}"),
-    })?;
-    let mut source =
-        fs::File::open(&candidate.source_path).map_err(|err| ImportError::CopyFailed {
-            path: candidate.source_path.clone(),
-            reason: err.to_string(),
-        })?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
-    let mut file_size = 0u64;
-    loop {
-        let read = source
-            .read(&mut buffer)
-            .map_err(|err| ImportError::CopyFailed {
-                path: candidate.source_path.clone(),
-                reason: err.to_string(),
-            })?;
-        if read == 0 {
-            break;
+    };
+    let dest = dest_dir.join(name);
+    let persisted = match temp.persist_noclobber(&dest) {
+        Ok(persisted) => persisted,
+        Err(err) => {
+            let kind = err.error.kind();
+            // Hand the temporary file back to the caller for a retry.
+            staged.temp = Some(err.file);
+            return Err(if kind == std::io::ErrorKind::AlreadyExists {
+                ImportError::DestinationExists {
+                    path: dest.display().to_string(),
+                }
+            } else {
+                ImportError::CopyFailed {
+                    path: source_path,
+                    reason: err.error.to_string(),
+                }
+            });
         }
-        hasher.update(&buffer[..read]);
-        temp.write_all(&buffer[..read])
-            .map_err(|err| ImportError::CopyFailed {
-                path: candidate.source_path.clone(),
-                reason: err.to_string(),
-            })?;
-        file_size += read as u64;
-    }
-    temp.as_file()
-        .sync_all()
-        .map_err(|err| ImportError::CopyFailed {
-            path: candidate.source_path.clone(),
-            reason: err.to_string(),
-        })?;
-
-    let content_hash = hex(&hasher.finalize());
-    if !content_hash.eq_ignore_ascii_case(&candidate.content_hash.0) {
-        // Dropping `temp` removes the partial copy.
-        return Err(ImportError::SourceChanged {
-            path: candidate.source_path.clone(),
-        });
-    }
-
-    let dest = dest_dir.join(dest_name);
-    let persisted = temp.persist_noclobber(&dest).map_err(|err| {
-        if err.error.kind() == std::io::ErrorKind::AlreadyExists {
-            ImportError::DestinationExists {
-                path: dest.display().to_string(),
-            }
-        } else {
-            ImportError::CopyFailed {
-                path: candidate.source_path.clone(),
-                reason: err.error.to_string(),
-            }
-        }
-    })?;
+    };
     drop(persisted);
 
     // Canonicalize after the rename so the database stores the same absolute
@@ -783,18 +805,153 @@ fn copy_candidate(
         // Do not keep a copy the database will never reference.
         remove_copy(&dest);
         ImportError::CopyFailed {
-            path: candidate.source_path.clone(),
+            path: source_path,
             reason: err.to_string(),
         }
     })?;
-    Ok((
-        format,
-        CopiedFile {
-            dest: canonical,
-            content_hash,
-            file_size,
-        },
-    ))
+    let file_size = fs::metadata(&canonical).map(|meta| meta.len()).unwrap_or(0);
+    Ok(CopiedFile {
+        dest: canonical,
+        content_hash: staged.candidate.content_hash.0.clone(),
+        file_size,
+    })
+}
+
+/// Persists one staged copy under the first free `name (n)` suffix.
+///
+/// Names are decided here, not in the plan, so two imports that race for the
+/// same suffix do not fail: each tries the next one until a rename succeeds.
+fn persist_single(
+    staged: &mut StagedFile,
+    dest_dir: &Path,
+    base: &str,
+) -> Result<CopiedFile, ImportError> {
+    let mut last = dest_dir.join(base);
+    for suffix in 1..=MAX_SUFFIX {
+        let name = suffixed_name(base, suffix);
+        last = dest_dir.join(&name);
+        match persist_staged(staged, dest_dir, &name) {
+            Err(ImportError::DestinationExists { .. }) => continue,
+            result => return result,
+        }
+    }
+    Err(ImportError::DestinationExists {
+        path: last.display().to_string(),
+    })
+}
+
+/// Persists a JPEG/DNG pair under one shared suffix.
+///
+/// The two stems must stay equal, or the link between them breaks: if only
+/// one of `DJI_0001.JPG`/`DJI_0001.DNG` needs a suffix, both get it. If the
+/// DNG's name is claimed between the two renames, the persisted JPEG is moved
+/// to the next suffix and the DNG follows it.
+fn persist_pair(
+    jpeg: &mut StagedFile,
+    dng: &mut StagedFile,
+    dest_dir: &Path,
+    jpeg_base: &str,
+    dng_base: &str,
+) -> Result<(CopiedFile, CopiedFile), PairPersistError> {
+    let mut suffix = 1;
+    let jpeg_copy = loop {
+        if suffix > MAX_SUFFIX {
+            return Err(PairPersistError {
+                error: ImportError::DestinationExists {
+                    path: dest_dir
+                        .join(suffixed_name(jpeg_base, suffix))
+                        .display()
+                        .to_string(),
+                },
+                copy: None,
+            });
+        }
+        let name = suffixed_name(jpeg_base, suffix);
+        match persist_staged(jpeg, dest_dir, &name) {
+            Ok(copy) => break copy,
+            Err(ImportError::DestinationExists { .. }) => suffix += 1,
+            Err(error) => {
+                return Err(PairPersistError { error, copy: None });
+            }
+        }
+    };
+
+    let mut jpeg_copy = jpeg_copy;
+    loop {
+        if suffix > MAX_SUFFIX {
+            remove_copy(&jpeg_copy.dest);
+            return Err(PairPersistError {
+                error: ImportError::DestinationExists {
+                    path: dest_dir
+                        .join(suffixed_name(dng_base, suffix))
+                        .display()
+                        .to_string(),
+                },
+                copy: None,
+            });
+        }
+        let name = suffixed_name(dng_base, suffix);
+        match persist_staged(dng, dest_dir, &name) {
+            Ok(dng_copy) => return Ok((jpeg_copy, dng_copy)),
+            Err(ImportError::DestinationExists { .. }) => {
+                // Move the already-persisted JPEG to the next suffix, keeping
+                // both stems equal, then try the DNG again.
+                loop {
+                    suffix += 1;
+                    if suffix > MAX_SUFFIX {
+                        remove_copy(&jpeg_copy.dest);
+                        return Err(PairPersistError {
+                            error: ImportError::DestinationExists {
+                                path: dest_dir
+                                    .join(suffixed_name(dng_base, suffix))
+                                    .display()
+                                    .to_string(),
+                            },
+                            copy: None,
+                        });
+                    }
+                    let next = dest_dir.join(suffixed_name(jpeg_base, suffix));
+                    if next.exists() {
+                        continue;
+                    }
+                    match fs::rename(&jpeg_copy.dest, &next) {
+                        Ok(()) => {
+                            jpeg_copy = match dunce::canonicalize(&next) {
+                                Ok(dest) => CopiedFile { dest, ..jpeg_copy },
+                                Err(err) => {
+                                    let error = ImportError::CopyFailed {
+                                        path: next.display().to_string(),
+                                        reason: err.to_string(),
+                                    };
+                                    return Err(PairPersistError {
+                                        error,
+                                        copy: Some(jpeg_copy),
+                                    });
+                                }
+                            };
+                            break;
+                        }
+                        Err(err) => {
+                            let error = ImportError::CopyFailed {
+                                path: next.display().to_string(),
+                                reason: err.to_string(),
+                            };
+                            return Err(PairPersistError {
+                                error,
+                                copy: Some(jpeg_copy),
+                            });
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                return Err(PairPersistError {
+                    error,
+                    copy: Some(jpeg_copy),
+                });
+            }
+        }
+    }
 }
 
 /// Reads metadata from a copied file.
@@ -990,23 +1147,16 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
     if !library_root.is_dir() {
         return 0;
     }
-    let referenced: std::collections::HashSet<String> =
-        match conn.prepare("SELECT file_path FROM image") {
-            Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
-                Ok(rows) => rows
-                    .filter_map(Result::ok)
-                    .map(|path| normalize_path(Path::new(&path)))
-                    .collect(),
-                Err(err) => {
-                    eprintln!("warning: could not list stored image paths: {err}");
-                    return 0;
-                }
-            },
-            Err(err) => {
-                eprintln!("warning: could not list stored image paths: {err}");
-                return 0;
-            }
-        };
+    let referenced: std::collections::HashSet<String> = match all_image_paths(conn) {
+        Ok(paths) => paths
+            .iter()
+            .map(|path| normalize_path(Path::new(path)))
+            .collect(),
+        Err(err) => {
+            eprintln!("warning: could not list stored image paths: {err}");
+            return 0;
+        }
+    };
 
     let now = std::time::SystemTime::now();
     let mut removed = 0usize;
@@ -1101,21 +1251,24 @@ fn lock_db(db: &Mutex<Connection>) -> Result<MutexGuard<'_, Connection>, Session
         .map_err(|err| SessionError::LockPoisoned(err.to_string()))
 }
 
-/// Scans picked files or folders into ready-to-plan candidates.
+/// Stages picked files or folders into ready-to-plan candidates.
 ///
-/// Each successful entry carries the 16-byte header, the SHA-256 of the whole
-/// file, and a fresh candidate id. Unreadable files become per-file
-/// rejections instead of failing the batch.
+/// Each successful entry is a [`StagedFile`]: the source was read exactly
+/// once, hashed while a temporary copy was written in the session folder, and
+/// the temporary file can be renamed into place if the plan accepts it.
+/// Unreadable files become per-file rejections instead of failing the batch.
 ///
 /// Picked paths are filtered **before** any read: a path that is not a
 /// regular file (a FIFO, a device node, a directory) or whose extension is
-/// not jpeg/dng is rejected unopened, so picking a huge video or `/dev/zero`
-/// never reads it.
-fn scan_sources(
+/// not jpeg/dng is rejected unopened, and a supported extension with a
+/// non-matching header is rejected after reading only the first bytes, so
+/// picking a huge video or `/dev/zero` never reads it in full.
+fn stage_sources(
     sources: &[String],
     from_folder: bool,
-) -> Vec<Result<ImportCandidate, RejectedFile>> {
-    let mut entries: Vec<Result<ImportCandidate, RejectedFile>> = Vec::new();
+    dest_dir: &Path,
+) -> Vec<Result<StagedFile, RejectedFile>> {
+    let mut entries: Vec<Result<StagedFile, RejectedFile>> = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
     if from_folder {
         for source in sources {
@@ -1169,7 +1322,7 @@ fn scan_sources(
     }
 
     for path in files {
-        entries.push(scan_file(&path));
+        entries.push(stage_file(&path, dest_dir));
     }
     entries
 }
@@ -1181,70 +1334,85 @@ fn file_name_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Whether the path's extension is one this module imports.
 fn is_import_extension(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(|extension| extension.to_str())
-            .map(str::to_ascii_lowercase)
+            .map(|extension| extension.to_ascii_lowercase())
             .as_deref(),
         Some("jpg" | "jpeg" | "dng")
     )
 }
 
-/// Reads one file's header and content hash into a candidate.
-fn scan_file(path: &Path) -> Result<ImportCandidate, RejectedFile> {
+/// Copies one source into a temporary file while hashing it, and classifies
+/// it from the header read along the way.
+///
+/// # Errors
+///
+/// A [`RejectedFile`] for unreadable sources, unusable names, or unsupported
+/// formats. The temporary file is removed when this returns an error.
+fn stage_file(path: &Path, dest_dir: &Path) -> Result<StagedFile, RejectedFile> {
     let source_path = path.display().to_string();
-    let fail = |reason: String| RejectedFile {
+    let fail = |reason: ImportError| RejectedFile {
         source_path: source_path.clone(),
-        reason: ImportError::CopyFailed {
-            path: source_path.clone(),
-            reason,
-        },
+        reason,
     };
-    let mut file = fs::File::open(path).map_err(|err| fail(err.to_string()))?;
+    let io_fail = |err: std::io::Error| {
+        fail(ImportError::CopyFailed {
+            path: source_path.clone(),
+            reason: err.to_string(),
+        })
+    };
+
+    let mut file = fs::File::open(path).map_err(io_fail)?;
     let mut header = Vec::with_capacity(HEADER_BYTES);
     Read::by_ref(&mut file)
         .take(HEADER_BYTES as u64)
         .read_to_end(&mut header)
-        .map_err(|err| fail(err.to_string()))?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|err| fail(err.to_string()))?;
+        .map_err(io_fail)?;
 
+    let probe = ImportCandidate {
+        id: Uuid::new_v4().to_string(),
+        source_path: source_path.clone(),
+        file_name: file_name_of(path),
+        header,
+        content_hash: ContentHash(String::new()),
+    };
+    // Reject unusable names and non-JPEG/DNG headers before reading the
+    // rest of a possibly huge file.
+    if dest_basename(&probe.file_name).is_none() {
+        return Err(fail(ImportError::InvalidFileName {
+            path: source_path.clone(),
+        }));
+    }
+    if let Err(reason) = classify_file(&probe) {
+        return Err(fail(reason));
+    }
+
+    let mut temp = NamedTempFile::new_in(dest_dir).map_err(io_fail)?;
     let mut hasher = Sha256::new();
+    hasher.update(&probe.header);
+    temp.write_all(&probe.header).map_err(io_fail)?;
+
     let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| fail(err.to_string()))?;
+        let read = file.read(&mut buffer).map_err(io_fail)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
+        temp.write_all(&buffer[..read]).map_err(io_fail)?;
     }
+    temp.as_file().sync_all().map_err(io_fail)?;
 
-    Ok(ImportCandidate {
-        id: Uuid::new_v4().to_string(),
-        source_path,
-        file_name: file_name_of(path),
-        header,
-        content_hash: ContentHash(hex(&hasher.finalize())),
+    Ok(StagedFile {
+        candidate: ImportCandidate {
+            content_hash: ContentHash(hex(&hasher.finalize())),
+            ..probe
+        },
+        temp: Some(temp),
     })
-}
-
-/// Full paths already in the session folder, for name-conflict detection.
-fn list_existing(dest_dir: &Path) -> Result<Vec<String>, SessionError> {
-    if !dest_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let entries = fs::read_dir(dest_dir).map_err(|err| {
-        SessionError::Storage(format!("cannot read '{}': {err}", dest_dir.display()))
-    })?;
-    let mut paths: Vec<String> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().display().to_string())
-        .collect();
-    paths.sort();
-    Ok(paths)
 }
 
 /// Lowercase hex encoding of a digest.
@@ -1301,10 +1469,17 @@ pub(crate) fn analysis_input(
 ) -> Result<PluginImageMetadata, ImportFailure> {
     let image = get_image(conn, image_id)?;
     match (image.format.as_deref(), image.raw_sibling_id) {
-        (Some("dng"), Some(sibling_id)) => {
-            let sibling = get_image(conn, sibling_id)?;
-            Ok(plugin_projection(&sibling))
-        }
+        (Some("dng"), Some(sibling_id)) => match get_image(conn, sibling_id) {
+            Ok(sibling) => Ok(plugin_projection(&sibling)),
+            // A dangling sibling means the JPEG is gone; the DNG is just as
+            // unusable as one that never had a sibling. Reporting
+            // `IMAGE_NOT_FOUND` would name an id the caller never passed.
+            Err(SessionError::ImageNotFound { .. }) => Err(ImportError::NotAnalysisReady {
+                image_id: image_id.to_string(),
+            }
+            .into()),
+            Err(err) => Err(err.into()),
+        },
         (Some("dng"), None) => Err(ImportError::NotAnalysisReady {
             image_id: image_id.to_string(),
         }
@@ -1351,6 +1526,39 @@ mod tests {
         let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
         encoder.encode_image(&image).expect("encode synthetic jpeg");
         path
+    }
+
+    fn write_jpeg_seeded(dir: &Path, name: &str, seed: u8) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(8, 8, |x, y| {
+            image::Rgb([seed.wrapping_add((x * 3) as u8), (y * 5) as u8, 64])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
+    fn image_row(session_id: Uuid, file_path: &str, hash: &str) -> Image {
+        Image {
+            id: Uuid::new_v4(),
+            session_id,
+            file_path: file_path.to_string(),
+            location_lat: None,
+            location_lon: None,
+            captured_at: None,
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: Some("jpeg".to_string()),
+            make: None,
+            camera_model: None,
+            source_path: None,
+            content_hash: Some(hash.to_string()),
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: Some(true),
+        }
     }
 
     fn write_dng(dir: &Path, name: &str, width: u32, height: u32) -> PathBuf {
@@ -1492,7 +1700,6 @@ mod tests {
         .expect("import");
 
         assert_eq!(report.imported_image_ids.len(), 1);
-        assert!(report.name_conflicts.is_empty());
         // The file already there is untouched; the import takes a new name.
         assert_eq!(
             fs::read(&existing).expect("existing"),
@@ -1584,25 +1791,6 @@ mod tests {
     }
 
     #[test]
-    fn source_that_changed_after_planning_leaves_no_file() {
-        let source_dir = tempfile::tempdir().expect("source dir");
-        let library = tempfile::tempdir().expect("library");
-        let source = write_jpeg(source_dir.path(), "DJI_0006.JPG");
-        let dest_dir = library.path().join("dest");
-        let candidate = match scan_sources(&sources(std::slice::from_ref(&source)), false).remove(0)
-        {
-            Ok(candidate) => candidate,
-            Err(rejection) => panic!("scan rejected: {rejection:?}"),
-        };
-        // Simulate the source changing between hashing and copying.
-        fs::write(&source, b"different bytes now").expect("rewrite source");
-
-        let error = copy_candidate(&candidate, &dest_dir, "test.JPG").expect_err("hash mismatch");
-        assert!(matches!(error, ImportError::SourceChanged { .. }));
-        assert!(!dest_dir.join("DJI_0006.JPG").exists());
-    }
-
-    #[test]
     fn failed_insert_deletes_the_copy() {
         let source_dir = tempfile::tempdir().expect("source dir");
         let library = tempfile::tempdir().expect("library");
@@ -1668,13 +1856,267 @@ mod tests {
     }
 
     #[test]
+    fn two_same_named_files_in_one_batch_both_import() {
+        let first_dir = tempfile::tempdir().expect("first dir");
+        let second_dir = tempfile::tempdir().expect("second dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let first = write_jpeg_seeded(first_dir.path(), "DJI_0020.JPG", 1);
+        let second = write_jpeg_seeded(second_dir.path(), "DJI_0020.JPG", 200);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[first, second]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        assert_eq!(report.imported_image_ids.len(), 2);
+        assert!(report.rejected.is_empty());
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        assert!(dest_dir.join("DJI_0020.JPG").is_file());
+        assert!(dest_dir.join("DJI_0020 (2).JPG").is_file());
+    }
+
+    #[test]
+    fn record_images_rejects_a_duplicate_that_appeared_after_planning() {
+        let db = test_db();
+        let session_id = session(&db);
+        {
+            let conn = db.lock().expect("db lock");
+            insert_image(&conn, &image_row(session_id, "/lib/first.jpg", "H")).expect("row");
+        }
+
+        let later = image_row(session_id, "/lib/second.jpg", "H");
+        match record_images(&db, session_id, std::slice::from_ref(&later)) {
+            Ok(Recorded::Duplicate(existing)) => {
+                assert_eq!(existing.index, 0);
+            }
+            Ok(Recorded::Inserted) => panic!("the duplicate slipped through"),
+            Err(err) => panic!("record failed: {err}"),
+        }
+        let conn = db.lock().expect("db lock");
+        assert_eq!(get_images_by_session(&conn, session_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pair_with_an_unpersistable_jpeg_still_imports_the_dng() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let jpeg = write_jpeg(source_dir.path(), "DJI_0021.JPG");
+        let dng = write_dng(source_dir.path(), "DJI_0021.DNG", 4000, 3000);
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        fs::create_dir_all(&dest_dir).expect("dest dir");
+
+        // Stage both, then break the JPEG's temporary file so its persist
+        // fails with a non-retryable error.
+        let jpeg_staged = stage_file(&jpeg, &dest_dir).expect("stage jpeg");
+        let dng_staged = stage_file(&dng, &dest_dir).expect("stage dng");
+        fs::remove_file(jpeg_staged.temp.as_ref().expect("staged temp").path())
+            .expect("remove jpeg temp");
+        let jpeg_candidate = jpeg_staged.candidate.clone();
+        let dng_candidate = dng_staged.candidate.clone();
+        let mut staging = std::collections::HashMap::from([
+            (jpeg_candidate.id.clone(), jpeg_staged),
+            (dng_candidate.id.clone(), dng_staged),
+        ]);
+        let mut state = RunState {
+            image_ids: std::collections::HashMap::new(),
+            rejected: Vec::new(),
+            duplicates: Vec::new(),
+        };
+        {
+            let mut scope = ImportScope {
+                db: &db,
+                dest_dir: &dest_dir,
+                session_id,
+                staging: &mut staging,
+                state: &mut state,
+            };
+            let imported = scope
+                .pair(&jpeg_candidate, &dng_candidate)
+                .expect("dng alone");
+            assert_eq!(imported.len(), 1);
+            assert!(imported[0].not_analysis_ready);
+        }
+        assert_eq!(state.rejected.len(), 1);
+        let conn = db.lock().expect("db lock");
+        assert_eq!(get_images_by_session(&conn, session_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pair_with_an_unpersistable_dng_still_imports_the_jpeg() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let jpeg = write_jpeg(source_dir.path(), "DJI_0022.JPG");
+        let dng = write_dng(source_dir.path(), "DJI_0022.DNG", 4000, 3000);
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        fs::create_dir_all(&dest_dir).expect("dest dir");
+
+        let jpeg_staged = stage_file(&jpeg, &dest_dir).expect("stage jpeg");
+        let dng_staged = stage_file(&dng, &dest_dir).expect("stage dng");
+        fs::remove_file(dng_staged.temp.as_ref().expect("staged temp").path())
+            .expect("remove dng temp");
+        let jpeg_candidate = jpeg_staged.candidate.clone();
+        let dng_candidate = dng_staged.candidate.clone();
+        let mut staging = std::collections::HashMap::from([
+            (jpeg_candidate.id.clone(), jpeg_staged),
+            (dng_candidate.id.clone(), dng_staged),
+        ]);
+        let mut state = RunState {
+            image_ids: std::collections::HashMap::new(),
+            rejected: Vec::new(),
+            duplicates: Vec::new(),
+        };
+        {
+            let mut scope = ImportScope {
+                db: &db,
+                dest_dir: &dest_dir,
+                session_id,
+                staging: &mut staging,
+                state: &mut state,
+            };
+            let imported = scope
+                .pair(&jpeg_candidate, &dng_candidate)
+                .expect("jpeg alone");
+            assert_eq!(imported.len(), 1);
+            assert!(!imported[0].not_analysis_ready);
+        }
+        assert_eq!(state.rejected.len(), 1);
+        let conn = db.lock().expect("db lock");
+        let rows = get_images_by_session(&conn, session_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].format.as_deref(), Some("jpeg"));
+    }
+
+    #[test]
+    fn pair_keeps_one_shared_suffix_when_the_jpeg_name_is_taken() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let jpeg = write_jpeg(source_dir.path(), "DJI_0023.JPG");
+        let dng = write_dng(source_dir.path(), "DJI_0023.DNG", 4000, 3000);
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        fs::create_dir_all(&dest_dir).expect("dest dir");
+        fs::write(dest_dir.join("DJI_0023.JPG"), b"already here").expect("existing");
+
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg, dng]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        assert!(dest_dir.join("DJI_0023 (2).JPG").is_file());
+        assert!(dest_dir.join("DJI_0023 (2).DNG").is_file());
+        assert_eq!(
+            fs::read(dest_dir.join("DJI_0023.JPG")).expect("existing"),
+            b"already here"
+        );
+    }
+
+    #[test]
+    fn persist_single_tries_the_next_suffix_when_one_is_claimed() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let dest_dir = tempfile::tempdir().expect("dest dir");
+        let source = write_jpeg(source_dir.path(), "DJI_0024.JPG");
+        let mut staged = stage_file(&source, dest_dir.path()).expect("stage");
+        fs::write(dest_dir.path().join("DJI_0024.JPG"), b"one").expect("first");
+        fs::write(dest_dir.path().join("DJI_0024 (2).JPG"), b"two").expect("second");
+
+        let copy = persist_single(&mut staged, dest_dir.path(), "DJI_0024.JPG").expect("persist");
+        assert_eq!(
+            copy.dest.file_name().and_then(|name| name.to_str()),
+            Some("DJI_0024 (3).JPG")
+        );
+    }
+
+    #[test]
+    fn dangling_raw_sibling_is_reported_as_not_ready() {
+        let db = test_db();
+        let session_id = session(&db);
+        let conn = db.lock().expect("db lock");
+        let mut dng = image_row(session_id, "/lib/only.dng", "H");
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(Uuid::new_v4());
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &dng).expect("dng row");
+
+        let error = analysis_input(&conn, dng.id).expect_err("dangling sibling");
+        assert!(matches!(
+            error,
+            ImportFailure::Import(ImportError::NotAnalysisReady { .. })
+        ));
+    }
+
+    #[test]
     fn folder_scan_ignores_other_extensions() {
         let source_dir = tempfile::tempdir().expect("source dir");
         write_jpeg(source_dir.path(), "keep.JPG");
         write_dng(source_dir.path(), "keep.DNG", 10, 10);
         fs::write(source_dir.path().join("notes.txt"), b"ignore me").expect("txt");
 
-        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        let staging = tempfile::tempdir().expect("staging");
+        let entries = stage_sources(
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            staging.path(),
+        );
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(Result::is_ok));
     }
@@ -1685,7 +2127,8 @@ mod tests {
         let video = source_dir.path().join("flight.mp4");
         fs::write(&video, b"not an image").expect("video");
 
-        let entries = scan_sources(&sources(&[video]), false);
+        let staging = tempfile::tempdir().expect("staging");
+        let entries = stage_sources(&sources(&[video]), false, staging.path());
         assert_eq!(entries.len(), 1);
         match &entries[0] {
             Err(RejectedFile {

@@ -5,11 +5,12 @@ Source: `src-tauri/src/modules/module_01/`
 This module is Module 1's back-end for two responsibilities:
 
 - **Image import planning** (`image_importer.rs`) — classifies and validates
-  a batch of picked files, checks for name collisions and duplicates, and
-  produces an `ImportReport`, without touching the disk or the database.
-- **Copy-on-import I/O** (`import_io.rs`) — scans the picked files, copies
-  each accepted image into the app-owned library, reads metadata from the
-  copy, and records the row(s). This is what a Tauri command calls.
+  a batch of picked files, rejects duplicates, and produces an `ImportReport`,
+  without touching the disk or the database.
+- **Copy-on-import I/O** (`import_io.rs`) — stages the picked files (one read
+  each, hashed while copying), renames the accepted ones into the app-owned
+  library under the first free name, reads metadata from the copy, and
+  records the row(s). This is what a Tauri command calls.
 - **Metadata extraction** (`metadata_extractor.rs`) — reads EXIF and XMP DJI
   tags from a single JPEG/DNG file into an `ImageMetadata` value.
 - **DNG preview** (`dng_preview.rs`) — returns the JPEG a DNG already stores,
@@ -74,29 +75,23 @@ use crate::modules::module_01::{
 pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
-    existing_paths: &[String],
-    folding: NameFolding,
-    conflict: ConflictPolicy,
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
 ```
 
-Entry point for RGB image import. Composes per-file format classification,
-destination-name-collision detection, and duplicate detection into one
-`ImportReport`. Does not copy files or touch the disk or the database —
-`request` is already populated with file headers/hashes/ids by I/O before
-this runs, and the caller applies the returned `ImportReport` afterwards.
-`existing_paths` are the files already in the session folder, whose
-basenames are compared against incoming names. `folding` says how the
-destination filesystem decides two names are the same file:
+Entry point for RGB image import. Composes per-file format classification and
+duplicate detection into one `ImportReport`. Does not copy files or touch the
+disk or the database — `request` is already populated with file
+headers/hashes/ids by I/O before this runs, and the caller applies the
+returned `ImportReport` afterwards.
 
-- `Exact` — byte-identical names only (most Linux filesystems).
-- `Ntfs` — names differing only by case; composed and decomposed accents are
-  distinct files.
-- `Apfs` — names differing only by case or by canonical (NFC/NFD) form.
-
-None of them folds `ß` to `ss`: no target filesystem does.
+Destination names are deliberately **not** decided here. The I/O layer picks
+the first free ` (n)` name when it persists each staged copy, so two files
+with the same basename both import (`DJI_0001.JPG`, `DJI_0001 (2).JPG`), and a
+race between two imports is resolved by retrying the next suffix rather than
+failing. A JPEG/DNG stem pair always receives one shared suffix, so the
+sibling link survives the rename.
 
 - **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
   Per-candidate failures (bad format, magic mismatch, invalid file name, missing
@@ -105,16 +100,8 @@ None of them folds `ß` to `ss`: no target filesystem does.
 - **The caller validates the session.** This function has no session list, so
   it never returns `ImportError::SessionNotFound`. The command that owns the
   database checks an `Existing` id via `get_session` before calling in.
-- `ConflictPolicy` decides what a name collision does: `Report` holds a
-  candidate out of `imported_image_ids` until the frontend resolves it,
-  `AutoSuffix` imports it under the first free ` (n)` name and reports no
-  conflict. `run_import` uses `AutoSuffix`; the pure planner defaults to
-  `Report` when called directly. The chosen names come back in
-  `ImportReport.assigned_names` (internal, not serialised). Intra-batch
-  duplicates are flagged against the first file that was accepted for
-  import. A file whose content matches a file this call _held back_ is not a
-  duplicate (the held-back file may never be imported); it is listed in
-  `pending_duplicates` so it can be imported once the conflict is resolved.
+- Intra-batch duplicates are flagged against the first file that was accepted
+  for import. Duplicates are never copied.
 
 ### `run_import`
 
@@ -132,11 +119,12 @@ pub(crate) fn run_import(
 ```
 
 The copy-on-import pipeline behind the `import_images` command. It scans
-`sources` (files, or non-recursive folders when `from_folder` is set), hashes
-each file, runs the pure planner, copies every approved candidate into the
-session folder, reads metadata from the copy, and inserts the row(s) in one
-transaction with the session date-range recalculation. `on_progress` receives
-`(done, total, destination_path)` after each file.
+`sources` (files, or non-recursive folders when `from_folder` is set), reads
+each source **once** — hashing it while writing a temporary copy in the
+session folder — runs the pure planner, renames every approved candidate to a
+free destination name, reads metadata from the copy, and inserts the row(s)
+in one transaction with the session date-range recalculation. `on_progress`
+receives `(done, total, destination_path)` after each file.
 
 Storage layout, below the root resolved once at startup:
 
@@ -150,14 +138,14 @@ The database stores the canonical absolute path of the copy.
 Per-file behaviour:
 
 - picked paths are checked **before** any read: anything that is not a
-  regular file, or is not `.jpg`/`.jpeg`/`.dng`, is rejected unopened, so a
-  video or a FIFO never stalls or exhausts the import;
-- a copy is hash-checked against the planner's SHA-256 and renamed into place
-  only after it matches; a source that changed in between is rejected with
-  `SourceChanged` and leaves nothing behind;
+  regular file, or is not `.jpg`/`.jpeg`/`.dng`, is rejected unopened, and a
+  non-matching header is rejected after the first bytes, so a video or a FIFO
+  never stalls or exhausts the import;
+- each source is read once, while a temporary copy is hashed; the plan never
+  re-reads it;
 - an existing destination is never overwritten (`DestinationExists`); the
-  planner has normally suffixed the name already, so this only catches a file
-  that appeared mid-import;
+  persist step retries the next suffix, and a JPEG/DNG pair moves together to
+  keep their stems equal;
 - if the insert fails, the copied file(s) are deleted, so no orphan remains,
   and the failure is reported as `RecordFailed` (a database problem) rather
   than `CopyFailed`;
@@ -166,9 +154,11 @@ Per-file behaviour:
 - one rejected file never aborts the rest of the batch.
 
 Its helpers `remove_session_files` and `cleanup_orphaned_copies` handle the
-disk side of deletion: `delete_session` removes the session's copied files
-after deleting its rows, and startup sweeps files older than an hour that no
-row references (the crash window between a copy and its commit).
+disk side of deletion: `delete_session` (which the command refuses unless
+`confirm=true`) removes the session's copied files after deleting its rows,
+and a background sweep started after launch removes files older than an hour
+that no row references (the crash window between staging and commit). The
+sweep runs off the startup path so a large library does not delay launch.
 
 ### `get_analysis_input` / `analysis_input`
 
@@ -359,7 +349,7 @@ pub(crate) fn flag_incomplete_metadata(
 Pure, total. Second phase of the import pipeline, after `import_images`:
 
 ```text
-import_images(request, known, existing_paths)
+import_images(request, known)
   -> I/O copies files + extracts metadata per imported id (impure)
   -> flag_incomplete_metadata(imported_candidates, metadata)
 ```
@@ -426,7 +416,7 @@ directly from a `#[tauri::command]` and reach the frontend over IPC.
 
 ## Note on `ImportError` copy-on-import variants
 
-Five variants belong to the copy step:
+Four variants belong to the copy step:
 
 - `CopyFailed { path, reason }` (code `COPY_FAILED`) — an I/O failure while
   scanning, copying, or reading the copy's metadata. The file leaves no row
@@ -435,12 +425,11 @@ Five variants belong to the copy step:
   its row could not be written (or the destination path is already owned by
   another row). The copy is deleted; the UI should treat this as a database
   problem, not a bad image.
-- `SourceChanged { path }` (`SOURCE_CHANGED`) — the bytes no longer hash to the
-  value the plan used. Re-import scans it again.
 - `DestinationExists { path }` (`DESTINATION_EXISTS`) — a file appeared at the
   destination after planning. The import never overwrites.
 - `NotAnalysisReady { image_id }` (`IMAGE_NOT_READY`) — `get_analysis_input`
-  was asked for a DNG with no JPEG sibling.
+  was asked for a DNG with no usable JPEG sibling (none was imported, or the
+  sibling row is gone).
 
 `ImportError` implements `Display` (human-readable) and `code()`
 (programmatic), and converts to `CommandError` through

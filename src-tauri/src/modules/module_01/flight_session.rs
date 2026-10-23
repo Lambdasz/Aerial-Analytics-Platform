@@ -642,6 +642,20 @@ pub fn recalculate_session_date_range(
     require_changed(rows, session_id)
 }
 
+/// Every stored absolute copy path.
+///
+/// Used by the orphan sweep: a file under the library root that is not in
+/// this list has no row pointing at it.
+///
+/// # Purity
+///
+/// Impure — reads the database.
+pub(crate) fn all_image_paths(conn: &Connection) -> Result<Vec<String>, SessionError> {
+    let mut statement = conn.prepare("SELECT file_path FROM image")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
 /// Deletes a session and, by cascade, the image rows that belong to it.
 ///
 /// The `image` table has no SQL `ON DELETE CASCADE`, so the rows are deleted
@@ -650,11 +664,12 @@ pub fn recalculate_session_date_range(
 /// removed by [`crate::modules::module_01::import_io::remove_session_files`]
 /// (the database layer never touches the disk).
 ///
-/// # Status
+/// # Cascade is the decided behaviour
 ///
-/// **Open item** — behaviour when the session still has images assigned to
-/// it has not yet been decided by the team (block deletion vs. cascade).
-/// Currently cascades; revisit once decided.
+/// The team chose cascade over block-delete or unassign, because a session
+/// only ever owns the copies it imported. Because that makes the operation
+/// destructive, `commands::session::delete_session` requires an explicit
+/// `confirm` flag from the UI; this layer assumes the caller confirmed.
 ///
 /// # Purity
 ///

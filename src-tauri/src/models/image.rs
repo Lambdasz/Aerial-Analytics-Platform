@@ -3,8 +3,8 @@
 //!
 //! This file holds two related but distinct families of types:
 //! - **Import pipeline types** ([`ContentHash`], [`SessionTarget`],
-//!   [`ImportRequest`], [`ImportCandidate`], [`NameConflict`],
-//!   [`DuplicateFlag`], [`RejectedFile`], [`ImportReport`],
+//!   [`ImportRequest`], [`ImportCandidate`], [`DuplicateFlag`],
+//!   [`RejectedFile`], [`ImportReport`],
 //!   [`ImportError`]) — describe an in-flight import operation, before any
 //!   image has become a persisted record.
 //! - **Format/metadata types** ([`ImageFormat`], [`ImageMetadata`]) — the
@@ -58,23 +58,10 @@ pub struct ImportCandidate {
     pub content_hash: ContentHash,
 }
 
-/// A destination-basename collision found among incoming candidates or
-/// against files already in the session folder.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NameConflict {
-    pub dest_name: String,
-    /// Incoming source paths that want `dest_name`.
-    pub sources: Vec<String>,
-    /// Path already in the session folder with `dest_name`. `None` if only incoming files collide.
-    pub existing_path: Option<String>,
-}
-
 /// A candidate whose content hash matches another image.
 ///
 /// In [`ImportReport::duplicates`], `existing_image_id` is a persisted image
-/// id or the id of an earlier candidate that is being imported. In
-/// [`ImportReport::pending_duplicates`] it is the id of a candidate that is
-/// held back by an unresolved name conflict and may never be imported.
+/// id or the id of an earlier candidate that is being imported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateFlag {
     pub source_path: String,
@@ -120,21 +107,6 @@ pub struct ImportReport {
     pub duplicates: Vec<DuplicateFlag>,
     /// Candidates that failed to import, with reasons.
     pub rejected: Vec<RejectedFile>,
-    /// Destination-basename collisions found during the import.
-    pub name_conflicts: Vec<NameConflict>,
-    /// Candidates whose content matches a file held back by an unresolved
-    /// name conflict. They are not imported, but are not known duplicates
-    /// either: if the held-back file is never imported, these still need to
-    /// be. Re-import them after the conflict is resolved.
-    #[serde(default)]
-    pub pending_duplicates: Vec<DuplicateFlag>,
-    /// Destination file name chosen for each imported candidate
-    /// (`candidate_id`, basename), after any automatic suffixing.
-    ///
-    /// Internal to the copy step, which needs the name the planner settled
-    /// on; not part of the IPC contract.
-    #[serde(skip)]
-    pub(crate) assigned_names: Vec<AssignedName>,
     /// Ids of imported images that need a raw decode before analysis: DNG
     /// files with no same-stem JPEG to stand in for them.
     ///
@@ -143,15 +115,6 @@ pub struct ImportReport {
     /// same-stem JPEG is not listed: the JPEG is its analysis input.
     #[serde(default)]
     pub not_analysis_ready: Vec<String>,
-}
-
-/// The destination name the planner chose for one candidate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AssignedName {
-    /// [`ImportCandidate::id`] this name belongs to.
-    pub candidate_id: String,
-    /// Basename to copy the file to, inside the session folder.
-    pub dest_name: String,
 }
 
 /// Reasons an import operation or a single candidate within it can fail.
@@ -194,10 +157,6 @@ pub enum ImportError {
     /// problem — reported separately from [`ImportError::CopyFailed`] so the
     /// UI does not blame the image.
     RecordFailed { path: String, reason: String },
-    /// The source file changed between hashing and copying: its bytes no
-    /// longer match the `content_hash` the plan was made from. Nothing was
-    /// recorded; re-importing scans and hashes it again.
-    SourceChanged { path: String },
     /// The destination name is already taken by a file that appeared after
     /// the plan was made. The import never overwrites: re-plan with the new
     /// folder contents to get a name-conflict prompt.
@@ -238,9 +197,6 @@ impl std::fmt::Display for ImportError {
             Self::RecordFailed { path, reason } => {
                 write!(f, "could not record '{path}': {reason}")
             }
-            Self::SourceChanged { path } => {
-                write!(f, "'{path}' changed while it was being imported")
-            }
             Self::DestinationExists { path } => {
                 write!(f, "'{path}' already exists in the library")
             }
@@ -266,7 +222,6 @@ impl ImportError {
             Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
             Self::CopyFailed { .. } => "COPY_FAILED",
             Self::RecordFailed { .. } => "RECORD_FAILED",
-            Self::SourceChanged { .. } => "SOURCE_CHANGED",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",
             Self::NotAnalysisReady { .. } => "IMAGE_NOT_READY",
         }

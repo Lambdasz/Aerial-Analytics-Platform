@@ -34,7 +34,6 @@ export type ImportError =
   | { MagicMismatch: { path: string } }
   | { CopyFailed: { path: string; reason: string } }
   | { RecordFailed: { path: string; reason: string } }
-  | { SourceChanged: { path: string } }
   | { DestinationExists: { path: string } }
   | { NotAnalysisReady: { image_id: string } };
 
@@ -51,13 +50,6 @@ export type DuplicateFlag = {
   content_hash: string;
 };
 
-/** A destination name that two or more candidates want. */
-export type NameConflict = {
-  dest_name: string;
-  sources: string[];
-  existing_path: string | null;
-};
-
 /** Outcome of one import run. */
 export type ImportReport = {
   session_id: string;
@@ -65,8 +57,6 @@ export type ImportReport = {
   imported_image_ids: string[];
   duplicates: DuplicateFlag[];
   rejected: RejectedFile[];
-  name_conflicts: NameConflict[];
-  pending_duplicates: DuplicateFlag[];
   /** Imported DNGs with no JPEG sibling: not analysable yet. */
   not_analysis_ready: string[];
 };
@@ -158,7 +148,6 @@ const IMPORT_ERROR_CODES: Record<string, string> = {
   MagicMismatch: "MAGIC_MISMATCH",
   CopyFailed: "COPY_FAILED",
   RecordFailed: "RECORD_FAILED",
-  SourceChanged: "SOURCE_CHANGED",
   DestinationExists: "DESTINATION_EXISTS",
   NotAnalysisReady: "IMAGE_NOT_READY",
 };

@@ -583,20 +583,31 @@ pub fn run() {
                     .map_err(|err| format!("cannot resolve the app-data directory: {err}"))?
                     .join("library"),
             };
-            // Collect copies whose rows never landed (a crash between copy
-            // and commit) or whose deletion failed. Failing to sweep must not
-            // stop the app: the files are inert.
-            match modules::module_01::import_io::cleanup_orphaned_copies(&db_conn, &library_root) {
-                removed if removed > 0 => eprintln!(
-                    "info: removed {removed} orphaned image copies from '{}'",
-                    library_root.display()
-                ),
-                _ => {}
-            }
+            let db = Arc::new(Mutex::new(db_conn));
+            let library_root = Arc::new(library_root);
+            let sweep_db = Arc::clone(&db);
+            let sweep_root = Arc::clone(&library_root);
             app.manage(AppState {
                 jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
-                db: Arc::new(Mutex::new(db_conn)),
-                library_root: Arc::new(library_root),
+                db,
+                library_root,
+            });
+            // Collect copies whose rows never landed (a crash between staging
+            // and commit) or whose deletion failed. Run it off the startup
+            // path: walking a large library must not delay launch. Failing to
+            // sweep is harmless — the files are inert.
+            std::thread::spawn(move || match sweep_db.lock() {
+                Ok(conn) => {
+                    let removed =
+                        modules::module_01::import_io::cleanup_orphaned_copies(&conn, &sweep_root);
+                    if removed > 0 {
+                        eprintln!(
+                            "info: removed {removed} orphaned image copies from '{}'",
+                            sweep_root.display()
+                        );
+                    }
+                }
+                Err(err) => eprintln!("warning: skipped the library sweep: {err}"),
             });
             Ok(())
         })

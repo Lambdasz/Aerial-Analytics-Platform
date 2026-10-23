@@ -97,11 +97,27 @@ pub fn recalculate_session_date_range(
 
 /// Deletes a session, its image rows, and the copies it imported.
 ///
+/// Cascade is the decided behaviour: a session only owns the copies it
+/// imported. Because that is destructive, `confirm` must be `true`; the UI
+/// asks the user first, and the command refuses without it
+/// (`CONFIRMATION_REQUIRED`) rather than deleting on a stray call.
+///
 /// The rows are deleted first: if removing the folder fails, the library
 /// holds an orphan rather than the UI holding a session that points at
-/// deleted files. The startup sweep collects such orphans.
+/// deleted files. The background sweep collects such orphans.
 #[tauri::command]
-pub fn delete_session(state: tauri::State<AppState>, session_id: Uuid) -> Result<(), CommandError> {
+pub fn delete_session(
+    state: tauri::State<AppState>,
+    session_id: Uuid,
+    confirm: bool,
+) -> Result<(), CommandError> {
+    if !confirm {
+        return Err(CommandError {
+            code: "CONFIRMATION_REQUIRED".to_string(),
+            message: "deleting a session also deletes its imported images;                       pass confirm=true after asking the user"
+                .to_string(),
+        });
+    }
     let project_id = {
         let conn = state.db.lock().map_err(lock_err)?;
         let session = flight_session::get_session(&conn, session_id)?;

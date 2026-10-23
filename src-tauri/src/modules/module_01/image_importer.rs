@@ -2,9 +2,8 @@
 
 //! RGB image import (Module 1).
 //!
-//! [`import_images`] is the entry point. [`find_name_conflicts`] and
-//! [`find_duplicate`] are shared helpers other modules call through the
-//! `module_01` re-exports. [`flag_incomplete_metadata`] is the second phase:
+//! [`import_images`] is the entry point. [`find_duplicate`] is a shared
+//! helper other modules call through the `module_01` re-exports. [`flag_incomplete_metadata`] is the second phase:
 //! after [`import_images`] decides what gets imported, the I/O layer extracts
 //! metadata for each imported id (impure) and calls it to flag images with
 //! missing required fields. Flagged images stay imported — they are reported
@@ -12,15 +11,15 @@
 //! None of these functions read the disk. I/O fills [`ImportCandidate`]
 //! (header, hash, id) before they run, and applies [`ImportReport`] afterwards.
 
-use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::path::Path;
 
 use unicode_normalization::UnicodeNormalization;
 
 use crate::models::image::ImageFormat;
 use crate::models::image::{
-    AssignedName, ContentHash, DuplicateFlag, ImageMetadata, ImportCandidate, ImportError,
-    ImportReport, ImportRequest, IncompleteMetadataFlag, NameConflict, RejectedFile, SessionTarget,
+    ContentHash, DuplicateFlag, ImageMetadata, ImportCandidate, ImportError, ImportReport,
+    ImportRequest, IncompleteMetadataFlag, RejectedFile, SessionTarget,
 };
 use crate::modules::module_01::error::MetadataError;
 use crate::modules::module_01::metadata_extractor::{detect_format, missing_required_fields};
@@ -154,7 +153,7 @@ pub(crate) fn folding_for_os() -> NameFolding {
 /// one JPEG and one DNG, ordered by folded stem. A stem with two JPEGs or
 /// two DNGs is ambiguous and produces no pair: guessing would attach the
 /// wrong raw file to the wrong preview. `folding` decides which stems count
-/// as the same name, matching the name-conflict policy.
+/// as the same name, matching the destination filesystem.
 pub(crate) fn pair_raw_siblings(
     candidates: &[ImportCandidate],
     folding: NameFolding,
@@ -221,76 +220,6 @@ fn fold_name(base: &str, folding: NameFolding) -> String {
     }
 }
 
-/// Finds destination-basename collisions.
-///
-/// Compares incoming candidates against each other and against the paths
-/// already in the session folder; the flatten-copy puts everything in one
-/// folder.
-///
-/// # Name policy
-///
-/// `folding` says which names the destination filesystem treats as the same
-/// file; see [`NameFolding`]. Over-reporting is avoided on purpose: on a
-/// case-sensitive filesystem `IMG_001.JPG` and `img_001.jpg` are not a
-/// conflict, and on NTFS `É` and `E` + combining accent are not either.
-/// `dest_name` is the basename only — directories, `.`, and `..` are
-/// stripped — and prefers the name already in the session folder when
-/// `existing_path` is set. Does not rename; the frontend resolves
-/// [`NameConflict`]. Existing paths with no incoming counterpart are not
-/// conflicts.
-///
-/// # Purity
-///
-/// Pure.
-pub(crate) fn find_name_conflicts(
-    candidates: &[ImportCandidate],
-    existing_paths: &[String],
-    folding: NameFolding,
-) -> Vec<NameConflict> {
-    let key = |base: &str| fold_name(base, folding);
-    #[derive(Default)]
-    struct Group {
-        dest_name: Option<String>,
-        sources: Vec<String>,
-        existing_path: Option<String>,
-    }
-
-    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
-    for path in existing_paths {
-        let Some(base) = dest_basename(path) else {
-            continue;
-        };
-        let group = groups.entry(key(base)).or_default();
-        if group.existing_path.is_none() {
-            group.existing_path = Some(path.clone());
-            group.dest_name = Some(base.to_string());
-        }
-    }
-    for candidate in candidates {
-        let Some(base) = dest_basename(&candidate.file_name) else {
-            continue;
-        };
-        let group = groups.entry(key(base)).or_default();
-        if group.dest_name.is_none() {
-            group.dest_name = Some(base.to_string());
-        }
-        group.sources.push(candidate.source_path.clone());
-    }
-
-    groups
-        .into_values()
-        .filter_map(|group| {
-            let collides_incoming = group.sources.len() > 1;
-            let collides_existing = group.sources.len() == 1 && group.existing_path.is_some();
-            (collides_incoming || collides_existing).then(|| NameConflict {
-                dest_name: group.dest_name.unwrap_or_default(),
-                sources: group.sources,
-                existing_path: group.existing_path,
-            })
-        })
-        .collect()
-}
-
 /// Flags a candidate whose content hash matches an image already in the project.
 ///
 /// `known` is `(image_id, hash)` pairs. Duplicate scope is the project, not
@@ -313,94 +242,30 @@ pub(crate) fn find_duplicate(
         })
 }
 
-/// What to do when two files want the same destination name.
+/// Composes classification and duplicate checks into an [`ImportReport`].
 ///
-/// Drone cameras reuse names across flights (`DJI_0001.JPG`), so an import
-/// into one session hits conflicts routinely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConflictPolicy {
-    /// Do not import the colliding files; report them in
-    /// [`ImportReport::name_conflicts`] for the UI to resolve. This is what
-    /// the pure planner does on its own.
-    Report,
-    /// Import every collision under the first free name, e.g.
-    /// `DJI_0001 (2).JPG`. The chosen names are returned in
-    /// `ImportReport::assigned_names`; no conflict is reported.
-    AutoSuffix,
-}
-
-/// Adds ` (n)` before the extension until `base` is free, claiming the key.
-///
-/// `taken` is a set of folded names, so the suffix respects the destination
-/// filesystem's folding: on APFS `DJI_0001 (2).JPG` is not free if
-/// `dji_0001 (2).jpg` exists.
-fn unique_dest_name(base: &str, taken: &mut HashSet<String>, folding: NameFolding) -> String {
-    let key = |name: &str| fold_name(name, folding);
-    if taken.insert(key(base)) {
-        return base.to_string();
-    }
-    let path = Path::new(base);
-    let stem = path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let extension = path
-        .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
-        .unwrap_or_default();
-    let mut counter = 2u32;
-    loop {
-        let candidate = format!("{stem} ({counter}){extension}");
-        if taken.insert(key(&candidate)) {
-            return candidate;
-        }
-        if counter == u32::MAX {
-            // Give up rather than panic: the copy fails with
-            // `DestinationExists` instead of overwriting a file.
-            return candidate;
-        }
-        counter += 1;
-    }
-}
-
-/// Composes classify, name-conflict, and duplicate checks into an [`ImportReport`].
-///
-/// Pure. Does not copy files, query SQLite, or touch the clock. `from_folder`
-/// and `candidates` are already prepared by the I/O layer, and the caller
-/// that owns the database connection checks that an `Existing` session id is
-/// real — this function has no session list, so it never produces
+/// Pure. Does not copy files, query SQLite, or touch the clock. `candidates`
+/// are already prepared by the I/O layer, and the caller that owns the
+/// database connection checks that an `Existing` session id is real — this
+/// function has no session list, so it never produces
 /// [`ImportError::SessionNotFound`].
 ///
 /// Duplicate scope is the project. Persisted `known` hashes are checked
 /// first, then the batch itself: the first claimant of a content (batch
 /// order) is its representative and later identical files are duplicates of
-/// it. This runs *before* name-conflict detection, so only representatives
-/// are conflict candidates and two identical files that share a name never
-/// become a rename prompt.
+/// it.
 ///
-/// A representative held back by a name conflict is not imported (the user
-/// can cancel the conflict), so files identical to it are not known
-/// duplicates. They are reported in [`ImportReport::pending_duplicates`] —
-/// neither imported nor treated as duplicates — so their content is never
-/// silently lost and the UI can offer to import them once the conflict is
-/// resolved.
-///
-/// `folding` selects the name-conflict policy; see [`NameFolding`].
+/// Destination names are not decided here: the I/O layer picks the first
+/// free name when it persists each staged copy, so two files with the same
+/// basename both import (the second as `name (2).ext`) and a race between
+/// two imports is resolved at persist time rather than guessed at plan time.
 ///
 /// A candidate with an empty `content_hash` is rejected with
 /// [`ImportError::MissingContentHash`], and persisted `known` entries with an
 /// empty hash are ignored: an empty hash means the content was never hashed,
 /// and treating it as a value would make unrelated files duplicates of each
-/// other.
-///
-/// Under [`ConflictPolicy::Report`] a name conflict holds a candidate back:
-/// it is not listed in `imported_image_ids` until the frontend resolves the
-/// conflict. Under [`ConflictPolicy::AutoSuffix`] collisions are imported
-/// under a suffixed name and `name_conflicts` stays empty. Rejected and
-/// duplicate files are never conflict candidates, because they are never
-/// copied. `dest_name` in the report is a basename; `.`, `..`, empty names,
-/// and trailing-separator names are rejected with
-/// [`ImportError::InvalidFileName`] instead of imported.
+/// other. Names that yield no basename (empty, `.`, `..`, trailing
+/// separator) are rejected with [`ImportError::InvalidFileName`].
 ///
 /// # Errors
 ///
@@ -410,9 +275,6 @@ fn unique_dest_name(base: &str, taken: &mut HashSet<String>, folding: NameFoldin
 pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
-    existing_paths: &[String],
-    folding: NameFolding,
-    conflict: ConflictPolicy,
 ) -> Result<ImportReport, ImportError> {
     if request.candidates.is_empty() {
         return Err(ImportError::NoImagesFound);
@@ -421,9 +283,9 @@ pub(crate) fn import_images(
         SessionTarget::Existing { id } | SessionTarget::New { id, .. } => id.clone(),
     };
 
-    let mut pending = Vec::new();
     let mut duplicates = Vec::new();
     let mut rejected = Vec::new();
+    let mut representatives = Vec::new();
 
     // Hash → image id, seeded from the persisted images (first entry wins).
     // Batch candidates register themselves as they are accepted, so the
@@ -441,6 +303,7 @@ pub(crate) fn import_images(
             .or_insert(image_id.as_str());
     }
 
+    let mut claimed: HashMap<&str, &str> = HashMap::with_capacity(request.candidates.len());
     for candidate in &request.candidates {
         if dest_basename(&candidate.file_name).is_none() {
             rejected.push(RejectedFile {
@@ -449,126 +312,53 @@ pub(crate) fn import_images(
                     path: candidate.source_path.clone(),
                 },
             });
-        } else if candidate.content_hash.0.is_empty() {
+            continue;
+        }
+        if candidate.content_hash.0.is_empty() {
             rejected.push(RejectedFile {
                 source_path: candidate.source_path.clone(),
                 reason: ImportError::MissingContentHash {
                     path: candidate.source_path.clone(),
                 },
             });
-        } else if let Err(reason) = classify_file(candidate) {
+            continue;
+        }
+        if let Err(reason) = classify_file(candidate) {
             rejected.push(RejectedFile {
                 source_path: candidate.source_path.clone(),
                 reason,
             });
-        } else if let Some(&existing_image_id) = known_hashes.get(candidate.content_hash.0.as_str())
-        {
+            continue;
+        }
+
+        let hash = candidate.content_hash.0.as_str();
+        let existing = known_hashes
+            .get(hash)
+            .copied()
+            .or_else(|| claimed.get(hash).copied());
+        if let Some(existing_image_id) = existing {
             duplicates.push(DuplicateFlag {
                 source_path: candidate.source_path.clone(),
                 existing_image_id: existing_image_id.to_string(),
                 content_hash: candidate.content_hash.clone(),
             });
-        } else {
-            pending.push(candidate.clone());
+            continue;
         }
-    }
-
-    // Intra-batch dedup runs before conflict detection: the first claimant of
-    // a content is its representative, and later identical files are
-    // duplicates of it. Only representatives can be name-conflict candidates,
-    // so a duplicate never forces a pointless rename.
-    let mut representatives: Vec<ImportCandidate> = Vec::new();
-    let mut batch_duplicates: Vec<(&ImportCandidate, &str)> = Vec::new();
-    let mut claimed: HashMap<&str, &str> = HashMap::with_capacity(pending.len());
-    for candidate in &pending {
-        match claimed.entry(candidate.content_hash.0.as_str()) {
-            Entry::Occupied(entry) => batch_duplicates.push((candidate, *entry.get())),
-            Entry::Vacant(entry) => {
-                entry.insert(candidate.id.as_str());
-                representatives.push(candidate.clone());
-            }
-        }
-    }
-
-    let mut assigned_names = Vec::with_capacity(representatives.len());
-    let (name_conflicts, held_ids): (Vec<NameConflict>, HashSet<&str>) = match conflict {
-        ConflictPolicy::Report => {
-            let name_conflicts = find_name_conflicts(&representatives, existing_paths, folding);
-            let conflicting: HashSet<&str> = name_conflicts
-                .iter()
-                .flat_map(|conflict| conflict.sources.iter().map(String::as_str))
-                .collect();
-            // A conflict-held representative is not imported (the user may
-            // cancel), so files identical to it are not known duplicates:
-            // they are reported separately and can be imported once the
-            // conflict is resolved.
-            let held: HashSet<&str> = representatives
-                .iter()
-                .filter(|candidate| conflicting.contains(candidate.source_path.as_str()))
-                .map(|candidate| candidate.id.as_str())
-                .collect();
-            // Names only matter for files that will actually be copied.
-            for candidate in representatives
-                .iter()
-                .filter(|candidate| !held.contains(candidate.id.as_str()))
-            {
-                if let Some(base) = dest_basename(&candidate.file_name) {
-                    assigned_names.push(AssignedName {
-                        candidate_id: candidate.id.clone(),
-                        dest_name: base.to_string(),
-                    });
-                }
-            }
-            (name_conflicts, held)
-        }
-        ConflictPolicy::AutoSuffix => {
-            let mut taken: HashSet<String> = existing_paths
-                .iter()
-                .filter_map(|path| dest_basename(path))
-                .map(|base| fold_name(base, folding))
-                .collect();
-            for candidate in &representatives {
-                let Some(base) = dest_basename(&candidate.file_name) else {
-                    continue;
-                };
-                let dest_name = unique_dest_name(base, &mut taken, folding);
-                assigned_names.push(AssignedName {
-                    candidate_id: candidate.id.clone(),
-                    dest_name,
-                });
-            }
-            (Vec::new(), HashSet::new())
-        }
-    };
-
-    let imported_image_ids = representatives
-        .iter()
-        .filter(|candidate| !held_ids.contains(candidate.id.as_str()))
-        .map(|candidate| candidate.id.clone())
-        .collect();
-    let mut pending_duplicates = Vec::new();
-    for (candidate, representative_id) in batch_duplicates {
-        let flag = DuplicateFlag {
-            source_path: candidate.source_path.clone(),
-            existing_image_id: representative_id.to_string(),
-            content_hash: candidate.content_hash.clone(),
-        };
-        if held_ids.contains(representative_id) {
-            pending_duplicates.push(flag);
-        } else {
-            duplicates.push(flag);
+        if let Entry::Vacant(entry) = claimed.entry(hash) {
+            entry.insert(candidate.id.as_str());
+            representatives.push(candidate.clone());
         }
     }
 
     Ok(ImportReport {
         session_id,
-        imported_image_ids,
+        imported_image_ids: representatives
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect(),
         duplicates,
         rejected,
-        name_conflicts,
-        pending_duplicates,
         not_analysis_ready: Vec::new(),
-        assigned_names,
     })
 }
 
@@ -582,7 +372,7 @@ pub(crate) fn import_images(
 /// Second phase of the import pipeline, after [`import_images`]:
 ///
 /// ```text
-/// import_images(request, known, existing_paths, folding, conflict_policy)
+/// import_images(request, known)
 ///   -> I/O copies files + extracts metadata per imported id (impure)
 ///   -> flag_incomplete_metadata(imported_candidates, metadata)
 /// ```
@@ -741,40 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn held_back_hash_is_reported_as_pending_duplicate_not_duplicate() {
-        // A collides with the existing x.jpg and is held back. B and C carry
-        // identical content: A may never be imported, so they are reported
-        // as pending duplicates rather than duplicates of a missing image,
-        // and C's name no longer makes a second conflict source.
-        let request = import_request(vec![
-            candidate_named("a", "/in/a.jpg", "x.jpg", "H"),
-            candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
-            candidate_named("c", "/in/c.jpg", "x.jpg", "H"),
-        ]);
-        let report = import_images(
-            &request,
-            &[],
-            &["/session/x.jpg".to_string()],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
-        assert!(report.imported_image_ids.is_empty());
-        assert!(report.duplicates.is_empty());
-        let pending: Vec<_> = report
-            .pending_duplicates
-            .iter()
-            .map(|flag| (flag.source_path.as_str(), flag.existing_image_id.as_str()))
-            .collect();
-        assert_eq!(pending, vec![("/in/b.jpg", "a"), ("/in/c.jpg", "a")]);
-        assert_eq!(report.name_conflicts.len(), 1);
-        assert_eq!(
-            report.name_conflicts[0].sources,
-            vec!["/in/a.jpg".to_string()]
-        );
-    }
-
-    #[test]
     fn identical_files_sharing_a_name_are_duplicates_not_a_conflict() {
         // The same photo picked from two folders: no rename prompt, the
         // second is a plain duplicate of the first.
@@ -782,17 +538,8 @@ mod tests {
             candidate_named("a", "/in/a/x.jpg", "x.jpg", "H"),
             candidate_named("b", "/in/b/x.jpg", "x.jpg", "H"),
         ]);
-        let report = import_images(
-            &request,
-            &[],
-            &[],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &[]).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["a".to_string()]);
-        assert!(report.name_conflicts.is_empty());
-        assert!(report.pending_duplicates.is_empty());
         assert_eq!(report.duplicates.len(), 1);
         assert_eq!(report.duplicates[0].source_path, "/in/b/x.jpg");
         assert_eq!(report.duplicates[0].existing_image_id, "a");
@@ -802,35 +549,9 @@ mod tests {
     fn known_duplicate_with_conflicting_name_is_a_duplicate() {
         let request = import_request(vec![candidate_named("a", "/in/a.jpg", "x.jpg", "H")]);
         let known = vec![("old".to_string(), ContentHash("H".to_string()))];
-        let report = import_images(
-            &request,
-            &known,
-            &["/session/x.jpg".to_string()],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &known).expect("import runs");
         assert!(report.imported_image_ids.is_empty());
-        assert!(report.name_conflicts.is_empty());
         assert_eq!(report.duplicates[0].existing_image_id, "old");
-    }
-
-    #[test]
-    fn pending_duplicates_are_empty_without_conflicts() {
-        let request = import_request(vec![
-            candidate_named("x", "/in/x.jpg", "x.jpg", "H"),
-            candidate_named("y", "/in/y.jpg", "y.jpg", "H"),
-        ]);
-        let report = import_images(
-            &request,
-            &[],
-            &[],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
-        assert!(report.pending_duplicates.is_empty());
-        assert_eq!(report.duplicates.len(), 1);
     }
 
     #[test]
@@ -839,14 +560,7 @@ mod tests {
             candidate_named("x", "/in/x.jpg", "x.jpg", "H"),
             candidate_named("y", "/in/y.jpg", "y.jpg", "H"),
         ]);
-        let report = import_images(
-            &request,
-            &[],
-            &[],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &[]).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["x".to_string()]);
         assert_eq!(report.duplicates.len(), 1);
         assert_eq!(report.duplicates[0].existing_image_id, "x".to_string());
@@ -861,77 +575,9 @@ mod tests {
             candidate_named("b", "/in/b.jpg", "y.jpg", "H"),
             candidate_named("a", "/in/a.jpg", "x.jpg", "H"),
         ]);
-        let report = import_images(
-            &request,
-            &[],
-            &["/session/x.jpg".to_string()],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &[]).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["b".to_string()]);
         assert_eq!(report.duplicates.len(), 1);
-        assert!(report.name_conflicts.is_empty());
-    }
-
-    #[test]
-    fn conflicts_group_case_insensitively_first_name_wins() {
-        let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "Photo.JPG", "H1"),
-            candidate_named("b", "/in/b.jpg", "photo.jpg", "H2"),
-        ];
-        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].dest_name, "Photo.JPG");
-        assert_eq!(
-            conflicts[0].sources,
-            vec!["/in/a.jpg".to_string(), "/in/b.jpg".to_string()]
-        );
-        assert_eq!(conflicts[0].existing_path, None);
-    }
-
-    #[test]
-    fn conflicts_prefer_existing_path_casing() {
-        let candidates = vec![candidate_named("a", "/in/a.jpg", "keep.jpg", "H1")];
-        let conflicts = find_name_conflicts(
-            &candidates,
-            &["/session/Keep.JPG".to_string()],
-            NameFolding::Apfs,
-        );
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].dest_name, "Keep.JPG");
-        assert_eq!(
-            conflicts[0].existing_path,
-            Some("/session/Keep.JPG".to_string())
-        );
-    }
-
-    #[test]
-    fn no_conflict_for_unique_or_unmatched_existing() {
-        let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "a.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "b.jpg", "H2"),
-        ];
-        // Unrelated existing paths are not conflicts.
-        let conflicts = find_name_conflicts(
-            &candidates,
-            &["/session/other.jpg".to_string()],
-            NameFolding::Apfs,
-        );
-        assert!(conflicts.is_empty());
-        assert!(
-            find_name_conflicts(&[], &["/session/x.jpg".to_string()], NameFolding::Apfs).is_empty()
-        );
-    }
-
-    #[test]
-    fn conflicts_skip_invalid_basenames() {
-        let candidates = vec![
-            candidate_named("empty", "/in/a.jpg", "", "H1"),
-            candidate_named("dotdot", "/in/b.jpg", "..", "H2"),
-            candidate_named("ok", "/in/c.jpg", "c.jpg", "H3"),
-        ];
-        assert!(find_name_conflicts(&candidates, &[], NameFolding::Apfs).is_empty());
     }
 
     #[test]
@@ -943,19 +589,11 @@ mod tests {
             candidate_named("trailing", "/in/d.jpg", "photos/", "H4"),
             candidate_named("ok", "/in/e.jpg", "e.jpg", "H5"),
         ]);
-        let report = import_images(
-            &request,
-            &[],
-            &[],
-            NameFolding::Apfs,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &[]).expect("import runs");
         // Only the well-named file imports; invalid names never reach
         // conflict or duplicate detection.
         assert_eq!(report.imported_image_ids, vec!["ok".to_string()]);
         assert!(report.duplicates.is_empty());
-        assert!(report.name_conflicts.is_empty());
         assert_eq!(
             report
                 .rejected
@@ -980,109 +618,13 @@ mod tests {
     }
 
     #[test]
-    fn conflicts_detect_unicode_case_folding() {
-        let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "Émile.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "émile.jpg", "H2"),
-        ];
-        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].dest_name, "Émile.jpg");
-        assert_eq!(conflicts[0].sources.len(), 2);
-    }
-
-    #[test]
-    fn conflicts_detect_unicode_nfc_nfd_normalization() {
-        let candidates = vec![
-            // é composed (NFC) vs e + combining acute (NFD).
-            candidate_named("a", "/in/a.jpg", "\u{00E9}mile.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "e\u{0301}mile.jpg", "H2"),
-        ];
-        let conflicts = find_name_conflicts(&candidates, &[], NameFolding::Apfs);
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].dest_name, "\u{00E9}mile.jpg");
-        assert_eq!(conflicts[0].sources.len(), 2);
-    }
-
-    #[test]
-    fn case_sensitive_fs_only_conflicts_on_identical_names() {
-        let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "IMG_001.JPG", "H1"),
-            candidate_named("b", "/in/b.jpg", "img_001.jpg", "H2"),
-        ];
-        assert!(find_name_conflicts(&candidates, &[], NameFolding::Exact).is_empty());
-        assert_eq!(
-            find_name_conflicts(&candidates, &[], NameFolding::Apfs).len(),
-            1
-        );
-
-        let same = vec![
-            candidate_named("a", "/in/a.jpg", "img.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "img.jpg", "H2"),
-        ];
-        assert_eq!(find_name_conflicts(&same, &[], NameFolding::Exact).len(), 1);
-        // Existing-path matching follows the same policy.
-        let one = vec![candidate_named("a", "/in/a.jpg", "keep.jpg", "H1")];
-        assert!(
-            find_name_conflicts(&one, &["/session/Keep.JPG".to_string()], NameFolding::Exact)
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn folding_policies_differ_where_the_filesystems_differ() {
-        let pair = |a: &str, b: &str| {
-            vec![
-                candidate_named("a", "/in/a.jpg", a, "H1"),
-                candidate_named("b", "/in/b.jpg", b, "H2"),
-            ]
-        };
-        let conflicts =
-            |names: Vec<ImportCandidate>, folding| find_name_conflicts(&names, &[], folding).len();
-        // Case only: both case-insensitive policies collide, Exact does not.
-        let case = || pair("IMG_001.JPG", "img_001.jpg");
-        assert_eq!(conflicts(case(), NameFolding::Exact), 0);
-        assert_eq!(conflicts(case(), NameFolding::Ntfs), 1);
-        assert_eq!(conflicts(case(), NameFolding::Apfs), 1);
-        // Composed vs decomposed accent: only APFS treats them as equal.
-        let accents = || pair("\u{00E9}.jpg", "e\u{0301}.jpg");
-        assert_eq!(conflicts(accents(), NameFolding::Exact), 0);
-        assert_eq!(conflicts(accents(), NameFolding::Ntfs), 0);
-        assert_eq!(conflicts(accents(), NameFolding::Apfs), 1);
-        // Straße vs STRASSE is a different file on every filesystem.
-        let sharp = || pair("Stra\u{00DF}e.jpg", "STRASSE.jpg");
-        for folding in [NameFolding::Exact, NameFolding::Ntfs, NameFolding::Apfs] {
-            assert_eq!(conflicts(sharp(), folding), 0, "{folding:?}");
-        }
-    }
-
-    #[test]
-    fn ntfs_does_not_collide_a_dotted_capital_i_with_plain_i() {
-        // `İ` upper-cases to one char but lower-cases to two; folding must
-        // stay total and keep unrelated names apart.
-        let candidates = vec![
-            candidate_named("a", "/in/a.jpg", "\u{0130}.jpg", "H1"),
-            candidate_named("b", "/in/b.jpg", "i.jpg", "H2"),
-        ];
-        assert!(find_name_conflicts(&candidates, &[], NameFolding::Apfs).is_empty());
-        assert!(find_name_conflicts(&candidates, &[], NameFolding::Ntfs).is_empty());
-    }
-
-    #[test]
     fn empty_content_hash_is_rejected_not_deduplicated() {
         let request = import_request(vec![
             candidate_named("a", "/in/a.jpg", "a.jpg", ""),
             candidate_named("b", "/in/b.jpg", "b.jpg", ""),
             candidate_named("c", "/in/c.jpg", "c.jpg", "H"),
         ]);
-        let report = import_images(
-            &request,
-            &[],
-            &[],
-            NameFolding::Exact,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &[]).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["c".to_string()]);
         assert!(report.duplicates.is_empty());
         assert_eq!(
@@ -1106,14 +648,7 @@ mod tests {
     fn empty_known_hash_does_not_match_anything() {
         let request = import_request(vec![candidate_named("a", "/in/a.jpg", "a.jpg", "H")]);
         let known = vec![("old".to_string(), ContentHash(String::new()))];
-        let report = import_images(
-            &request,
-            &known,
-            &[],
-            NameFolding::Exact,
-            ConflictPolicy::Report,
-        )
-        .expect("import runs");
+        let report = import_images(&request, &known).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["a".to_string()]);
         assert!(report.duplicates.is_empty());
     }

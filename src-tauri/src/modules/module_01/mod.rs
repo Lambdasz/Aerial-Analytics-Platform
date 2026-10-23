@@ -6,7 +6,7 @@
 //! `use crate::modules::module_01::{extract_metadata, MetadataError};`.
 //!
 //! RGB import exposes [`image_importer::import_images`] plus the shared
-//! helpers [`find_name_conflicts`], [`find_duplicate`], and [`detect_format`].
+//! helpers [`find_duplicate`] and [`detect_format`].
 //!
 //! Reading a DNG from another module goes through [`read_dng`], which keeps
 //! the TIFF/IFD parsing inside this module, and [`read_dng_preview`], which
@@ -35,7 +35,7 @@ pub use flight_session::{
     update_project, update_session_name, update_session_status,
 };
 pub(crate) use image_importer::{
-    find_duplicate, find_name_conflicts, flag_incomplete_metadata, import_images, NameFolding,
+    find_duplicate, flag_incomplete_metadata, import_images, NameFolding,
 };
 pub(crate) use import_io::{analysis_input, run_import, session_images_dir, ImportFailure};
 pub(crate) use metadata_extractor::{
