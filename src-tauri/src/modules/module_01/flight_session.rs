@@ -43,12 +43,18 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
             height        INTEGER,
             format        TEXT,
             make          TEXT,
-            camera_model  TEXT";
+            camera_model  TEXT,
+            source_path   TEXT,
+            content_hash  TEXT,
+            file_size     INTEGER,
+            raw_sibling_id TEXT,
+            analysis_ready INTEGER";
 
 /// Columns of the `image` table in canonical order, for `SELECT`s and for
 /// the data-preserving copy in [`migrate_image_schema`].
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
-    captured_at, gps_altitude_m, width, height, format, make, camera_model";
+    captured_at, gps_altitude_m, width, height, format, make, camera_model, \
+    source_path, content_hash, file_size, raw_sibling_id, analysis_ready";
 
 /// Canonical `image` columns. A table carrying all of them with nullable
 /// location columns is already current and is never rebuilt, so any columns
@@ -66,7 +72,16 @@ const IMAGE_COLUMN_NAMES: &[&str] = &[
     "format",
     "make",
     "camera_model",
+    "source_path",
+    "content_hash",
+    "file_size",
+    "raw_sibling_id",
+    "analysis_ready",
 ];
+
+/// Index used by project-scope duplicate detection, which looks images up by
+/// content hash.
+const IMAGE_CONTENT_HASH_INDEX: &str = "idx_image_content_hash";
 
 /// One `PRAGMA table_info` row, as far as a rebuild needs it.
 struct ColumnInfo {
@@ -128,6 +143,28 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool, SessionError> {
         )
         .optional()?
         .is_some())
+}
+
+/// Indexes a table rebuild would otherwise lose: user-defined ones on the
+/// `image` table, as `(name, original_sql)` pairs.
+///
+/// `sql IS NULL` marks auto-created indexes (constraint enforcement); the new
+/// table recreates those itself. Only explicit `CREATE INDEX` statements are
+/// captured here so the migration can replay them.
+fn user_indexes_on_image(conn: &Connection) -> Result<Vec<(String, String)>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT name, sql FROM sqlite_master
+         WHERE type = 'index' AND tbl_name = 'image' AND sql IS NOT NULL
+         ORDER BY name",
+    )?;
+    let indexes = stmt
+        .query_map([], |row| {
+            let name: String = row.get(0)?;
+            let sql: String = row.get(1)?;
+            Ok((name, sql))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(indexes)
 }
 
 fn table_is_empty(conn: &Connection, table: &str) -> Result<bool, SessionError> {
@@ -282,6 +319,12 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         [],
     )?;
     migrate_image_schema(conn)?;
+    // Created after the migration: a rebuild drops the old table's indexes,
+    // so this also restores the index on upgraded databases.
+    conn.execute(
+        &format!("CREATE INDEX IF NOT EXISTS {IMAGE_CONTENT_HASH_INDEX} ON image(content_hash)"),
+        [],
+    )?;
     Ok(())
 }
 
@@ -293,7 +336,10 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
 /// or `captured_at` still carries a `NOT NULL` constraint (SQLite cannot
 /// drop such a constraint with `ALTER TABLE`, hence the rebuild). The
 /// upgrade copies every existing column, so rows keep their data and the new
-/// metadata columns are `NULL`.
+/// metadata columns are `NULL`. That includes the copy-on-import provenance
+/// columns (`source_path`, `content_hash`, `file_size`, `raw_sibling_id`,
+/// `analysis_ready`): an upgraded row keeps pointing at its original
+/// `file_path` and is not rewritten.
 ///
 /// Idempotent: a table already on the current schema is left untouched,
 /// including any columns a user added beyond the canonical set — an extra
@@ -360,7 +406,15 @@ pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
         ddl.push_str(&extra_ddl.join(",\n            "));
     }
 
+    // Indexes with `sql IS NULL` are auto-created (UNIQUE etc.) and come back
+    // with the table. Only user-defined ones need explicit re-creation.
+    let user_indexes = user_indexes_on_image(conn)?;
+
     // One transaction: either the whole table moves or nothing does.
+    // User indexes are re-created from their original SQL inside the same
+    // transaction: `DROP TABLE` drops an index with it, and losing one after
+    // a schema upgrade would quietly make duplicate detection or file-path
+    // lookups table scans.
     with_immediate_transaction(conn, |conn| {
         conn.execute("DROP TABLE IF EXISTS image_new", [])?;
         conn.execute(&format!("CREATE TABLE image_new ({ddl})"), [])?;
@@ -370,6 +424,10 @@ pub fn migrate_image_schema(conn: &Connection) -> Result<(), SessionError> {
         )?;
         conn.execute("DROP TABLE image", [])?;
         conn.execute("ALTER TABLE image_new RENAME TO image", [])?;
+        for (index_name, index_sql) in user_indexes {
+            conn.execute(&index_sql, [])?;
+            eprintln!("info: recreated index '{index_name}' after the image table migration");
+        }
         Ok(())
     })
 }
@@ -618,23 +676,163 @@ pub fn recalculate_session_date_range(
     require_changed(rows, session_id)
 }
 
-/// Deletes a session.
+/// Every stored absolute copy path.
 ///
-/// # Status
+/// Used by the orphan sweep: a file under the library root that is not in
+/// this list has no row pointing at it.
 ///
-/// **Open item** — behaviour when the session still has images assigned to
-/// it has not yet been decided by the team (block deletion vs. cascade
-/// vs. unassign). Currently deletes unconditionally; revisit once decided.
+/// # Purity
+///
+/// Impure — reads the database.
+pub(crate) fn all_image_paths(conn: &Connection) -> Result<Vec<String>, SessionError> {
+    let mut statement = conn.prepare("SELECT file_path FROM image")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut paths = Vec::new();
+    for row in rows {
+        // A row that cannot be read is not "no path". Skipping it would make
+        // the sweep treat that file as an orphan and delete it.
+        paths.push(row?);
+    }
+    Ok(paths)
+}
+
+/// `(project_id, session_id)` pairs for every session currently in SQLite.
+///
+/// Used by the orphan sweep to restrict its search strictly to sessions this
+/// database knows about. A dev database, an older backup, or another database
+/// sharing the library root will never touch or trash another database's sessions.
+///
+/// # Purity
+///
+/// Impure — reads the database.
+pub(crate) fn known_session_scopes(
+    conn: &Connection,
+) -> Result<std::collections::HashSet<(String, String)>, SessionError> {
+    let mut statement = conn.prepare("SELECT project_id, id FROM session")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut scopes = std::collections::HashSet::new();
+    for row in rows {
+        scopes.insert(row?);
+    }
+    Ok(scopes)
+}
+
+/// Deletes a session and, by cascade, the image rows that belong to it.
+///
+/// Bundled SQLite is compiled with `SQLITE_DEFAULT_FOREIGN_KEYS`, so foreign
+/// keys are always on and `image.session_id REFERENCES session(id)` is
+/// enforced. The child rows are therefore deleted **first**: dropping the
+/// session before its images would fail every statement with
+/// `FOREIGN KEY constraint failed` and roll back. If the session is missing,
+/// the empty child delete is undone by the rollback and
+/// [`SessionError::NotFound`] is returned.
+///
+/// The copied files are removed by
+/// [`crate::modules::module_01::import_io::remove_session_files`] (the
+/// database layer never touches the disk).
+///
+/// # Cascade is the decided behaviour
+///
+/// The team chose cascade over block-delete or unassign, because a session
+/// only ever owns the copies it imported. Because that makes the operation
+/// destructive, `commands::session::delete_session` requires an explicit
+/// `confirm` flag from the UI; this layer assumes the caller confirmed.
 ///
 /// # Purity
 ///
 /// Impure.
 pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), SessionError> {
-    let rows = conn.execute(
-        "DELETE FROM session WHERE id = ?1",
-        params![session_id.to_string()],
-    )?;
-    require_changed(rows, session_id)
+    with_immediate_transaction(conn, |conn| {
+        let deleted = conn.execute(
+            "DELETE FROM image WHERE session_id = ?1",
+            params![session_id.to_string()],
+        )?;
+        let rows = conn.execute(
+            "DELETE FROM session WHERE id = ?1",
+            params![session_id.to_string()],
+        )?;
+        require_changed(rows, session_id)?;
+        Ok(deleted)
+    })
+    .map(|_| ())
+}
+
+/// The row that already holds an imported image's content.
+///
+/// Returned by [`insert_images_and_recalculate`] when a second import of the
+/// same bytes (a concurrent run, or a re-import) reaches the insert after the
+/// plan was made.
+pub(crate) struct ExistingContent {
+    /// Index into the batch passed to [`insert_images_and_recalculate`].
+    pub index: usize,
+    /// Image that already stores those bytes, in the same project.
+    pub existing_image_id: Uuid,
+}
+
+/// Inserts one import's records and recalculates the session range atomically.
+///
+/// Duplicate detection normally runs in the pure planner before any file is
+/// copied. That check is a snapshot: two imports started at the same time can
+/// both pass it and both copy the same bytes. The `IMMEDIATE` transaction
+/// serialises writers, so re-checking every content hash **inside** it makes
+/// the second writer see the first one's rows.
+///
+/// # Purity
+///
+/// Impure — writes the database.
+///
+/// # Returns
+///
+/// `Ok(None)` when every row was inserted. `Ok(Some(existing))` when a hash
+/// is already stored in the project: nothing from this batch is inserted, and
+/// the caller decides what to report (and removes the copies).
+pub(crate) fn insert_images_and_recalculate(
+    conn: &Connection,
+    session_id: Uuid,
+    images: &[Image],
+) -> Result<Option<ExistingContent>, SessionError> {
+    with_immediate_transaction(conn, |conn| {
+        let project_id: String = conn.query_row(
+            "SELECT project_id FROM session WHERE id = ?1",
+            params![session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        for (index, image) in images.iter().enumerate() {
+            let Some(hash) = image
+                .content_hash
+                .as_deref()
+                .filter(|hash| !hash.is_empty())
+            else {
+                continue;
+            };
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT i.id FROM image i
+                     JOIN session s ON s.id = i.session_id
+                     WHERE s.project_id = ?1 AND i.content_hash = ?2
+                     LIMIT 1",
+                    params![project_id, hash],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(raw) = existing {
+                let existing_image_id = Uuid::parse_str(&raw).map_err(|err| {
+                    SessionError::Storage(format!("stored image id '{raw}' is not a UUID: {err}"))
+                })?;
+                return Ok(Some(ExistingContent {
+                    index,
+                    existing_image_id,
+                }));
+            }
+        }
+        for image in images {
+            insert_image(conn, image)?;
+        }
+        recalculate_session_date_range(conn, session_id)?;
+        Ok(None)
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -809,6 +1007,11 @@ fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
 /// * `metadata` — output of [`crate::modules::module_01::extract_metadata`].
 ///   Absent tags become `NULL` columns; the record is always built, even
 ///   when every field is missing (M1-23 "incomplete metadata").
+///
+/// The copy-on-import provenance columns (`source_path`, `content_hash`,
+/// `file_size`, `raw_sibling_id`, `analysis_ready`) start as `None`: the
+/// import I/O layer fills them in once the copy exists and the stem pair is
+/// known. A record built here is otherwise complete.
 pub fn image_from_metadata(
     image_id: Uuid,
     session_id: Uuid,
@@ -828,6 +1031,11 @@ pub fn image_from_metadata(
         format: metadata.format.map(|format| format.as_str().to_string()),
         make: metadata.make.clone(),
         camera_model: metadata.camera_model_name.clone(),
+        source_path: None,
+        content_hash: None,
+        file_size: None,
+        raw_sibling_id: None,
+        analysis_ready: None,
     }
 }
 
@@ -843,8 +1051,9 @@ pub fn image_from_metadata(
 pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError> {
     conn.execute(
         "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
-            captured_at, gps_altitude_m, width, height, format, make, camera_model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            captured_at, gps_altitude_m, width, height, format, make, camera_model, \
+            source_path, content_hash, file_size, raw_sibling_id, analysis_ready)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             image.id.to_string(),
             image.session_id.to_string(),
@@ -858,6 +1067,11 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
             image.format,
             image.make,
             image.camera_model,
+            image.source_path,
+            image.content_hash,
+            image.file_size.and_then(|size| i64::try_from(size).ok()),
+            image.raw_sibling_id.map(|id| id.to_string()),
+            image.analysis_ready.map(i64::from),
         ],
     )?;
     Ok(())
@@ -899,6 +1113,41 @@ pub fn get_images_by_session(
         .query_map(params![session_id.to_string()], row_to_image)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(images)
+}
+
+/// Lists the content hashes of every image already stored in a project.
+///
+/// This is the duplicate scope for an import: an image is a duplicate when
+/// its hash matches one of these, even if it lives in a different session.
+/// Rows without a hash (migrated from before copy-on-import) are skipped —
+/// they cannot prove a duplicate.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+///
+/// # Returns
+///
+/// `(image_id, content_hash)` pairs ordered by image id, so the first entry
+/// for a repeated hash is stable across calls.
+pub fn known_hashes_for_project(
+    conn: &Connection,
+    project_id: Uuid,
+) -> Result<Vec<(String, crate::models::image::ContentHash)>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.content_hash FROM image i
+         JOIN session s ON s.id = i.session_id
+         WHERE s.project_id = ?1 AND i.content_hash IS NOT NULL AND i.content_hash <> ''
+         ORDER BY i.id",
+    )?;
+    let hashes = stmt
+        .query_map(params![project_id.to_string()], |row| {
+            let id: String = row.get(0)?;
+            let hash: String = row.get(1)?;
+            Ok((id, crate::models::image::ContentHash(hash)))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(hashes)
 }
 
 /// Derives a session's `(date_start, date_end)` as the min/max `captured_at`
@@ -980,6 +1229,11 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let format: Option<String> = row.get(9)?;
     let make: Option<String> = row.get(10)?;
     let camera_model: Option<String> = row.get(11)?;
+    let source_path: Option<String> = row.get(12)?;
+    let content_hash: Option<String> = row.get(13)?;
+    let file_size: Option<i64> = row.get(14)?;
+    let raw_sibling_id: Option<String> = row.get(15)?;
+    let analysis_ready: Option<i64> = row.get(16)?;
 
     let captured_at = captured_at
         .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
@@ -991,6 +1245,32 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         .transpose()?;
     let height = height
         .map(|v| u32::try_from(v).map_err(|e| conversion_err(8, rusqlite::types::Type::Integer, e)))
+        .transpose()?;
+    // Written from `u64`; a negative or non-representable value is corruption.
+    let file_size = file_size
+        .map(|v| {
+            u64::try_from(v).map_err(|e| conversion_err(14, rusqlite::types::Type::Integer, e))
+        })
+        .transpose()?;
+    let raw_sibling_id = raw_sibling_id
+        .map(|raw| {
+            Uuid::parse_str(&raw).map_err(|e| conversion_err(15, rusqlite::types::Type::Text, e))
+        })
+        .transpose()?;
+    // Stored as 0/1; anything else is not a boolean this code wrote.
+    let analysis_ready = analysis_ready
+        .map(|v| match v {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(conversion_err(
+                16,
+                rusqlite::types::Type::Integer,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("analysis_ready must be 0 or 1, found {other}"),
+                ),
+            )),
+        })
         .transpose()?;
 
     Ok(Image {
@@ -1006,6 +1286,11 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         format,
         make,
         camera_model,
+        source_path,
+        content_hash,
+        file_size,
+        raw_sibling_id,
+        analysis_ready,
     })
 }
 
@@ -1042,6 +1327,29 @@ mod tests {
     use super::*;
     use crate::models::image::ImageFormat;
 
+    /// Minimal image row for insert tests; `content_hash` is what matters.
+    fn image_row(session_id: Uuid, file_path: &str, content_hash: Option<&str>) -> Image {
+        Image {
+            id: Uuid::new_v4(),
+            session_id,
+            file_path: file_path.to_string(),
+            location_lat: None,
+            location_lon: None,
+            captured_at: None,
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: Some("jpeg".to_string()),
+            make: None,
+            camera_model: None,
+            source_path: None,
+            content_hash: content_hash.map(str::to_string),
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: Some(true),
+        }
+    }
+
     fn img(captured_at: &str) -> Image {
         Image {
             id: Uuid::new_v4(),
@@ -1056,6 +1364,11 @@ mod tests {
             format: None,
             make: None,
             camera_model: None,
+            source_path: None,
+            content_hash: None,
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: None,
         }
     }
 
@@ -1232,6 +1545,16 @@ mod tests {
 
         init_schema(&conn).expect("migrate");
 
+        // The rebuilt table gets the duplicate-detection index back.
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                params![IMAGE_CONTENT_HASH_INDEX],
+                |row| row.get(0),
+            )
+            .expect("index lookup");
+        assert_eq!(index_count, 1);
+
         let old: Image = conn
             .query_row(
                 &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/photos/old.jpg'"),
@@ -1241,6 +1564,14 @@ mod tests {
             .expect("old row readable");
         assert_eq!(old.location_lat, Some(-7.5));
         assert_eq!(old.width, None);
+        // Copy-on-import provenance is unknown for a migrated row: it keeps
+        // pointing at the original path and is not rewritten.
+        assert_eq!(old.file_path, "/photos/old.jpg");
+        assert_eq!(old.source_path, None);
+        assert_eq!(old.content_hash, None);
+        assert_eq!(old.file_size, None);
+        assert_eq!(old.raw_sibling_id, None);
+        assert_eq!(old.analysis_ready, None);
 
         // Previously impossible on the old schema: persisting an image
         // without GPS or capture time.
@@ -1562,6 +1893,128 @@ mod tests {
         assert_eq!(note, "IMPORTANT NOTE");
     }
 
+    /// The `image` table exactly as the last commit on the main branch
+    /// defines it: twelve columns, no metadata/hash pair columns. The team
+    /// pinned this as the migration fixture everyone's checkout hits.
+    const MAIN_BRANCH_IMAGE_DDL: &str = "CREATE TABLE image (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        file_path TEXT NOT NULL UNIQUE,
+        location_lat REAL,
+        location_lon REAL,
+        captured_at TEXT,
+        gps_altitude_m REAL,
+        width INTEGER,
+        height INTEGER,
+        format TEXT,
+        make TEXT,
+        camera_model TEXT
+    )";
+
+    #[test]
+    fn migrates_main_schema_preserving_rows_and_values() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(MAIN_BRANCH_IMAGE_DDL, [])
+            .expect("main-branch table");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon,
+                                captured_at, gps_altitude_m, width, height, format, make, camera_model)
+             VALUES ('img-1', ?1, '/photos/flight.jpg', -7.52, 110.11,
+                     '2026-09-18 07:12:00', 512.0, 4032, 3000, 'jpeg', 'DJI', 'FC7304')",
+            params![session_id],
+        )
+        .expect("row of real image data");
+
+        init_schema(&conn).expect("migrate");
+
+        let columns = table_info(&conn, "image").expect("introspect");
+        for canonical in IMAGE_COLUMN_NAMES {
+            assert!(
+                columns.iter().any(|c| c.name == *canonical),
+                "column {canonical} present after migration"
+            );
+        }
+        let row: (String, Option<f64>, Option<f64>, Option<f64>, i64, i64) = conn
+            .query_row(
+                "SELECT file_path, location_lat, location_lon, gps_altitude_m, width, height
+                 FROM image WHERE id = 'img-1'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("row readable");
+        assert_eq!(row.0, "/photos/flight.jpg");
+        assert_eq!(row.1, Some(-7.52));
+        assert_eq!(row.2, Some(110.11));
+        assert_eq!(row.3, Some(512.0));
+        assert_eq!(row.4, 4032);
+        assert_eq!(row.5, 3000);
+        // Migrated rows have no hash yet; the backfill is a separate follow-up.
+        assert!(
+            known_hashes_for_project(&conn, project_of(&conn).parse().expect("uuid"))
+                .expect("hash query")
+                .is_empty()
+        );
+    }
+
+    fn project_of(conn: &Connection) -> String {
+        conn.query_row("SELECT project_id FROM session", [], |row| row.get(0))
+            .expect("one seeded session")
+    }
+
+    #[test]
+    fn migration_keeps_user_indexes() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        let session_id = seeded_session(&conn);
+        conn.execute(MAIN_BRANCH_IMAGE_DDL, []).expect("table");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path) VALUES ('img-1', ?1, '/a.jpg')",
+            params![session_id],
+        )
+        .expect("row");
+        conn.execute(
+            "CREATE INDEX idx_image_session_fast ON image (session_id, captured_at)",
+            [],
+        )
+        .expect("user index");
+
+        init_schema(&conn).expect("migrate");
+
+        let index_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_image_session_fast'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("user index recreated");
+        assert!(
+            index_sql.to_lowercase().contains("session_id"),
+            "original definition preserved: {index_sql}"
+        );
+        // And it is still a usable index over the rebuilt table.
+        conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT file_path FROM image WHERE session_id = 'x'",
+            [],
+            |row| row.get::<_, String>(3),
+        )
+        .map(|plan| {
+            assert!(
+                plan.to_lowercase().contains("idx_image_session_fast"),
+                "the planner uses the recreated index: {plan}"
+            )
+        })
+        .expect("query plan");
+    }
+
     #[test]
     fn date_range_skips_undated_images() {
         let dated = img("2026-09-18T07:15:00");
@@ -1638,6 +2091,73 @@ mod tests {
         assert_eq!(
             updated.date_end,
             "2026-09-20T10:00:00".parse::<NaiveDateTime>().unwrap()
+        );
+    }
+
+    #[test]
+    fn foreign_keys_are_enforced() {
+        // Bundled libsqlite3-sys is built with SQLITE_DEFAULT_FOREIGN_KEYS,
+        // so a fresh connection must be able to reject orphaned image rows.
+        // Guarding this here stops anyone from "fixing" a cascade failure by
+        // turning foreign keys off instead of deleting children first.
+        let conn = memory_db();
+        let enforced: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("pragma foreign_keys");
+        assert_eq!(enforced, 1);
+
+        let live = create_session(&conn, test_project(&conn).id, None).expect("live");
+        let image = image_from_metadata(
+            Uuid::new_v4(),
+            live.id,
+            "/photos/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        insert_image(&conn, &image).expect("image");
+        assert!(
+            insert_image(
+                &conn,
+                &image_row(Uuid::new_v4(), "/photos/orphan.jpg", None)
+            )
+            .is_err(),
+            "an image row must reference a session the database knows"
+        );
+    }
+
+    #[test]
+    fn delete_session_removes_a_session_with_images() {
+        let conn = memory_db();
+        let session = create_session(&conn, test_project(&conn).id, None).expect("session");
+        for path in ["/lib/a.jpg", "/lib/b.jpg"] {
+            insert_image(&conn, &image_row(session.id, path, None)).expect("image");
+        }
+        delete_session(&conn, session.id).expect("cascade delete");
+        assert!(matches!(
+            get_session(&conn, session.id),
+            Err(SessionError::NotFound { .. })
+        ));
+        assert_eq!(
+            get_images_by_session(&conn, session.id).expect("images"),
+            Vec::<Image>::new()
+        );
+    }
+
+    #[test]
+    fn delete_session_of_missing_id_keeps_other_rows() {
+        let conn = memory_db();
+        let kept = create_session(&conn, test_project(&conn).id, None).expect("kept session");
+        for path in ["/lib/keep1.jpg", "/lib/keep2.jpg"] {
+            insert_image(&conn, &image_row(kept.id, path, None)).expect("image");
+        }
+
+        assert!(matches!(
+            delete_session(&conn, Uuid::new_v4()),
+            Err(SessionError::NotFound { .. })
+        ));
+        assert!(get_session(&conn, kept.id).is_ok());
+        assert_eq!(
+            get_images_by_session(&conn, kept.id).expect("images").len(),
+            2
         );
     }
 

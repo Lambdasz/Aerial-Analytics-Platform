@@ -91,6 +91,17 @@ pub enum SessionError {
     /// The underlying SQLite operation failed.
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
+
+    /// The project's image library could not be located or written to.
+    #[error("storage error: {0}")]
+    Storage(String),
+
+    /// The shared database mutex was poisoned by a panicking holder.
+    ///
+    /// Kept distinct from [`SessionError::Db`] so the UI can tell "another
+    /// operation crashed mid-write" from "SQLite rejected the statement".
+    #[error("database lock poisoned: {0}")]
+    LockPoisoned(String),
 }
 
 impl SessionError {
@@ -101,6 +112,8 @@ impl SessionError {
             Self::ProjectNotFound { .. } => "PROJECT_NOT_FOUND",
             Self::ImageNotFound { .. } => "IMAGE_NOT_FOUND",
             Self::Db(_) => "DB_ERROR",
+            Self::Storage(_) => "STORAGE_ERROR",
+            Self::LockPoisoned(_) => "DB_LOCK_POISONED",
         }
     }
 }
