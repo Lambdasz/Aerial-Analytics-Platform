@@ -154,16 +154,28 @@ Per-file behaviour:
   imports running at once cannot store the same bytes twice;
 - one rejected file never aborts the rest of the batch.
 
-Its helpers `remove_session_files` and `cleanup_orphaned_copies` handle the
-disk side of deletion: `delete_session` (which the command refuses unless
-`confirm=true`) removes the session's copied files after deleting its rows,
-and a background sweep started after launch moves unreferenced files older
-than an hour into `<library_root>/.trash/` (rather than permanently deleting
-them). The sweep inspects only folders corresponding to sessions recorded in
-SQLite, skips itself entirely when the database has no image rows, and drops
-the database lock before it walks the disk. The database itself is
-`<app-data-dir>/aerial.db` (override `AAP_DB_PATH`), never a relative
-`aerial.db`.
+Its helpers `remove_session_files`, `trash_session_folder` and
+`cleanup_orphaned_copies_older_than` handle the disk side of deletion:
+`delete_session` (which the command refuses unless `confirm=true`) first
+deletes the session's rows, then removes the copies with
+`remove_session_files`. When that removal fails part-way (blocked file,
+dropped mount, odd share), the whole left-over session folder moves into the
+current trash batch by `trash_session_folder`, so the user can still undo —
+only when even the rename fails does `delete_session` report
+`files_left=true` to the UI. A background sweep started after launch moves
+unreferenced files older than an hour into `<library_root>/.trash/` rather
+than permanently deleting them. Batches land in
+`.trash/<unix-seconds>-<pid>/` at the moment of the first move (batched, so
+a later run of the sweep can purge whole batches), never overwrite an
+existing name in the same batch, and batches older than 30 days are purged
+at the start of each sweep. The sweep inspects only folders corresponding to
+sessions recorded in SQLite, skips itself entirely when the database has no
+image rows, and drops the database lock before it walks the disk. The
+database itself is `<app-data-dir>/aerial.db` (override `AAP_DB_PATH`): an
+existing app-data file always wins; when the app-data target does not exist
+but the old `./aerial.db` placeholder from the working directory does, that
+file is **copied** (never moved) into place, so session history survives the
+startup migration. Never a relative `aerial.db`.
 
 ### `get_analysis_input` / `analysis_input`
 

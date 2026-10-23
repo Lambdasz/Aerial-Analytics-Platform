@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub mod e2e_tests;
 #[allow(unused_imports)]
 pub mod image_preview;
 #[allow(unused_imports)]

@@ -61,7 +61,7 @@
 //! because Module 1 cannot hand raw pixels to a plugin.
 
 use std::fs;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -814,9 +814,48 @@ fn persist_single(
 /// Moves `from` to `to` without replacing a file that appeared in between.
 ///
 /// `rename` replaces its target. `hard_link` fails if the target exists, so
-/// a concurrent import that just claimed `to` keeps its file.
+/// a concurrent import that just claimed `to` keeps its file. Where hard
+/// links are unsupported (exFAT, SMB, cross-device), the content is copied
+/// to a `.partial` staging file and published with a copy-create/rename
+/// chain that still refuses an existing destination.
 fn move_without_replace(from: &Path, to: &Path) -> Result<(), ImportError> {
-    match fs::hard_link(from, to) {
+    move_without_replace_with(from, to, |a, b| fs::hard_link(a, b))
+}
+
+/// Copy-based publication of `from` at `to`, refusing an existing target.
+///
+/// Used when [`fs::hard_link`] (and therefore [`move_without_replace`]'s
+/// atomic path) is unavailable. The staged `.partial` file is removed in
+/// every outcome, and `from` is only deleted after `to` is fully written.
+fn publish_copy_without_replace(from: &Path, to: &Path) -> Result<(), ImportError> {
+    let tmp = to.with_extension("partial");
+    let publish = (|| -> std::io::Result<()> {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|err| {
+                if err.kind() == std::io::ErrorKind::AlreadyExists {
+                    std::io::Error::new(std::io::ErrorKind::AlreadyExists, err.to_string())
+                } else {
+                    err
+                }
+            })?;
+        io::copy(&mut fs::File::open(from)?, &mut out)?;
+        out.sync_all()?;
+        match fs::hard_link(&tmp, to) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Err(err),
+            // Linking failed for another reason; publish by no-replace rename.
+            Err(_) => {
+                let staged = tempfile::TempPath::try_from_path(&tmp)?;
+                staged.persist_noclobber(to).map_err(|err| err.error)?;
+                Ok(())
+            }
+        }
+    })();
+    let _ = fs::remove_file(&tmp);
+    match publish {
         Ok(()) => {
             remove_copy(from);
             Ok(())
@@ -827,9 +866,30 @@ fn move_without_replace(from: &Path, to: &Path) -> Result<(), ImportError> {
             })
         }
         Err(err) => Err(ImportError::CopyFailed {
-            path: from.display().to_string(),
+            path: file_label(from),
             reason: err.to_string(),
         }),
+    }
+}
+
+/// Publishes a destination for [`move_without_replace`], with the link
+/// attempt injectable for tests.
+fn move_without_replace_with(
+    from: &Path,
+    to: &Path,
+    try_link: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), ImportError> {
+    match try_link(from, to) {
+        Ok(()) => {
+            remove_copy(from);
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(ImportError::DestinationExists {
+                path: to.display().to_string(),
+            })
+        }
+        Err(_) => publish_copy_without_replace(from, to),
     }
 }
 
@@ -1056,7 +1116,13 @@ fn record_images(
 fn remove_copy(path: &Path) {
     if let Err(err) = fs::remove_file(path) {
         if err.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("warning: could not remove '{}': {err}", file_label(path));
+            // Only the file's name, never any path component, may reach a
+            // log line: the name is the only thing a user can act on here.
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            eprintln!("warning: could not remove '{name}': {err}");
         }
     }
 }
@@ -1101,7 +1167,7 @@ pub(crate) fn remove_session_files(
 /// A copy exists for a moment before its row is committed, and a second app
 /// instance may be importing into the same library. Leaving recent files
 /// alone keeps the sweep from deleting another process's work in progress.
-const ORPHAN_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+pub(crate) const ORPHAN_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Moves copied files that no `image` row references into `.trash/`.
 ///
@@ -1126,15 +1192,6 @@ const ORPHAN_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 
 /// # Returns
 ///
 /// Number of files moved to trash. `0` when the sweep was skipped.
-pub(crate) fn cleanup_orphaned_copies(
-    referenced: &[String],
-    known_scopes: &std::collections::HashSet<(String, String)>,
-    library_root: &Path,
-) -> usize {
-    cleanup_orphaned_copies_older_than(referenced, known_scopes, library_root, ORPHAN_MIN_AGE)
-}
-
-/// [`cleanup_orphaned_copies`] with an explicit age threshold, for tests.
 pub(crate) fn cleanup_orphaned_copies_older_than(
     referenced: &[String],
     known_scopes: &std::collections::HashSet<(String, String)>,
@@ -1144,6 +1201,8 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
     if !library_root.is_dir() {
         return 0;
     }
+    let now = std::time::SystemTime::now();
+    purge_old_trash_batches(library_root, now);
     let referenced: std::collections::HashSet<String> = referenced
         .iter()
         .map(|path| normalize_path(Path::new(path)))
@@ -1157,8 +1216,12 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
         return 0;
     }
 
-    let now = std::time::SystemTime::now();
     let mut moved = 0usize;
+    let mut moved_scopes = std::collections::HashSet::new();
+    // One batch folder per sweep: every file this sweep removes lands in the
+    // same folder, so it can be restored wholesale. The folder is created
+    // lazily by the first move; a sweep that moves nothing leaves no `.trash`.
+    let batch = new_trash_batch(library_root);
     for path in &candidates {
         if referenced.contains(&normalize_path(path)) {
             continue;
@@ -1174,37 +1237,256 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
         if !old_enough {
             continue;
         }
-        match trash_orphan(path, library_root) {
-            Ok(()) => moved += 1,
+        match trash_orphan(path, library_root, &batch) {
+            Ok(()) => {
+                moved += 1;
+                if let Some(scope) = scope_of(path, library_root) {
+                    moved_scopes.insert(scope);
+                }
+            }
             Err(err) => {
-                eprintln!(
-                    "warning: could not move '{}' to trash: {err}",
-                    file_label(path)
-                );
+                // Only the file's name may reach a log line — the sweep must
+                // not leak which project or session it belongs to.
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned());
+                eprintln!("warning: could not move '{name:?}' to trash: {err}");
             }
         }
     }
     if moved > 0 {
-        prune_session_layout_dirs(library_root, known_scopes);
+        // Prune only the folders that actually emptied, never all of them.
+        prune_session_layout_dirs(library_root, &moved_scopes);
     }
     moved
 }
 
-/// Moves an unreferenced file into `<library_root>/.trash/`.
-fn trash_orphan(path: &Path, library_root: &Path) -> std::io::Result<()> {
-    let trash_dir = library_root.join(".trash");
-    fs::create_dir_all(&trash_dir)?;
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-    let timestamp = std::time::SystemTime::now()
+/// Moves an unreferenced file into the sweep's `.trash` batch folder.
+///
+/// The file keeps its session-relative path
+/// (`<p_id>/<s_id>/images/<name>`), and the destination name is suffixed
+/// rather than replaced, so two same-named orphans (drone folders repeat
+/// `DJI_0001.JPG` in every session) can never overwrite each other.
+fn trash_orphan(path: &Path, library_root: &Path, batch: &Path) -> std::io::Result<()> {
+    let rel = path
+        .strip_prefix(library_root.join("projects"))
+        .map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    let dir = batch.join(rel.parent().unwrap_or_else(|| Path::new("")));
+    fs::create_dir_all(&dir)?;
+    let name = path
+        .file_name()
+        .ok_or(std::io::ErrorKind::InvalidInput)?
+        .to_string_lossy();
+    for n in 1..=TRASH_MAX_SUFFIX {
+        let dest = dir.join(suffixed_name(&name, n));
+        match move_no_clobber(path, &dest) {
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            other => return other,
+        }
+    }
+    Err(std::io::ErrorKind::AlreadyExists.into())
+}
+
+/// Upper bound on suffix attempts before an orphan is left in place.
+const TRASH_MAX_SUFFIX: u32 = 1000;
+
+/// Creates the per-sweep trash batch folder: `<library_root>/.trash/<unix_secs>-<pid>`.
+///
+/// All files a single sweep removes share one batch, so a timestamped
+/// `.trash` folder can be restored wholesale, and two sweeps (or two app
+/// instances) can never write into each other's batch.
+pub(crate) fn new_trash_batch(library_root: &Path) -> PathBuf {
+    let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let dest = trash_dir.join(format!("{timestamp}_{file_name}"));
-    if fs::rename(path, &dest).is_err() {
-        fs::copy(path, &dest)?;
-        let _ = fs::remove_file(path);
+    library_root
+        .join(".trash")
+        .join(format!("{secs}-{}", std::process::id()))
+}
+
+/// How long a `.trash` batch folder survives before a sweep is allowed to
+/// purge it. Batch folders are the user's undo window, so deletion is hard
+/// deletes and only ever inside `.trash`.
+const TRASH_RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Removes `.trash` batch folders whose timestamps are older than
+/// [`TRASH_RETENTION`].
+///
+/// Only folders named `<secs>-<...>` are treated as batch folders; anything
+/// else a user (or another tool) left in `.trash` is ignored.
+fn purge_old_trash_batches(library_root: &Path, now: std::time::SystemTime) {
+    let now_secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_secs())
+        .unwrap_or_default();
+    let Ok(batches) = fs::read_dir(library_root.join(".trash")) else {
+        return;
+    };
+    for batch in batches.flatten() {
+        let path = batch.path();
+        if !path.is_dir() {
+            // Not a batch folder (e.g. a stray file) — none of our business.
+            continue;
+        }
+        let batch_name = batch.file_name().to_string_lossy().into_owned();
+        let Some(secs) = batch_name
+            .split('-')
+            .next()
+            .and_then(|prefix| prefix.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if now_secs.saturating_sub(secs) > TRASH_RETENTION.as_secs() {
+            let _ = fs::remove_dir_all(&path);
+        }
     }
-    Ok(())
+}
+
+/// Moves `from` to `to` without replacing anything, cleaning up fully on
+/// failure.
+///
+/// Steps, in order of cost:
+///
+/// 1. `hard_link` publishes atomically and refuses an existing destination
+///    (`AlreadyExists`, reported so the caller can retry the next suffix),
+///    then removes the source. If **only** the source removal fails, the
+///    published link is undone: nothing half-moved survived.
+/// 2. Otherwise (EXDEV across filesystems, exFAT, SMB) the content is copied
+///    to `to.with_extension("partial")` and published by link or
+///    no-replace rename. The partial file is removed in every outcome.
+///
+/// Success is reported only when the source no longer exists; the caller's
+/// bookkeeping then matches the disk state.
+fn move_no_clobber(from: &Path, to: &Path) -> std::io::Result<()> {
+    match fs::hard_link(from, to) {
+        Ok(()) => return remove_source_and_unlink_target_on_failure(from, to),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => return Err(err),
+        // Hard links unavailable where the trash lives; copy instead.
+        Err(_) => {}
+    }
+    let tmp = to.with_extension("partial");
+    let _ = fs::remove_file(&tmp); // a stale partial from a crashed run
+    let publish = (|| -> std::io::Result<()> {
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        io::copy(&mut fs::File::open(from)?, &mut out)?;
+        out.sync_all()?;
+        match fs::hard_link(&tmp, to) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Err(err),
+            // Linking inside `.trash` failed too; publish by no-replace rename.
+            Err(_) => {
+                let staged = tempfile::TempPath::try_from_path(&tmp)?;
+                staged.persist_noclobber(to).map_err(|err| err.error)?;
+                Ok(())
+            }
+        }
+    })();
+    let _ = fs::remove_file(&tmp);
+    publish?;
+    remove_source_and_unlink_target_on_failure(from, to)
+}
+
+/// Removes `from`, and if that fails undoes the published `to` so no
+/// half-moved state is left behind.
+fn remove_source_and_unlink_target_on_failure(from: &Path, to: &Path) -> std::io::Result<()> {
+    match fs::remove_file(from) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = fs::remove_file(to);
+            Err(err)
+        }
+    }
+}
+
+/// The `(project_id, session_id)` a library path belongs to.
+fn scope_of(path: &Path, library_root: &Path) -> Option<(String, String)> {
+    let rel = path.strip_prefix(library_root.join("projects")).ok()?;
+    let mut components = rel.iter();
+    let project = components.next()?.to_string_lossy().into_owned();
+    let session = components.next()?.to_string_lossy().into_owned();
+    Some((project, session))
+}
+
+/// Best effort rescue of a removed session's leftover folder into `.trash`.
+///
+/// The image rows are already deleted by the time this runs, so the
+/// background sweep — which only walks sessions the database still knows —
+/// will never revisit this folder. Whatever
+/// [`remove_session_files`](`self::remove_session_files`) could not delete is
+/// therefore moved into a fresh `.trash` batch, keeping
+/// `projects/<p>/sessions/<s>/images/<name>`: the whole `images` folder is
+/// renamed first, and only if that is refused (cross-device, name clash) are
+/// its files moved one by one with the same no-clobber helpers the sweep
+/// uses. When everything moved, the emptied folder chain is pruned.
+///
+/// Returns `true` when nothing is left behind (folder already gone, or every
+/// file rescued); `false` means files remain on disk in the session folder.
+pub(crate) fn trash_session_folder(
+    library_root: &Path,
+    project_id: &str,
+    session_id: &str,
+) -> bool {
+    let images = session_images_dir(library_root, project_id, session_id);
+    if !images.is_dir() {
+        return true;
+    }
+    let batch = new_trash_batch(library_root);
+    let dest = batch
+        .join(project_id)
+        .join("sessions")
+        .join(session_id)
+        .join("images");
+    if let Some(dest_parent) = dest.parent() {
+        let _ = fs::create_dir_all(dest_parent);
+    }
+    let mut all_moved = fs::rename(&images, &dest).is_ok();
+    if !all_moved {
+        for file in files_under(&images) {
+            if let Err(err) = trash_orphan(&file, library_root, &batch) {
+                let name = file
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                eprintln!("warning: could not rescue '{name}' into trash: {err}");
+                all_moved = false;
+            }
+        }
+    }
+    if all_moved {
+        // The session's records are gone, so this chain is the app's own
+        // layout; remove_dir fails silently on anything still holding files.
+        let project_dir = library_root.join("projects").join(project_id);
+        let session_dir = project_dir.join("sessions").join(session_id);
+        let _ = fs::remove_dir(session_dir.join("images"));
+        let _ = fs::remove_dir(&session_dir);
+        let _ = fs::remove_dir(project_dir.join("sessions"));
+        let _ = fs::remove_dir(&project_dir);
+    }
+    all_moved
+}
+
+/// Every file below `dir`, depth first.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files
 }
 
 /// Files sitting in a known session's `images` folder, and nowhere else.
@@ -2123,6 +2405,36 @@ mod tests {
     }
 
     #[test]
+    fn move_without_replace_falls_back_when_hard_link_unsupported() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let dest_dir = tempfile::tempdir().expect("dest dir");
+        let source = write_jpeg(source_dir.path(), "DJI_0031.JPG");
+        let to = dest_dir.path().join("DJI_0031.JPG");
+        let expected = fs::read(&source).expect("source bytes");
+        // exFAT/SMB/cross-device: `hard_link` refuses for a reason other than
+        // an existing destination.
+        move_without_replace_with(&source, &to, |_, _| {
+            Err(std::io::Error::other(
+                "filesystem does not support hard links",
+            ))
+        })
+        .expect("published by copy");
+
+        assert_eq!(fs::read(&to).expect("published content"), expected);
+        assert!(!source.exists(), "source only removed after publication");
+        let leftovers: Vec<String> = fs::read_dir(dest_dir.path())
+            .expect("dest dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            leftovers,
+            vec!["DJI_0031.JPG"],
+            "no .partial staging file may remain: {leftovers:?}"
+        );
+    }
+
+    #[test]
     fn dangling_raw_sibling_is_reported_as_not_ready() {
         let db = test_db();
         let session_id = session(&db);
@@ -2277,6 +2589,220 @@ mod tests {
         assert!(!dest_dir.join("DJI_0030 (2).DNG").exists());
     }
 
+    /// Full pipeline: the JPEG of a stem pair is already in the project, so
+    /// the planner flags it as a duplicate and only the DNG is imported —
+    /// alone and not analysis-ready (its pair is gone, the planner split
+    /// them before any copy happened).
+    #[test]
+    fn pair_with_jpeg_already_in_project_imports_dng_alone() {
+        let first_dir = tempfile::tempdir().expect("first dir");
+        let pair_dir = tempfile::tempdir().expect("pair dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let jpeg_seed = write_jpeg(first_dir.path(), "DJI_0005.JPG");
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_seed]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("jpeg-only import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        // Same bytes, so the same content hash: the pair's JPEG re-imports
+        // as a known duplicate and the DNG rides in for free.
+        let jpeg_pair = write_jpeg(pair_dir.path(), "DJI_0005.JPG");
+        let _ = jpeg_pair;
+        write_dng(pair_dir.path(), "DJI_0005.DNG", 4000, 3000);
+        let pair_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[pair_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("pair import beside a known jpeg");
+
+        assert_eq!(
+            pair_report.imported_image_ids.len(),
+            1,
+            "only the dng imports"
+        );
+        assert_eq!(pair_report.duplicates.len(), 1);
+        assert!(
+            pair_report.duplicates[0]
+                .source_path
+                .ends_with("DJI_0005.JPG"),
+            "the jpeg is the duplicate: {:?}",
+            pair_report.duplicates[0]
+        );
+        assert_eq!(
+            pair_report.not_analysis_ready.len(),
+            1,
+            "the dng is imported but cannot be analysed without its pair: {pair_report:?}"
+        );
+        assert!(pair_report.rejected.is_empty());
+
+        // The recorded dng is unpaired and not analysis-ready; the library
+        // keeps the original jpeg and now holds the dng copy.
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        {
+            let conn = db.lock().expect("db lock");
+            let rows =
+                crate::modules::module_01::get_images_by_session(&conn, session_id).expect("rows");
+            assert_eq!(rows.len(), 2);
+            let dng_row = rows
+                .iter()
+                .find(|row| row.file_path.ends_with("DJI_0005.DNG"))
+                .expect("dng row");
+            assert_eq!(dng_row.raw_sibling_id, None, "no jpeg pair to link to");
+            assert_eq!(dng_row.analysis_ready, Some(false));
+        }
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        let leftover: Vec<String> = fs::read_dir(&dest_dir)
+            .expect("session folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            leftover,
+            vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],
+            "the dng copy landed beside the original: {leftover:?}"
+        );
+    }
+
+    /// Insert-time race: the planner approved both halves, but between the
+    /// hash snapshot and the insert the JPEG's content got into the image
+    /// table. The duplicate must be reported and the DNG rescued alone.
+    #[test]
+    fn pair_survivor_is_imported_when_jpeg_becomes_duplicate_at_insert() {
+        pair_survivor_case(PairSide::Jpeg);
+    }
+
+    /// Mirror of the above: the DNG loses the race. The JPEG survives and
+    /// stays analysis-ready.
+    #[test]
+    fn pair_survivor_is_imported_when_dng_becomes_duplicate_at_insert() {
+        pair_survivor_case(PairSide::Dng);
+    }
+
+    #[derive(Clone, Copy)]
+    enum PairSide {
+        Jpeg,
+        Dng,
+    }
+
+    fn pair_survivor_case(lossing_side: PairSide) {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let jpeg = write_jpeg(source_dir.path(), "DJI_0009.JPG");
+        let dng = write_dng(source_dir.path(), "DJI_0009.DNG", 4000, 3000);
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        fs::create_dir_all(&dest_dir).expect("dest dir");
+
+        let jpeg_candidate = hash_file(&jpeg).expect("hash jpeg");
+        let dng_candidate = hash_file(&dng).expect("hash dng");
+        let (losing, losing_name): (&ImportCandidate, &str) = match lossing_side {
+            PairSide::Jpeg => (&jpeg_candidate, "DJI_0009.JPG"),
+            PairSide::Dng => (&dng_candidate, "DJI_0009.DNG"),
+        };
+        // The raced row carries exactly the losing half's content hash.
+        {
+            let conn = db.lock().expect("db lock");
+            insert_image(
+                &conn,
+                &image_row(
+                    session_id,
+                    "/elsewhere/already-there.jpg",
+                    &losing.content_hash.0,
+                ),
+            )
+            .expect("racing row in place");
+        }
+
+        let mut state = RunState {
+            image_ids: std::collections::HashMap::new(),
+            rejected: Vec::new(),
+            duplicates: Vec::new(),
+        };
+        let imported = {
+            let mut scope = ImportScope {
+                db: &db,
+                dest_dir: &dest_dir,
+                session_id,
+                state: &mut state,
+            };
+            scope
+                .pair(&jpeg_candidate, &dng_candidate)
+                .expect("the surviving half imports alone")
+        };
+        assert_eq!(state.duplicates.len(), 1, "one half reported as duplicate");
+        assert!(
+            state.duplicates[0].source_path.ends_with(losing_name),
+            "the {} is the duplicate: {:?}",
+            losing_name,
+            state.duplicates[0]
+        );
+        assert_eq!(imported.len(), 1);
+        match lossing_side {
+            // DNG survived but is no longer analysable without its pair.
+            PairSide::Jpeg => assert!(
+                imported[0].not_analysis_ready,
+                "rescued dng alone must be not-analysis-ready"
+            ),
+            PairSide::Dng => assert!(
+                !imported[0].not_analysis_ready,
+                "rescued jpeg is analysis-ready by itself"
+            ),
+        }
+        // No half-written copies: the losing file was cleaned up, the
+        // survivor is a real copy in the session folder.
+        let on_disk: Vec<String> = fs::read_dir(&dest_dir)
+            .expect("session folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        match lossing_side {
+            PairSide::Jpeg => assert_eq!(
+                on_disk,
+                vec!["DJI_0009.DNG".to_string()],
+                "only the rescued dng remains: {on_disk:?}"
+            ),
+            PairSide::Dng => assert_eq!(
+                on_disk,
+                vec!["DJI_0009.JPG".to_string()],
+                "only the rescued jpeg remains: {on_disk:?}"
+            ),
+        }
+    }
+
     #[test]
     fn folder_scan_ignores_other_extensions() {
         let source_dir = tempfile::tempdir().expect("source dir");
@@ -2304,6 +2830,26 @@ mod tests {
             }) => {}
             other => panic!("expected UnsupportedFormat, got {other:?}"),
         }
+    }
+
+    /// Every file under `<library_root>/.trash/`, for layout assertions.
+    fn trash_files(library_root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let Ok(root) = fs::read_dir(library_root.join(".trash")) else {
+            return out;
+        };
+        let mut stack: Vec<PathBuf> = root.flatten().map(|entry| entry.path()).collect();
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                if let Ok(entries) = fs::read_dir(&path) {
+                    stack.extend(entries.flatten().map(|entry| entry.path()));
+                }
+            } else {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
     }
 
     #[test]
@@ -2350,20 +2896,229 @@ mod tests {
         );
         assert_eq!(removed, 1);
         assert!(!stray.exists());
-        // Verify the orphan was moved into .trash rather than permanently deleted
+        // Verify the orphan was moved into .trash rather than permanently
+        // deleted, keeping its session-relative path inside one batch folder.
         assert!(library.path().join(".trash").is_dir());
-        let trash_entries: Vec<_> = fs::read_dir(library.path().join(".trash"))
-            .unwrap()
-            .flatten()
-            .collect();
-        assert_eq!(trash_entries.len(), 1);
-        assert!(trash_entries[0]
-            .file_name()
-            .to_string_lossy()
-            .ends_with("stray.JPG"));
+        let trashed = trash_files(library.path());
+        assert_eq!(trashed.len(), 1);
+        let relative = trashed[0]
+            .strip_prefix(library.path())
+            .expect("relative to library root");
+        assert!(
+            relative.to_string_lossy().ends_with("images/stray.JPG"),
+            "orphan must keep its session-relative path: {relative:?}"
+        );
         assert_eq!(get_images_by_session(&conn, session_id).unwrap().len(), 1);
         let stored = get_images_by_session(&conn, session_id).unwrap();
         assert!(Path::new(&stored[0].file_path).is_file());
+    }
+
+    #[test]
+    fn sweep_trashes_two_same_named_orphans_without_overwrite() {
+        let library = tempfile::tempdir().expect("library");
+        // Drone folders repeat the same file names in every session, so two
+        // known sessions can hold identically named orphans with different
+        // contents. Neither copy may overwrite the other in `.trash`.
+        let layouts = [
+            (
+                ("p1".to_string(), "s1".to_string()),
+                b"first one".as_slice(),
+            ),
+            (
+                ("p2".to_string(), "s2".to_string()),
+                b"second two".as_slice(),
+            ),
+        ];
+        let mut orphans = Vec::new();
+        for ((project, session), content) in &layouts {
+            let images = library
+                .path()
+                .join("projects")
+                .join(project)
+                .join("sessions")
+                .join(session)
+                .join("images");
+            fs::create_dir_all(&images).expect("layout");
+            let orphan = images.join("DJI_0001.JPG");
+            fs::write(&orphan, content).expect("orphan");
+            orphans.push(orphan);
+        }
+
+        let scopes = std::collections::HashSet::from([
+            ("p1".to_string(), "s1".to_string()),
+            ("p2".to_string(), "s2".to_string()),
+        ]);
+        let removed = cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(removed, 2);
+
+        let trashed = trash_files(library.path());
+        // One sweep batch, two files, both copies intact, same names kept.
+        let batches: std::collections::HashSet<_> = trashed
+            .iter()
+            .filter_map(|path| path.strip_prefix(library.path().join(".trash")).ok())
+            .map(|rel| rel.iter().next().map(|component| component.to_os_string()))
+            .collect();
+        assert_eq!(batches.len(), 1, "one batch folder per sweep");
+        assert_eq!(
+            trashed
+                .iter()
+                .filter(
+                    |path| path.file_name().and_then(|name| name.to_str()) == Some("DJI_0001.JPG")
+                )
+                .count(),
+            2
+        );
+        let mut contents: Vec<String> = trashed
+            .iter()
+            .map(|path| fs::read_to_string(path).expect("content"))
+            .collect();
+        contents.sort();
+        assert_eq!(contents, ["first one", "second two"]);
+        assert!(orphans.iter().all(|path| !path.exists()));
+    }
+
+    #[test]
+    fn trash_keeps_session_relative_path() {
+        let library = tempfile::tempdir().expect("library");
+        let images = library
+            .path()
+            .join("projects")
+            .join("px")
+            .join("sessions")
+            .join("sx")
+            .join("images");
+        fs::create_dir_all(&images).expect("layout");
+        let orphan = images.join("DJI_0002.JPG");
+        fs::write(&orphan, b"wanderer").expect("orphan");
+
+        let scopes = std::collections::HashSet::from([("px".to_string(), "sx".to_string())]);
+        let removed = cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(removed, 1);
+        let trashed = trash_files(library.path());
+        assert_eq!(trashed.len(), 1);
+        let relative = trashed[0]
+            .strip_prefix(library.path())
+            .expect("relative to library root");
+        assert!(
+            relative
+                .to_string_lossy()
+                .ends_with("sessions/sx/images/DJI_0002.JPG"),
+            "orphan keeps its session-relative path: {relative:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_move_failure_leaves_source_and_no_partial_copy() {
+        use std::os::unix::fs::PermissionsExt;
+        let library = tempfile::tempdir().expect("library");
+        let images = library
+            .path()
+            .join("projects")
+            .join("px")
+            .join("sessions")
+            .join("sx")
+            .join("images");
+        fs::create_dir_all(&images).expect("layout");
+        let orphan = images.join("DJI_0003.JPG");
+        fs::write(&orphan, b"stuck").expect("orphan");
+        // Read-only parent: the source can be linked elsewhere, but the final
+        // `remove_file` must fail — the worst move outcome there is.
+        fs::set_permissions(&images, std::fs::Permissions::from_mode(0o555)).expect("freeze");
+
+        let scopes = std::collections::HashSet::from([("px".to_string(), "sx".to_string())]);
+        let removed = cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(removed, 0, "the move failed and nothing was counted");
+        assert!(orphan.is_file(), "the source survived untouched");
+        assert!(
+            trash_files(library.path()).is_empty(),
+            "no half-moved or partial file may be left in the trash"
+        );
+
+        fs::set_permissions(&images, std::fs::Permissions::from_mode(0o755)).expect("thaw");
+    }
+
+    #[test]
+    fn trash_batches_older_than_retention_are_purged() {
+        let library = tempfile::tempdir().expect("library");
+        let ancient = library.path().join(".trash").join("1000000-ancient");
+        fs::create_dir_all(&ancient).expect("ancient batch");
+        fs::write(ancient.join("orphan.JPG"), b"old copy").expect("file");
+        let scopes = std::collections::HashSet::new();
+
+        cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+
+        assert!(!ancient.exists(), "retention purged the ancient batch");
+    }
+
+    #[test]
+    fn recent_trash_batches_are_kept() {
+        let library = tempfile::tempdir().expect("library");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let fresh = library.path().join(".trash").join(format!("{now}-123"));
+        fs::create_dir_all(&fresh).expect("fresh batch");
+        let treasure = fresh.join("recoverable.JPG");
+        fs::write(&treasure, b"recent copy").expect("file");
+        let scopes = std::collections::HashSet::new();
+
+        cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+
+        assert!(
+            treasure.is_file(),
+            "a batch inside the retention window survives the sweep"
+        );
+    }
+
+    #[test]
+    fn non_batch_entries_in_trash_are_ignored() {
+        let library = tempfile::tempdir().expect("library");
+        fs::create_dir_all(library.path().join(".trash")).expect("trash");
+        // A stray file in .trash is not a batch folder: leave it alone.
+        let stray = library.path().join(".trash").join("keep-me.txt");
+        fs::write(&stray, b"not ours").expect("stray");
+        // A batch-like name that parses is treated as a batch and must survive
+        // if it is recent enough.
+        let folder = library.path().join(".trash").join("notes-1");
+        fs::create_dir_all(&folder).expect("random folder");
+        let scopes = std::collections::HashSet::new();
+
+        cleanup_orphaned_copies_older_than(
+            &["/some/referenced.jpg".to_string()],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+
+        assert!(stray.is_file());
+        assert!(folder.is_dir(), "recent parseable batch is kept");
     }
 
     #[test]
@@ -2398,6 +3153,82 @@ mod tests {
         assert!(!project_dir.exists());
         // The library root itself is never removed.
         assert!(library.path().is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_session_moves_folder_to_trash_when_remove_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_jpeg(source_dir.path(), "DJI_0010.JPG");
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        // A read-only subfolder makes remove_dir_all fail part-way, leaving
+        // the session folder empty-ish but the folder itself still writable.
+        // Once the rows are gone the sweep never revisits this folder, so
+        // without the rescue these files would be unreachable forever.
+        let locked_sub = dest_dir.join("locked");
+        fs::create_dir_all(&locked_sub).expect("sub folder");
+        let locked_file = locked_sub.join("DJI_0001.JPG");
+        fs::write(&locked_file, b"locked away").expect("file");
+        fs::set_permissions(&locked_sub, std::fs::Permissions::from_mode(0o555))
+            .expect("freeze sub folder");
+        assert!(
+            !remove_session_files(
+                library.path(),
+                &project_id.to_string(),
+                &session_id.to_string()
+            ),
+            "the removal must fail for this scenario to exist"
+        );
+
+        // The rescue: the whole images folder moves into the current .trash
+        // batch (rename succeeds because the folder itself is writable).
+        assert!(trash_session_folder(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string()
+        ));
+        let trashed = trash_files(library.path());
+        assert!(!dest_dir.exists(), "emptied folder chain is pruned");
+        assert!(
+            trashed.iter().any(|path| path
+                .to_string_lossy()
+                .ends_with("images/locked/DJI_0001.JPG")),
+            "rescued folder keeps its session-relative layout: {trashed:?}"
+        );
+        let rescued = trashed
+            .iter()
+            .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("DJI_0001.JPG"))
+            .expect("rescued file present");
+        assert_eq!(fs::read(rescued).expect("content"), b"locked away");
+
+        // Restore so the temp file cleanup can remove the frozen folder too.
+        let rescued_parent = rescued.parent().expect("rescued sub folder");
+        fs::set_permissions(rescued_parent, std::fs::Permissions::from_mode(0o755))
+            .expect("thaw sub folder");
     }
 
     #[test]

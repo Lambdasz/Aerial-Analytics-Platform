@@ -521,9 +521,6 @@ pub struct AppState {
     /// SQLite connection shared across commands that need persistence
     /// (currently: Flight Session Management, Module 1.4).
     ///
-    /// SQLite connection shared across commands that need persistence
-    /// (currently: Flight Session Management, Module 1.4).
-    ///
     /// Persisted at `<app-data-dir>/aerial.db` (overridable via `AAP_DB_PATH`).
     /// Moved from the temporary working-directory placeholder (`./aerial.db`)
     /// to an absolute OS-standard path so library cleanup sweeps and data
@@ -570,6 +567,92 @@ fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+/// Where the app's SQLite database lives this start, as a decision the
+/// caller still acts on (creating parents, copying a legacy file, opening).
+#[derive(Debug)]
+enum DbLocation {
+    /// `AAP_DB_PATH` was set — an absolute path. It wins over everything.
+    Override(PathBuf),
+    /// `<app-data-dir>/aerial.db` exists: it stays the database. A legacy
+    /// working-directory file (if any) is older state and is ignored.
+    Resident(PathBuf),
+    /// Fresh install target; no database file anywhere yet.
+    Fresh(PathBuf),
+    /// The target does not exist but the working directory still holds the
+    /// pre-M1-placeholder `./aerial.db`: copy it (never move it) so the
+    /// session history survives the migration to the app-data directory.
+    Adopted {
+        /// Where the database will live from now on.
+        target: PathBuf,
+        /// The legacy file the user data is copied from.
+        legacy: PathBuf,
+    },
+}
+
+/// Decides the database location, keeping the copy policy behind a pure fn.
+///
+/// Rules, in order: an explicit `AAP_DB_PATH` env override wins; then an
+/// existing database at the app-data location wins; then a legacy
+/// `./aerial.db` in the working directory is adopted by copying; otherwise
+/// the app-data location starts fresh. On [`DbLocation::Adopted`] both paths
+/// are returned so the caller can log and copy explicitly.
+fn plan_db_location(
+    cwd: &std::path::Path,
+    app_data: &std::path::Path,
+    env: Option<PathBuf>,
+) -> DbLocation {
+    if let Some(override_path) = env {
+        return DbLocation::Override(override_path);
+    }
+    let target = app_data.join("aerial.db");
+    let legacy = cwd.join("aerial.db");
+    if target.is_file() {
+        return DbLocation::Resident(target);
+    }
+    if legacy.is_file() {
+        return DbLocation::Adopted { target, legacy };
+    }
+    DbLocation::Fresh(target)
+}
+
+/// One background library sweep: read the database, then clean the library.
+///
+/// Extracted from the startup closure so the e2e tests can exercise the exact
+/// same path. `min_age` is [`modules::module_01::import_io::ORPHAN_MIN_AGE`]
+/// in production and `Duration::ZERO` in tests; `0` in the count means the
+/// sweep was skipped (no image rows) and nothing was trashed.
+pub(crate) fn run_library_sweep(
+    db: &std::sync::Mutex<rusqlite::Connection>,
+    root: &std::path::Path,
+    min_age: std::time::Duration,
+) -> usize {
+    use modules::module_01::{flight_session, import_io};
+    let (referenced, known_scopes) = match db.lock() {
+        Ok(conn) => {
+            let paths = match flight_session::all_image_paths(&conn) {
+                Ok(paths) => paths,
+                Err(err) => {
+                    eprintln!("warning: skipped the library sweep: {err}");
+                    return 0;
+                }
+            };
+            let scopes = match flight_session::known_session_scopes(&conn) {
+                Ok(scopes) => scopes,
+                Err(err) => {
+                    eprintln!("warning: skipped the library sweep: {err}");
+                    return 0;
+                }
+            };
+            (paths, scopes)
+        }
+        Err(err) => {
+            eprintln!("warning: skipped the library sweep: {err}");
+            return 0;
+        }
+    };
+    import_io::cleanup_orphaned_copies_older_than(&referenced, &known_scopes, root, min_age)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -587,21 +670,24 @@ pub fn run() {
             // Absolute, never `aerial.db` in whatever directory the process
             // was started from. A relative database plus a sweep that deletes
             // unreferenced files is how the library gets wiped.
-            let db_path = match std::env::var_os("AAP_DB_PATH") {
-                Some(value) => absolute_path(PathBuf::from(value))?,
-                None => {
-                    if let Ok(cwd) = std::env::current_dir() {
-                        let old_db = cwd.join("aerial.db");
-                        let target = app_data.join("aerial.db");
-                        if old_db.is_file() && !target.exists() {
-                            eprintln!(
-                                "hint: found existing './aerial.db' in the working directory ('{}');                                  active database is now located at '{}'",
-                                old_db.display(),
-                                target.display()
-                            );
-                        }
+            let cwd = std::env::current_dir()
+                .map_err(|err| format!("cannot determine the current working directory: {err}"))?;
+            let db_path = match plan_db_location(&cwd, &app_data, std::env::var_os("AAP_DB_PATH").map(PathBuf::from)) {
+                DbLocation::Override(path) => path,
+                DbLocation::Resident(path) => path,
+                DbLocation::Fresh(path) => path,
+                DbLocation::Adopted { target, legacy } => {
+                    // Copy, never move: if the copy fails mid-way, the user
+                    // must be able to retry by hand. Logs carry names only.
+                    match std::fs::copy(&legacy, &target) {
+                        Ok(_) => eprintln!(
+                            "info: copied the legacy database 'aerial.db' found in the working directory into the app-data directory"
+                        ),
+                        Err(err) => eprintln!(
+                            "warning: could not copy the legacy database 'aerial.db'; starting with an empty database in the app-data directory: {err}"
+                        ),
                     }
-                    app_data.join("aerial.db")
+                    target
                 }
             };
             if let Some(parent) = db_path.parent() {
@@ -637,34 +723,7 @@ pub fn run() {
             // moves orphans to `.trash/` instead of deleting them, and skips
             // itself when the database has no image rows.
             std::thread::spawn(move || {
-                let (paths, known_scopes) = match sweep_db.lock() {
-                    Ok(conn) => {
-                        let paths = match modules::module_01::flight_session::all_image_paths(&conn) {
-                            Ok(paths) => paths,
-                            Err(err) => {
-                                eprintln!("warning: skipped the library sweep: {err}");
-                                return;
-                            }
-                        };
-                        let scopes = match modules::module_01::flight_session::known_session_scopes(&conn) {
-                            Ok(scopes) => scopes,
-                            Err(err) => {
-                                eprintln!("warning: skipped the library sweep: {err}");
-                                return;
-                            }
-                        };
-                        (paths, scopes)
-                    }
-                    Err(err) => {
-                        eprintln!("warning: skipped the library sweep: {err}");
-                        return;
-                    }
-                };
-                let trashed = modules::module_01::import_io::cleanup_orphaned_copies(
-                    &paths,
-                    &known_scopes,
-                    &sweep_root,
-                );
+                let trashed = run_library_sweep(&sweep_db, &sweep_root, modules::module_01::import_io::ORPHAN_MIN_AGE);
                 if trashed > 0 {
                     eprintln!("info: moved {trashed} orphaned image copies to .trash");
                 }
@@ -710,4 +769,85 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{plan_db_location, DbLocation};
+
+    /// The team decision review called for a test-backed copy policy: an
+    /// existing `./aerial.db` must survive the move to the app-data
+    /// directory, and the app-data file must never be clobbered.
+    #[test]
+    fn legacy_db_is_copied_when_target_missing() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        std::fs::write(cwd.join("aerial.db"), b"history").expect("legacy db");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Adopted { target, legacy } => {
+                assert_eq!(target, app_data.join("aerial.db"));
+                assert_eq!(legacy, cwd.join("aerial.db"));
+            }
+            other => panic!("expected an adopted legacy database, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn existing_target_is_never_overwritten() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        std::fs::write(cwd.join("aerial.db"), b"legacy").expect("legacy db");
+        std::fs::write(app_data.join("aerial.db"), b"current").expect("resident db");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Resident(path) => assert_eq!(path, app_data.join("aerial.db")),
+            other => panic!("expected the resident database to win, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(cwd.join("aerial.db")).expect("legacy untouched"),
+            b"legacy"
+        );
+        assert_eq!(
+            std::fs::read(app_data.join("aerial.db")).expect("resident untouched"),
+            b"current"
+        );
+    }
+
+    #[test]
+    fn env_override_wins() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        let custom = root.path().join("custom").join("main.db");
+        std::fs::write(cwd.join("aerial.db"), b"legacy").expect("legacy db");
+        std::fs::write(app_data.join("aerial.db"), b"resident").expect("resident db");
+
+        match plan_db_location(&cwd, &app_data, Some(custom.clone())) {
+            DbLocation::Override(path) => assert_eq!(path, custom),
+            other => panic!("expected the env override to win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fresh_install_is_the_app_data_location() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Fresh(path) => assert_eq!(path, app_data.join("aerial.db")),
+            other => panic!("expected a fresh install, got {other:?}"),
+        }
+    }
 }

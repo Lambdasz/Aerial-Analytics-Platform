@@ -104,13 +104,34 @@ pub fn recalculate_session_date_range(
 ///
 /// The rows are deleted first: if removing the folder fails, the library
 /// holds an orphan rather than the UI holding a session that points at
-/// deleted files. The background sweep collects such orphans.
+/// deleted files. Unremovable files are then moved into `.trash/` so the user
+/// can still undo; only when even that fails does the UI need to tell the
+/// user a few copies remain on disk unreachable by the app.
 #[tauri::command]
 pub fn delete_session(
     state: tauri::State<AppState>,
     session_id: Uuid,
     confirm: bool,
-) -> Result<(), CommandError> {
+) -> Result<DeleteOutcome, CommandError> {
+    delete_session_impl(&state, session_id, confirm)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteOutcome {
+    /// `true` when some copied files could not be removed or rescued into
+    /// `.trash/` and remain on disk under the session's folder. The UI
+    /// should surface this to the user.
+    pub files_left: bool,
+}
+
+/// Testable core of [`delete_session`]: identical behaviour against an owned
+/// [`AppState`], without Tauri plumbing.
+pub(crate) fn delete_session_impl(
+    state: &AppState,
+    session_id: Uuid,
+    confirm: bool,
+) -> Result<DeleteOutcome, CommandError> {
     if !confirm {
         return Err(CommandError {
             code: "CONFIRMATION_REQUIRED".to_string(),
@@ -123,10 +144,20 @@ pub fn delete_session(
         flight_session::delete_session(&conn, session_id)?;
         session.project_id
     };
-    import_io::remove_session_files(
-        &state.library_root,
-        &project_id.to_string(),
-        &session_id.to_string(),
+    let project = project_id.to_string();
+    let session = session_id.to_string();
+    if import_io::remove_session_files(&state.library_root, &project, &session) {
+        return Ok(DeleteOutcome { files_left: false });
+    }
+    // Removing failed part-way. The rows are gone, so the background sweep
+    // will never collect these files: rescue them into `.trash/`, and only
+    // warn the UI if even that is impossible.
+    if import_io::trash_session_folder(&state.library_root, &project, &session) {
+        return Ok(DeleteOutcome { files_left: false });
+    }
+    eprintln!(
+        "warning: some copies of a deleted session stay on disk outside \
+         .trash; remove them manually or retry"
     );
-    Ok(())
+    Ok(DeleteOutcome { files_left: true })
 }

@@ -38,7 +38,31 @@ struct ImportProgress {
     path: String,
 }
 
+/// Testable core of [`import_images`]: identical behaviour against an owned
+/// [`AppState`], reporting progress through `on_progress` instead of events.
+pub(crate) fn import_images_impl(
+    state: &AppState,
+    session_id: Uuid,
+    sources: &[String],
+    from_folder: bool,
+    on_progress: impl FnMut(usize, usize, &str),
+) -> Result<ImportReport, CommandError> {
+    run_import(
+        &state.db,
+        &state.library_root,
+        session_id,
+        sources,
+        from_folder,
+        on_progress,
+    )
+    .map_err(CommandError::from)
+}
+
 /// Imports picked files (or a picked folder) into an existing session.
+///
+/// Thin adapter over [`import_images_impl`]: it runs the pipeline on a
+/// blocking thread and forwards progress as `import-progress` events instead
+/// of invoking a callback.
 ///
 /// # Arguments
 ///
@@ -72,14 +96,20 @@ pub async fn import_images(
             session_id: session_id.clone(),
         })
     })?;
-    let db = Arc::clone(&state.db);
-    let library_root = Arc::clone(&state.library_root);
-    let progress_session = session_id.to_string();
+    // Owned handles into the managed state: the blocking thread owns its
+    // clones while the borrow of `state` must end now (Tauri forbids async
+    // borrows crossing awaits).
+    let app_state = AppState {
+        jobs: Arc::clone(&state.jobs),
+        db: Arc::clone(&state.db),
+        library_root: Arc::clone(&state.library_root),
+    };
 
+    // The pipeline runs on a thread that cannot hold the app's lock while it
+    // encodes JPEGs; spawn_blocking returns the payload again.
     let report = tauri::async_runtime::spawn_blocking(move || {
-        run_import(
-            &db,
-            &library_root,
+        import_images_impl(
+            &app_state,
             session_id,
             &sources,
             from_folder,
@@ -87,7 +117,7 @@ pub async fn import_images(
                 let _ = app.emit(
                     IMPORT_PROGRESS_EVENT,
                     ImportProgress {
-                        session_id: progress_session.clone(),
+                        session_id: session_id.to_string(),
                         done,
                         total,
                         path: path.to_string(),
@@ -103,6 +133,19 @@ pub async fn import_images(
     })??;
 
     Ok(report)
+}
+
+/// Testable core of [`get_analysis_input`]: identical behaviour against an
+/// owned [`AppState`].
+pub(crate) fn get_analysis_input_impl(
+    state: &AppState,
+    image_id: Uuid,
+) -> Result<PluginImageMetadata, CommandError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|err| CommandError::from(SessionError::LockPoisoned(err.to_string())))?;
+    Ok(analysis_input(&conn, image_id)?)
 }
 
 /// Returns the image a plugin may analyse for `image_id`.
@@ -126,10 +169,5 @@ pub fn get_analysis_input(
         code: "IMAGE_NOT_FOUND".to_string(),
         message: format!("image '{image_id}' not found"),
     })?;
-    let conn = state
-        .db
-        .lock()
-        .map_err(|err| CommandError::from(SessionError::LockPoisoned(err.to_string())))?;
-    let input = analysis_input(&conn, image_id)?;
-    Ok(input)
+    get_analysis_input_impl(&state, image_id)
 }
