@@ -1116,22 +1116,18 @@ fn record_images(
 fn remove_copy(path: &Path) {
     if let Err(err) = fs::remove_file(path) {
         if err.kind() != std::io::ErrorKind::NotFound {
-            // Only the file's name, never any path component, may reach a
-            // log line: the name is the only thing a user can act on here.
-            // The OS error message itself names the full path, so it is
-            // rendered as one of a few fixed words instead.
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            // Log lines must not carry anything derived from the store
+            // path — the directories embed ids that would leak session
+            // context, and the OS error message names the full path. The
+            // failure is described with fixed words only.
             let reason = match err.kind() {
-                std::io::ErrorKind::PermissionDenied => "not writable",
-                std::io::ErrorKind::ReadOnlyFilesystem => "read-only file system",
-                std::io::ErrorKind::StorageFull => "storage full",
-                std::io::ErrorKind::IsADirectory => "is a directory",
+                std::io::ErrorKind::PermissionDenied => "the copy is not writable",
+                std::io::ErrorKind::ReadOnlyFilesystem => "the file system is read-only",
+                std::io::ErrorKind::StorageFull => "storage is full",
+                std::io::ErrorKind::IsADirectory => "the copy is a directory",
                 _ => "unexpected filesystem error",
             };
-            eprintln!("warning: could not remove '{name}': {reason}");
+            eprintln!("warning: could not remove a leftover copy: {reason}");
         }
     }
 }
