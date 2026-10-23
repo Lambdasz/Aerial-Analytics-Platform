@@ -402,6 +402,10 @@ mod tests {
                 crate::plugin_manager::executor::ActiveJobTracker::new(),
             )),
             state_path: Some(state_path.clone()),
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
         };
 
         let res = set_plugin_status_internal("test-plugin", false, &app_state).await;
@@ -442,6 +446,10 @@ mod tests {
                 crate::plugin_manager::executor::ActiveJobTracker::new(),
             )),
             state_path: None,
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
         };
 
         let res = set_plugin_status_internal("missing-plugin", false, &app_state).await;

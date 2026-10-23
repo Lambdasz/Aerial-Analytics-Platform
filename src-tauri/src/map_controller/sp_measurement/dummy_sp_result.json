@@ -1,0 +1,77 @@
+[
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_tree_001",
+      "layer_name": "Deteksi Pohon - Sektor A",
+      "display_preference": { "type": "point", "color": "#FF0000", "icon": "tree_marker" },
+      "spatial_results": [
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.4567, -1.2345] },
+          "properties": { "tree_id": "T-001", "confidence": 0.93, "height_est_m": 12.5 }
+        },
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.4568, -1.2346] },
+          "properties": { "tree_id": "T-002", "confidence": 0.88, "height_est_m": 10.2 }
+        },
+        {
+          "source": "tree_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.4571, -1.2344] },
+          "properties": { "tree_id": "T-003", "confidence": 0.77, "height_est_m": 8.4 }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_vegetation_001",
+      "layer_name": "Indeks Vegetasi - Sektor A",
+      "display_preference": { "type": "point", "color": "#2ECC40", "icon": "" },
+      "spatial_results": [
+        {
+          "source": "vegetation_index_v1",
+          "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [116.456, -1.234],
+                [116.4575, -1.234],
+                [116.4575, -1.2352],
+                [116.456, -1.2352],
+                [116.456, -1.234]
+              ]
+            ]
+          },
+          "properties": {
+            "vegetation_index_type": "NDVI",
+            "mean_greenness_score": 0.68,
+            "area_sqm": 1420.5
+          }
+        }
+      ]
+    }
+  },
+  {
+    "action": "load_spatial_result",
+    "payload": {
+      "layer_id": "result_building_001",
+      "layer_name": "Deteksi Bangunan - Sektor A",
+      "display_preference": { "type": "point", "color": "#0074D9", "icon": "building_marker" },
+      "spatial_results": [
+        {
+          "source": "building_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.458, -1.235] },
+          "properties": { "building_id": "B-001" }
+        },
+        {
+          "source": "building_detection_v1",
+          "geometry": { "type": "Point", "coordinates": [116.4583, -1.2353] },
+          "properties": { "building_id": "B-002" }
+        }
+      ]
+    }
+  }
+]
