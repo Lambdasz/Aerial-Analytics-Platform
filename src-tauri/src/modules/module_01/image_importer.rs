@@ -41,7 +41,7 @@ use crate::modules::module_01::metadata_extractor::{detect_format, missing_requi
 /// [`MetadataError`] — variants its own contract says it never produces. In
 /// that case `extension` is not necessarily unsupported; the failure is
 /// unrelated to the extension check.
-fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
+pub(crate) fn classify_file(candidate: &ImportCandidate) -> Result<ImageFormat, ImportError> {
     let extension = extension_of(&candidate.file_name);
     match detect_format(&candidate.header, &extension) {
         Ok(format) => Ok(format),
@@ -85,7 +85,7 @@ fn basename_of(path: &str) -> &str {
 ///
 /// Strips directories. Rejects empty names, `.`, and `..` so a raw
 /// `file_name` cannot escape the session folder.
-fn dest_basename(name: &str) -> Option<&str> {
+pub(crate) fn dest_basename(name: &str) -> Option<&str> {
     let base = basename_of(name);
     if base.is_empty() || base == "." || base == ".." {
         None
@@ -94,7 +94,7 @@ fn dest_basename(name: &str) -> Option<&str> {
     }
 }
 
-fn extension_of(file_name: &str) -> String {
+pub(crate) fn extension_of(file_name: &str) -> String {
     basename_of(file_name)
         .rsplit_once('.')
         .map(|(_, ext)| ext.trim_start_matches('.').to_ascii_lowercase())
@@ -117,6 +117,81 @@ pub(crate) enum NameFolding {
     /// only by case or by canonical (NFC/NFD) form are the same. Case folding
     /// is simple, per character, so `ß` stays distinct from `ss`.
     Apfs,
+}
+
+/// The name-folding policy of the filesystem this build writes to.
+///
+/// The import destination is the app's library folder inside the OS
+/// app-data directory, which sits on the platform's default filesystem:
+/// NTFS on Windows, APFS on macOS, and a case-sensitive Linux filesystem
+/// elsewhere (where `Exact` is the only safe choice, since the build cannot
+/// know whether the data directory is on ext4, btrfs, or a case-insensitive
+/// mount).
+///
+/// # Purity
+///
+/// Pure, total (never fails).
+pub(crate) fn folding_for_os() -> NameFolding {
+    if cfg!(target_os = "windows") {
+        NameFolding::Ntfs
+    } else if cfg!(target_os = "macos") {
+        NameFolding::Apfs
+    } else {
+        NameFolding::Exact
+    }
+}
+
+/// Pairs `.jpg`/`.jpeg` candidates with the `.dng` of the same stem.
+///
+/// # Purity
+///
+/// Pure. Does not read the disk.
+///
+/// # Returns
+///
+/// `(jpeg_candidate_id, dng_candidate_id)` for every stem that has exactly
+/// one JPEG and one DNG, ordered by folded stem. A stem with two JPEGs or
+/// two DNGs is ambiguous and produces no pair: guessing would attach the
+/// wrong raw file to the wrong preview. `folding` decides which stems count
+/// as the same name, matching the name-conflict policy.
+pub(crate) fn pair_raw_siblings(
+    candidates: &[ImportCandidate],
+    folding: NameFolding,
+) -> Vec<(String, String)> {
+    #[derive(Default)]
+    struct Group<'a> {
+        jpgs: Vec<&'a ImportCandidate>,
+        dngs: Vec<&'a ImportCandidate>,
+    }
+
+    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    for candidate in candidates {
+        let Some(base) = dest_basename(&candidate.file_name) else {
+            continue;
+        };
+        let Some((stem, extension)) = base.rsplit_once('.') else {
+            continue;
+        };
+        if stem.is_empty() {
+            continue;
+        }
+        let group = groups.entry(fold_name(stem, folding)).or_default();
+        match extension.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => group.jpgs.push(candidate),
+            "dng" => group.dngs.push(candidate),
+            _ => {}
+        }
+    }
+
+    groups
+        .into_values()
+        .filter_map(
+            |group| match (group.jpgs.as_slice(), group.dngs.as_slice()) {
+                ([jpeg], [dng]) => Some((jpeg.id.clone(), dng.id.clone())),
+                _ => None,
+            },
+        )
+        .collect()
 }
 
 /// Maps a character through its single-character case mapping, leaving it
@@ -401,6 +476,7 @@ pub(crate) fn import_images(
         rejected,
         name_conflicts,
         pending_duplicates,
+        not_analysis_ready: Vec::new(),
     })
 }
 
@@ -903,5 +979,56 @@ mod tests {
         let report = import_images(&request, &known, &[], NameFolding::Exact).expect("import runs");
         assert_eq!(report.imported_image_ids, vec!["a".to_string()]);
         assert!(report.duplicates.is_empty());
+    }
+
+    #[test]
+    fn pairs_same_stem_jpeg_and_dng() {
+        let candidates = vec![
+            candidate_named("j", "/in/DJI_1.JPG", "DJI_1.JPG", "h1"),
+            candidate_named("d", "/in/DJI_1.DNG", "DJI_1.DNG", "h2"),
+            candidate_named("lonely", "/in/DJI_2.JPG", "DJI_2.JPG", "h3"),
+        ];
+        assert_eq!(
+            pair_raw_siblings(&candidates, NameFolding::Exact),
+            vec![("j".to_string(), "d".to_string())]
+        );
+    }
+
+    #[test]
+    fn pairing_respects_folding_and_ignores_ambiguous_stems() {
+        let candidates = vec![
+            candidate_named("upper", "/in/IMG_1.JPG", "IMG_1.JPG", "h1"),
+            candidate_named("lower", "/in/img_1.dng", "img_1.dng", "h2"),
+            candidate_named("a", "/in/two.jpg", "two.jpg", "h3"),
+            candidate_named("b", "/in/two.jpeg", "two.jpeg", "h4"),
+            candidate_named("c", "/in/two.dng", "two.dng", "h5"),
+        ];
+        assert!(pair_raw_siblings(&candidates, NameFolding::Exact).is_empty());
+        assert_eq!(
+            pair_raw_siblings(&candidates, NameFolding::Ntfs),
+            vec![("upper".to_string(), "lower".to_string())],
+            "two JPEGs for one stem stay unpaired"
+        );
+    }
+
+    #[test]
+    fn pairing_requires_the_same_stem_not_just_the_same_folder() {
+        let candidates = vec![
+            candidate_named("j", "/in/A.JPG", "A.JPG", "h1"),
+            candidate_named("d", "/in/B.DNG", "B.DNG", "h2"),
+        ];
+        assert!(pair_raw_siblings(&candidates, NameFolding::Exact).is_empty());
+    }
+
+    #[test]
+    fn folding_for_os_matches_the_platform_default() {
+        let expected = if cfg!(target_os = "windows") {
+            NameFolding::Ntfs
+        } else if cfg!(target_os = "macos") {
+            NameFolding::Apfs
+        } else {
+            NameFolding::Exact
+        };
+        assert_eq!(folding_for_os(), expected);
     }
 }

@@ -128,6 +128,14 @@ pub struct ImportReport {
     /// be. Re-import them after the conflict is resolved.
     #[serde(default)]
     pub pending_duplicates: Vec<DuplicateFlag>,
+    /// Ids of imported images that need a raw decode before analysis: DNG
+    /// files with no same-stem JPEG to stand in for them.
+    ///
+    /// They are imported and listed in [`Self::imported_image_ids`] — this
+    /// only tells the UI they cannot be sent to a plugin yet. A DNG with a
+    /// same-stem JPEG is not listed: the JPEG is its analysis input.
+    #[serde(default)]
+    pub not_analysis_ready: Vec<String>,
 }
 
 /// Reasons an import operation or a single candidate within it can fail.
@@ -160,6 +168,84 @@ pub enum ImportError {
     UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
     MagicMismatch { path: String },
+    /// Copying the source into the project's library failed, or the copied
+    /// file could not be recorded. `path` is the source path the user picked
+    /// when it is known, and `reason` says what went wrong. The failed file
+    /// leaves no row and no half-written copy behind.
+    CopyFailed { path: String, reason: String },
+    /// The source file changed between hashing and copying: its bytes no
+    /// longer match the `content_hash` the plan was made from. Nothing was
+    /// recorded; re-importing scans and hashes it again.
+    SourceChanged { path: String },
+    /// The destination name is already taken by a file that appeared after
+    /// the plan was made. The import never overwrites: re-plan with the new
+    /// folder contents to get a name-conflict prompt.
+    DestinationExists { path: String },
+    /// The image cannot be handed to a plugin: it is a DNG with no
+    /// same-stem JPEG, and Module 1 does not decode DNG pixels.
+    NotAnalysisReady { image_id: String },
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoImagesFound => f.write_str("no importable images were found"),
+            Self::SessionNotFound { session_id } => {
+                write!(f, "session '{session_id}' does not exist")
+            }
+            Self::NotImplemented { path } => {
+                write!(f, "import is not implemented for '{path}' yet")
+            }
+            Self::InvalidFileName { path } => {
+                write!(f, "'{path}' has no usable file name")
+            }
+            Self::MissingContentHash { path } => {
+                write!(f, "'{path}' could not be read for hashing")
+            }
+            Self::UnsupportedFormat { path, extension } => {
+                write!(
+                    f,
+                    "'{path}' is not a JPEG or DNG file (extension '.{extension}')"
+                )
+            }
+            Self::MagicMismatch { path } => {
+                write!(f, "'{path}' does not contain a valid JPEG or DNG signature")
+            }
+            Self::CopyFailed { path, reason } => {
+                write!(f, "could not copy '{path}': {reason}")
+            }
+            Self::SourceChanged { path } => {
+                write!(f, "'{path}' changed while it was being imported")
+            }
+            Self::DestinationExists { path } => {
+                write!(f, "'{path}' already exists in the library")
+            }
+            Self::NotAnalysisReady { image_id } => {
+                write!(f, "image '{image_id}' cannot be analysed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+impl ImportError {
+    /// Returns a short error code for client-side programmatic matching.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NoImagesFound => "NO_IMAGES_FOUND",
+            Self::SessionNotFound { .. } => "SESSION_NOT_FOUND",
+            Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
+            Self::InvalidFileName { .. } => "INVALID_FILE_NAME",
+            Self::MissingContentHash { .. } => "MISSING_CONTENT_HASH",
+            Self::UnsupportedFormat { .. } => "UNSUPPORTED_FORMAT",
+            Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
+            Self::CopyFailed { .. } => "COPY_FAILED",
+            Self::SourceChanged { .. } => "SOURCE_CHANGED",
+            Self::DestinationExists { .. } => "DESTINATION_EXISTS",
+            Self::NotAnalysisReady { .. } => "IMAGE_NOT_READY",
+        }
+    }
 }
 
 /// Supported image file formats.

@@ -230,9 +230,14 @@
 //! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
 //!   per-file classification, filesystem-aware name-conflict detection,
 //!   project-scope duplicate detection, and incomplete-metadata flags.
+//! - `modules::module_01::import_io` — copy-on-import I/O (`run_import`,
+//!   `analysis_input`): copies accepted images into `<library_root>`, reads
+//!   metadata from the copy, writes the row(s), and links JPG/DNG stem pairs.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `commands::session` — flight session Tauri commands.
+//! - `commands::import` — copy-on-import commands (`import_images`,
+//!   `get_analysis_input`) and the `import-progress` event.
 //! - `commands::image_preview` — serves a `.jpg`/`.jpeg`/`.dng` as a
 //!   base64-encoded JPEG preview over IPC.
 //!
@@ -240,6 +245,8 @@
 //!
 //! | Command | Description |
 //! |---------|-------------|
+//! | `import_images` | Copy picked JPG/DNG files into the app library and record them in a session |
+//! | `get_analysis_input` | Return the image a plugin may analyse (JPEG, or a DNG's same-stem JPEG) |
 //! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
@@ -251,14 +258,17 @@
 //! | `delete_session` | Delete a session |
 //!
 //! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
-//! import planning and the schema migration are implemented and unit tested.
+//! import planning, copy-on-import I/O and the schema migration are
+//! implemented and unit tested. `import_images` copies picked images into the
+//! app-owned library (`<app-data-dir>/library`, override `AAP_LIBRARY_ROOT`)
+//! and stores the copy's absolute path, so the source folder may later be
+//! moved or deleted. `get_analysis_input` resolves the row a plugin may
+//! analyse; a DNG with no same-stem JPEG is imported but reported as not
+//! analysis-ready, because Module 1 does not decode raw pixels.
 //! `read_dng` is the crate's entry point for reading a DNG and
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
-//! The `preview_image` command serves those previews over IPC. Importing
-//! images and persisting the resulting [`models::ImageMetadata`] rows are
-//! still library-level only: no command wires them in, so the UI cannot
-//! import images yet.
+//! The `preview_image` command serves those previews over IPC.
 //!
 //! ---
 //!
@@ -496,7 +506,9 @@ use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Shared application state injected into every Tauri command via `.manage()`.
@@ -511,6 +523,14 @@ pub struct AppState {
     /// simple for dev) — revisit for the OS app-data directory before
     /// shipping a real build.
     pub db: Arc<Mutex<rusqlite::Connection>>,
+    /// App-owned root of imported images, decided once at startup.
+    ///
+    /// Imported files are **copied** below it, so a stored image survives the
+    /// user moving or deleting the folder it came from. Override with the
+    /// `AAP_LIBRARY_ROOT` environment variable; otherwise this is
+    /// `<app-data-dir>/library`. See
+    /// [`modules::module_01::import_io::session_images_dir`] for the layout.
+    pub library_root: Arc<PathBuf>,
 }
 
 // Learn more about Tauri commands at
@@ -547,9 +567,30 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
-            jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
-            db: Arc::new(Mutex::new(db_conn)),
+        .setup(move |app| {
+            // Resolved here, not in the command, so every import in this
+            // process writes below the same root. A missing app-data
+            // directory must not keep the app from starting: fall back to
+            // the working directory and say so.
+            let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
+                Some(value) => PathBuf::from(value),
+                None => match app.path().app_data_dir() {
+                    Ok(dir) => dir.join("library"),
+                    Err(err) => {
+                        eprintln!(
+                            "warning: could not resolve the app-data directory ({err}); \
+                             using './library' for imported images"
+                        );
+                        std::env::current_dir().unwrap_or_default().join("library")
+                    }
+                },
+            };
+            app.manage(AppState {
+                jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+                db: Arc::new(Mutex::new(db_conn)),
+                library_root: Arc::new(library_root),
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             greet,
@@ -573,7 +614,9 @@ pub fn run() {
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
-            // Image preview
+            // Image import & preview
+            commands::import::import_images,
+            commands::import::get_analysis_input,
             commands::image_preview::preview_image,
             // Project management
             commands::project::create_project,

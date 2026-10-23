@@ -43,12 +43,18 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
             height        INTEGER,
             format        TEXT,
             make          TEXT,
-            camera_model  TEXT";
+            camera_model  TEXT,
+            source_path   TEXT,
+            content_hash  TEXT,
+            file_size     INTEGER,
+            raw_sibling_id TEXT,
+            analysis_ready INTEGER";
 
 /// Columns of the `image` table in canonical order, for `SELECT`s and for
 /// the data-preserving copy in [`migrate_image_schema`].
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
-    captured_at, gps_altitude_m, width, height, format, make, camera_model";
+    captured_at, gps_altitude_m, width, height, format, make, camera_model, \
+    source_path, content_hash, file_size, raw_sibling_id, analysis_ready";
 
 /// Canonical `image` columns. A table carrying all of them with nullable
 /// location columns is already current and is never rebuilt, so any columns
@@ -66,7 +72,16 @@ const IMAGE_COLUMN_NAMES: &[&str] = &[
     "format",
     "make",
     "camera_model",
+    "source_path",
+    "content_hash",
+    "file_size",
+    "raw_sibling_id",
+    "analysis_ready",
 ];
+
+/// Index used by project-scope duplicate detection, which looks images up by
+/// content hash.
+const IMAGE_CONTENT_HASH_INDEX: &str = "idx_image_content_hash";
 
 /// One `PRAGMA table_info` row, as far as a rebuild needs it.
 struct ColumnInfo {
@@ -146,7 +161,7 @@ fn table_is_empty(conn: &Connection, table: &str) -> Result<bool, SessionError> 
 /// this module's public functions take `&Connection` and must keep doing
 /// so. `IMMEDIATE` takes the write lock up front, so the DDL sequence below
 /// it cannot interleave with another writer.
-fn with_immediate_transaction<T>(
+pub(crate) fn with_immediate_transaction<T>(
     conn: &Connection,
     body: impl FnOnce(&Connection) -> Result<T, SessionError>,
 ) -> Result<T, SessionError> {
@@ -282,6 +297,12 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         [],
     )?;
     migrate_image_schema(conn)?;
+    // Created after the migration: a rebuild drops the old table's indexes,
+    // so this also restores the index on upgraded databases.
+    conn.execute(
+        &format!("CREATE INDEX IF NOT EXISTS {IMAGE_CONTENT_HASH_INDEX} ON image(content_hash)"),
+        [],
+    )?;
     Ok(())
 }
 
@@ -293,7 +314,10 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
 /// or `captured_at` still carries a `NOT NULL` constraint (SQLite cannot
 /// drop such a constraint with `ALTER TABLE`, hence the rebuild). The
 /// upgrade copies every existing column, so rows keep their data and the new
-/// metadata columns are `NULL`.
+/// metadata columns are `NULL`. That includes the copy-on-import provenance
+/// columns (`source_path`, `content_hash`, `file_size`, `raw_sibling_id`,
+/// `analysis_ready`): an upgraded row keeps pointing at its original
+/// `file_path` and is not rewritten.
 ///
 /// Idempotent: a table already on the current schema is left untouched,
 /// including any columns a user added beyond the canonical set — an extra
@@ -809,6 +833,11 @@ fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
 /// * `metadata` — output of [`crate::modules::module_01::extract_metadata`].
 ///   Absent tags become `NULL` columns; the record is always built, even
 ///   when every field is missing (M1-23 "incomplete metadata").
+///
+/// The copy-on-import provenance columns (`source_path`, `content_hash`,
+/// `file_size`, `raw_sibling_id`, `analysis_ready`) start as `None`: the
+/// import I/O layer fills them in once the copy exists and the stem pair is
+/// known. A record built here is otherwise complete.
 pub fn image_from_metadata(
     image_id: Uuid,
     session_id: Uuid,
@@ -828,6 +857,11 @@ pub fn image_from_metadata(
         format: metadata.format.map(|format| format.as_str().to_string()),
         make: metadata.make.clone(),
         camera_model: metadata.camera_model_name.clone(),
+        source_path: None,
+        content_hash: None,
+        file_size: None,
+        raw_sibling_id: None,
+        analysis_ready: None,
     }
 }
 
@@ -843,8 +877,9 @@ pub fn image_from_metadata(
 pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError> {
     conn.execute(
         "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
-            captured_at, gps_altitude_m, width, height, format, make, camera_model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            captured_at, gps_altitude_m, width, height, format, make, camera_model, \
+            source_path, content_hash, file_size, raw_sibling_id, analysis_ready)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             image.id.to_string(),
             image.session_id.to_string(),
@@ -858,6 +893,11 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
             image.format,
             image.make,
             image.camera_model,
+            image.source_path,
+            image.content_hash,
+            image.file_size.and_then(|size| i64::try_from(size).ok()),
+            image.raw_sibling_id.map(|id| id.to_string()),
+            image.analysis_ready.map(i64::from),
         ],
     )?;
     Ok(())
@@ -899,6 +939,41 @@ pub fn get_images_by_session(
         .query_map(params![session_id.to_string()], row_to_image)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(images)
+}
+
+/// Lists the content hashes of every image already stored in a project.
+///
+/// This is the duplicate scope for an import: an image is a duplicate when
+/// its hash matches one of these, even if it lives in a different session.
+/// Rows without a hash (migrated from before copy-on-import) are skipped —
+/// they cannot prove a duplicate.
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+///
+/// # Returns
+///
+/// `(image_id, content_hash)` pairs ordered by image id, so the first entry
+/// for a repeated hash is stable across calls.
+pub fn known_hashes_for_project(
+    conn: &Connection,
+    project_id: Uuid,
+) -> Result<Vec<(String, crate::models::image::ContentHash)>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.content_hash FROM image i
+         JOIN session s ON s.id = i.session_id
+         WHERE s.project_id = ?1 AND i.content_hash IS NOT NULL AND i.content_hash <> ''
+         ORDER BY i.id",
+    )?;
+    let hashes = stmt
+        .query_map(params![project_id.to_string()], |row| {
+            let id: String = row.get(0)?;
+            let hash: String = row.get(1)?;
+            Ok((id, crate::models::image::ContentHash(hash)))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(hashes)
 }
 
 /// Derives a session's `(date_start, date_end)` as the min/max `captured_at`
@@ -980,6 +1055,11 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let format: Option<String> = row.get(9)?;
     let make: Option<String> = row.get(10)?;
     let camera_model: Option<String> = row.get(11)?;
+    let source_path: Option<String> = row.get(12)?;
+    let content_hash: Option<String> = row.get(13)?;
+    let file_size: Option<i64> = row.get(14)?;
+    let raw_sibling_id: Option<String> = row.get(15)?;
+    let analysis_ready: Option<i64> = row.get(16)?;
 
     let captured_at = captured_at
         .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
@@ -991,6 +1071,32 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         .transpose()?;
     let height = height
         .map(|v| u32::try_from(v).map_err(|e| conversion_err(8, rusqlite::types::Type::Integer, e)))
+        .transpose()?;
+    // Written from `u64`; a negative or non-representable value is corruption.
+    let file_size = file_size
+        .map(|v| {
+            u64::try_from(v).map_err(|e| conversion_err(14, rusqlite::types::Type::Integer, e))
+        })
+        .transpose()?;
+    let raw_sibling_id = raw_sibling_id
+        .map(|raw| {
+            Uuid::parse_str(&raw).map_err(|e| conversion_err(15, rusqlite::types::Type::Text, e))
+        })
+        .transpose()?;
+    // Stored as 0/1; anything else is not a boolean this code wrote.
+    let analysis_ready = analysis_ready
+        .map(|v| match v {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(conversion_err(
+                16,
+                rusqlite::types::Type::Integer,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("analysis_ready must be 0 or 1, found {other}"),
+                ),
+            )),
+        })
         .transpose()?;
 
     Ok(Image {
@@ -1006,6 +1112,11 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         format,
         make,
         camera_model,
+        source_path,
+        content_hash,
+        file_size,
+        raw_sibling_id,
+        analysis_ready,
     })
 }
 
@@ -1056,6 +1167,11 @@ mod tests {
             format: None,
             make: None,
             camera_model: None,
+            source_path: None,
+            content_hash: None,
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: None,
         }
     }
 
@@ -1232,6 +1348,16 @@ mod tests {
 
         init_schema(&conn).expect("migrate");
 
+        // The rebuilt table gets the duplicate-detection index back.
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                params![IMAGE_CONTENT_HASH_INDEX],
+                |row| row.get(0),
+            )
+            .expect("index lookup");
+        assert_eq!(index_count, 1);
+
         let old: Image = conn
             .query_row(
                 &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/photos/old.jpg'"),
@@ -1241,6 +1367,14 @@ mod tests {
             .expect("old row readable");
         assert_eq!(old.location_lat, Some(-7.5));
         assert_eq!(old.width, None);
+        // Copy-on-import provenance is unknown for a migrated row: it keeps
+        // pointing at the original path and is not rewritten.
+        assert_eq!(old.file_path, "/photos/old.jpg");
+        assert_eq!(old.source_path, None);
+        assert_eq!(old.content_hash, None);
+        assert_eq!(old.file_size, None);
+        assert_eq!(old.raw_sibling_id, None);
+        assert_eq!(old.analysis_ready, None);
 
         // Previously impossible on the old schema: persisting an image
         // without GPS or capture time.
