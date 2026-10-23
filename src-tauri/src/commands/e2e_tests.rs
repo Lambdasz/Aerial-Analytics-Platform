@@ -66,9 +66,15 @@ where
 
 fn env_session(env: &TestEnv) -> Uuid {
     let conn = env.state.db.lock().expect("db lock");
-    flight_session::create_session(&conn, Uuid::new_v4(), Some("e2e".to_string()))
-        .expect("session")
-        .id
+    flight_session::create_session(
+        &conn,
+        crate::modules::module_01::create_project(&conn, "Test Project".to_string(), None)
+            .expect("project")
+            .id,
+        Some("e2e".to_string()),
+    )
+    .expect("session")
+    .id
 }
 
 /// A synthetic-but-real JPEG the import pipeline can read back.

@@ -1909,9 +1909,15 @@ mod tests {
 
     fn session(db: &Mutex<Connection>) -> Uuid {
         let conn = db.lock().expect("db lock");
-        create_session(&conn, Uuid::new_v4(), Some("Session".to_string()))
-            .expect("session")
-            .id
+        create_session(
+            &conn,
+            crate::modules::module_01::create_project(&conn, "Test Project".to_string(), None)
+                .expect("project")
+                .id,
+            Some("Session".to_string()),
+        )
+        .expect("session")
+        .id
     }
 
     fn sources(paths: &[PathBuf]) -> Vec<String> {
@@ -3249,7 +3255,14 @@ mod tests {
     fn legacy_dng_row_is_not_analysis_ready() {
         let conn = Connection::open_in_memory().expect("db");
         init_schema(&conn).expect("schema");
-        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let session = create_session(
+            &conn,
+            crate::modules::module_01::create_project(&conn, "Test Project".to_string(), None)
+                .expect("project")
+                .id,
+            None,
+        )
+        .expect("session");
         let legacy = Image {
             id: Uuid::new_v4(),
             session_id: session.id,

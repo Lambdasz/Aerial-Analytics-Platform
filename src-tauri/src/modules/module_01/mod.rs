@@ -30,8 +30,8 @@ pub use error::{MetadataError, SessionError};
 pub use flight_session::{
     assign_image_to_session, count_images_by_project, create_project, create_session,
     delete_project, delete_session, get_image, get_images_by_session, get_project, get_session,
-    get_sessions_by_project, image_from_metadata, init_schema, insert_image, list_projects,
-    known_hashes_for_project, migrate_image_schema, recalculate_session_date_range,
+    get_sessions_by_project, image_from_metadata, init_schema, insert_image,
+    known_hashes_for_project, list_projects, migrate_image_schema, recalculate_session_date_range,
     update_project, update_session_name, update_session_status,
 };
 pub(crate) use image_importer::{

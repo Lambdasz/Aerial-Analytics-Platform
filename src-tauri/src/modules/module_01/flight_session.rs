@@ -2106,7 +2106,7 @@ mod tests {
             .expect("pragma foreign_keys");
         assert_eq!(enforced, 1);
 
-        let live = create_session(&conn, Uuid::new_v4(), None).expect("live");
+        let live = create_session(&conn, test_project(&conn).id, None).expect("live");
         let image = image_from_metadata(
             Uuid::new_v4(),
             live.id,
@@ -2127,7 +2127,7 @@ mod tests {
     #[test]
     fn delete_session_removes_a_session_with_images() {
         let conn = memory_db();
-        let session = create_session(&conn, Uuid::new_v4(), None).expect("session");
+        let session = create_session(&conn, test_project(&conn).id, None).expect("session");
         for path in ["/lib/a.jpg", "/lib/b.jpg"] {
             insert_image(&conn, &image_row(session.id, path, None)).expect("image");
         }
@@ -2145,7 +2145,7 @@ mod tests {
     #[test]
     fn delete_session_of_missing_id_keeps_other_rows() {
         let conn = memory_db();
-        let kept = create_session(&conn, Uuid::new_v4(), None).expect("kept session");
+        let kept = create_session(&conn, test_project(&conn).id, None).expect("kept session");
         for path in ["/lib/keep1.jpg", "/lib/keep2.jpg"] {
             insert_image(&conn, &image_row(kept.id, path, None)).expect("image");
         }
