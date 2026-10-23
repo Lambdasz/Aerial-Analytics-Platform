@@ -225,17 +225,22 @@
 //!   (`extract_metadata`): camera/GPS tags, acquisition timestamp, pixel
 //!   dimensions, format sniffing, completeness checks, and the plugin
 //!   pre-flight projection.
+//! - `modules::module_01::dng_preview` — the JPEG a DNG already stores
+//!   (`read_dng_preview`), so a browser can display a DNG with no raw decoder.
 //! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
 //!   per-file classification, filesystem-aware name-conflict detection,
 //!   project-scope duplicate detection, and incomplete-metadata flags.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `commands::session` — flight session Tauri commands.
+//! - `commands::image_preview` — serves a `.jpg`/`.jpeg`/`.dng` as a
+//!   base64-encoded JPEG preview over IPC.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
+//! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
 //! | `get_sessions_by_project` | List sessions for a project |
@@ -247,10 +252,13 @@
 //!
 //! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
 //! import planning and the schema migration are implemented and unit tested.
-//! The import and extraction functions are pure/library-level only: no Tauri
-//! command exposes them yet, so the UI cannot import images, and the I/O layer
-//! that copies files and persists the resulting [`models::ImageMetadata`] rows
-//! is not wired in.
+//! `read_dng` is the crate's entry point for reading a DNG and
+//! `read_dng_preview` for reading its stored JPEG preview, so no module has
+//! to reach into Module 1's TIFF parser; no other module calls them yet.
+//! The `preview_image` command serves those previews over IPC. Importing
+//! images and persisting the resulting [`models::ImageMetadata`] rows are
+//! still library-level only: no command wires them in, so the UI cannot
+//! import images yet.
 //!
 //! ---
 //!
@@ -565,6 +573,8 @@ pub fn run() {
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
+            // Image preview
+            commands::image_preview::preview_image,
             // Temporal change analysis (Module 10)
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,

@@ -8,10 +8,10 @@
 //!
 //! ## Purity Boundary
 //!
-//! [`extract_metadata`] is the **only** impure function in this module — it
-//! is the sole point that touches the filesystem. Every other function is a
-//! pure transformation over bytes and values, so they can be exercised with
-//! in-memory fixtures without a real file on disk.
+//! [`extract_metadata`] and [`read_dng`] are the impure functions in this
+//! module — they are the only points that touch the filesystem. Every other
+//! function is a pure transformation over bytes and values, so they can be
+//! exercised with in-memory fixtures without a real file on disk.
 //!
 //! [`extract_metadata`] is defined as the composition:
 //!
@@ -44,6 +44,8 @@
 //! |----------|-----------|---------|
 //! | [`to_plugin_metadata`] | Module 1 → Module 2 | Pre-flight image metadata for `plugin_manager::payload::preflight_check` |
 //! | [`describe_completeness`] | Module 1 → Module 1.5 | Missing-tag report feeding Image Quality Checking |
+//! | [`read_dng`] | Module 1 → other modules | Reads one DNG into `ImageMetadata` without exposing the TIFF parsers |
+//! | [`read_dng_preview`] | Module 1 → other modules | The stored JPEG preview of one DNG, so a browser can display it |
 
 use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::modules::module_01::error::MetadataError;
@@ -236,6 +238,110 @@ pub(crate) fn extract_metadata(path: &Path) -> Result<ImageMetadata, MetadataErr
     Ok(merge_tags(exif, xmp, dimensions, format))
 }
 
+/// Reads a single DNG file from disk and returns its metadata.
+///
+/// This is the entry point other modules use to read a DNG. It exists so
+/// callers never have to reach into the TIFF/IFD machinery of this module:
+/// the DNG container is parsed here, and the caller receives the same
+/// [`ImageMetadata`] an import would produce.
+///
+/// The file is sniffed before it is parsed. A file that is not a DNG is
+/// rejected as the wrong format, not as a broken one: a JPEG handed to this
+/// function reports [`MetadataError::UnsupportedFormat`] rather than the
+/// [`MetadataError::MalformedExif`] that parsing it as a DNG would produce.
+/// The one exception is a `.dng` whose header is not TIFF at all, which
+/// reports [`MetadataError::MagicMismatch`] — the extension promised a DNG
+/// and the bytes did not deliver one.
+///
+/// A plain TIFF named `.dng` is accepted, because the format sniff cannot
+/// tell a DNG from a TIFF and this module treats them the same. No DNG
+/// version check is performed.
+///
+/// # Purity
+///
+/// Impure — it opens the file to sniff the header, then delegates the read
+/// to [`extract_metadata`].
+///
+/// # Arguments
+///
+/// * `path` — filesystem path to a DNG aerial image.
+///
+/// # Returns
+///
+/// `Ok(ImageMetadata)` with every field populated that could be read; absent
+/// tags are `None`, not an error. An absent or unsalvageable EXIF block
+/// composes into default tags the same way [`extract_metadata`] treats a
+/// JPEG, so it is not an error either.
+///
+/// # Errors
+///
+/// [`MetadataError::UnsupportedFormat`] if the file is not a DNG,
+/// [`MetadataError::MagicMismatch`] if a `.dng` does not start with TIFF
+/// magic, and [`MetadataError::Io`] if it cannot be read. Parsing a present
+/// EXIF segment that is broken does not fail the read; whatever kamadak
+/// recovers composes into the tags and the rest stay `None`.
+///
+/// # Module Contract
+///
+/// **Module 1.3 → other modules (DNG read)**.
+pub(crate) fn read_dng(path: &Path) -> Result<ImageMetadata, MetadataError> {
+    require_dng_file(path)?;
+    extract_metadata(path)
+}
+
+/// Checks that `path` really is a DNG before anything tries to parse it.
+///
+/// This is the shared gate for every DNG reader in Module 1, so a reader
+/// cannot disagree with another about what counts as a DNG.
+///
+/// # Purity
+///
+/// Impure — opens the file to read its header.
+///
+/// # Arguments
+///
+/// * `path` — filesystem path to the candidate file.
+///
+/// # Returns
+///
+/// `Ok(())` when the file is a DNG.
+///
+/// # Errors
+///
+/// [`MetadataError::UnsupportedFormat`] when the file is not a DNG at all,
+/// and [`MetadataError::MagicMismatch`] when a `.dng` does not start with
+/// TIFF magic. A `.dng` whose header is not TIFF is reported as a mismatch
+/// rather than an unsupported format: the extension promised a DNG and the
+/// bytes did not deliver one.
+pub(super) fn require_dng_file(path: &Path) -> Result<(), MetadataError> {
+    let extension = normalized_extension(path);
+    let mut file = std::fs::File::open(path)?;
+    let mut header = Vec::with_capacity(16);
+    file.by_ref().take(16).read_to_end(&mut header)?;
+    match detect_format(&header, &extension) {
+        Ok(ImageFormat::Dng) => Ok(()),
+        Err(MetadataError::MagicMismatch { .. }) if extension == "dng" => {
+            Err(MetadataError::MagicMismatch {
+                path: path.display().to_string(),
+            })
+        }
+        _ => Err(MetadataError::UnsupportedFormat {
+            path: path.display().to_string(),
+            extension,
+        }),
+    }
+}
+
+/// The file's extension, lowercased and without a leading dot, matching how
+/// [`detect_format`] normalizes it.
+fn normalized_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+}
+
 /// Determines the image format from the file extension and leading bytes.
 ///
 /// # Purity
@@ -294,7 +400,7 @@ pub(crate) fn detect_format(header: &[u8], extension: &str) -> Result<ImageForma
 
 /// Byte order of an embedded TIFF header (EXIF in JPEG APP1, or a DNG file).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TiffEndian {
+pub(super) enum TiffEndian {
     Little,
     Big,
 }
@@ -307,7 +413,7 @@ fn u16_at(data: &[u8], off: usize, endian: TiffEndian) -> Option<u16> {
     })
 }
 
-fn u32_at(data: &[u8], off: usize, endian: TiffEndian) -> Option<u32> {
+pub(super) fn u32_at(data: &[u8], off: usize, endian: TiffEndian) -> Option<u32> {
     let b = data.get(off..off + 4)?;
     Some(match endian {
         TiffEndian::Little => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
@@ -319,12 +425,12 @@ fn u32_at(data: &[u8], off: usize, endian: TiffEndian) -> Option<u32> {
 /// inline values (total size <= 4) can be read without endian confusion;
 /// `val_u32` holds the same field decoded as an offset when the value is
 /// stored out-of-line.
-struct IfdEntry {
-    tag: u16,
-    typ: u16,
-    count: u32,
-    val_bytes: [u8; 4],
-    val_u32: u32,
+pub(super) struct IfdEntry {
+    pub(super) tag: u16,
+    pub(super) typ: u16,
+    pub(super) count: u32,
+    pub(super) val_bytes: [u8; 4],
+    pub(super) val_u32: u32,
 }
 
 fn type_size(typ: u16) -> Option<u64> {
@@ -337,7 +443,7 @@ fn type_size(typ: u16) -> Option<u64> {
     }
 }
 
-fn parse_ifd(
+pub(super) fn parse_ifd(
     tiff: &[u8],
     endian: TiffEndian,
     ifd_offset: usize,
@@ -365,8 +471,38 @@ fn parse_ifd(
     Ok(entries)
 }
 
-fn find_entry(entries: &[IfdEntry], tag: u16) -> Option<&IfdEntry> {
+pub(super) fn find_entry(entries: &[IfdEntry], tag: u16) -> Option<&IfdEntry> {
     entries.iter().find(|e| e.tag == tag)
+}
+
+/// Reads a blob of `len` bytes at `offset`, refusing anything longer than
+/// `max_len`.
+///
+/// This exists beside [`entry_data`] because that helper caps a value at
+/// 1 MB, which is too small for a real aerial preview JPEG. A DNG stores the
+/// preview out of line, addressed by an offset and a length, so the two
+/// numbers are read separately and the blob is fetched directly.
+///
+/// # Purity
+///
+/// Pure.
+///
+/// # Arguments
+///
+/// * `tiff` — the whole container.
+/// * `offset` — byte offset of the blob within `tiff`.
+/// * `len` — length of the blob in bytes.
+/// * `max_len` — refuse any blob longer than this.
+///
+/// # Returns
+///
+/// `Some(&[u8])` for the blob, or `None` when the range is out of bounds,
+/// `len` is zero, or `len` exceeds `max_len`.
+pub(super) fn blob_at(tiff: &[u8], offset: usize, len: usize, max_len: usize) -> Option<&[u8]> {
+    if len == 0 || len > max_len {
+        return None;
+    }
+    tiff.get(offset..offset.checked_add(len)?)
 }
 
 /// Raw value bytes for an entry: inline when they fit in 4 bytes,
@@ -399,7 +535,12 @@ fn read_u16_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16)
     }
 }
 
-fn read_u32_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16) -> Option<u32> {
+pub(super) fn read_u32_val(
+    tiff: &[u8],
+    entries: &[IfdEntry],
+    endian: TiffEndian,
+    tag: u16,
+) -> Option<u32> {
     let entry = find_entry(entries, tag)?;
     let data = entry_data(tiff, entry)?;
     match entry.typ {
@@ -410,7 +551,7 @@ fn read_u32_val(tiff: &[u8], entries: &[IfdEntry], endian: TiffEndian, tag: u16)
 }
 
 /// Validates the TIFF header and returns `(endian, ifd0_offset)`.
-fn tiff_header(tiff: &[u8]) -> Option<(TiffEndian, usize)> {
+pub(super) fn tiff_header(tiff: &[u8]) -> Option<(TiffEndian, usize)> {
     let magic = tiff.get(0..4)?;
     let endian = match magic {
         [0x49, 0x49, 0x2A, 0x00] => TiffEndian::Little,
@@ -2073,6 +2214,98 @@ mod tests {
         assert_eq!(metadata.width, Some(400));
         assert_eq!(metadata.height, Some(300));
         assert_eq!(metadata.format, Some(ImageFormat::Dng));
+    }
+
+    #[test]
+    fn read_dng_returns_what_extract_metadata_returns() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.dng");
+        std::fs::write(&path, tiff_le_with_dimensions(400, 300)).expect("write fixture");
+        let read = read_dng(&path).expect("read dng");
+        let extracted = extract_metadata(&path).expect("extract");
+        assert_eq!(read, extracted);
+    }
+
+    #[test]
+    fn read_dng_rejects_a_jpeg() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        std::fs::write(&path, jpeg_sof_no_exif()).expect("write fixture");
+        match read_dng(&path) {
+            Err(MetadataError::UnsupportedFormat {
+                path: got,
+                extension,
+            }) => {
+                assert_eq!(got, path.display().to_string());
+                assert_eq!(extension, "jpg");
+            }
+            other => panic!("expected UnsupportedFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_dng_rejects_a_jpeg_without_sof_as_unsupported_not_malformed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        // JPEG magic, but no SOF segment, so a parse-based check would
+        // report a malformed file rather than the wrong format.
+        std::fs::write(&path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02]).expect("write fixture");
+        match read_dng(&path) {
+            Err(MetadataError::UnsupportedFormat { extension, .. }) => {
+                assert_eq!(extension, "jpg");
+            }
+            other => panic!("expected UnsupportedFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_dng_reports_magic_mismatch_for_a_dng_without_tiff_magic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.dng");
+        std::fs::write(&path, jpeg_sof_no_exif()).expect("write fixture");
+        match read_dng(&path) {
+            Err(MetadataError::MagicMismatch { path: got }) => {
+                assert_eq!(got, path.display().to_string());
+            }
+            other => panic!("expected MagicMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_dng_rejects_a_tiff_extension_as_unsupported() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.tif");
+        std::fs::write(&path, tiff_le_with_dimensions(400, 300)).expect("write fixture");
+        match read_dng(&path) {
+            Err(MetadataError::UnsupportedFormat {
+                path: got,
+                extension,
+            }) => {
+                assert_eq!(got, path.display().to_string());
+                assert_eq!(extension, "tif");
+            }
+            other => panic!("expected UnsupportedFormat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_dng_accepts_an_uppercase_extension() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.DNG");
+        std::fs::write(&path, tiff_le_with_dimensions(400, 300)).expect("write fixture");
+        let read = read_dng(&path).expect("read dng");
+        assert_eq!(read.format, Some(ImageFormat::Dng));
+        assert_eq!(read.width, Some(400));
+    }
+
+    #[test]
+    fn read_dng_missing_file_is_an_io_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing.dng");
+        match read_dng(&path) {
+            Err(MetadataError::Io(_)) => {}
+            other => panic!("expected Io, got {other:?}"),
+        }
     }
 
     fn jpeg_with_segments(segments: &[(u8, Vec<u8>)]) -> Vec<u8> {
