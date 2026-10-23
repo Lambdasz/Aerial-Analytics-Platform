@@ -615,6 +615,39 @@ fn plan_db_location(
     DbLocation::Fresh(target)
 }
 
+/// Copies a legacy database from the working directory into the app-data
+/// target, creating the target's parent directory if it does not exist yet.
+///
+/// Returns `true` if the copy succeeded, `false` otherwise.
+fn adopt_legacy_db(target: &std::path::Path, legacy: &std::path::Path) -> bool {
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                eprintln!(
+                    "warning: could not create the app-data directory for 'aerial.db': {err}"
+                );
+                return false;
+            }
+        }
+    }
+    // Copy, never move: if the copy fails mid-way, the user
+    // must be able to retry by hand. Logs carry names only.
+    match std::fs::copy(legacy, target) {
+        Ok(_) => {
+            eprintln!(
+                "info: copied the legacy database 'aerial.db' found in the working directory into the app-data directory"
+            );
+            true
+        }
+        Err(err) => {
+            eprintln!(
+                "warning: could not copy the legacy database 'aerial.db'; starting with an empty database in the app-data directory: {err}"
+            );
+            false
+        }
+    }
+}
+
 /// One background library sweep: read the database, then clean the library.
 ///
 /// Extracted from the startup closure so the e2e tests can exercise the exact
@@ -672,21 +705,16 @@ pub fn run() {
             // unreferenced files is how the library gets wiped.
             let cwd = std::env::current_dir()
                 .map_err(|err| format!("cannot determine the current working directory: {err}"))?;
-            let db_path = match plan_db_location(&cwd, &app_data, std::env::var_os("AAP_DB_PATH").map(PathBuf::from)) {
+            let db_path = match plan_db_location(
+                &cwd,
+                &app_data,
+                std::env::var_os("AAP_DB_PATH").map(PathBuf::from),
+            ) {
                 DbLocation::Override(path) => path,
                 DbLocation::Resident(path) => path,
                 DbLocation::Fresh(path) => path,
                 DbLocation::Adopted { target, legacy } => {
-                    // Copy, never move: if the copy fails mid-way, the user
-                    // must be able to retry by hand. Logs carry names only.
-                    match std::fs::copy(&legacy, &target) {
-                        Ok(_) => eprintln!(
-                            "info: copied the legacy database 'aerial.db' found in the working directory into the app-data directory"
-                        ),
-                        Err(err) => eprintln!(
-                            "warning: could not copy the legacy database 'aerial.db'; starting with an empty database in the app-data directory: {err}"
-                        ),
-                    }
+                    adopt_legacy_db(&target, &legacy);
                     target
                 }
             };
@@ -723,7 +751,11 @@ pub fn run() {
             // moves orphans to `.trash/` instead of deleting them, and skips
             // itself when the database has no image rows.
             std::thread::spawn(move || {
-                let trashed = run_library_sweep(&sweep_db, &sweep_root, modules::module_01::import_io::ORPHAN_MIN_AGE);
+                let trashed = run_library_sweep(
+                    &sweep_db,
+                    &sweep_root,
+                    modules::module_01::import_io::ORPHAN_MIN_AGE,
+                );
                 if trashed > 0 {
                     eprintln!("info: moved {trashed} orphaned image copies to .trash");
                 }
@@ -773,7 +805,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_db_location, DbLocation};
+    use super::{adopt_legacy_db, plan_db_location, DbLocation};
 
     /// The team decision review called for a test-backed copy policy: an
     /// existing `./aerial.db` must survive the move to the app-data
@@ -791,6 +823,37 @@ mod tests {
             DbLocation::Adopted { target, legacy } => {
                 assert_eq!(target, app_data.join("aerial.db"));
                 assert_eq!(legacy, cwd.join("aerial.db"));
+                assert!(adopt_legacy_db(&target, &legacy));
+                assert_eq!(std::fs::read(&target).expect("read target"), b"history");
+            }
+            other => panic!("expected an adopted legacy database, got {other:?}"),
+        }
+    }
+
+    /// On a first launch, the app-data directory does not exist on disk yet.
+    /// `adopt_legacy_db` must ensure the parent directory is created before
+    /// copying so the legacy history is not lost.
+    #[test]
+    fn legacy_db_is_adopted_when_app_data_does_not_exist_beforehand() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::write(cwd.join("aerial.db"), b"history").expect("legacy db");
+
+        assert!(!app_data.exists(), "app_data dir must not exist beforehand");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Adopted { target, legacy } => {
+                assert_eq!(target, app_data.join("aerial.db"));
+                assert_eq!(legacy, cwd.join("aerial.db"));
+                assert!(adopt_legacy_db(&target, &legacy));
+                assert!(target.is_file(), "target database was copied successfully");
+                assert_eq!(std::fs::read(&target).expect("read target"), b"history");
+                assert_eq!(
+                    std::fs::read(&legacy).expect("legacy file preserved"),
+                    b"history"
+                );
             }
             other => panic!("expected an adopted legacy database, got {other:?}"),
         }
