@@ -1074,7 +1074,7 @@ fn record_images(
 fn remove_copy(path: &Path) {
     if let Err(err) = fs::remove_file(path) {
         if err.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("warning: could not remove '{}': {err}", path.display());
+            eprintln!("warning: could not remove temporary copy: {err}");
         }
     }
 }
