@@ -114,8 +114,7 @@ pub fn delete_session(
     if !confirm {
         return Err(CommandError {
             code: "CONFIRMATION_REQUIRED".to_string(),
-            message: "deleting a session also deletes its imported images;                       pass confirm=true after asking the user"
-                .to_string(),
+            message: "deleting a session also deletes its imported images; pass confirm=true after asking the user".to_string(),
         });
     }
     let project_id = {

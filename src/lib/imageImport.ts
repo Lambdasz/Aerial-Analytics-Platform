@@ -32,6 +32,7 @@ export type ImportError =
   | { MissingContentHash: { path: string } }
   | { UnsupportedFormat: { path: string; extension: string } }
   | { MagicMismatch: { path: string } }
+  | { NotAFile: { path: string } }
   | { CopyFailed: { path: string; reason: string } }
   | { RecordFailed: { path: string; reason: string } }
   | { DestinationExists: { path: string } }
@@ -146,6 +147,7 @@ const IMPORT_ERROR_CODES: Record<string, string> = {
   MissingContentHash: "MISSING_CONTENT_HASH",
   UnsupportedFormat: "UNSUPPORTED_FORMAT",
   MagicMismatch: "MAGIC_MISMATCH",
+  NotAFile: "NOT_A_FILE",
   CopyFailed: "COPY_FAILED",
   RecordFailed: "RECORD_FAILED",
   DestinationExists: "DESTINATION_EXISTS",

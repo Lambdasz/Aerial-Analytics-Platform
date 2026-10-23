@@ -137,12 +137,13 @@ The database stores the canonical absolute path of the copy.
 
 Per-file behaviour:
 
-- picked paths are checked **before** any read: anything that is not a
-  regular file, or is not `.jpg`/`.jpeg`/`.dng`, is rejected unopened, and a
-  non-matching header is rejected after the first bytes, so a video or a FIFO
-  never stalls or exhausts the import;
-- each source is read once, while a temporary copy is hashed; the plan never
-  re-reads it;
+- picked paths are checked **before** any read: a folder, FIFO, or device
+  node is rejected as `NotAFile` (`NOT_A_FILE`) without being opened, and a
+  non-image extension or a non-matching header is rejected before the rest
+  of the file is read;
+- hashes are computed before any copy, so a duplicate is never written. An
+  approved file is copied afterwards, one at a time, and the copy is closed
+  before the next file is opened;
 - an existing destination is never overwritten (`DestinationExists`); the
   persist step retries the next suffix, and a JPEG/DNG pair moves together to
   keep their stems equal;
@@ -157,8 +158,11 @@ Its helpers `remove_session_files` and `cleanup_orphaned_copies` handle the
 disk side of deletion: `delete_session` (which the command refuses unless
 `confirm=true`) removes the session's copied files after deleting its rows,
 and a background sweep started after launch removes files older than an hour
-that no row references (the crash window between staging and commit). The
-sweep runs off the startup path so a large library does not delay launch.
+that no row references. The sweep only looks inside
+`projects/<id>/sessions/<id>/images/`, skips itself when the database has no
+image rows, and drops the database lock before it walks the disk. The
+database itself is `<app-data-dir>/aerial.db` (override `AAP_DB_PATH`), never
+a relative `aerial.db`.
 
 ### `get_analysis_input` / `analysis_input`
 

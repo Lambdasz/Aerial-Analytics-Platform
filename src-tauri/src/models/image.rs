@@ -147,6 +147,10 @@ pub enum ImportError {
     UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
     MagicMismatch { path: String },
+    /// The picked path is not a regular file: a folder, a FIFO, or a device
+    /// node. Reported separately from [`ImportError::CopyFailed`] because
+    /// nothing was copied — the user picked the wrong kind of path.
+    NotAFile { path: String },
     /// Copying the source into the project's library failed. `path` is the
     /// source path the user picked when it is known, and `reason` says what
     /// went wrong. The failed file leaves no row and no half-written copy
@@ -191,6 +195,9 @@ impl std::fmt::Display for ImportError {
             Self::MagicMismatch { path } => {
                 write!(f, "'{path}' does not contain a valid JPEG or DNG signature")
             }
+            Self::NotAFile { path } => {
+                write!(f, "'{path}' is not a file")
+            }
             Self::CopyFailed { path, reason } => {
                 write!(f, "could not copy '{path}': {reason}")
             }
@@ -220,6 +227,7 @@ impl ImportError {
             Self::MissingContentHash { .. } => "MISSING_CONTENT_HASH",
             Self::UnsupportedFormat { .. } => "UNSUPPORTED_FORMAT",
             Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
+            Self::NotAFile { .. } => "NOT_A_FILE",
             Self::CopyFailed { .. } => "COPY_FAILED",
             Self::RecordFailed { .. } => "RECORD_FAILED",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",

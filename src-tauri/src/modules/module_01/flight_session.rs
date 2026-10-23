@@ -653,7 +653,13 @@ pub fn recalculate_session_date_range(
 pub(crate) fn all_image_paths(conn: &Connection) -> Result<Vec<String>, SessionError> {
     let mut statement = conn.prepare("SELECT file_path FROM image")?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-    Ok(rows.filter_map(Result::ok).collect())
+    let mut paths = Vec::new();
+    for row in rows {
+        // A row that cannot be read is not "no path". Skipping it would make
+        // the sweep treat that file as an orphan and delete it.
+        paths.push(row?);
+    }
+    Ok(paths)
 }
 
 /// Deletes a session and, by cascade, the image rows that belong to it.

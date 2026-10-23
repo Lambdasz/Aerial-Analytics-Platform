@@ -556,17 +556,19 @@ pub mod models;
 
 pub mod plot_api;
 
+/// Makes `path` absolute without requiring it to exist yet.
+fn absolute_path(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| PathBuf::from("."))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let db_conn = rusqlite::Connection::open("aerial.db").expect("failed to open SQLite database");
-    // A schema that cannot be initialised (for example an `image` table the
-    // migration refuses to rebuild) must not stop the whole desktop app from
-    // opening: Modules 2-11 do not need it. Session/image commands then
-    // report the database error to the UI instead.
-    if let Err(err) = modules::module_01::init_schema(&db_conn) {
-        eprintln!("warning: could not initialize the session/image schema: {err}");
-    }
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -575,13 +577,33 @@ pub fn run() {
             // process writes below the same root. There is no silent cwd
             // fallback: an import that later cannot be found again is worse
             // than a startup error naming the real problem.
+            let app_data = app
+                .path()
+                .app_data_dir()
+                .map_err(|err| format!("cannot resolve the app-data directory: {err}"))?;
+            // Absolute, never `aerial.db` in whatever directory the process
+            // was started from. A relative database plus a sweep that deletes
+            // unreferenced files is how the library gets wiped.
+            let db_path = match std::env::var_os("AAP_DB_PATH") {
+                Some(value) => absolute_path(PathBuf::from(value)),
+                None => app_data.join("aerial.db"),
+            };
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|err| format!("cannot create '{}': {err}", parent.display()))?;
+                }
+            }
+            let db_conn = rusqlite::Connection::open(&db_path)
+                .map_err(|err| format!("failed to open '{}': {err}", db_path.display()))?;
+            // A schema that cannot be initialised must not stop the desktop
+            // app from opening: Modules 2-11 do not need it.
+            if let Err(err) = modules::module_01::init_schema(&db_conn) {
+                eprintln!("warning: could not initialize the session/image schema: {err}");
+            }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
-                Some(value) => PathBuf::from(value),
-                None => app
-                    .path()
-                    .app_data_dir()
-                    .map_err(|err| format!("cannot resolve the app-data directory: {err}"))?
-                    .join("library"),
+                Some(value) => absolute_path(PathBuf::from(value)),
+                None => app_data.join("library"),
             };
             let db = Arc::new(Mutex::new(db_conn));
             let library_root = Arc::new(library_root);
@@ -592,22 +614,30 @@ pub fn run() {
                 db,
                 library_root,
             });
-            // Collect copies whose rows never landed (a crash between staging
-            // and commit) or whose deletion failed. Run it off the startup
-            // path: walking a large library must not delay launch. Failing to
-            // sweep is harmless — the files are inert.
-            std::thread::spawn(move || match sweep_db.lock() {
-                Ok(conn) => {
-                    let removed =
-                        modules::module_01::import_io::cleanup_orphaned_copies(&conn, &sweep_root);
-                    if removed > 0 {
-                        eprintln!(
-                            "info: removed {removed} orphaned image copies from '{}'",
-                            sweep_root.display()
-                        );
+            // Off the startup path, and the database lock is dropped before
+            // the walk: a large library must not delay launch or stall
+            // session commands. The sweep only touches the app's own
+            // `projects/.../images` layout, and skips itself when the
+            // database has no image rows.
+            std::thread::spawn(move || {
+                let paths = match sweep_db.lock() {
+                    Ok(conn) => match modules::module_01::flight_session::all_image_paths(&conn) {
+                        Ok(paths) => paths,
+                        Err(err) => {
+                            eprintln!("warning: skipped the library sweep: {err}");
+                            return;
+                        }
+                    },
+                    Err(err) => {
+                        eprintln!("warning: skipped the library sweep: {err}");
+                        return;
                     }
+                };
+                let removed =
+                    modules::module_01::import_io::cleanup_orphaned_copies(&paths, &sweep_root);
+                if removed > 0 {
+                    eprintln!("info: removed {removed} orphaned image copies");
                 }
-                Err(err) => eprintln!("warning: skipped the library sweep: {err}"),
             });
             Ok(())
         })
