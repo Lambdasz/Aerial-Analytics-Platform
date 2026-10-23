@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::models::image::{ImportError, ImportReport};
+use crate::modules::module_01::error::SessionError;
 use crate::modules::module_01::import_io::{analysis_input, run_import, ImportFailure};
 use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
@@ -24,11 +25,14 @@ use crate::AppState;
 
 /// Event emitted after every imported file.
 ///
-/// Payload: `{ done, total, path }`, where `path` is the destination copy.
+/// Payload: `{ session_id, done, total, path }`, where `path` is the
+/// destination copy and `session_id` lets the UI ignore events from a
+/// different import that happens to run at the same time.
 pub const IMPORT_PROGRESS_EVENT: &str = "import-progress";
 
 #[derive(Debug, Clone, Serialize)]
 struct ImportProgress {
+    session_id: String,
     done: usize,
     total: usize,
     path: String,
@@ -51,8 +55,10 @@ struct ImportProgress {
 /// # Errors
 ///
 /// `SESSION_NOT_FOUND` for a malformed or unknown session, `NO_IMAGES_FOUND`
-/// when nothing importable was picked, and `DB_ERROR`/`STORAGE_ERROR` when the
-/// database or the library folder cannot be used.
+/// when nothing importable was picked, `DB_ERROR` when SQLite rejects a
+/// statement, `DB_LOCK_POISONED` when a previous operation crashed while
+/// holding the database lock, and `STORAGE_ERROR` when the library folder
+/// cannot be used.
 #[tauri::command]
 pub async fn import_images(
     app: AppHandle,
@@ -68,6 +74,7 @@ pub async fn import_images(
     })?;
     let db = Arc::clone(&state.db);
     let library_root = Arc::clone(&state.library_root);
+    let progress_session = session_id.to_string();
 
     let report = tauri::async_runtime::spawn_blocking(move || {
         run_import(
@@ -80,6 +87,7 @@ pub async fn import_images(
                 let _ = app.emit(
                     IMPORT_PROGRESS_EVENT,
                     ImportProgress {
+                        session_id: progress_session.clone(),
                         done,
                         total,
                         path: path.to_string(),
@@ -106,7 +114,9 @@ pub async fn import_images(
 /// # Errors
 ///
 /// `IMAGE_NOT_FOUND` when the id does not exist, `IMAGE_NOT_READY` when the
-/// image cannot be analysed, `DB_ERROR` when the row cannot be read.
+/// image cannot be analysed, `DB_ERROR` when the row cannot be read, and
+/// `DB_LOCK_POISONED` when a previous operation crashed while holding the
+/// database lock.
 #[tauri::command]
 pub fn get_analysis_input(
     state: State<'_, AppState>,
@@ -116,10 +126,10 @@ pub fn get_analysis_input(
         code: "IMAGE_NOT_FOUND".to_string(),
         message: format!("image '{image_id}' not found"),
     })?;
-    let conn = state.db.lock().map_err(|err| CommandError {
-        code: "DB_ERROR".to_string(),
-        message: format!("database lock poisoned: {err}"),
-    })?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|err| CommandError::from(SessionError::LockPoisoned(err.to_string())))?;
     let input = analysis_input(&conn, image_id)?;
     Ok(input)
 }

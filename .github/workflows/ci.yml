@@ -66,6 +66,9 @@ jobs:
       - name: Clippy
         run: npm run lint:rust
 
+      - name: Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build:
     name: Build (${{ matrix.os }})
     needs: [lint-js, lint-rust]

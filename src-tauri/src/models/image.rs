@@ -128,6 +128,13 @@ pub struct ImportReport {
     /// be. Re-import them after the conflict is resolved.
     #[serde(default)]
     pub pending_duplicates: Vec<DuplicateFlag>,
+    /// Destination file name chosen for each imported candidate
+    /// (`candidate_id`, basename), after any automatic suffixing.
+    ///
+    /// Internal to the copy step, which needs the name the planner settled
+    /// on; not part of the IPC contract.
+    #[serde(skip)]
+    pub(crate) assigned_names: Vec<AssignedName>,
     /// Ids of imported images that need a raw decode before analysis: DNG
     /// files with no same-stem JPEG to stand in for them.
     ///
@@ -136,6 +143,15 @@ pub struct ImportReport {
     /// same-stem JPEG is not listed: the JPEG is its analysis input.
     #[serde(default)]
     pub not_analysis_ready: Vec<String>,
+}
+
+/// The destination name the planner chose for one candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AssignedName {
+    /// [`ImportCandidate::id`] this name belongs to.
+    pub candidate_id: String,
+    /// Basename to copy the file to, inside the session folder.
+    pub dest_name: String,
 }
 
 /// Reasons an import operation or a single candidate within it can fail.
@@ -168,11 +184,16 @@ pub enum ImportError {
     UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
     MagicMismatch { path: String },
-    /// Copying the source into the project's library failed, or the copied
-    /// file could not be recorded. `path` is the source path the user picked
-    /// when it is known, and `reason` says what went wrong. The failed file
-    /// leaves no row and no half-written copy behind.
+    /// Copying the source into the project's library failed. `path` is the
+    /// source path the user picked when it is known, and `reason` says what
+    /// went wrong. The failed file leaves no row and no half-written copy
+    /// behind.
     CopyFailed { path: String, reason: String },
+    /// The copy exists, but the database row could not be written. The copy
+    /// is deleted again, so this is a database problem rather than a file
+    /// problem — reported separately from [`ImportError::CopyFailed`] so the
+    /// UI does not blame the image.
+    RecordFailed { path: String, reason: String },
     /// The source file changed between hashing and copying: its bytes no
     /// longer match the `content_hash` the plan was made from. Nothing was
     /// recorded; re-importing scans and hashes it again.
@@ -214,6 +235,9 @@ impl std::fmt::Display for ImportError {
             Self::CopyFailed { path, reason } => {
                 write!(f, "could not copy '{path}': {reason}")
             }
+            Self::RecordFailed { path, reason } => {
+                write!(f, "could not record '{path}': {reason}")
+            }
             Self::SourceChanged { path } => {
                 write!(f, "'{path}' changed while it was being imported")
             }
@@ -241,6 +265,7 @@ impl ImportError {
             Self::UnsupportedFormat { .. } => "UNSUPPORTED_FORMAT",
             Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
             Self::CopyFailed { .. } => "COPY_FAILED",
+            Self::RecordFailed { .. } => "RECORD_FAILED",
             Self::SourceChanged { .. } => "SOURCE_CHANGED",
             Self::DestinationExists { .. } => "DESTINATION_EXISTS",
             Self::NotAnalysisReady { .. } => "IMAGE_NOT_READY",

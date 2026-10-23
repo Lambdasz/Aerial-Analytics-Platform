@@ -43,8 +43,10 @@ Status now (what an importing UI can rely on):
 - no — a DNG with no JPEG is imported but marked
   `analysis_ready = 0` and listed in `not_analysis_ready`; Module 1 does not
   decode raw pixels;
-- no — name conflicts and duplicates are reported, never resolved
-  automatically, and the backend never renames a file.
+- yes — a destination name that is already taken is imported under the
+  first free ` (n)` suffix (`DJI_0003 (2).JPG`); nothing is ever overwritten;
+- no — duplicates are reported, never resolved automatically (a second
+  import of the same bytes is skipped and flagged).
 
 DNG dimensions come from the largest image not flagged reduced-resolution
 among IFD0 and its SubIFDs (tag 330), so a preview in IFD0 is not mistaken for
@@ -74,6 +76,7 @@ pub(crate) fn import_images(
     known: &[(String, ContentHash)],
     existing_paths: &[String],
     folding: NameFolding,
+    conflict: ConflictPolicy,
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
@@ -102,11 +105,15 @@ None of them folds `ß` to `ss`: no target filesystem does.
 - **The caller validates the session.** This function has no session list, so
   it never returns `ImportError::SessionNotFound`. The command that owns the
   database checks an `Existing` id via `get_session` before calling in.
-- A name conflict holds a candidate out of `imported_image_ids` until the
-  frontend resolves it. The backend never renames. Intra-batch duplicates
-  are flagged against the first file that was accepted for import. A file
-  whose content matches a file this call _held back_ is not a duplicate
-  (the held-back file may never be imported); it is listed in
+- `ConflictPolicy` decides what a name collision does: `Report` holds a
+  candidate out of `imported_image_ids` until the frontend resolves it,
+  `AutoSuffix` imports it under the first free ` (n)` name and reports no
+  conflict. `run_import` uses `AutoSuffix`; the pure planner defaults to
+  `Report` when called directly. The chosen names come back in
+  `ImportReport.assigned_names` (internal, not serialised). Intra-batch
+  duplicates are flagged against the first file that was accepted for
+  import. A file whose content matches a file this call _held back_ is not a
+  duplicate (the held-back file may never be imported); it is listed in
   `pending_duplicates` so it can be imported once the conflict is resolved.
 
 ### `run_import`
@@ -142,13 +149,26 @@ The database stores the canonical absolute path of the copy.
 
 Per-file behaviour:
 
+- picked paths are checked **before** any read: anything that is not a
+  regular file, or is not `.jpg`/`.jpeg`/`.dng`, is rejected unopened, so a
+  video or a FIFO never stalls or exhausts the import;
 - a copy is hash-checked against the planner's SHA-256 and renamed into place
   only after it matches; a source that changed in between is rejected with
   `SourceChanged` and leaves nothing behind;
 - an existing destination is never overwritten (`DestinationExists`); the
-  planner normally reports the collision first, this is the race fallback;
-- if the insert fails, the copied file(s) are deleted, so no orphan remains;
+  planner has normally suffixed the name already, so this only catches a file
+  that appeared mid-import;
+- if the insert fails, the copied file(s) are deleted, so no orphan remains,
+  and the failure is reported as `RecordFailed` (a database problem) rather
+  than `CopyFailed`;
+- every content hash is re-checked inside the insert transaction, so two
+  imports running at once cannot store the same bytes twice;
 - one rejected file never aborts the rest of the batch.
+
+Its helpers `remove_session_files` and `cleanup_orphaned_copies` handle the
+disk side of deletion: `delete_session` removes the session's copied files
+after deleting its rows, and startup sweeps files older than an hour that no
+row references (the crash window between a copy and its commit).
 
 ### `get_analysis_input` / `analysis_input`
 
@@ -406,11 +426,15 @@ directly from a `#[tauri::command]` and reach the frontend over IPC.
 
 ## Note on `ImportError` copy-on-import variants
 
-Four variants belong to the copy step:
+Five variants belong to the copy step:
 
 - `CopyFailed { path, reason }` (code `COPY_FAILED`) — an I/O failure while
-  scanning, copying, reading the copy's metadata, or recording the row. The
-  file leaves no row and no half-written copy.
+  scanning, copying, or reading the copy's metadata. The file leaves no row
+  and no half-written copy.
+- `RecordFailed { path, reason }` (`RECORD_FAILED`) — the copy succeeded but
+  its row could not be written (or the destination path is already owned by
+  another row). The copy is deleted; the UI should treat this as a database
+  problem, not a bad image.
 - `SourceChanged { path }` (`SOURCE_CHANGED`) — the bytes no longer hash to the
   value the plan used. Re-import scans it again.
 - `DestinationExists { path }` (`DESTINATION_EXISTS`) — a file appeared at the

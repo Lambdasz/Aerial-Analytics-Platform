@@ -228,11 +228,14 @@
 //! - `modules::module_01::dng_preview` — the JPEG a DNG already stores
 //!   (`read_dng_preview`), so a browser can display a DNG with no raw decoder.
 //! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
-//!   per-file classification, filesystem-aware name-conflict detection,
-//!   project-scope duplicate detection, and incomplete-metadata flags.
+//!   per-file classification, filesystem-aware name-conflict detection
+//!   (report or auto-suffix), project-scope duplicate detection, and
+//!   incomplete-metadata flags.
 //! - `modules::module_01::import_io` — copy-on-import I/O (`run_import`,
 //!   `analysis_input`): copies accepted images into `<library_root>`, reads
-//!   metadata from the copy, writes the row(s), and links JPG/DNG stem pairs.
+//!   metadata from the copy, writes the row(s), links JPG/DNG stem pairs, and
+//!   removes copies when their session is deleted or a startup sweep finds
+//!   them orphaned.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `commands::session` — flight session Tauri commands.
@@ -569,22 +572,27 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             // Resolved here, not in the command, so every import in this
-            // process writes below the same root. A missing app-data
-            // directory must not keep the app from starting: fall back to
-            // the working directory and say so.
+            // process writes below the same root. There is no silent cwd
+            // fallback: an import that later cannot be found again is worse
+            // than a startup error naming the real problem.
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
                 Some(value) => PathBuf::from(value),
-                None => match app.path().app_data_dir() {
-                    Ok(dir) => dir.join("library"),
-                    Err(err) => {
-                        eprintln!(
-                            "warning: could not resolve the app-data directory ({err}); \
-                             using './library' for imported images"
-                        );
-                        std::env::current_dir().unwrap_or_default().join("library")
-                    }
-                },
+                None => app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|err| format!("cannot resolve the app-data directory: {err}"))?
+                    .join("library"),
             };
+            // Collect copies whose rows never landed (a crash between copy
+            // and commit) or whose deletion failed. Failing to sweep must not
+            // stop the app: the files are inert.
+            match modules::module_01::import_io::cleanup_orphaned_copies(&db_conn, &library_root) {
+                removed if removed > 0 => eprintln!(
+                    "info: removed {removed} orphaned image copies from '{}'",
+                    library_root.display()
+                ),
+                _ => {}
+            }
             app.manage(AppState {
                 jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
                 db: Arc::new(Mutex::new(db_conn)),

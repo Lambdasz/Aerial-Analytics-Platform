@@ -161,7 +161,7 @@ fn table_is_empty(conn: &Connection, table: &str) -> Result<bool, SessionError> 
 /// this module's public functions take `&Connection` and must keep doing
 /// so. `IMMEDIATE` takes the write lock up front, so the DDL sequence below
 /// it cannot interleave with another writer.
-pub(crate) fn with_immediate_transaction<T>(
+fn with_immediate_transaction<T>(
     conn: &Connection,
     body: impl FnOnce(&Connection) -> Result<T, SessionError>,
 ) -> Result<T, SessionError> {
@@ -642,23 +642,112 @@ pub fn recalculate_session_date_range(
     require_changed(rows, session_id)
 }
 
-/// Deletes a session.
+/// Deletes a session and, by cascade, the image rows that belong to it.
+///
+/// The `image` table has no SQL `ON DELETE CASCADE`, so the rows are deleted
+/// explicitly in the same transaction; leaving them behind would make them
+/// look like live images whose session no longer exists. The copied files are
+/// removed by [`crate::modules::module_01::import_io::remove_session_files`]
+/// (the database layer never touches the disk).
 ///
 /// # Status
 ///
 /// **Open item** — behaviour when the session still has images assigned to
-/// it has not yet been decided by the team (block deletion vs. cascade
-/// vs. unassign). Currently deletes unconditionally; revisit once decided.
+/// it has not yet been decided by the team (block deletion vs. cascade).
+/// Currently cascades; revisit once decided.
 ///
 /// # Purity
 ///
 /// Impure.
 pub fn delete_session(conn: &Connection, session_id: Uuid) -> Result<(), SessionError> {
-    let rows = conn.execute(
-        "DELETE FROM session WHERE id = ?1",
-        params![session_id.to_string()],
-    )?;
-    require_changed(rows, session_id)
+    with_immediate_transaction(conn, |conn| {
+        let rows = conn.execute(
+            "DELETE FROM session WHERE id = ?1",
+            params![session_id.to_string()],
+        )?;
+        require_changed(rows, session_id)?;
+        conn.execute(
+            "DELETE FROM image WHERE session_id = ?1",
+            params![session_id.to_string()],
+        )?;
+        Ok(())
+    })
+}
+
+/// The row that already holds an imported image's content.
+///
+/// Returned by [`insert_images_and_recalculate`] when a second import of the
+/// same bytes (a concurrent run, or a re-import) reaches the insert after the
+/// plan was made.
+pub(crate) struct ExistingContent {
+    /// Index into the batch passed to [`insert_images_and_recalculate`].
+    pub index: usize,
+    /// Image that already stores those bytes, in the same project.
+    pub existing_image_id: Uuid,
+}
+
+/// Inserts one import's records and recalculates the session range atomically.
+///
+/// Duplicate detection normally runs in the pure planner before any file is
+/// copied. That check is a snapshot: two imports started at the same time can
+/// both pass it and both copy the same bytes. The `IMMEDIATE` transaction
+/// serialises writers, so re-checking every content hash **inside** it makes
+/// the second writer see the first one's rows.
+///
+/// # Purity
+///
+/// Impure — writes the database.
+///
+/// # Returns
+///
+/// `Ok(None)` when every row was inserted. `Ok(Some(existing))` when a hash
+/// is already stored in the project: nothing from this batch is inserted, and
+/// the caller decides what to report (and removes the copies).
+pub(crate) fn insert_images_and_recalculate(
+    conn: &Connection,
+    session_id: Uuid,
+    images: &[Image],
+) -> Result<Option<ExistingContent>, SessionError> {
+    with_immediate_transaction(conn, |conn| {
+        let project_id: String = conn.query_row(
+            "SELECT project_id FROM session WHERE id = ?1",
+            params![session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        for (index, image) in images.iter().enumerate() {
+            let Some(hash) = image
+                .content_hash
+                .as_deref()
+                .filter(|hash| !hash.is_empty())
+            else {
+                continue;
+            };
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT i.id FROM image i
+                     JOIN session s ON s.id = i.session_id
+                     WHERE s.project_id = ?1 AND i.content_hash = ?2
+                     LIMIT 1",
+                    params![project_id, hash],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(raw) = existing {
+                let existing_image_id = Uuid::parse_str(&raw).map_err(|err| {
+                    SessionError::Storage(format!("stored image id '{raw}' is not a UUID: {err}"))
+                })?;
+                return Ok(Some(ExistingContent {
+                    index,
+                    existing_image_id,
+                }));
+            }
+        }
+        for image in images {
+            insert_image(conn, image)?;
+        }
+        recalculate_session_date_range(conn, session_id)?;
+        Ok(None)
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1152,6 +1241,29 @@ fn conversion_err(
 mod tests {
     use super::*;
     use crate::models::image::ImageFormat;
+
+    /// Minimal image row for insert tests; `content_hash` is what matters.
+    fn image_row(session_id: Uuid, file_path: &str, content_hash: Option<&str>) -> Image {
+        Image {
+            id: Uuid::new_v4(),
+            session_id,
+            file_path: file_path.to_string(),
+            location_lat: None,
+            location_lon: None,
+            captured_at: None,
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: Some("jpeg".to_string()),
+            make: None,
+            camera_model: None,
+            source_path: None,
+            content_hash: content_hash.map(str::to_string),
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: Some(true),
+        }
+    }
 
     fn img(captured_at: &str) -> Image {
         Image {

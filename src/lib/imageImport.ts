@@ -10,6 +10,8 @@ export const IMPORT_PROGRESS_EVENT = "import-progress";
 
 /** Progress for one imported file. */
 export type ImportProgress = {
+  /** Session being imported into; lets the UI ignore another run's events. */
+  session_id: string;
   done: number;
   total: number;
   /** Destination path of the copy that was just recorded. */
@@ -31,6 +33,7 @@ export type ImportError =
   | { UnsupportedFormat: { path: string; extension: string } }
   | { MagicMismatch: { path: string } }
   | { CopyFailed: { path: string; reason: string } }
+  | { RecordFailed: { path: string; reason: string } }
   | { SourceChanged: { path: string } }
   | { DestinationExists: { path: string } }
   | { NotAnalysisReady: { image_id: string } };
@@ -154,6 +157,7 @@ const IMPORT_ERROR_CODES: Record<string, string> = {
   UnsupportedFormat: "UNSUPPORTED_FORMAT",
   MagicMismatch: "MAGIC_MISMATCH",
   CopyFailed: "COPY_FAILED",
+  RecordFailed: "RECORD_FAILED",
   SourceChanged: "SOURCE_CHANGED",
   DestinationExists: "DESTINATION_EXISTS",
   NotAnalysisReady: "IMAGE_NOT_READY",

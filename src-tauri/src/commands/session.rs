@@ -3,15 +3,13 @@
 use uuid::Uuid;
 
 use crate::models::{Session, SessionStatus};
-use crate::modules::module_01 as flight_session;
+use crate::modules::module_01::error::SessionError;
+use crate::modules::module_01::{self as flight_session, import_io};
 use crate::plugin_manager::error::CommandError;
 use crate::AppState;
 
 fn lock_err(e: impl std::fmt::Display) -> CommandError {
-    CommandError {
-        code: "DB_LOCK_POISONED".to_string(),
-        message: e.to_string(),
-    }
+    SessionError::LockPoisoned(e.to_string()).into()
 }
 
 /// Creates a new, empty session (no images assigned yet).
@@ -97,10 +95,23 @@ pub fn recalculate_session_date_range(
     )?)
 }
 
-/// The behavior for deleting a session that still has images assigned to it
-/// has not been decided yet and needs further discussion with the team.
+/// Deletes a session, its image rows, and the copies it imported.
+///
+/// The rows are deleted first: if removing the folder fails, the library
+/// holds an orphan rather than the UI holding a session that points at
+/// deleted files. The startup sweep collects such orphans.
 #[tauri::command]
 pub fn delete_session(state: tauri::State<AppState>, session_id: Uuid) -> Result<(), CommandError> {
-    let conn = state.db.lock().map_err(lock_err)?;
-    Ok(flight_session::delete_session(&conn, session_id)?)
+    let project_id = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        let session = flight_session::get_session(&conn, session_id)?;
+        flight_session::delete_session(&conn, session_id)?;
+        session.project_id
+    };
+    import_io::remove_session_files(
+        &state.library_root,
+        &project_id.to_string(),
+        &session_id.to_string(),
+    );
+    Ok(())
 }
