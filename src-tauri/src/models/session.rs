@@ -43,6 +43,12 @@ use uuid::Uuid;
 pub struct Project {
     pub id: Uuid,
     pub name: String,
+    /// Optional short description of the mapping project.
+    pub description: Option<String>,
+    /// Timezone-aware; invariably expressed in UTC.
+    pub created_at: DateTime<Utc>,
+    /// Timezone-aware; invariably expressed in UTC.
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
