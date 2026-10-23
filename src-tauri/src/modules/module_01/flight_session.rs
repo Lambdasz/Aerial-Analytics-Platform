@@ -662,6 +662,29 @@ pub(crate) fn all_image_paths(conn: &Connection) -> Result<Vec<String>, SessionE
     Ok(paths)
 }
 
+/// `(project_id, session_id)` pairs for every session currently in SQLite.
+///
+/// Used by the orphan sweep to restrict its search strictly to sessions this
+/// database knows about. A dev database, an older backup, or another database
+/// sharing the library root will never touch or trash another database's sessions.
+///
+/// # Purity
+///
+/// Impure — reads the database.
+pub(crate) fn known_session_scopes(
+    conn: &Connection,
+) -> Result<std::collections::HashSet<(String, String)>, SessionError> {
+    let mut statement = conn.prepare("SELECT project_id, id FROM session")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut scopes = std::collections::HashSet::new();
+    for row in rows {
+        scopes.insert(row?);
+    }
+    Ok(scopes)
+}
+
 /// Deletes a session and, by cascade, the image rows that belong to it.
 ///
 /// The `image` table has no SQL `ON DELETE CASCADE`, so the rows are deleted

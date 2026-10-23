@@ -521,10 +521,13 @@ pub struct AppState {
     /// SQLite connection shared across commands that need persistence
     /// (currently: Flight Session Management, Module 1.4).
     ///
-    /// TODO(M1.4): file location is a placeholder (`aerial.db` next to the
-    /// binary's working directory, per team decision 2026-09-26 to keep it
-    /// simple for dev) — revisit for the OS app-data directory before
-    /// shipping a real build.
+    /// SQLite connection shared across commands that need persistence
+    /// (currently: Flight Session Management, Module 1.4).
+    ///
+    /// Persisted at `<app-data-dir>/aerial.db` (overridable via `AAP_DB_PATH`).
+    /// Moved from the temporary working-directory placeholder (`./aerial.db`)
+    /// to an absolute OS-standard path so library cleanup sweeps and data
+    /// access remain stable regardless of the process launch directory.
     pub db: Arc<Mutex<rusqlite::Connection>>,
     /// App-owned root of imported images, decided once at startup.
     ///
@@ -557,13 +560,13 @@ pub mod models;
 pub mod plot_api;
 
 /// Makes `path` absolute without requiring it to exist yet.
-fn absolute_path(path: PathBuf) -> PathBuf {
+fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
     if path.is_absolute() {
-        path
+        Ok(path)
     } else {
         std::env::current_dir()
             .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| PathBuf::from("."))
+            .map_err(|err| format!("cannot determine the current working directory: {err}"))
     }
 }
 
@@ -585,8 +588,21 @@ pub fn run() {
             // was started from. A relative database plus a sweep that deletes
             // unreferenced files is how the library gets wiped.
             let db_path = match std::env::var_os("AAP_DB_PATH") {
-                Some(value) => absolute_path(PathBuf::from(value)),
-                None => app_data.join("aerial.db"),
+                Some(value) => absolute_path(PathBuf::from(value))?,
+                None => {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        let old_db = cwd.join("aerial.db");
+                        let target = app_data.join("aerial.db");
+                        if old_db.is_file() && !target.exists() {
+                            eprintln!(
+                                "hint: found existing './aerial.db' in the working directory ('{}');                                  active database is now located at '{}'",
+                                old_db.display(),
+                                target.display()
+                            );
+                        }
+                    }
+                    app_data.join("aerial.db")
+                }
             };
             if let Some(parent) = db_path.parent() {
                 if !parent.as_os_str().is_empty() {
@@ -602,7 +618,7 @@ pub fn run() {
                 eprintln!("warning: could not initialize the session/image schema: {err}");
             }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
-                Some(value) => absolute_path(PathBuf::from(value)),
+                Some(value) => absolute_path(PathBuf::from(value))?,
                 None => app_data.join("library"),
             };
             let db = Arc::new(Mutex::new(db_conn));
@@ -617,26 +633,40 @@ pub fn run() {
             // Off the startup path, and the database lock is dropped before
             // the walk: a large library must not delay launch or stall
             // session commands. The sweep only touches the app's own
-            // `projects/.../images` layout, and skips itself when the
-            // database has no image rows.
+            // `projects/.../images` layout for sessions that exist in SQLite,
+            // moves orphans to `.trash/` instead of deleting them, and skips
+            // itself when the database has no image rows.
             std::thread::spawn(move || {
-                let paths = match sweep_db.lock() {
-                    Ok(conn) => match modules::module_01::flight_session::all_image_paths(&conn) {
-                        Ok(paths) => paths,
-                        Err(err) => {
-                            eprintln!("warning: skipped the library sweep: {err}");
-                            return;
-                        }
-                    },
+                let (paths, known_scopes) = match sweep_db.lock() {
+                    Ok(conn) => {
+                        let paths = match modules::module_01::flight_session::all_image_paths(&conn) {
+                            Ok(paths) => paths,
+                            Err(err) => {
+                                eprintln!("warning: skipped the library sweep: {err}");
+                                return;
+                            }
+                        };
+                        let scopes = match modules::module_01::flight_session::known_session_scopes(&conn) {
+                            Ok(scopes) => scopes,
+                            Err(err) => {
+                                eprintln!("warning: skipped the library sweep: {err}");
+                                return;
+                            }
+                        };
+                        (paths, scopes)
+                    }
                     Err(err) => {
                         eprintln!("warning: skipped the library sweep: {err}");
                         return;
                     }
                 };
-                let removed =
-                    modules::module_01::import_io::cleanup_orphaned_copies(&paths, &sweep_root);
-                if removed > 0 {
-                    eprintln!("info: removed {removed} orphaned image copies");
+                let trashed = modules::module_01::import_io::cleanup_orphaned_copies(
+                    &paths,
+                    &known_scopes,
+                    &sweep_root,
+                );
+                if trashed > 0 {
+                    eprintln!("info: moved {trashed} orphaned image copies to .trash");
                 }
             });
             Ok(())

@@ -157,12 +157,13 @@ Per-file behaviour:
 Its helpers `remove_session_files` and `cleanup_orphaned_copies` handle the
 disk side of deletion: `delete_session` (which the command refuses unless
 `confirm=true`) removes the session's copied files after deleting its rows,
-and a background sweep started after launch removes files older than an hour
-that no row references. The sweep only looks inside
-`projects/<id>/sessions/<id>/images/`, skips itself when the database has no
-image rows, and drops the database lock before it walks the disk. The
-database itself is `<app-data-dir>/aerial.db` (override `AAP_DB_PATH`), never
-a relative `aerial.db`.
+and a background sweep started after launch moves unreferenced files older
+than an hour into `<library_root>/.trash/` (rather than permanently deleting
+them). The sweep inspects only folders corresponding to sessions recorded in
+SQLite, skips itself entirely when the database has no image rows, and drops
+the database lock before it walks the disk. The database itself is
+`<app-data-dir>/aerial.db` (override `AAP_DB_PATH`), never a relative
+`aerial.db`.
 
 ### `get_analysis_input` / `analysis_input`
 

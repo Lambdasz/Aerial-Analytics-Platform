@@ -1103,29 +1103,41 @@ pub(crate) fn remove_session_files(
 /// alone keeps the sweep from deleting another process's work in progress.
 const ORPHAN_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
-/// Deletes copied files that no `image` row references.
+/// Moves copied files that no `image` row references into `.trash/`.
 ///
-/// `referenced` is the absolute copy paths already read from the database.
-/// The caller loads them and drops the database lock before calling this, so
-/// a long walk does not block session commands.
+/// `referenced` is the absolute copy paths already read from the database, and
+/// `known_scopes` is `(project_id, session_id)` pairs of sessions currently in
+/// SQLite. The caller loads them and drops the database lock before calling
+/// this, so a long sweep does not block session commands.
 ///
-/// Only files inside `projects/<id>/sessions/<id>/images/` are considered.
-/// Anything else under the library root — a note, a plugin file, a folder
-/// the user put there — is left alone. If the database has no image rows at
-/// all while that layout still has files, the sweep does nothing: that is
-/// the shape of "opened the wrong database", and deleting then would wipe
-/// the library.
+/// # Safety guarantees
+///
+/// * Only files inside `projects/<p>/sessions/<s>/images/` belonging to a
+///   session in `known_scopes` are inspected. Sessions belonging to another
+///   database or an older backup are never touched.
+/// * Unreferenced files are moved to `<library_root>/.trash/` rather than
+///   permanently deleted, so a restored backup or misconfigured path never
+///   causes permanent data loss.
+/// * If the database has no image rows while known sessions still have files
+///   on disk, the sweep skips itself.
+/// * Empty directory pruning is restricted strictly to known session paths
+///   under `projects/` and never touches arbitrary folders under the library root.
 ///
 /// # Returns
 ///
-/// Number of files deleted. `0` when the sweep was skipped.
-pub(crate) fn cleanup_orphaned_copies(referenced: &[String], library_root: &Path) -> usize {
-    cleanup_orphaned_copies_older_than(referenced, library_root, ORPHAN_MIN_AGE)
+/// Number of files moved to trash. `0` when the sweep was skipped.
+pub(crate) fn cleanup_orphaned_copies(
+    referenced: &[String],
+    known_scopes: &std::collections::HashSet<(String, String)>,
+    library_root: &Path,
+) -> usize {
+    cleanup_orphaned_copies_older_than(referenced, known_scopes, library_root, ORPHAN_MIN_AGE)
 }
 
 /// [`cleanup_orphaned_copies`] with an explicit age threshold, for tests.
 pub(crate) fn cleanup_orphaned_copies_older_than(
     referenced: &[String],
+    known_scopes: &std::collections::HashSet<(String, String)>,
     library_root: &Path,
     min_age: std::time::Duration,
 ) -> usize {
@@ -1136,7 +1148,7 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
         .iter()
         .map(|path| normalize_path(Path::new(path)))
         .collect();
-    let candidates = library_image_files(library_root);
+    let candidates = library_image_files(library_root, known_scopes);
     if referenced.is_empty() && !candidates.is_empty() {
         eprintln!(
             "warning: skipped the library sweep: the database has no image rows, \
@@ -1146,12 +1158,12 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
     }
 
     let now = std::time::SystemTime::now();
-    let mut removed = 0usize;
-    for path in candidates {
-        if referenced.contains(&normalize_path(&path)) {
+    let mut moved = 0usize;
+    for path in &candidates {
+        if referenced.contains(&normalize_path(path)) {
             continue;
         }
-        let Ok(metadata) = fs::metadata(&path) else {
+        let Ok(metadata) = fs::metadata(path) else {
             continue;
         };
         let old_enough = metadata
@@ -1162,25 +1174,47 @@ pub(crate) fn cleanup_orphaned_copies_older_than(
         if !old_enough {
             continue;
         }
-        match fs::remove_file(&path) {
-            Ok(()) => removed += 1,
+        match trash_orphan(path, library_root) {
+            Ok(()) => moved += 1,
             Err(err) => {
-                eprintln!("warning: could not remove '{}': {err}", file_label(&path));
+                eprintln!(
+                    "warning: could not move '{}' to trash: {err}",
+                    file_label(path)
+                );
             }
         }
     }
-    if removed > 0 {
-        prune_empty_dirs(library_root);
+    if moved > 0 {
+        prune_session_layout_dirs(library_root, known_scopes);
     }
-    removed
+    moved
 }
 
-/// Files sitting in a session's `images` folder, and nowhere else.
+/// Moves an unreferenced file into `<library_root>/.trash/`.
+fn trash_orphan(path: &Path, library_root: &Path) -> std::io::Result<()> {
+    let trash_dir = library_root.join(".trash");
+    fs::create_dir_all(&trash_dir)?;
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let dest = trash_dir.join(format!("{timestamp}_{file_name}"));
+    if fs::rename(path, &dest).is_err() {
+        fs::copy(path, &dest)?;
+        let _ = fs::remove_file(path);
+    }
+    Ok(())
+}
+
+/// Files sitting in a known session's `images` folder, and nowhere else.
 ///
-/// The layout is `projects/<id>/sessions/<id>/images/<file>`. A name of `.`
-/// or `..`, or a path that is not a regular file, is not a copy this module
-/// made and is not returned.
-fn library_image_files(library_root: &Path) -> Vec<PathBuf> {
+/// The layout is `projects/<p_id>/sessions/<s_id>/images/<file>`.
+/// Only folders whose `(p_id, s_id)` exists in `known_scopes` are traversed.
+fn library_image_files(
+    library_root: &Path,
+    known_scopes: &std::collections::HashSet<(String, String)>,
+) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let Ok(projects) = fs::read_dir(library_root.join("projects")) else {
         return files;
@@ -1189,11 +1223,17 @@ fn library_image_files(library_root: &Path) -> Vec<PathBuf> {
         if !is_layout_id(&project.file_name()) {
             continue;
         }
+        let project_id = project.file_name().to_string_lossy().into_owned();
         let Ok(sessions) = fs::read_dir(project.path().join("sessions")) else {
             continue;
         };
         for session in sessions.flatten() {
             if !is_layout_id(&session.file_name()) {
+                continue;
+            }
+            let session_id = session.file_name().to_string_lossy().into_owned();
+            if !known_scopes.contains(&(project_id.clone(), session_id)) {
+                // Not in this database — leave untouched.
                 continue;
             }
             let Ok(images) = fs::read_dir(session.path().join("images")) else {
@@ -1224,23 +1264,26 @@ fn normalize_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Removes empty directories below `root`, never `root` itself.
-fn prune_empty_dirs(root: &Path) {
-    fn prune(dir: &Path, root: &Path) -> bool {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return false;
-        };
-        let mut empty = true;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() && prune(&path, root) {
-                continue;
-            }
-            empty = false;
-        }
-        empty && dir != root && fs::remove_dir(dir).is_ok()
+/// Removes empty layout directories for known scopes under `projects/`.
+///
+/// Unlike a generic recursive walk, this only prunes directory levels that
+/// belong to the known session layout and will never remove arbitrary folders
+/// or files outside that structure (such as `.trash/`).
+fn prune_session_layout_dirs(
+    library_root: &Path,
+    known_scopes: &std::collections::HashSet<(String, String)>,
+) {
+    let projects_root = library_root.join("projects");
+    for (project_id, session_id) in known_scopes {
+        let session_dir = projects_root
+            .join(project_id)
+            .join("sessions")
+            .join(session_id);
+        let _ = fs::remove_dir(session_dir.join("images"));
+        let _ = fs::remove_dir(&session_dir);
+        let _ = fs::remove_dir(projects_root.join(project_id).join("sessions"));
+        let _ = fs::remove_dir(projects_root.join(project_id));
     }
-    prune(root, root);
 }
 
 fn reject(candidate: &ImportCandidate, reason: ImportError) -> RejectedFile {
@@ -2126,11 +2169,44 @@ mod tests {
         // A file outside the layout must never be a candidate either.
         fs::write(library.path().join("notes.txt"), b"note").expect("note");
 
-        let removed =
-            cleanup_orphaned_copies_older_than(&[], library.path(), std::time::Duration::ZERO);
+        let scopes = std::collections::HashSet::from([("p1".to_string(), "s1".to_string())]);
+        let removed = cleanup_orphaned_copies_older_than(
+            &[],
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
         assert_eq!(removed, 0);
         assert!(stray.is_file());
         assert!(library.path().join("notes.txt").is_file());
+    }
+
+    #[test]
+    fn sweep_never_touches_unrecorded_sessions() {
+        let library = tempfile::tempdir().expect("library");
+        let unknown_images = library
+            .path()
+            .join("projects")
+            .join("other_p")
+            .join("sessions")
+            .join("other_s")
+            .join("images");
+        fs::create_dir_all(&unknown_images).expect("unknown layout");
+        let unrecorded_file = unknown_images.join("DJI_9999.JPG");
+        fs::write(&unrecorded_file, b"from another database").expect("unrecorded");
+
+        // The connected database only knows about (p1, s1)
+        let scopes = std::collections::HashSet::from([("p1".to_string(), "s1".to_string())]);
+        let referenced = vec!["/some/referenced.jpg".to_string()];
+        let removed = cleanup_orphaned_copies_older_than(
+            &referenced,
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
+        assert_eq!(removed, 0);
+        assert!(unrecorded_file.is_file());
+        assert!(!library.path().join(".trash").exists());
     }
 
     #[test]
@@ -2139,6 +2215,7 @@ mod tests {
         fs::write(library.path().join("notes.txt"), b"note").expect("note");
         let removed = cleanup_orphaned_copies_older_than(
             &["/some/referenced.jpg".to_string()],
+            &std::collections::HashSet::new(),
             library.path(),
             std::time::Duration::ZERO,
         );
@@ -2263,10 +2340,27 @@ mod tests {
         let conn = db.lock().expect("db lock");
         let paths =
             crate::modules::module_01::flight_session::all_image_paths(&conn).expect("paths");
-        let removed =
-            cleanup_orphaned_copies_older_than(&paths, library.path(), std::time::Duration::ZERO);
+        let scopes =
+            crate::modules::module_01::flight_session::known_session_scopes(&conn).expect("scopes");
+        let removed = cleanup_orphaned_copies_older_than(
+            &paths,
+            &scopes,
+            library.path(),
+            std::time::Duration::ZERO,
+        );
         assert_eq!(removed, 1);
         assert!(!stray.exists());
+        // Verify the orphan was moved into .trash rather than permanently deleted
+        assert!(library.path().join(".trash").is_dir());
+        let trash_entries: Vec<_> = fs::read_dir(library.path().join(".trash"))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(trash_entries.len(), 1);
+        assert!(trash_entries[0]
+            .file_name()
+            .to_string_lossy()
+            .ends_with("stray.JPG"));
         assert_eq!(get_images_by_session(&conn, session_id).unwrap().len(), 1);
         let stored = get_images_by_session(&conn, session_id).unwrap();
         assert!(Path::new(&stored[0].file_path).is_file());
