@@ -111,8 +111,12 @@ pub struct Session {
 pub struct Image {
     pub id: Uuid,
     pub session_id: Uuid,
-    /// Absolute path to the original file (not a directory path, and not a
-    /// reference to any derived or multi-variant representation thereof).
+    /// Absolute path to the project's copy of the image inside the app-owned
+    /// library folder — not the path the user imported from, and not a
+    /// directory or any derived/multi-variant representation. Import copies
+    /// the source here, so moving or deleting the original never breaks a
+    /// stored image. Rows migrated from before copy-on-import still point at
+    /// the original file until they are re-imported.
     pub file_path: String,
     /// GPS latitude in decimal degrees. `None` when the source image has no
     /// GPS tags.
@@ -140,4 +144,24 @@ pub struct Image {
     pub make: Option<String>,
     /// Camera model name (e.g. `"Mavic 3"`). `None` when absent.
     pub camera_model: Option<String>,
+    /// Absolute path the image was imported from, kept for provenance only.
+    /// `None` for rows migrated from before copy-on-import (their
+    /// `file_path` is still the original path).
+    pub source_path: Option<String>,
+    /// SHA-256 of the file bytes, lowercase hex. Project-scope duplicate
+    /// detection compares it with the hashes of every image in the project.
+    /// `None` for rows migrated from before copy-on-import.
+    pub content_hash: Option<String>,
+    /// Size of the stored file in bytes. `None` when unknown (migrated rows).
+    pub file_size: Option<u64>,
+    /// The other half of a JPG/DNG stem pair: the same stem imported as both
+    /// formats links the two rows in both directions. `None` when the image
+    /// has no sibling.
+    pub raw_sibling_id: Option<Uuid>,
+    /// Whether a plugin can analyse this row today. `true` for JPEGs and for
+    /// DNGs with a same-stem JPEG standing in for them; `false` for a DNG
+    /// with no JPEG (Module 1 does not decode raw pixels). `None` for rows
+    /// migrated from before copy-on-import, where readiness is decided from
+    /// `format` instead.
+    pub analysis_ready: Option<bool>,
 }

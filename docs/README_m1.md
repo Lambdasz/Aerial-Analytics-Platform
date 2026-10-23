@@ -4,9 +4,13 @@ Source: `src-tauri/src/modules/module_01/`
 
 This module is Module 1's back-end for two responsibilities:
 
-- **Image import** (`image_importer.rs`) — classifies and validates a batch
-  of picked files, checks for name collisions and duplicates, and produces an
-  `ImportReport`.
+- **Image import planning** (`image_importer.rs`) — classifies and validates
+  a batch of picked files, rejects duplicates, and produces an `ImportReport`,
+  without touching the disk or the database.
+- **Copy-on-import I/O** (`import_io.rs`) — stages the picked files (one read
+  each, hashed while copying), renames the accepted ones into the app-owned
+  library under the first free name, reads metadata from the copy, and
+  records the row(s). This is what a Tauri command calls.
 - **Metadata extraction** (`metadata_extractor.rs`) — reads EXIF and XMP DJI
   tags from a single JPEG/DNG file into an `ImageMetadata` value.
 - **DNG preview** (`dng_preview.rs`) — returns the JPEG a DNG already stores,
@@ -23,10 +27,27 @@ Project
 
 ## Status
 
-Implemented. Import entry points, the extraction pipeline (format sniff, JPEG
-and DNG/TIFF parsers, XMP DJI scan, merge helpers), the DNG preview reader and
-the schema migration are all live and covered by unit tests. Nothing in this
-module has a Tauri command yet, so the UI reaches none of it directly.
+Implemented. Import planning and copy-on-import I/O, the extraction pipeline
+(format sniff, JPEG and DNG/TIFF parsers, XMP DJI scan, merge helpers), the
+DNG preview reader and the schema migration are all live and covered by unit
+tests. Two commands expose this module to the UI:
+`commands::import::import_images` and `commands::import::get_analysis_input`.
+
+Status now (what an importing UI can rely on):
+
+- yes — picked images are copied into the app-owned library before they are
+  recorded; the original folder may be moved or deleted afterwards;
+- yes — `.jpg`/`.jpeg` and `.dng` are imported; each stored row's `file_path`
+  is the absolute path of the copy;
+- yes — a DNG with a same-stem JPEG is stored as a second row linked through
+  `raw_sibling_id`, and the plugin input is the JPEG;
+- no — a DNG with no JPEG is imported but marked
+  `analysis_ready = 0` and listed in `not_analysis_ready`; Module 1 does not
+  decode raw pixels;
+- yes — a destination name that is already taken is imported under the
+  first free ` (n)` suffix (`DJI_0003 (2).JPG`); nothing is ever overwritten;
+- no — duplicates are reported, never resolved automatically (a second
+  import of the same bytes is skipped and flagged).
 
 DNG dimensions come from the largest image not flagged reduced-resolution
 among IFD0 and its SubIFDs (tag 330), so a preview in IFD0 is not mistaken for
@@ -54,28 +75,23 @@ use crate::modules::module_01::{
 pub(crate) fn import_images(
     request: &ImportRequest,
     known: &[(String, ContentHash)],
-    existing_paths: &[String],
-    folding: NameFolding,
 ) -> Result<ImportReport, ImportError> {
     // ...
 }
 ```
 
-Entry point for RGB image import. Composes per-file format classification,
-destination-name-collision detection, and duplicate detection into one
-`ImportReport`. Does not copy files or touch the disk or the database —
-`request` is already populated with file headers/hashes/ids by I/O before
-this runs, and the caller applies the returned `ImportReport` afterwards.
-`existing_paths` are the files already in the session folder, whose
-basenames are compared against incoming names. `folding` says how the
-destination filesystem decides two names are the same file:
+Entry point for RGB image import. Composes per-file format classification and
+duplicate detection into one `ImportReport`. Does not copy files or touch the
+disk or the database — `request` is already populated with file
+headers/hashes/ids by I/O before this runs, and the caller applies the
+returned `ImportReport` afterwards.
 
-- `Exact` — byte-identical names only (most Linux filesystems).
-- `Ntfs` — names differing only by case; composed and decomposed accents are
-  distinct files.
-- `Apfs` — names differing only by case or by canonical (NFC/NFD) form.
-
-None of them folds `ß` to `ss`: no target filesystem does.
+Destination names are deliberately **not** decided here. The I/O layer picks
+the first free ` (n)` name when it persists each staged copy, so two files
+with the same basename both import (`DJI_0001.JPG`, `DJI_0001 (2).JPG`), and a
+race between two imports is resolved by retrying the next suffix rather than
+failing. A JPEG/DNG stem pair always receives one shared suffix, so the
+sibling link survives the rename.
 
 - **Errors**: `ImportError::NoImagesFound` if `request` has no candidates.
   Per-candidate failures (bad format, magic mismatch, invalid file name, missing
@@ -84,12 +100,114 @@ None of them folds `ß` to `ss`: no target filesystem does.
 - **The caller validates the session.** This function has no session list, so
   it never returns `ImportError::SessionNotFound`. The command that owns the
   database checks an `Existing` id via `get_session` before calling in.
-- A name conflict holds a candidate out of `imported_image_ids` until the
-  frontend resolves it. The backend never renames. Intra-batch duplicates
-  are flagged against the first file that was accepted for import. A file
-  whose content matches a file this call _held back_ is not a duplicate
-  (the held-back file may never be imported); it is listed in
-  `pending_duplicates` so it can be imported once the conflict is resolved.
+- Intra-batch duplicates are flagged against the first file that was accepted
+  for import. Duplicates are never copied.
+
+### `run_import`
+
+```rust
+pub(crate) fn run_import(
+    db: &Mutex<Connection>,
+    library_root: &Path,
+    session_id: Uuid,
+    sources: &[String],
+    from_folder: bool,
+    on_progress: impl FnMut(usize, usize, &str),
+) -> Result<ImportReport, ImportFailure> {
+    // ...
+}
+```
+
+The copy-on-import pipeline behind the `import_images` command. It scans
+`sources` (files, or non-recursive folders when `from_folder` is set), reads
+each source **once** — hashing it while writing a temporary copy in the
+session folder — runs the pure planner, renames every approved candidate to a
+free destination name, reads metadata from the copy, and inserts the row(s)
+in one transaction with the session date-range recalculation. `on_progress`
+receives `(done, total, destination_path)` after each file.
+
+Storage layout, below the root resolved once at startup:
+
+```text
+<library_root>/projects/<project_id>/sessions/<session_id>/images/<file_name>
+```
+
+`library_root` is `<app-data-dir>/library`, or `AAP_LIBRARY_ROOT` when set.
+The database stores the canonical absolute path of the copy.
+
+Per-file behaviour:
+
+- picked paths are checked **before** any read: a folder, FIFO, or device
+  node is rejected as `NotAFile` (`NOT_A_FILE`) without being opened, and a
+  non-image extension or a non-matching header is rejected before the rest
+  of the file is read;
+- hashes are computed before any copy, so a duplicate is never written. An
+  approved file is copied afterwards, one at a time, and the copy is closed
+  before the next file is opened;
+- an existing destination is never overwritten (`DestinationExists`); the
+  persist step retries the next suffix, and a JPEG/DNG pair moves together to
+  keep their stems equal;
+- if the insert fails, the copied file(s) are deleted, so no orphan remains,
+  and the failure is reported as `RecordFailed` (a database problem) rather
+  than `CopyFailed`;
+- every content hash is re-checked inside the insert transaction, so two
+  imports running at once cannot store the same bytes twice;
+- one rejected file never aborts the rest of the batch.
+
+Its helpers `remove_session_files`, `trash_session_folder` and
+`cleanup_orphaned_copies_older_than` handle the disk side of deletion:
+`delete_session` (which the command refuses unless `confirm=true`) first
+deletes the session's rows, then removes the copies with
+`remove_session_files`. When that removal fails part-way (blocked file,
+dropped mount, odd share), the whole left-over session folder moves into the
+current trash batch by `trash_session_folder`, so the user can still undo —
+only when even the rename fails does `delete_session` report
+`files_left=true` to the UI. A background sweep started after launch moves
+unreferenced files older than an hour into `<library_root>/.trash/` rather
+than permanently deleting them. Batches land in
+`.trash/<unix-seconds>-<pid>/` at the moment of the first move (batched, so
+a later run of the sweep can purge whole batches), never overwrite an
+existing name in the same batch, and batches older than 30 days are purged
+at the start of each sweep. The sweep inspects only folders corresponding to
+sessions recorded in SQLite, skips itself entirely when the database has no
+image rows, and drops the database lock before it walks the disk. The
+database itself is `<app-data-dir>/aerial.db` (override `AAP_DB_PATH`): an
+existing app-data file always wins; when the app-data target does not exist
+but the old `./aerial.db` placeholder from the working directory does, that
+file is **copied** (never moved) into place, so session history survives the
+startup migration. Never a relative `aerial.db`.
+
+### `get_analysis_input` / `analysis_input`
+
+```rust
+pub(crate) fn analysis_input(
+    conn: &Connection,
+    image_id: Uuid,
+) -> Result<PluginImageMetadata, ImportFailure> {
+    // ...
+}
+```
+
+Projects a stored image onto the plugin pre-flight shape without reading the
+file again. A JPEG is its own input. A DNG returns its `raw_sibling_id` row
+(always a JPEG by construction); a DNG without a sibling is rejected with
+`ImportError::NotAnalysisReady`. Rows migrated from before copy-on-import have
+`analysis_ready = NULL`; readiness for them is decided from `format` (JPEG
+ready, DNG not), so an old JPEG stays analysable.
+
+### Schema (image table)
+
+Copy-on-import adds five nullable columns; existing rows are copied unchanged
+and keep their `file_path`. `CREATE INDEX idx_image_content_hash` supports
+project-scope duplicate detection.
+
+| Column           | Meaning                                              |
+| ---------------- | ---------------------------------------------------- |
+| `source_path`    | Path the image was imported from (provenance).       |
+| `content_hash`   | SHA-256 of the file, lowercase hex.                  |
+| `file_size`      | Size of the copy in bytes.                           |
+| `raw_sibling_id` | The other half of a JPG/DNG stem pair (symmetric).   |
+| `analysis_ready` | `1` analysable, `0` DNG with no JPEG, `NULL` legacy. |
 
 ### `extract_metadata`
 
@@ -248,7 +366,7 @@ pub(crate) fn flag_incomplete_metadata(
 Pure, total. Second phase of the import pipeline, after `import_images`:
 
 ```text
-import_images(request, known, existing_paths)
+import_images(request, known)
   -> I/O copies files + extracts metadata per imported id (impure)
   -> flag_incomplete_metadata(imported_candidates, metadata)
 ```
@@ -312,6 +430,28 @@ metadata-extraction operation. Each variant has a `code()` method
 `"PREVIEW_UNAVAILABLE"`) for programmatic matching on the frontend, and
 converts via `From<MetadataError> for CommandError` so it can be returned
 directly from a `#[tauri::command]` and reach the frontend over IPC.
+
+## Note on `ImportError` copy-on-import variants
+
+Four variants belong to the copy step:
+
+- `CopyFailed { path, reason }` (code `COPY_FAILED`) — an I/O failure while
+  scanning, copying, or reading the copy's metadata. The file leaves no row
+  and no half-written copy.
+- `RecordFailed { path, reason }` (`RECORD_FAILED`) — the copy succeeded but
+  its row could not be written (or the destination path is already owned by
+  another row). The copy is deleted; the UI should treat this as a database
+  problem, not a bad image.
+- `DestinationExists { path }` (`DESTINATION_EXISTS`) — a file appeared at the
+  destination after planning. The import never overwrites.
+- `NotAnalysisReady { image_id }` (`IMAGE_NOT_READY`) — `get_analysis_input`
+  was asked for a DNG with no usable JPEG sibling (none was imported, or the
+  sibling row is gone).
+
+`ImportError` implements `Display` (human-readable) and `code()`
+(programmatic), and converts to `CommandError` through
+`ImportFailure` (see `import_io::ImportFailure`), which also carries
+`SessionError` for database/storage failures.
 
 ## Note on `ImportError::UnsupportedFormat`
 
