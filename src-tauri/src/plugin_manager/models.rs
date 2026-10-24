@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+pub use crate::plugin_manager::payload::ImageMetadata;
+
 // ---------------------------------------------------------------------------
 // Plugin Manifest Definition (Conforms to schemas/plugin.schema.json)
 // ---------------------------------------------------------------------------
@@ -343,11 +345,44 @@ impl TryFrom<(&Path, &crate::models::ImageMetadata)> for ExecutionTarget {
             }
         };
 
+        let mut meta = serde_json::Map::new();
+
+        if let (Some(w), Some(h)) = (exif.width, exif.height) {
+            meta.insert("resolution".to_string(), serde_json::json!([w, h]));
+        }
+
+        if let (Some(lat), Some(lon)) = (exif.gps_latitude, exif.gps_longitude) {
+            meta.insert(
+                "gps".to_string(),
+                serde_json::json!({
+                    "lat": lat,
+                    "lon": lon,
+                }),
+            );
+        }
+
+        if let Some(alt) = exif.gps_altitude_m.or(exif.absolute_altitude_m) {
+            meta.insert("altitude".to_string(), serde_json::json!(alt));
+        }
+
+        if let Some(dt) = exif.date_time_original {
+            meta.insert(
+                "timestamp".to_string(),
+                serde_json::json!(dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            );
+        }
+
+        let metadata_val = if meta.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(meta))
+        };
+
         Ok(ExecutionTarget {
             granularity: "single_image".to_string(),
             image_path: image_path.to_string_lossy().into_owned(),
             mime_type: mime_type.to_string(),
-            metadata: serde_json::to_value(exif).ok(),
+            metadata: metadata_val,
         })
     }
 }
@@ -362,6 +397,11 @@ mod exif_bridge_tests {
     fn jpeg_exif_maps_to_image_jpeg_target() {
         let exif = ImageMetadata {
             format: Some(ImageFormat::Jpeg),
+            width: Some(4000),
+            height: Some(3000),
+            gps_latitude: Some(-7.25),
+            gps_longitude: Some(112.75),
+            gps_altitude_m: Some(120.5),
             ..Default::default()
         };
         let path = Path::new("/data/images/drone_01.jpg");
@@ -371,7 +411,11 @@ mod exif_bridge_tests {
         assert_eq!(target.granularity, "single_image");
         assert_eq!(target.image_path, "/data/images/drone_01.jpg");
         assert_eq!(target.mime_type, "image/jpeg");
-        assert!(target.metadata.is_some());
+        let meta = target.metadata.expect("metadata should be present");
+        assert_eq!(meta["resolution"], serde_json::json!([4000, 3000]));
+        assert_eq!(meta["gps"]["lat"], -7.25);
+        assert_eq!(meta["gps"]["lon"], 112.75);
+        assert_eq!(meta["altitude"], 120.5);
     }
 
     #[test]

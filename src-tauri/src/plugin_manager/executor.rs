@@ -45,6 +45,9 @@ pub struct StartJobRequestDto {
     pub aoi: Option<serde_json::Value>,
     /// User-configured parameter values corresponding to the plugin's `parameters.json`.
     pub parameters: HashMap<String, serde_json::Value>,
+    /// Optional decoded metadata (resolution, GPS, altitude, timestamp) conforming to `execution_payload.schema.json`.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Instant return handle from `start_plugin_job`.
@@ -437,7 +440,7 @@ pub(crate) fn build_execution_payload(
         granularity: "single_image".to_string(),
         image_path: req.target_image_path.clone(),
         mime_type: req.mime_type.clone(),
-        metadata: None,
+        metadata: req.metadata.clone(),
     };
 
     Ok(ExecutionPayload {
@@ -1039,6 +1042,7 @@ mod tests {
             mime_type: "image/jpeg".to_string(),
             aoi: None,
             parameters: HashMap::from([("threshold".to_string(), serde_json::json!(0.35))]),
+            metadata: Some(serde_json::json!({ "resolution": [4000, 3000] })),
         };
         let output_dir = Path::new("/tmp/test_output");
         let payload = build_execution_payload("exec_test_123", output_dir, &req).unwrap();
@@ -1048,6 +1052,10 @@ mod tests {
         assert_eq!(payload.target.granularity, "single_image");
         assert_eq!(payload.target.image_path, "/data/images/drone_01.jpg");
         assert_eq!(payload.target.mime_type, "image/jpeg");
+        assert_eq!(
+            payload.target.metadata,
+            Some(serde_json::json!({ "resolution": [4000, 3000] }))
+        );
         assert_eq!(
             payload.parameters.get("threshold"),
             Some(&serde_json::json!(0.35))

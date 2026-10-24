@@ -34,9 +34,9 @@
 //! | [`executor`] | Async subprocess supervision, timeout enforcement, and progress streaming |
 //! | [`lifecycle`] | Plugin installation, removal, enable/disable, and state persistence |
 //! | [`models`] | Data models, DTOs, and schema-conforming types |
-//! | [`payload`] | Execution payload assembly and pre-flight validation |
+//! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata` and execution preflight) |
 //! | [`registry`] | Plugin discovery, indexing, compatibility queries, and health checks |
-//! | [`result_handler`] | Execution result parsing and run history recording |
+//! | [`result_handler`] | Compatibility shim for Module 9 (`ExecutionResult` and run history) |
 //!
 //! ## Fault Isolation
 //!
