@@ -43,6 +43,7 @@ pub struct GeoTiffHeaderSummary {
     pub compression_name: String,
     pub has_alpha: bool,
     pub nodata_value: Option<f64>,
+    pub is_min_is_white: bool,
 }
 
 /// Informasi georeferensi yang diekstrak dari tag GeoTIFF.
@@ -160,6 +161,61 @@ pub fn validate_geotiff_header_fast(path: &Path) -> Result<GeoTiffHeaderSummary,
         });
     }
 
+    // 1. Periksa PlanarConfiguration (Tag 284): 1=Chunky (didukung), 2=Planar (ditolak)
+    if let Ok(val) = decoder.get_tag(Tag::PlanarConfiguration) {
+        let is_planar = matches!(val, Value::Short(2) | Value::Unsigned(2));
+        if is_planar {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "PlanarConfiguration 2 (separate planes) tidak didukung. Harap konversi ke format Chunky (PlanarConfiguration 1).".to_string(),
+            ));
+        }
+    }
+
+    // 2. Periksa PhotometricInterpretation (Tag 262) & Kompresi (Tag 259)
+    let comp_id = decoder.get_tag_u32(Tag::Compression).unwrap_or(1);
+    let photo_val = if let Ok(val) = decoder.get_tag(Tag::PhotometricInterpretation) {
+        match val {
+            Value::Short(v) => Some(v as u32),
+            Value::Unsigned(v) => Some(v),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(photo) = photo_val {
+        if photo == 3 {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "PhotometricInterpretation Palette (3) tidak didukung untuk ortofoto. Harap konversi ke RGB/RGBA.".to_string(),
+            ));
+        }
+        if photo == 5 {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "PhotometricInterpretation CMYK (5) tidak didukung untuk tampilan peta. Harap konversi ke RGB.".to_string(),
+            ));
+        }
+        if photo == 6 && comp_id != 7 {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "PhotometricInterpretation YCbCr (6) hanya didukung dengan kompresi JPEG (7)."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let is_min_is_white = photo_val == Some(0);
+
+    // 3. Validasi Kompresi: 1=None, 5=LZW, 7=JPEG, 8=Deflate, 32773=PackBits, 32946=PKZIP Deflate
+    match comp_id {
+        1 | 5 | 7 | 8 | 32773 | 32946 => {}
+        _ => {
+            let comp_name = detect_compression_name(&mut decoder);
+            return Err(OrthoImportError::KompresiTidakDidukung(format!(
+                "Metode kompresi '{}' (ID {}) tidak didukung oleh decoder pure Rust. Harap gunakan Deflate, LZW, JPEG, PackBits, atau Uncompressed.",
+                comp_name, comp_id
+            )));
+        }
+    }
+
     let color_type = decoder.colortype()?;
     let (bit_depth, samples_per_pixel) = match color_type {
         ColorType::Gray(b) => (b as u32, 1u32),
@@ -214,6 +270,7 @@ pub fn validate_geotiff_header_fast(path: &Path) -> Result<GeoTiffHeaderSummary,
         compression_name,
         has_alpha,
         nodata_value,
+        is_min_is_white,
     })
 }
 
@@ -584,18 +641,32 @@ pub fn compute_16bit_percentiles<R: Read + Seek>(
             let (tw, th) = decoder.chunk_dimensions();
             let tiles_across = width.div_ceil(tw);
             let tiles_down = height.div_ceil(th);
-
-            let col_mid = tiles_across / 2;
-            let col_end = tiles_across.saturating_sub(1);
-            let row_mid = tiles_down / 2;
-            let row_end = tiles_down.saturating_sub(1);
+            let total_tiles = tiles_across * tiles_down;
 
             let mut indices = Vec::new();
-            for &r in &[0, row_mid, row_end] {
-                for &c in &[0, col_mid, col_end] {
-                    let idx = r * tiles_across + c;
-                    if !indices.contains(&idx) {
-                        indices.push(idx);
+            if total_tiles <= 64 {
+                for i in 0..total_tiles {
+                    indices.push(i);
+                }
+            } else {
+                let num_samples_x = 8.min(tiles_across);
+                let num_samples_y = 8.min(tiles_down);
+                for sy in 0..num_samples_y {
+                    let r = if num_samples_y > 1 {
+                        (sy * (tiles_down - 1)) / (num_samples_y - 1)
+                    } else {
+                        0
+                    };
+                    for sx in 0..num_samples_x {
+                        let c = if num_samples_x > 1 {
+                            (sx * (tiles_across - 1)) / (num_samples_x - 1)
+                        } else {
+                            0
+                        };
+                        let idx = r * tiles_across + c;
+                        if !indices.contains(&idx) {
+                            indices.push(idx);
+                        }
                     }
                 }
             }
@@ -604,13 +675,13 @@ pub fn compute_16bit_percentiles<R: Read + Seek>(
         ChunkType::Strip => {
             let count = decoder.strip_count().unwrap_or(1);
             let mut indices = Vec::new();
-            if count <= 9 {
+            if count <= 64 {
                 for i in 0..count {
                     indices.push(i);
                 }
             } else {
-                for step in 0..9 {
-                    let idx = (step * (count - 1)) / 8;
+                for step in 0..64 {
+                    let idx = (step * (count - 1)) / 63;
                     if !indices.contains(&idx) {
                         indices.push(idx);
                     }
@@ -620,7 +691,14 @@ pub fn compute_16bit_percentiles<R: Read + Seek>(
         }
     };
 
-    for idx in chunk_indices {
+    let start_time = std::time::Instant::now();
+    let max_duration = std::time::Duration::from_millis(1500);
+
+    for &idx in &chunk_indices {
+        if start_time.elapsed() > max_duration && total_samples >= 1000 {
+            break;
+        }
+
         if let Ok(DecodingResult::U16(data)) = decoder.read_chunk(idx) {
             let color_type = decoder.colortype()?;
             let channels = match color_type {
@@ -664,7 +742,63 @@ pub fn compute_16bit_percentiles<R: Read + Seek>(
         }
     }
 
+    // Jika histogram masih kosong (semua 64 tile nodata/alpha=0), scan tile tambahan
     if total_samples == 0 {
+        let total_chunks = match decoder.get_chunk_type() {
+            ChunkType::Tile => decoder.tile_count().unwrap_or(0),
+            ChunkType::Strip => decoder.strip_count().unwrap_or(0),
+        };
+        for idx in 0..total_chunks.min(64) {
+            if chunk_indices.contains(&idx) {
+                continue;
+            }
+            if start_time.elapsed() > max_duration {
+                break;
+            }
+            if let Ok(DecodingResult::U16(data)) = decoder.read_chunk(idx) {
+                let color_type = decoder.colortype()?;
+                let channels = match color_type {
+                    ColorType::Gray(_) => 1,
+                    ColorType::GrayA(_) => 2,
+                    ColorType::RGB(_) => 3,
+                    ColorType::RGBA(_) => 4,
+                    _ => 3,
+                };
+                let num_pixels = data.len() / channels;
+                for p in 0..num_pixels {
+                    let offset = p * channels;
+                    if has_alpha && channels >= 4 && data[offset + 3] == 0 {
+                        continue;
+                    }
+                    if let Some(nd) = nodata_val {
+                        let nd_u16 = nd.round() as u16;
+                        if channels >= 3 {
+                            if data[offset] == nd_u16
+                                && data[offset + 1] == nd_u16
+                                && data[offset + 2] == nd_u16
+                            {
+                                continue;
+                            }
+                        } else if data[offset] == nd_u16 {
+                            continue;
+                        }
+                    }
+                    let color_chans = if channels >= 3 { 3 } else { 1 };
+                    for c in 0..color_chans {
+                        let val = data[offset + c] as usize;
+                        histogram[val] += 1;
+                        total_samples += 1;
+                    }
+                }
+            }
+            if total_samples > 0 {
+                break;
+            }
+        }
+    }
+
+    if total_samples == 0 {
+        // Fallback: full-range
         return Ok((0.0, 65535.0, true));
     }
 
@@ -703,6 +837,7 @@ pub fn compute_16bit_percentiles<R: Read + Seek>(
 /// Untuk citra Tiled: Merakit satu strip tile penuh ($W \times TileHeight$) lalu
 /// menyuapkannya per baris ke resampler (pilihan arsitektur Opsi i).
 /// Untuk citra Stripped: Membaca per strip langsung dan menyuapkan baris-barisnya.
+#[allow(clippy::too_many_arguments)]
 pub fn stream_geotiff_to_resampler<R: Read + Seek>(
     decoder: &mut Decoder<R>,
     width: u32,
@@ -710,6 +845,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
     resampler: &mut StreamingResampler,
     u16_stretch: Option<(f64, f64)>,
     nodata_val: Option<f64>,
+    is_min_is_white: bool,
     cancel_token: Option<&CancellationToken>,
 ) -> Result<(), OrthoImportError> {
     let color_type = decoder.colortype()?;
@@ -769,6 +905,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
                                         channels,
                                         target_channels,
                                         nodata_val,
+                                        is_min_is_white,
                                     );
                                 }
                             }
@@ -818,6 +955,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
                                         channels,
                                         target_channels,
                                         nodata_val,
+                                        is_min_is_white,
                                     );
                                 }
                             }
@@ -871,6 +1009,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
                                     channels,
                                     target_channels,
                                     nodata_val,
+                                    is_min_is_white,
                                 );
                             }
                             resampler.push_row_u16(current_y, &row_buf, lo, hi, cancel_token)?;
@@ -894,6 +1033,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
                                 channels,
                                 target_channels,
                                 nodata_val,
+                                is_min_is_white,
                             );
                         }
                         resampler.push_row_u8(current_y, &row_buf, cancel_token)?;
@@ -913,7 +1053,14 @@ fn blit_pixel_u8(
     src_ch: usize,
     dst_ch: usize,
     nodata_val: Option<f64>,
+    is_min_is_white: bool,
 ) {
+    let src_g = if is_min_is_white && src_ch == 1 {
+        255 - src[0]
+    } else {
+        src[0]
+    };
+
     let is_nodata = if let Some(nd) = nodata_val {
         let nd_u8 = nd.round() as u8;
         if src_ch >= 3 {
@@ -944,9 +1091,9 @@ fn blit_pixel_u8(
             dst[3] = 255;
         } else {
             // Grayscale
-            dst[0] = src[0];
-            dst[1] = src[0];
-            dst[2] = src[0];
+            dst[0] = src_g;
+            dst[1] = src_g;
+            dst[2] = src_g;
             dst[3] = 255;
         }
     } else if dst_ch == 3 {
@@ -956,9 +1103,9 @@ fn blit_pixel_u8(
             dst[1] = src[1];
             dst[2] = src[2];
         } else {
-            dst[0] = src[0];
-            dst[1] = src[0];
-            dst[2] = src[0];
+            dst[0] = src_g;
+            dst[1] = src_g;
+            dst[2] = src_g;
         }
     }
 }
@@ -969,7 +1116,14 @@ fn blit_pixel_u16(
     src_ch: usize,
     dst_ch: usize,
     nodata_val: Option<f64>,
+    is_min_is_white: bool,
 ) {
+    let src_g = if is_min_is_white && src_ch == 1 {
+        65535 - src[0]
+    } else {
+        src[0]
+    };
+
     let is_nodata = if let Some(nd) = nodata_val {
         let nd_u16 = nd.round() as u16;
         if src_ch >= 3 {
@@ -999,9 +1153,9 @@ fn blit_pixel_u16(
             dst[2] = src[2];
             dst[3] = 65535;
         } else {
-            dst[0] = src[0];
-            dst[1] = src[0];
-            dst[2] = src[0];
+            dst[0] = src_g;
+            dst[1] = src_g;
+            dst[2] = src_g;
             dst[3] = 65535;
         }
     } else if dst_ch == 3 {
@@ -1011,9 +1165,9 @@ fn blit_pixel_u16(
             dst[1] = src[1];
             dst[2] = src[2];
         } else {
-            dst[0] = src[0];
-            dst[1] = src[0];
-            dst[2] = src[0];
+            dst[0] = src_g;
+            dst[1] = src_g;
+            dst[2] = src_g;
         }
     }
 }

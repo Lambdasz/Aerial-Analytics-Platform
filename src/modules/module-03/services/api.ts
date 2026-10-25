@@ -204,8 +204,8 @@ export interface InstanceStatus {
  */
 export function getInstanceStatus(): Promise<InstanceStatus> {
   return invokeMap<InstanceStatus>("get_instance_status").catch(() => ({
-    is_primary: true,
-    is_read_only: false,
+    is_primary: false,
+    is_read_only: true,
   }));
 }
 

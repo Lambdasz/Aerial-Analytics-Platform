@@ -1474,6 +1474,7 @@ pub fn execute_import_option_b(
                         &mut resampler,
                         u16_stretch,
                         header_summary.nodata_value,
+                        header_summary.is_min_is_white,
                         Some(&cancel_token),
                     )?;
                 } else {
@@ -1485,6 +1486,7 @@ pub fn execute_import_option_b(
                         &mut resampler,
                         u16_stretch,
                         header_summary.nodata_value,
+                        header_summary.is_min_is_white,
                         Some(&cancel_token),
                     )?;
                 }
@@ -1498,6 +1500,7 @@ pub fn execute_import_option_b(
             &mut resampler,
             u16_stretch,
             header_summary.nodata_value,
+            header_summary.is_min_is_white,
             Some(&cancel_token),
         )?;
     }
