@@ -101,3 +101,25 @@ fn parse_dms_to_degrees(value: &Value) -> Option<f64> {
     }
     None
 }
+
+/// Memeriksa apakah EXIF memuat tag Orientation selain 1 (Normal).
+/// Jika ada, mengembalikan pesan peringatan bahwa rotasi EXIF diabaikan demi menjaga kesesuaian georeferensi.
+pub fn check_exif_orientation_warning(image_path: &Path) -> Option<String> {
+    let file = File::open(image_path).ok()?;
+    let mut buf_reader = BufReader::new(file);
+    let exif: Exif = Reader::new().read_from_container(&mut buf_reader).ok()?;
+
+    if let Some(field) = exif.get_field(Tag::Orientation, In::PRIMARY) {
+        if let Value::Short(ref v) = field.value {
+            if let Some(&orient) = v.first() {
+                if orient != 1 {
+                    return Some(format!(
+                        "EXIF Orientation bernilai {} (bukan 1/Normal). Rotasi EXIF diabaikan demi menjaga orientasi georeferensi North-up.",
+                        orient
+                    ));
+                }
+            }
+        }
+    }
+    None
+}

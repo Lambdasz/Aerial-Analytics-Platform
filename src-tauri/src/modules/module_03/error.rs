@@ -107,6 +107,10 @@ pub enum OrthoImportError {
     #[error("Proses impor citra telah dibatalkan oleh pengguna")]
     Dibatalkan,
 
+    /// Instansi aplikasi lain sedang berjalan dan memegang kunci eksklusif.
+    #[error("Instansi aplikasi lain sedang berjalan: {0}")]
+    AplikasiSudahBerjalan(String),
+
     /// Kesalahan internal tak terduga.
     #[error("Terjadi kesalahan internal: {0}")]
     InternalError(String),
@@ -125,6 +129,7 @@ impl OrthoImportError {
             Self::RotasiTidakDidukung(_) => "ROTASI_TIDAK_DIDUKUNG",
             Self::DiskPenuh(_) => "DISK_PENUH",
             Self::JobSedangBerjalan(_) => "JOB_SEDANG_BERJALAN",
+            Self::AplikasiSudahBerjalan(_) => "APLIKASI_SUDAH_BERJALAN",
             Self::Dibatalkan => "DIBATALKAN",
             Self::InternalError(_) => "INTERNAL_ERROR",
         }
@@ -177,6 +182,9 @@ impl OrthoImportError {
             }
             Self::JobSedangBerjalan(_) => {
                 "Proses impor lain sedang berlangsung. Harap tunggu hingga selesai atau batalkan job aktif.".to_string()
+            }
+            Self::AplikasiSudahBerjalan(_) => {
+                "Instansi aplikasi lain sedang berjalan. Operasi penyimpanan dan impor dibatasi untuk mencegah konflik data.".to_string()
             }
             Self::Dibatalkan => {
                 "Proses impor citra telah dibatalkan oleh pengguna.".to_string()

@@ -353,19 +353,75 @@ mod tests {
     }
 
     #[test]
-    fn test_utm_north_roundtrip() {
-        // Greenwich London (UTM Zona 30N, EPSG:32630):
-        let orig_lat = 51.48;
-        let orig_lon = 0.05;
+    fn test_utm_north_greenwich_zone_30n() {
+        // Greenwich Royal Observatory (UTM Zona 30N, EPSG:32630):
+        // Bujur 0.0000° merupakan batas timur persis dari Zona 30 UTM (-6° s/d 0°).
+        // Nilai referensi: Diturunkan dari formulasi analitis Snyder (USGS PP 1395) / Karney
+        // yang diimplementasikan secara murni (pure Rust) tanpa runtime eksternal C/Python.
+        let orig_lat = 51.476852;
+        let orig_lon = 0.000000;
 
         let (easting, northing) =
-            wgs84_to_utm(orig_lat, orig_lon, 30, false).expect("Forward UTM 30N");
+            wgs84_to_utm(orig_lat, orig_lon, 30, false).expect("Forward UTM 30N Greenwich");
+
+        // Pada batas timur (delta 3 derajat dari meridian sentral -3°), Easting bernilai sekitar 708.000 m
+        assert!(
+            easting > 700000.0 && easting < 720000.0,
+            "Easting Greenwich batas zona: {}",
+            easting
+        );
+        assert!(
+            northing > 5700000.0 && northing < 5710000.0,
+            "Northing Greenwich: {}",
+            northing
+        );
 
         let (inv_lat, inv_lon) =
-            utm_to_wgs84(easting, northing, 30, false).expect("Inverse UTM 30N");
+            utm_to_wgs84(easting, northing, 30, false).expect("Inverse UTM 30N Greenwich");
 
-        assert!((inv_lat - orig_lat).abs() < 1e-6);
-        assert!((inv_lon - orig_lon).abs() < 1e-6);
+        assert!(
+            (inv_lat - orig_lat).abs() < 1e-6,
+            "Selisih lat: {}",
+            (inv_lat - orig_lat).abs()
+        );
+        assert!(
+            (inv_lon - orig_lon).abs() < 1e-6,
+            "Selisih lon: {}",
+            (inv_lon - orig_lon).abs()
+        );
+    }
+
+    #[test]
+    fn test_utm_zone_boundary_points_precision() {
+        // UTM Zona 50 mencakup bujur 114°E hingga 120°E (meridian sentral 117°E).
+        // Uji titik di dekat batas barat zona (114.001°E) dan batas timur zona (119.999°E)
+        let lat = -1.500000;
+
+        // 1. Batas Barat Zona 50
+        let west_lon = 114.001000;
+        let (e_w, n_w) = wgs84_to_utm(lat, west_lon, 50, true).expect("Forward UTM 50S West edge");
+        assert!(
+            e_w > 160000.0 && e_w < 170000.0,
+            "Easting batas barat zona: {}",
+            e_w
+        );
+        let (inv_lat_w, inv_lon_w) =
+            utm_to_wgs84(e_w, n_w, 50, true).expect("Inverse UTM 50S West edge");
+        assert!((inv_lat_w - lat).abs() < 1e-6);
+        assert!((inv_lon_w - west_lon).abs() < 1e-6);
+
+        // 2. Batas Timur Zona 50
+        let east_lon = 119.999000;
+        let (e_e, n_e) = wgs84_to_utm(lat, east_lon, 50, true).expect("Forward UTM 50S East edge");
+        assert!(
+            e_e > 830000.0 && e_e < 840000.0,
+            "Easting batas timur zona: {}",
+            e_e
+        );
+        let (inv_lat_e, inv_lon_e) =
+            utm_to_wgs84(e_e, n_e, 50, true).expect("Inverse UTM 50S East edge");
+        assert!((inv_lat_e - lat).abs() < 1e-6);
+        assert!((inv_lon_e - east_lon).abs() < 1e-6);
     }
 
     #[test]

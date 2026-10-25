@@ -11,6 +11,7 @@ use crate::modules::module_03::storage_utils::get_storage_root;
 
 /// Guard penguncian eksklusif file instance aplikasi.
 /// Saat struct ini di-drop, OS otomatis melepaskan lock file.
+#[derive(Debug)]
 pub struct AppInstanceLock {
     _file: File,
     lock_path: PathBuf,
@@ -37,7 +38,7 @@ impl AppInstanceLock {
                 .share_mode(0) // Kunci eksklusif mutlak di level kernel Windows
                 .open(&lock_path)
                 .map_err(|e| {
-                    OrthoImportError::JobSedangBerjalan(format!(
+                    OrthoImportError::AplikasiSudahBerjalan(format!(
                         "Instansi aplikasi lain sedang berjalan (kunci eksklusif '{}' aktif): {}",
                         lock_path.display(),
                         e
@@ -56,12 +57,21 @@ impl AppInstanceLock {
 
         #[cfg(not(windows))]
         {
+            use fs4::fs_std::FileExt;
             let mut file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .open(&lock_path)
                 .map_err(|e| OrthoImportError::InternalError(e.to_string()))?;
+
+            file.try_lock_exclusive().map_err(|e| {
+                OrthoImportError::AplikasiSudahBerjalan(format!(
+                    "Instansi aplikasi lain sedang berjalan (advisory flock '{}' aktif): {}",
+                    lock_path.display(),
+                    e
+                ))
+            })?;
 
             let pid = std::process::id();
             let _ = file.write_all(format!("PID: {}\n", pid).as_bytes());

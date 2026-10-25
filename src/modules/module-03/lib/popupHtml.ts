@@ -7,6 +7,7 @@ import { calculateLineLengthMeters, calculateGeodesicAreaMeters } from "./geoJso
 import type { FieldDef } from "../types/spatialResult";
 import { resolveDisplayFields, formatFieldValue, resolveFeaturePhoto } from "./fieldResolution";
 import { escapeHtml, isValidHexColor } from "./fieldValidation";
+import { resolveOrthoDisplayUrl } from "./leaflet/spatialLayerBuilder";
 
 /**
  * Membangun markup string HTML tabel atribut untuk popup hasil analisis spasial.
@@ -411,8 +412,8 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
       ? `${(img.size_bytes / (1024 * 1024)).toFixed(2)} MB`
       : `${(img.size_bytes / 1024).toFixed(0)} KB`;
 
-  const rawUrl = img.thumbnail_url || img.file_path;
-  const imageSection = rawUrl
+  const displayUrl = resolveOrthoDisplayUrl(img);
+  const imageSection = displayUrl
     ? `
       <div style="
         position: relative;
@@ -424,7 +425,7 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
         border: 1px solid rgba(0, 0, 0, 0.08);
       ">
         <img
-          src="${escapeHtml(rawUrl)}"
+          src="${escapeHtml(displayUrl)}"
           alt="${safeFilename}"
           style="
             width: 100%;

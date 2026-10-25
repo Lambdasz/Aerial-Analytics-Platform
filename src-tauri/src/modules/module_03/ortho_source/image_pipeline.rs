@@ -322,6 +322,20 @@ pub fn check_disk_space_preflight(
         }
     }
 
+    #[cfg(not(windows))]
+    {
+        if let Ok(free_bytes) = fs4::available_space(target_dir) {
+            if free_bytes < required_bytes {
+                let req_mb = required_bytes as f64 / (1024.0 * 1024.0);
+                let free_mb = free_bytes as f64 / (1024.0 * 1024.0);
+                return Err(OrthoImportError::DiskPenuh(format!(
+                    "{:.1} MB (tersedia: {:.1} MB)",
+                    req_mb, free_mb
+                )));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -365,6 +379,32 @@ pub fn detect_jpeg_progressive_and_dimensions(
         }
 
         let segment_len = ((buf[i + 2] as usize) << 8) | (buf[i + 3] as usize);
+
+        // Penolakan Kasus Tepi: Arithmetic Coding (SOF9 = 0xC9, SOF10 = 0xCA, SOF11 = 0xCB, SOF13..=SOF15)
+        if marker == 0xC9 || marker == 0xCA || marker == 0xCB || (0xCD..=0xCF).contains(&marker) {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "JPEG dengan pengkodean arithmetic (SOF9/SOF10) tidak didukung. Harap simpan citra dengan Huffman coding standar."
+                    .to_string(),
+            ));
+        }
+
+        // Marker SOF (Start of Frame) umum: 0xC0 (Baseline), 0xC1 (Extended), 0xC2 (Progressive), 0xC3 (Lossless)
+        if (0xC0..=0xC7).contains(&marker) && marker != 0xC4 && i + 9 < buf.len() {
+            let precision = buf[i + 4];
+            if precision == 12 {
+                return Err(OrthoImportError::FormatTidakDidukung(
+                    "JPEG 12-bit tidak didukung. Hanya JPEG 8-bit yang didukung.".to_string(),
+                ));
+            }
+
+            let components = buf[i + 9];
+            if components == 4 {
+                return Err(OrthoImportError::FormatTidakDidukung(
+                    "JPEG dengan 4 komponen warna (CMYK/YCCK) tidak didukung. Harap konversi citra ke ruang warna RGB."
+                        .to_string(),
+                ));
+            }
+        }
 
         // SOF2: Progressive DCT
         if marker == 0xC2 {
@@ -477,9 +517,25 @@ pub fn decode_and_scale_png(
     let info = reader.info();
     let (orig_w, orig_h) = (info.width, info.height);
     let color_type = info.color_type;
-    let has_alpha = color_type == png::ColorType::Rgba
-        || color_type == png::ColorType::GrayscaleAlpha
-        || color_type == png::ColorType::Indexed;
+
+    // Penolakan Kasus Tepi: PNG 16-bit
+    if info.bit_depth == png::BitDepth::Sixteen {
+        return Err(OrthoImportError::FormatTidakDidukung(
+            "PNG 16-bit tidak didukung pada Opsi A. Harap simpan citra sebagai PNG 8-bit atau gunakan Opsi B untuk citra sensor kedalaman tinggi."
+                .to_string(),
+        ));
+    }
+
+    // Penolakan Kasus Tepi: PNG Palette / Indexed
+    if color_type == png::ColorType::Indexed {
+        return Err(OrthoImportError::FormatTidakDidukung(
+            "PNG Palette (Indexed Color) tidak didukung. Harap konversi citra ke format warna RGB atau RGBA."
+                .to_string(),
+        ));
+    }
+
+    let has_alpha =
+        color_type == png::ColorType::Rgba || color_type == png::ColorType::GrayscaleAlpha;
 
     if orig_w > MAX_IMAGE_DIMENSION_PX || orig_h > MAX_IMAGE_DIMENSION_PX {
         return Err(OrthoImportError::MelebihiBatas {
@@ -849,6 +905,10 @@ pub fn execute_import_option_a(
 
     // Ekstrak EXIF (hanya titik kamera drone)
     let exif_meta = super::exif_reader::read_exif_metadata(&source_path).unwrap_or(None);
+    let mut pipeline_warnings = Vec::new();
+    if let Some(orient_warn) = super::exif_reader::check_exif_orientation_warning(&source_path) {
+        pipeline_warnings.push(orient_warn);
+    }
 
     // Siapkan Guard Staging RAII yang aman
     let mut staging_guard = StagingGuard::for_job(job_id)?;
@@ -958,7 +1018,11 @@ pub fn execute_import_option_a(
         exif_summary: exif_meta,
         tiff_technical_details: None,
         imported_at: chrono::Utc::now().to_rfc3339(),
-        warnings: encode_res.warnings.clone(),
+        warnings: {
+            let mut w = encode_res.warnings.clone();
+            w.extend(pipeline_warnings);
+            w
+        },
     };
 
     let tech_json_path = staging_dir.join("metadata.json");

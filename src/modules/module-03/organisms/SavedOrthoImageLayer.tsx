@@ -4,7 +4,7 @@ import * as L from "leaflet";
 import { listOrthoImages } from "../services/api";
 import type { StoredImageMetadata } from "../types/storage";
 import type { LayerState } from "../types/layer";
-import { isValidWgs84Bounds, resolveImageOverlayUrl } from "../lib/leaflet/spatialLayerBuilder";
+import { isValidWgs84Bounds, resolveOrthoDisplayUrl } from "../lib/leaflet/spatialLayerBuilder";
 import { MAX_DISPLAY_FILE_SIZE_BYTES, MIN_ORTHO_ZOOM } from "../config/mapConfig";
 import { buildOrthoPopupHtml } from "../lib/popupHtml";
 import { showToast } from "../lib/toaster";
@@ -186,11 +186,9 @@ export const SavedOrthoImageLayer: React.FC<SavedOrthoImageLayerProps> = ({ laye
           activeOutlines.delete(imgKey);
         }
 
-        // 2. Ambil URL citra display (atau original) yang web-ready
-        const rawUrl = img.thumbnail_url || img.file_path;
-        if (!rawUrl) return;
-
-        const resolvedUrl = resolveImageOverlayUrl(rawUrl);
+        // 2. Ambil URL citra display yang web-ready (aman dari .tif/.tiff)
+        const resolvedUrl = resolveOrthoDisplayUrl(img);
+        if (!resolvedUrl) return;
 
         // 3. Jika overlay sudah ada, perbarui opacity & popup konten
         const existingOverlay = activeOverlays.get(imgKey);

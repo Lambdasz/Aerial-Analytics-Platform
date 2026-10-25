@@ -171,6 +171,40 @@ export const ImportImageModal: React.FC<ImportImageModalProps> = ({
     return null;
   }, [useManualBounds, west, east]);
 
+  const aspectRatioWarning = useMemo(() => {
+    if (
+      !useManualBounds ||
+      !imgDimensions ||
+      west === undefined ||
+      south === undefined ||
+      east === undefined ||
+      north === undefined
+    ) {
+      return null;
+    }
+    if (south >= north || west >= east) return null;
+
+    const [imgW, imgH] = imgDimensions;
+    if (imgW <= 0 || imgH <= 0) return null;
+    const imgAspect = imgW / imgH;
+
+    const latMidRad = (((south + north) / 2) * Math.PI) / 180;
+    const cosLat = Math.cos(latMidRad);
+    const deltaLon = east - west;
+    const deltaLat = north - south;
+
+    if (deltaLat <= 0 || deltaLon <= 0) return null;
+
+    const bboxAspect = (deltaLon * cosLat) / deltaLat;
+    const discrepancy = Math.abs(bboxAspect - imgAspect) / imgAspect;
+
+    if (discrepancy > 0.05) {
+      const pctDiff = (discrepancy * 100).toFixed(1);
+      return `Peringatan: Rasio aspek batas koordinat (${bboxAspect.toFixed(2)}) berbeda ${pctDiff}% (>5%) dari rasio aspek citra (${imgAspect.toFixed(2)}). Citra mungkin tampak terdistorsi atau terenggang.`;
+    }
+    return null;
+  }, [useManualBounds, imgDimensions, west, south, east, north]);
+
   const isFormValid = useMemo(() => {
     if (!selectedFile) return false;
     if (useManualBounds) {
@@ -376,6 +410,7 @@ export const ImportImageModal: React.FC<ImportImageModalProps> = ({
                       </div>
                       {map && (
                         <Button
+                          type="button"
                           small
                           minimal
                           intent="primary"
@@ -475,6 +510,18 @@ export const ImportImageModal: React.FC<ImportImageModalProps> = ({
                             disabled={isStartingJob}
                           />
                         </FormGroup>
+
+                        {aspectRatioWarning && (
+                          <div style={{ gridColumn: "1 / -1", marginTop: "2px" }}>
+                            <Callout
+                              intent={Intent.WARNING}
+                              icon="warning-sign"
+                              style={{ fontSize: "11px", padding: "8px 12px" }}
+                            >
+                              {aspectRatioWarning}
+                            </Callout>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

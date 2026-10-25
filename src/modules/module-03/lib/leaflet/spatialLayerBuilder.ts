@@ -24,6 +24,42 @@ export function resolveImageOverlayUrl(rawUrl: string): string {
 }
 
 /**
+ * Menyusun URL citra orthomosaic yang dapat dirender oleh browser (JPG / PNG).
+ * Jika thumbnail_url tidak ada dan fallback ke file_path berkas asli (yang mungkin berupa .tif/.tiff),
+ * fungsi ini TIDAK akan menyusun 'display.tif' (karena browser tidak bisa merender TIFF),
+ * melainkan mengarahkannya secara presisi ke 'display.jpg' atau 'display.png' pada direktori yang sama.
+ */
+export function resolveOrthoDisplayUrl(img: {
+  id?: string;
+  thumbnail_url?: string;
+  file_path?: string;
+  extension?: string;
+}): string | null {
+  if (img.thumbnail_url && !/\.(tif|tiff)$/i.test(img.thumbnail_url)) {
+    return resolveImageOverlayUrl(img.thumbnail_url);
+  }
+
+  if (img.file_path) {
+    const raw = img.file_path.trim().replace(/\\/g, "/");
+    if (/\.(tif|tiff)$/i.test(raw)) {
+      const lastSlash = raw.lastIndexOf("/");
+      const baseDir = lastSlash !== -1 ? raw.substring(0, lastSlash) : "";
+      // Gunakan display.png jika ekstensi citra png, selain itu default ke display.jpg
+      const displayExt = img.extension?.toLowerCase() === "png" ? "png" : "jpg";
+      return resolveImageOverlayUrl(`${baseDir}/display.${displayExt}`);
+    }
+    return resolveImageOverlayUrl(raw);
+  }
+
+  if (img.id) {
+    const displayExt = img.extension?.toLowerCase() === "png" ? "png" : "jpg";
+    return resolveImageOverlayUrl(`/map_storage/images/${img.id}/display.${displayExt}`);
+  }
+
+  return null;
+}
+
+/**
  * Memvalidasi apakah koordinat bounding box berada dalam rentang WGS84 derajat sah (-90..90, -180..180).
  * Mencegah browser / Leaflet membeku bila menerima koordinat proyeksi UTM (dalam meter).
  */

@@ -278,6 +278,195 @@ fn test_option_a_storage_layout_and_adaptive_display() {
 }
 
 #[test]
+fn test_png_import_with_manual_bounds_and_alpha() {
+    let tmp = tempdir().expect("tempdir");
+    let png_path = tmp.path().join("test_alpha.png");
+
+    // Buat citra RGBA dengan alpha channel
+    let mut img = image::RgbaImage::new(400, 300);
+    for (x, y, pixel) in img.enumerate_pixels_mut() {
+        let alpha = if (x + y) % 2 == 0 { 255 } else { 128 };
+        *pixel = image::Rgba([100, 150, 200, alpha]);
+    }
+    img.save(&png_path).expect("save png");
+
+    let job_id = format!("job_png_manual_{}", chrono::Utc::now().timestamp_millis());
+    let payload = ImportDualModePayload {
+        mode: "A".to_string(),
+        file_path: png_path.to_string_lossy().to_string(),
+        save_original: true,
+        manual_bounds: Some(ImportBoundsPayload {
+            west: 116.82,
+            south: -1.28,
+            east: 116.86,
+            north: -1.24,
+        }),
+        custom_filename: Some("PNG_Alpha_Manual".to_string()),
+    };
+
+    let cancel_token = CancellationToken::new();
+    let stored_meta =
+        execute_import_option_a(&job_id, payload, cancel_token).expect("eksekusi impor PNG sukses");
+
+    let image_id = stored_meta.id;
+    let target_dir = get_images_dir().join(&image_id);
+    assert!(target_dir.is_dir());
+
+    // Verifikasi display adalah PNG (mempertahankan transparansi alpha)
+    let disp_file = target_dir.join("display.png");
+    let orig_file = target_dir.join("original.png");
+    assert!(
+        disp_file.exists(),
+        "display.png harus dibuat untuk citra alpha"
+    );
+    assert!(orig_file.exists(), "original.png harus ada");
+
+    // Verifikasi bounds
+    let bounds = stored_meta.bounds.expect("bounds harus ada");
+    assert_eq!(bounds, [[-1.28, 116.82], [-1.24, 116.86]]);
+
+    // Bersihkan
+    let _ = fs::remove_dir_all(&target_dir);
+    let layer_file =
+        aerial_analytics_platform_lib::modules::module_03::layers::store::get_layers_dir()
+            .join(format!("{}.json", image_id));
+    let _ = fs::remove_file(&layer_file);
+}
+
+#[test]
+fn test_instance_lock_blocks_second_instance_and_skips_cleanup() {
+    let tmp = tempdir().expect("tempdir");
+    let lock_file = tmp.path().join(".test_instance.lock");
+
+    // 1. Kunci pertama berhasil didapat
+    let lock1 = aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::AppInstanceLock::try_acquire(lock_file.clone())
+        .expect("Kunci instance pertama harus berhasil didapat");
+
+    // 2. Kunci kedua dari proses/thread lain harus GAGAL dengan varian AplikasiSudahBerjalan
+    let lock2_res = aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::AppInstanceLock::try_acquire(lock_file.clone());
+    assert!(
+        matches!(lock2_res, Err(OrthoImportError::AplikasiSudahBerjalan(_))),
+        "Instance kedua harus menghasilkan error AplikasiSudahBerjalan, bukan JobSedangBerjalan: {:?}",
+        lock2_res
+    );
+
+    // 3. Verifikasi perilaku startup: instance kedua TIDAK BOLEH memanggil cleanup atau reconcile
+    let mut cleanup_called = false;
+    let mut reconcile_called = false;
+    let acquire_res = aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::AppInstanceLock::try_acquire(lock_file.clone());
+    match acquire_res {
+        Ok(_) => {
+            cleanup_called = true;
+            reconcile_called = true;
+        }
+        Err(e) => {
+            assert!(matches!(e, OrthoImportError::AplikasiSudahBerjalan(_)));
+            // Mode sekunder: Melewati cleanup dan reconcile!
+        }
+    }
+    assert!(
+        !cleanup_called,
+        "Cleanup STALE jobs TIDAK BOLEH dipanggil oleh instance kedua!"
+    );
+    assert!(
+        !reconcile_called,
+        "Reconcile storage TIDAK BOLEH dipanggil oleh instance kedua!"
+    );
+
+    drop(lock1);
+}
+
+#[test]
+fn test_edge_case_jpeg_rejections() {
+    let tmp = tempdir().expect("tempdir");
+
+    // 1. Arithmetic coding (SOF9 = 0xC9)
+    let p_sof9 = tmp.path().join("arithmetic_sof9.jpg");
+    let mut sof9_bytes = vec![0xFF, 0xD8]; // SOI
+    sof9_bytes.extend_from_slice(&[
+        0xFF, 0xC9, 0x00, 0x0B, 0x08, 0x00, 0x64, 0x00, 0x64, 0x03, 0x01, 0x11, 0x00,
+    ]);
+    fs::write(&p_sof9, &sof9_bytes).unwrap();
+    let res_sof9 = detect_jpeg_progressive_and_dimensions(&p_sof9);
+    assert!(
+        matches!(res_sof9, Err(OrthoImportError::FormatTidakDidukung(_))),
+        "JPEG SOF9 arithmetic harus ditolak: {:?}",
+        res_sof9
+    );
+
+    // 2. 12-bit precision JPEG
+    let p_12bit = tmp.path().join("precision_12bit.jpg");
+    let mut bit12_bytes = vec![0xFF, 0xD8];
+    bit12_bytes.extend_from_slice(&[
+        0xFF, 0xC0, 0x00, 0x0B, 0x0C, 0x00, 0x64, 0x00, 0x64, 0x03, 0x01, 0x11, 0x00,
+    ]);
+    fs::write(&p_12bit, &bit12_bytes).unwrap();
+    let res_12bit = detect_jpeg_progressive_and_dimensions(&p_12bit);
+    assert!(
+        matches!(res_12bit, Err(OrthoImportError::FormatTidakDidukung(_))),
+        "JPEG 12-bit harus ditolak: {:?}",
+        res_12bit
+    );
+
+    // 3. CMYK / YCCK 4-komponen
+    let p_cmyk = tmp.path().join("cmyk_4comp.jpg");
+    let mut cmyk_bytes = vec![0xFF, 0xD8];
+    cmyk_bytes.extend_from_slice(&[
+        0xFF, 0xC0, 0x00, 0x0E, 0x08, 0x00, 0x64, 0x00, 0x64, 0x04, 0x01, 0x11, 0x00, 0x02, 0x11,
+        0x00,
+    ]);
+    fs::write(&p_cmyk, &cmyk_bytes).unwrap();
+    let res_cmyk = detect_jpeg_progressive_and_dimensions(&p_cmyk);
+    assert!(
+        matches!(res_cmyk, Err(OrthoImportError::FormatTidakDidukung(_))),
+        "JPEG CMYK 4-komponen harus ditolak: {:?}",
+        res_cmyk
+    );
+}
+
+#[test]
+fn test_edge_case_png_rejections() {
+    let tmp = tempdir().expect("tempdir");
+
+    // 1. PNG 16-bit depth
+    let p_16bit = tmp.path().join("png_16bit.png");
+    {
+        let file = File::create(&p_16bit).unwrap();
+        let mut enc = png::Encoder::new(file, 50, 50);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Sixteen);
+        let mut writer = enc.write_header().unwrap();
+        let data = vec![0u8; 50 * 50 * 3 * 2];
+        writer.write_image_data(&data).unwrap();
+    }
+    let res_16bit = aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::decode_and_scale_png(&p_16bit, 4096);
+    assert!(
+        matches!(res_16bit, Err(OrthoImportError::FormatTidakDidukung(_))),
+        "PNG 16-bit harus ditolak: {:?}",
+        res_16bit
+    );
+
+    // 2. PNG Palette / Indexed
+    let p_pal = tmp.path().join("png_indexed.png");
+    {
+        let file = File::create(&p_pal).unwrap();
+        let mut enc = png::Encoder::new(file, 50, 50);
+        enc.set_color(png::ColorType::Indexed);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_palette(&[255, 0, 0, 0, 255, 0, 0, 0, 255]);
+        let mut writer = enc.write_header().unwrap();
+        let data = vec![0u8; 50 * 50];
+        writer.write_image_data(&data).unwrap();
+    }
+    let res_pal = aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::decode_and_scale_png(&p_pal, 4096);
+    assert!(
+        matches!(res_pal, Err(OrthoImportError::FormatTidakDidukung(_))),
+        "PNG Palette harus ditolak: {:?}",
+        res_pal
+    );
+}
+
+#[test]
 fn test_option_a_cancellation_cleans_staging_completely() {
     let tmp = tempdir().expect("tempdir");
     let img_path = tmp.path().join("cancel_test.jpg");

@@ -42,6 +42,7 @@ tiff = "0.9"
 kamadak-exif = "0.6"
 jpeg-decoder = "0.3"
 png = "0.17"
+fs4 = "1.1"
 
 [profile.dev.package.tiff]
 opt-level = 3
@@ -57,6 +58,9 @@ opt-level = 3
 
 [profile.dev.package.kamadak-exif]
 opt-level = 3
+
+[dev-dependencies]
+jpeg-encoder = "0.7"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

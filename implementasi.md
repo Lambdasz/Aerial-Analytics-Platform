@@ -98,10 +98,13 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
 
 ### 2.2 Penanganan Crash Startup, Single-Instance Lock, dan Retensi Job
 
-- **Single-Instance Lock**:
-  Menggunakan mekanisme penguncian instance tunggal pada Tauri untuk mencegah dua proses aplikasi membuka basis data `map_storage` secara bersamaan.
+- **Single-Instance Lock & Urutan Startup Multi-Instance**:
+  Penguncian instance aplikasi dilakukan secara murni pada `map_storage/.app.lock` (`share_mode(0)` di Windows kernel, serta advisory `fs4::FileExt::try_lock_exclusive` pada platform non-Windows):
+  1. _Instansi Primer (Pemegang Kunci)_: Saat pertama kali dibuka, instansi ini berhasil memperoleh kunci eksklusif, lalu menjalankan pembersihan startup (`cleanup_stale_import_jobs()`) dan rekonsiliasi layer (`reconcile_storage_layers()`).
+  2. _Instansi Sekunder (Kunci Tidak Didapat)_: Jika pengguna membuka jendela aplikasi kedua saat instansi pertama masih berjalan, kernel/OS menolak perolehan kunci dengan error terstruktur `OrthoImportError::AplikasiSudahBerjalan`.
+  3. _Aturan Proteksi Instansi Sekunder_: **Instansi kedua TIDAK BOLEH menjalankan `cleanup_stale_import_jobs` maupun `reconcile_storage_layers`**, karena menjalankan pembersihan tersebut akan menghancurkan folder staging `.staging_*` dan menandai job aktif instansi pertama sebagai terputus (_interrupted_). Instansi kedua mencatat log peringatan ramah dan berjalan dalam mode baca aman tanpa mengalami crash.
 - **Deteksi Crash Startup Tanpa Ambang Batas Waktu**:
-  Saat aplikasi baru dibuka (`setup()` di `src-tauri/src/lib.rs`), **SEMUA job di `map_storage/.jobs/` yang masih berstatus `"running"` langsung dinyatakan `interrupted` (terputus/crash)**. Karena aplikasi baru saja di-boot, tidak mungkin ada pekerja latar belakang dari sesi sebelumnya yang masih berjalan.
+  Hanya oleh instansi primer: saat aplikasi baru dibuka (`setup()` di `src-tauri/src/lib.rs`), **SEMUA job di `map_storage/.jobs/` yang masih berstatus `"running"` langsung dinyatakan `interrupted` (terputus/crash)**. Karena aplikasi baru saja di-boot, tidak mungkin ada pekerja latar belakang dari sesi sebelumnya yang masih berjalan.
 - **Pembersihan Folder Staging Sisa Crash**:
   Semua folder staging temporer `map_storage/images/.staging_*` yang ditinggalkan oleh job yang crash langsung dihapus secara rekursif saat startup.
 - **Folder Staging Diabaikan oleh Listing**:
@@ -173,13 +176,26 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
      ```
      _Aturan CRS_: Hanya `"EPSG:4326"` yang diizinkan pada sidecar JSON.
   3. **Input Manual Form**: Pengguna memasukkan 4 titik koordinat di modal.
-- **Peran EXIF GPS**:
+- **Peran EXIF GPS & Orientasi**:
   Hanya berupa **satu titik koordinat posisi kamera drone** ($lat, lon, altitude$) saat foto diambil. **TIDAK BOLEH digunakan sebagai bounding box**. EXIF hanya dimanfaatkan untuk ekstraksi metadata kamera drone, tanggal terbang, dan opsi tombol _"Pusatkan Peta ke Lokasi Drone"_.
+  _Penanganan EXIF Orientation != 1_: Citra orthomosaic drone terikat secara spasial pada grid koordinat North-up. Jika EXIF memuat tag `Orientation != 1` (mis. rotasi 90°/180°/270°), rotasi bitmap otomatis **DIABAIKAN** demi mencegah rusaknya kesesuaian koordinat georeferensi, dan peringatan non-blocking dicatat ke dalam `TechnicalMetadata.warnings`.
+- **Evaluasi Decoder: `jpeg-decoder` vs `zune-jpeg`**:
+  - `jpeg-decoder` (v0.3.2, Maret 2024, repo aktif di bawah `image-rs`) dipilih secara sadar karena menyediakan fitur **DCT-domain scaling** (`scale(w, h)`). Fitur ini memangkas ukuran buffer langsung di tahap dekuantisasi/IDCT ke skala 1/2, 1/4, atau 1/8, sehingga citra 100–144 MP tidak pernah dialokasikan dalam resolusi penuh di RAM.
+  - `zune-jpeg` sengaja tidak dipilih karena dirancang untuk dekompresi penuh berbasis throughput SIMD (AVX2/NEON) dan **tidak mendukung arbitrary DCT-domain downscaling saat dekuantisasi**. Penggunaan `zune-jpeg` pada citra 144 MP akan memaksakan alokasi buffer piksel utuh sebesar $12.000 \times 12.000 \times 3 = 432\text{ MB}$ sebelum downsample, menyebabkan lonjakan RAM yang melanggar batas pagu memori.
+- **Penanganan Kasus Tepi (Edge Cases) Format**:
+  - _JPEG Arithmetic Coding (SOF9 / SOF10)_: Ditolak seketika pada pembacaan header segmen SOF dengan error `FormatTidakDidukung` (_"JPEG dengan pengkodean arithmetic (SOF9/SOF10) tidak didukung. Harap simpan citra dengan Huffman coding standar."_).
+  - _JPEG 12-bit (Sample Precision = 12)_: Ditolak dengan error `FormatTidakDidukung` (_"JPEG 12-bit tidak didukung. Hanya JPEG 8-bit yang didukung."_).
+  - _JPEG CMYK / YCCK (Jumlah Komponen = 4)_: Ditolak dengan error `FormatTidakDidukung` (_"JPEG dengan 4 komponen warna (CMYK/YCCK) tidak didukung. Harap konversi ke format RGB."_).
+  - _PNG 16-bit Depth_: Ditolak pada Opsi A dengan error `FormatTidakDidukung` (_"PNG 16-bit tidak didukung pada Opsi A. Harap gunakan format 8-bit atau gunakan Opsi B."_).
+  - _PNG Palette (Indexed Color)_: Ditolak pada Opsi A dengan error `FormatTidakDidukung` (_"PNG Palette (Indexed Color) tidak didukung. Harap konversi ke RGB/RGBA."_).
+  - _PNG Interlaced (Adam7)_: Didukung penuh melalui dekompresi pass Adam7 oleh frame decoder `png` (`0.17.16`).
 - **Mitigasi Memori & Deteksi Progressive JPEG**:
-  - Deteksi SOF marker: Jika terdeteksi marker `0xFF, 0xC2` (Progressive JPEG) dan total piksel $> 40\text{ MP}$, tolak dengan error `FormatTidakDidukung` (_"Berkas JPEG menggunakan format Progressive yang membutuhkan alokasi memori berlebih. Harap gunakan format Baseline JPEG"_).
-  - Untuk Baseline JPEG: Crate `jpeg-decoder` digunakan dengan fitur **IDCT scaling** (faktor 1/2 atau 1/4).
-  - Untuk PNG: Crate `png` digunakan dengan **scanline streaming** (`Reader::next_row`).
+  - Deteksi SOF marker: Jika terdeteksi marker `0xFF, 0xC2` (Progressive JPEG) dan total piksel $> 40\text{ MP}$, tolak dengan error `MelebihiBatas` (_"JPEG progressive dengan resolusi ... melebihi batas aman 40 MP. Harap simpan citra sebagai baseline JPEG atau PNG."_).
   - Batas maksimal total piksel Opsi A: **144 Megapiksel** (mis. $12.000 \times 12.000\text{ px}$) dan ukuran berkas maksimal **50 MB**.
+- **Validasi Rasio Aspek Bbox Manual**:
+  Pada input koordinat manual di UI, rasio aspek bounding box dihitung dalam ruang proyeksi Web Mercator:
+  $$\text{Aspect}_{\text{bbox}} = \frac{(east - west) \cdot \cos(lat_{mid})}{north - south}$$
+  Jika selisih rasio aspek terhadap citra ($W / H$) melebihi **5%**, UI menampilkan peringatan non-blocking (Callout peringatan kuning) tanpa memblokir tombol impor. Tombol _"Isi dari Viewport Peta"_ dilengkapi atribut eksplisit `type="button"` agar tidak pernah memicu pengiriman form secara otomatis.
 - **Penyimpanan Berkas Asli**: Selalu disalin ke `map_storage/images/{id}/original.{ext}` dengan nama normalisasi (`original.jpg` atau `original.png`).
 
 ### 3.2 Opsi B: TIFF -> Konversi (GeoTIFF)
@@ -230,6 +246,10 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
     $$lon = \frac{x}{a} \times \frac{180}{\pi}, \quad lat = \left( 2 \arctan\left(\exp\left(\frac{y}{a}\right)\right) - \frac{\pi}{2} \right) \times \frac{180}{\pi}$$
   - `UTM North / South WGS84` (EPSG:32601–32660, 32701–32760) $\rightarrow$ Rumus invers Snyder/Karney dengan penanganan _False Northing_ $10.000.000\text{ m}$ untuk belahan bumi selatan (misal EPSG:32750 UTM Zona 50S Balikpapan).
   - Kode CRS `32767` (User-Defined) atau di luar daftar di atas $\rightarrow$ Kembalikan `CrsTidakDidukung` dengan input manual (`is_recoverable = true`).
+- **Asal Nilai Referensi Proyeksi & Pengujian Batas Zona**:
+  Seluruh nilai referensi koordinat dalam modul proyeksi diturunkan dari formulasi analitis Snyder (_USGS Professional Paper 1395_) dan Karney yang diimplementasikan secara mandiri (_golden values pure Rust_), sehubungan dengan aturan larangan dependensi runtime C (GDAL/PROJ `cs2cs`) maupun pustaka Python (`pyproj`). Akurasi numerik diuji secara ketat melalui pengujian bolak-balik analitis (_forward ↔ inverse roundtrip_) dengan toleransi presisi $< 10^{-6}\text{ derajat}$ ($\approx 0{,}11\text{ meter}$). Test suite mencakup:
+  1. _Belahan Bumi Utara & Greenwich_: Greenwich Royal Observatory ($51{,}476852^\circ\text{N}, 0{,}000000^\circ\text{E}$) yang merupakan batas timur persis UTM Zona 30N (EPSG:32630).
+  2. _Titik Batas Zona UTM_: Titik bujur dekat batas barat ($114{,}001^\circ\text{E}$) dan dekat batas timur ($119{,}999^\circ\text{E}$) pada UTM Zona 50S (EPSG:32750).
 
 ---
 
@@ -302,6 +322,16 @@ _(Catatan: Seluruh angka waktu dan memori di bawah adalah hasil estimasi teoriti
 |      **50 MB**       | Tiled GeoTIFF ($10.000 \times 8.000\text{ px}$)  | $\approx 125\text{ MB}$ |        $2 - 4\text{ detik}$        |    $< 1{,}5\text{ detik}$     |   $4.096 \times 3.277\text{ px}$ ($\le 2{,}8\text{ MB}$ JPG)   |
 |      **100 MB**      | Tiled GeoTIFF ($15.000 \times 11.000\text{ px}$) | $\approx 145\text{ MB}$ |        $4 - 7\text{ detik}$        |   $2 - 3{,}5\text{ detik}$    |   $4.096 \times 3.004\text{ px}$ ($\le 3{,}9\text{ MB}$ JPG)   |
 |      **250 MB**      | Tiled GeoTIFF ($22.000 \times 16.000\text{ px}$) | $\approx 175\text{ MB}$ |       $9 - 15\text{ detik}$        |     $4 - 7\text{ detik}$      | $3.200 \times 2.327\text{ px}$ ($\le 4{,}8\text{ MB}$ PNG/JPG) |
+
+### 5.3 Hasil Pengukuran Memori Empiris (Fase 2 / Opsi A)
+
+Pengujian dilakukan menggunakan integration test binary mandiri terisolasi (`src-tauri/tests/module_03_memory_benchmark.rs`) dengan sub-proses terpisah dan pembacaan `PeakWorkingSetSize` melalui Windows API `K32GetProcessMemoryInfo` (didahului oleh `K32EmptyWorkingSet` untuk membersihkan working set pra-eksekusi).
+
+| Kasus Uji                  | Dimensi & Format                                               | Baseline RAM       | Puncak RAM (Peak Working Set) | Delta Memori               | Skala IDCT / Mekanisme                                                                                         | Evaluasi Batas & Catatan                                                                                                                                             |
+| :------------------------- | :------------------------------------------------------------- | :----------------- | :---------------------------- | :------------------------- | :------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **JPEG Baseline 100 MP**   | $10.000 \times 10.000\text{ px}$, RGB, Noise/Gradient          | $0{,}08\text{ MB}$ | **$435{,}23\text{ MB}$**      | **$435{,}15\text{ MB}$**   | Skala IDCT `1/2` ($5.000 \times 5.000\text{ px}$) $\rightarrow$ Triangle Resize $4.096 \times 4.096\text{ px}$ | **Stabil $\le 500\text{ MB}$**. Koeksistensi buffer IDCT ($75\text{ MB}$), display buffer ($50{,}3\text{ MB}$), intermediate buffer resize Triangle, dan pool Rayon. |
+| **JPEG Progressive 40 MP** | $8.000 \times 5.000\text{ px}$, RGB, Progressive Enkoder Nyata | $0{,}08\text{ MB}$ | **$289{,}84\text{ MB}$**      | **$289{,}76\text{ MB}$**   | Tidak ada IDCT scaling; dekompresi koefisien DCT penuh seluruh scan                                            | **Aman $< 400\text{ MB}$**. Batas 40 MP terbukti aman di bawah pagu $400\text{ MB}$ sehingga tidak perlu diturunkan.                                                 |
+| **PNG 100 MP RGBA**        | $10.000 \times 10.000\text{ px}$, RGBA 8-bit                   | $0{,}08\text{ MB}$ | **$1.072{,}04\text{ MB}$**    | **$1.071{,}96\text{ MB}$** | Scanline decoding (tanpa sub-sampling DCT); frame buffer utuh $400\text{ MB}$                                  | Buffer RGBA $400\text{ MB}$ ditambah buffer kerja resize Triangle menghasilkan lonjakan memori $\approx 1{,}07\text{ GB}$.                                           |
 
 ---
 
@@ -462,8 +492,9 @@ allow-unwrap-in-tests = true
 
 - `tiff = "0.9.1"`: Pure Rust, dipelihara oleh tim `image-rs`.
 - `kamadak-exif = "0.6.1"`: Pure Rust, parser EXIF terisolasi.
-- `jpeg-decoder = "0.3.1"`: Pure Rust, mendukung IDCT scaling faktor 1/2 dan 1/4.
-- `png = "0.17.14"`: Pure Rust, mendukung streaming per scanline baris.
+- `jpeg-decoder = "0.3.2"`: Pure Rust (image-rs, rilis terakhir Maret 2024), mendukung DCT-domain scaling (`scale(w, h)`).
+- `png = "0.17.16"`: Pure Rust, mendukung streaming per scanline baris dan dekompresi Adam7 interlaced.
+- `fs4 = "1.1"`: Pure Rust, penguncian berkas eksklusif lintas platform (`try_lock_exclusive`) dan pengecekan kapasitas disk (`available_space`).
 - `[profile.dev.package."*"] opt-level = 3`: Menjamin performa tinggi pada mode pengembangan `tauri dev`.
 
 ---
@@ -474,7 +505,7 @@ allow-unwrap-in-tests = true
 
 #### 1. Backend Rust (`src-tauri/`):
 
-- `src-tauri/Cargo.toml` — Tambah dependensi `tiff = "0.9.1"`, `kamadak-exif = "0.6.1"`, `jpeg-decoder = "0.3.1"`, `png = "0.17.14"`, dan `[profile.dev.package."*"] opt-level = 3`.
+- `src-tauri/Cargo.toml` — Tambah dependensi `tiff = "0.9.1"`, `kamadak-exif = "0.6.1"`, `jpeg-decoder = "0.3.2"`, `png = "0.17.16"`, `fs4 = "1.1"`, dan `[profile.dev.package."*"] opt-level = 3`.
 - `src-tauri/clippy.toml` _(Baru)_ — Konfigurasi `allow-unwrap-in-tests = true`.
 - `src-tauri/src/modules/module_03/error.rs` — Tambah varian enum `OrthoImportError` dan method `is_recoverable()`.
 - `src-tauri/src/modules/module_03/ortho_source/constants.rs` — Konstanta batas TIFF (250 MB), batas strip (30 MB/chunk), batas piksel Opsi A (144 MP), target resolusi display (4.096 px), batas display (5 MB).
