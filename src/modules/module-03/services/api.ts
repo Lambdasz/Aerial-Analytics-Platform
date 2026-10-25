@@ -15,7 +15,9 @@ import type { DroneImageMetadata } from "../types/marker";
 import type { LayerPayload } from "../types/map";
 import type {
   DeleteOrthoSummary,
+  ImportDualModeParams,
   ImportImageParams,
+  JobRecord,
   StoredImageMetadata,
   UpdateOrthoImageParams,
 } from "../types/storage";
@@ -265,6 +267,36 @@ export function getOrthoCascadeSummary(id: string): Promise<DeleteOrthoSummary> 
  */
 export function deleteOrthoImage(id: string): Promise<DeleteOrthoSummary> {
   return invokeMap<DeleteOrthoSummary>("delete_ortho_image", { id });
+}
+
+/**
+ * Memulai proses impor citra orthomosaic dual-mode (Opsi A atau Opsi B) secara asinkron.
+ * Mengembalikan `job_id` unik untuk memantau status atau membatalkan proses.
+ */
+export function startImportOrthoJob(params: ImportDualModeParams): Promise<string> {
+  return invokeMap<string>("start_import_ortho_job", {
+    payload: {
+      mode: params.mode,
+      file_path: params.filePath,
+      save_original: params.saveOriginal,
+      manual_bounds: params.manualBounds,
+      custom_filename: params.customFilename,
+    },
+  });
+}
+
+/**
+ * Membatalkan proses impor citra orthomosaic yang sedang berlangsung.
+ */
+export function cancelImportJob(jobId: string): Promise<void> {
+  return invokeMap<void>("cancel_import_job", { jobId });
+}
+
+/**
+ * Mengambil status pekerjaan impor dan persentase progres saat ini dari backend.
+ */
+export function getImportJobStatus(jobId: string): Promise<JobRecord> {
+  return invokeMap<JobRecord>("get_import_job_status", { jobId });
 }
 
 // ── Spatial Results (Hasil Analisis) ────────────────────────────────────────

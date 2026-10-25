@@ -275,7 +275,13 @@ Downscaling dilakukan langsung dari canvas penampung di RAM (tanpa membaca ulang
 - Buffer display output target ($4.096 \times 4.096 \times 3\text{ B}$): **$50{,}3\text{ MB}$**.
 - Buffer perantara encoder JPEG: **$15\text{ MB}$**.
 - Base process runtime Tauri / WebView: **$60\text{ MB}$**.
-- **Puncak Memori Opsi A Realistis**: $\approx \mathbf{233\text{ MB RAM}}$ (stabil di bawah pagu $500\text{ MB}$).
+- **Puncak Memori Opsi A Realistis (Baseline JPEG 144 MP)**: $\approx \mathbf{233\text{ MB RAM}}$ (stabil di bawah pagu $500\text{ MB}$).
+- **Kasus Khusus Progressive JPEG 40 MP (Batas Maksimal Progressive yang Diizinkan)**:
+  - Buffer koefisien DCT penuh seluruh blok ($6.324 \times 6.324 \times 3 \text{ komponen} \times 2 \text{ B}$ koefisien DCT): **$\approx 240\text{ MB}$**.
+  - Buffer rekonstruksi piksel RGB penuh: **$120\text{ MB}$**.
+  - Buffer display target ($4.096 \times 4.096 \times 3\text{ B}$): **$50{,}3\text{ MB}$**.
+  - Base process runtime Tauri / WebView: **$60\text{ MB}$**.
+  - **Puncak Memori Kasus Terburuk Progressive 40 MP**: $\approx \mathbf{470{,}3\text{ MB RAM}}$ (berada tepat di bawah pagu mutlak $500\text{ MB}$; JPEG progressive $> 40\text{ MP}$ ditolak seketika via fast-fail untuk mencegah OOM).
 
 #### B. Opsi B (GeoTIFF 250 MB Streaming):
 

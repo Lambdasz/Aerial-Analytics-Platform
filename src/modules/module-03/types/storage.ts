@@ -48,3 +48,28 @@ export interface DeleteOrthoSummary {
   layer_deleted: boolean;
   annotations_deleted_count: number;
 }
+
+export interface ImportDualModeParams {
+  mode: "A" | "B";
+  filePath: string;
+  saveOriginal: boolean;
+  manualBounds?: {
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+  };
+  customFilename?: string;
+}
+
+export interface JobRecord {
+  job_id: string;
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  stage: string;
+  progress_percent: number;
+  message: string;
+  created_at: string;
+  updated_at: string;
+  error?: string;
+  result_image_id?: string;
+}

@@ -18,6 +18,9 @@ pub const MAX_OPTION_B_PIXELS: u64 = 500_000_000;
 /// Batas maksimal dimensi citra Opsi A (JPG/PNG) per sisi: 16.384 piksel.
 pub const MAX_IMAGE_DIMENSION_PX: u32 = 16_384;
 
+/// Batas maksimal resolusi JPEG progressive: 40 Megapiksel (40.000.000 piksel).
+pub const MAX_PROGRESSIVE_JPEG_PIXELS: u64 = 40_000_000;
+
 /// Batas maksimal dimensi citra Opsi B (TIFF/GeoTIFF) per sisi: 25.000 piksel.
 pub const MAX_TIFF_DIMENSION_PX: u32 = 25_000;
 

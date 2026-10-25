@@ -64,3 +64,108 @@ pub fn get_saved_images() -> Result<Vec<StoredImageMetadata>, CommandError> {
 pub fn delete_saved_image(category: String, filename: String) -> Result<bool, CommandError> {
     Ok(get_global_state().delete_saved_image(&category, &filename)?)
 }
+
+/// Memulai job impor citra orthomosaic secara asinkron (Dual-mode: Opsi A atau Opsi B).
+/// Mengembalikan `job_id` unik untuk memantau status atau membatalkan proses.
+#[tauri::command]
+pub fn start_import_ortho_job(
+    payload: super::types::ImportDualModePayload,
+) -> Result<String, CommandError> {
+    let job_id = format!("job_{}", chrono::Utc::now().timestamp_millis());
+    let token = super::job_manager::try_acquire_job(&job_id)?;
+
+    // Catat status awal di disk (.jobs/{job_id}.json)
+    let initial_record = super::types::JobRecord {
+        job_id: job_id.clone(),
+        status: "running".to_string(),
+        stage: "validasi".to_string(),
+        progress_percent: 0.0,
+        message: "Memulai proses impor citra...".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        error: None,
+        result_image_id: None,
+    };
+    super::job_manager::save_job_record(&initial_record)?;
+
+    let worker_job_id = job_id.clone();
+    let worker_payload = payload.clone();
+
+    // Spawn async background task
+    tokio::spawn(async move {
+        let res = match worker_payload.mode.as_str() {
+            "A" | "a" => super::image_pipeline::execute_import_option_a(
+                &worker_job_id,
+                worker_payload,
+                token,
+            ),
+            "B" | "b" => {
+                // Placeholder Fase 3 untuk GeoTIFF
+                Err(
+                    crate::modules::module_03::error::OrthoImportError::InternalError(
+                        "Opsi B (GeoTIFF) akan tersedia pada Fase 3.".to_string(),
+                    ),
+                )
+            }
+            other => Err(
+                crate::modules::module_03::error::OrthoImportError::FormatTidakDidukung(format!(
+                    "Mode impor '{}' tidak valid. Pilih Opsi 'A' atau 'B'.",
+                    other
+                )),
+            ),
+        };
+
+        if let Err(e) = res {
+            // Jika terjadi kesalahan dan job belum berstatus cancelled/interrupted, simpan status gagal
+            if let Ok(Some(mut rec)) = super::job_manager::load_job_record(&worker_job_id) {
+                if rec.status == "running" {
+                    if e == crate::modules::module_03::error::OrthoImportError::Dibatalkan {
+                        rec.status = "cancelled".to_string();
+                        rec.message = "Proses impor telah dibatalkan oleh pengguna.".to_string();
+                    } else {
+                        rec.status = "failed".to_string();
+                        rec.error = Some(e.code().to_string());
+                        rec.message = e.user_friendly_message();
+                    }
+                    rec.updated_at = chrono::Utc::now().to_rfc3339();
+                    let _ = super::job_manager::save_job_record(&rec);
+                }
+            }
+        }
+    });
+
+    Ok(job_id)
+}
+
+/// Membatalkan proses impor citra yang sedang berlangsung.
+#[tauri::command]
+pub fn cancel_import_job(job_id: String) -> Result<(), CommandError> {
+    if let Some(token) = super::job_manager::get_active_job_token(&job_id) {
+        token.cancel();
+    }
+
+    if let Ok(Some(mut rec)) = super::job_manager::load_job_record(&job_id) {
+        if rec.status == "running" {
+            rec.status = "cancelled".to_string();
+            rec.message = "Proses dibatalkan oleh pengguna".to_string();
+            rec.updated_at = chrono::Utc::now().to_rfc3339();
+            let _ = super::job_manager::save_job_record(&rec);
+        }
+    }
+
+    super::job_manager::release_job(&job_id);
+
+    Ok(())
+}
+
+/// Mengambil status terkini dan persentase progres pekerjaan impor dari disk.
+#[tauri::command]
+pub fn get_import_job_status(job_id: String) -> Result<super::types::JobRecord, CommandError> {
+    match super::job_manager::load_job_record(&job_id)? {
+        Some(record) => Ok(record),
+        None => Err(CommandError {
+            code: "NOT_FOUND".to_string(),
+            message: format!("Pekerjaan impor dengan ID '{}' tidak ditemukan.", job_id),
+        }),
+    }
+}
