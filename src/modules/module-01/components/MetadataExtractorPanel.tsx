@@ -1,20 +1,46 @@
 import { useMemo, type FC, type ReactNode } from "react";
 import { Button, Callout, Dialog, Intent, Tag } from "@blueprintjs/core";
 import {
-  buildMockImageMetadata,
   describeCompleteness,
   hasAnyDjiTelemetry,
+  imageFormatFromDb,
   METADATA_FIELD_LABELS,
   REQUIRED_METADATA_FIELDS,
   type ImageMetadata,
 } from "../imageMetadata";
 import { formatSingleDate } from "../sessionStats";
-import type { ImageRow } from "./SessionDetail";
+import type { StoredImage } from "../sessionCommands";
 import "./MetadataExtractorPanel.css";
 
 interface MetadataExtractorPanelProps {
-  row: ImageRow | null;
+  image: StoredImage | null;
   onClose: () => void;
+}
+
+function fileNameOf(path: string): string {
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
+}
+
+/**
+ * Builds the metadata view from the fields import persisted on the image row.
+ *
+ * That is the stored subset (location, capture time, dimensions, format, camera); exposure
+ * and XMP flight-telemetry fields are not persisted, so they show as unavailable. Reading
+ * them live would need an `extract_metadata` Tauri command over `file_path`.
+ */
+function metadataFromStoredImage(image: StoredImage): ImageMetadata {
+  return {
+    gpsLatitude: image.locationLat,
+    gpsLongitude: image.locationLon,
+    gpsAltitudeM: image.gpsAltitudeM,
+    dateTimeOriginal: image.capturedAt,
+    width: image.width,
+    height: image.height,
+    format: imageFormatFromDb(image.format),
+    make: image.make,
+    cameraModelName: image.cameraModel,
+  };
 }
 
 const EMPTY = <span className="m1-sd-fact__empty">—</span>;
@@ -44,10 +70,10 @@ function formatSpeed(value?: number | null): string | null {
   return value === null || value === undefined ? null : `${value.toFixed(1)} m/s`;
 }
 
-export const MetadataExtractorPanel: FC<MetadataExtractorPanelProps> = ({ row, onClose }) => {
+export const MetadataExtractorPanel: FC<MetadataExtractorPanelProps> = ({ image, onClose }) => {
   const metadata: ImageMetadata | null = useMemo(
-    () => (row ? buildMockImageMetadata(row) : null),
-    [row],
+    () => (image ? metadataFromStoredImage(image) : null),
+    [image],
   );
 
   const completeness = useMemo(
@@ -55,7 +81,7 @@ export const MetadataExtractorPanel: FC<MetadataExtractorPanelProps> = ({ row, o
     [metadata],
   );
 
-  if (!row || !metadata || !completeness) return null;
+  if (!image || !metadata || !completeness) return null;
 
   const isComplete = completeness.missingRequired.length === 0;
   const djiAvailable = hasAnyDjiTelemetry(metadata);
@@ -64,7 +90,7 @@ export const MetadataExtractorPanel: FC<MetadataExtractorPanelProps> = ({ row, o
     <Dialog
       isOpen
       onClose={onClose}
-      title={`Metadata — ${row.name}`}
+      title={`Metadata — ${fileNameOf(image.filePath)}`}
       className="m1-custom-dialog m1-meta-dialog"
       portalClassName="m1-dialog-portal"
     >

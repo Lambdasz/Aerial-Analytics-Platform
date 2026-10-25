@@ -1,68 +1,96 @@
-import { useMemo, useState, type FC } from "react";
-import type { Session } from "../sessionCommands";
+import { useEffect, useMemo, useState, type FC } from "react";
+import { Alert, Intent } from "@blueprintjs/core";
+import {
+  commandErrorMessage,
+  copyImageToSession,
+  deleteImage,
+  getImagesBySession,
+  moveImageToSession,
+  type Session,
+  type StoredImage,
+} from "../sessionCommands";
 import {
   formatSingleDate,
   formatTimestamp,
   getSessionStage,
-  hasImageRange,
   parseCameraDate,
   shortId,
   type SessionStage,
 } from "../sessionStats";
+import { loadImageThumbnail } from "../../../lib/imagePreview";
+import { MetadataExtractorPanel } from "./MetadataExtractorPanel";
+import { MoveCopyImageDialog } from "./SessionDialogs";
 import "./SessionDetail.css";
 
 interface SessionDetailProps {
   session: Session;
   projectName: string;
   busy: boolean;
+  /** Other sessions of the same project — the move/copy targets. */
+  otherSessions: Session[];
   onBack: () => void;
   onToggleStatus: (session: Session) => void;
   onAssignImage: (session: Session) => void;
   onCopyId: (id: string) => void;
-}
-
-interface ImageRow {
-  id: string;
-  name: string;
-  /** Capture time in camera-local ISO form, parseable by `parseCameraDate`. */
-  takenIso: string;
-  takenMs: number;
+  /** Toast + refresh, shared with the import dialog's success path. */
+  onImagesChanged: (message: string) => Promise<void>;
 }
 
 type SortKey = "name" | "taken";
 type SortDir = "asc" | "desc";
 
-const PAGE_STEP = 5;
-const MOCK_IMAGE_COUNT = 12;
+const PAGE_STEP = 8;
 const STEP_LABELS = ["Sesi dibuat", "Citra ditambahkan", "Selesai & diarsipkan"] as const;
 
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** Formats a local Date as a camera-local ISO string (no timezone suffix). */
-function toCameraIso(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+function fileNameOf(path: string): string {
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
 }
 
-// TODO: replace with a real list_images_by_session command once the backend exists.
-// Mock rows are spread evenly across the session's date range, and only exist when the
-// session has an image range (see `hasImageRange`). Otherwise the list is empty.
-function buildMockImageRows(session: Session): ImageRow[] {
-  if (!hasImageRange(session)) return [];
-  const startMs = parseCameraDate(session.dateStart).getTime();
-  const endMs = parseCameraDate(session.dateEnd).getTime();
-  const step = (endMs - startMs) / (MOCK_IMAGE_COUNT - 1);
-  return Array.from({ length: MOCK_IMAGE_COUNT }, (_, i) => {
-    const takenMs = Math.round(startMs + step * i);
-    return {
-      id: `mock-${session.id}-${i + 1}`,
-      name: `IMG_${String(i + 1).padStart(4, "0")}.JPG`,
-      takenIso: toCameraIso(new Date(takenMs)),
-      takenMs,
+function formatBytes(size: number | null): string {
+  if (size === null) return "—";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatGps(lat: number | null, lon: number | null): string {
+  if (lat === null || lon === null) return "GPS tidak ada";
+  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+}
+
+function cameraLabel(image: StoredImage): string {
+  const parts = [image.make, image.cameraModel].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : "Kamera tidak diketahui";
+}
+
+const ImageThumb: FC<{ path: string; format: string | null }> = ({ path, format }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    loadImageThumbnail(path)
+      .then((next) => {
+        if (alive) setUrl(next);
+      })
+      .catch(() => {
+        if (alive) setMissing(true);
+      });
+    return () => {
+      alive = false;
+      // The URL is owned by the session-wide thumbnail cache and shared with
+      // other views, so it is deliberately not revoked here.
     };
-  });
-}
+  }, [path]);
+
+  if (url) return <img className="m1-meta__thumb" src={url} alt="" />;
+  return (
+    <span className="m1-meta__thumb m1-meta__thumb--empty">
+      {missing ? "—" : (format ?? "…").slice(0, 3).toUpperCase()}
+    </span>
+  );
+};
 
 const StageStepper: FC<{ stage: SessionStage; completed: boolean }> = ({ stage, completed }) => (
   <ol className="m1-sd-steps" aria-label="Tahap sesi">
@@ -94,28 +122,116 @@ export const SessionDetail: FC<SessionDetailProps> = ({
   session,
   projectName,
   busy,
+  otherSessions,
   onBack,
   onToggleStatus,
   onAssignImage,
   onCopyId,
+  onImagesChanged,
 }) => {
   const [sortKey, setSortKey] = useState<SortKey>("taken");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [visibleCount, setVisibleCount] = useState(PAGE_STEP);
+  const [images, setImages] = useState<StoredImage[]>([]);
+  const [imagesError, setImagesError] = useState<string | null>(null);
+  const [imagesLoading, setImagesLoading] = useState(true);
+  const [selectedImage, setSelectedImage] = useState<StoredImage | null>(null);
+  const [menuImageId, setMenuImageId] = useState<string | null>(null);
+  const [actionTarget, setActionTarget] = useState<{
+    image: StoredImage;
+    mode: "move" | "copy";
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StoredImage | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const rows = useMemo(() => buildMockImageRows(session), [session]);
-  const hasImages = rows.length > 0;
+  const handleMoveOrCopy = async (
+    mode: "move" | "copy",
+    image: StoredImage,
+    targetSessionId: string,
+  ) => {
+    if (mode === "move") {
+      await moveImageToSession(image.id, targetSessionId);
+    } else {
+      await copyImageToSession(image.id, targetSessionId);
+    }
+    setActionTarget(null);
+    await onImagesChanged(
+      mode === "move" ? "Citra dipindahkan ke sesi tujuan" : "Citra disalin ke sesi tujuan",
+    );
+  };
+
+  const handleDeleteImage = async () => {
+    if (!deleteTarget) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
+      const outcome = await deleteImage(deleteTarget.id);
+      setDeleteTarget(null);
+      await onImagesChanged(
+        outcome.filesLeft ? "Citra dihapus, tapi salinannya tersisa di disk" : "Citra dihapus",
+      );
+    } catch (err) {
+      setActionError(commandErrorMessage(err));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  // The row menu is hand-rolled (a portal-free dropdown like the project
+  // picker's) because Blueprint's Popover does not anchor in the Tauri
+  // webview. That means the dismissal behaviour is ours too: closing happens
+  // on Escape, and on the first pointer outside the open menu.
+  useEffect(() => {
+    if (menuImageId === null) return;
+    const dismiss = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key === "Escape") setMenuImageId(null);
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".m1-meta__menu-anchor")) setMenuImageId(null);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", dismiss);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismiss);
+    };
+  }, [menuImageId]);
+
+  useEffect(() => {
+    let alive = true;
+    getImagesBySession(session.id)
+      .then((rows) => {
+        if (alive) setImages(rows);
+      })
+      .catch((err) => {
+        if (alive) setImagesError(commandErrorMessage(err));
+      })
+      .finally(() => {
+        if (alive) setImagesLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session.id]);
+
+  const hasImages = images.length > 0;
   const stage = getSessionStage(session);
   const isActive = session.status === "active";
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) =>
-      sortKey === "name"
-        ? a.name.localeCompare(b.name, "id-ID") * dir
-        : (a.takenMs - b.takenMs) * dir,
-    );
-  }, [rows, sortKey, sortDir]);
+    return [...images].sort((a, b) => {
+      if (sortKey === "name") {
+        return fileNameOf(a.filePath).localeCompare(fileNameOf(b.filePath), "id-ID") * dir;
+      }
+      const aMs = a.capturedAt ? parseCameraDate(a.capturedAt).getTime() : 0;
+      const bMs = b.capturedAt ? parseCameraDate(b.capturedAt).getTime() : 0;
+      return (aMs - bMs) * dir;
+    });
+  }, [images, sortKey, sortDir]);
 
   const shownRows = sortedRows.slice(0, visibleCount);
 
@@ -127,9 +243,6 @@ export const SessionDetail: FC<SessionDetailProps> = ({
       setSortDir("asc");
     }
   };
-
-  const ariaSort = (key: SortKey): "ascending" | "descending" | "none" =>
-    sortKey !== key ? "none" : sortDir === "asc" ? "ascending" : "descending";
 
   const sortIcon = (key: SortKey) => (sortKey === key && sortDir === "desc" ? "↓" : "↑");
 
@@ -219,58 +332,124 @@ export const SessionDetail: FC<SessionDetailProps> = ({
                 <h2 id="m1-sd-images-heading" className="m1-sd-panel__title">
                   Citra &amp; telemetri
                 </h2>
-                <span className="m1-sd-count-badge m1-tabular">—</span>
+                <span className="m1-sd-count-badge m1-tabular">
+                  {imagesLoading ? "…" : images.length}
+                </span>
+              </div>
+              <div className="m1-sd-sort">
+                <button type="button" className="m1-sd-th-btn" onClick={() => handleSort("name")}>
+                  Nama {sortIcon("name")}
+                </button>
+                <button type="button" className="m1-sd-th-btn" onClick={() => handleSort("taken")}>
+                  Waktu {sortIcon("taken")}
+                </button>
               </div>
             </div>
 
-            {hasImages ? (
+            {imagesError ? (
+              <p className="m1-sd-note">{imagesError}</p>
+            ) : imagesLoading ? (
+              <p className="m1-sd-note">Memuat citra…</p>
+            ) : hasImages ? (
               <>
-                <p className="m1-sd-note">
-                  Data contoh: daftar citra asli belum tersedia, jadi nama berkas dan waktu di bawah
-                  hanya ilustrasi.
-                </p>
-                <div className="m1-sd-table-wrap">
-                  <table className="m1-sd-table m1-tabular">
-                    <thead>
-                      <tr>
-                        <th scope="col" aria-sort={ariaSort("name")}>
-                          <button
-                            type="button"
-                            className="m1-sd-th-btn"
-                            onClick={() => handleSort("name")}
-                          >
-                            Nama berkas
-                            <span aria-hidden="true">{sortIcon("name")}</span>
-                          </button>
-                        </th>
-                        <th scope="col" aria-sort={ariaSort("taken")}>
-                          <button
-                            type="button"
-                            className="m1-sd-th-btn"
-                            onClick={() => handleSort("taken")}
-                          >
-                            Waktu pengambilan
-                            <span aria-hidden="true">{sortIcon("taken")}</span>
-                          </button>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shownRows.map((row) => (
-                        <tr key={row.id}>
-                          <td>{row.name}</td>
-                          <td>{formatSingleDate(row.takenIso, true)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
+                <ul className="m1-meta-list">
+                  {shownRows.map((image) => (
+                    <li key={image.id} className="m1-meta">
+                      <ImageThumb path={image.filePath} format={image.format} />
+                      <div className="m1-meta__body">
+                        <button
+                          type="button"
+                          className="m1-meta__name"
+                          title={image.filePath}
+                          onClick={() => setSelectedImage(image)}
+                        >
+                          {fileNameOf(image.filePath)}
+                        </button>
+                        <p className="m1-meta__line">
+                          {(image.format ?? "format tidak diketahui").toUpperCase()}
+                          {" · "}
+                          {image.width && image.height
+                            ? `${image.width}×${image.height}`
+                            : "ukuran tidak ada"}
+                          {" · "}
+                          {formatBytes(image.fileSize)}
+                        </p>
+                        <p className="m1-meta__line">
+                          {cameraLabel(image)}
+                          {" · "}
+                          {image.capturedAt
+                            ? formatSingleDate(image.capturedAt, true)
+                            : "waktu tidak ada"}
+                        </p>
+                        <p className="m1-meta__line">
+                          {formatGps(image.locationLat, image.locationLon)}
+                          {image.gpsAltitudeM !== null
+                            ? ` · ${image.gpsAltitudeM.toFixed(0)} m`
+                            : ""}
+                          {image.analysisReady === false ? " · belum siap analisa" : ""}
+                        </p>
+                      </div>
+                      <div className="m1-meta__menu-anchor">
+                        <button
+                          type="button"
+                          className="m1-meta__more"
+                          aria-haspopup="menu"
+                          aria-expanded={menuImageId === image.id}
+                          aria-label={`Aksi untuk ${fileNameOf(image.filePath)}`}
+                          onClick={() =>
+                            setMenuImageId((current) => (current === image.id ? null : image.id))
+                          }
+                        >
+                          ⋯
+                        </button>
+                        {menuImageId === image.id && (
+                          <div className="m1-meta__menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="m1-meta__menu-item"
+                              onClick={() => {
+                                setDeleteTarget(image);
+                                setMenuImageId(null);
+                              }}
+                            >
+                              Hapus
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="m1-meta__menu-item"
+                              disabled={otherSessions.length === 0}
+                              onClick={() => {
+                                setActionTarget({ image, mode: "move" });
+                                setMenuImageId(null);
+                              }}
+                            >
+                              Pindah ke sesi lain
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="m1-meta__menu-item"
+                              disabled={otherSessions.length === 0}
+                              onClick={() => {
+                                setActionTarget({ image, mode: "copy" });
+                                setMenuImageId(null);
+                              }}
+                            >
+                              Salin ke sesi lain
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
                 <div className="m1-sd-table-footer">
                   <span className="m1-tabular">
-                    Menampilkan {shownRows.length} dari {rows.length} berkas
+                    Menampilkan {shownRows.length} dari {images.length} berkas
                   </span>
-                  {visibleCount < rows.length && (
+                  {visibleCount < images.length && (
                     <button
                       type="button"
                       className="m1-sd-link-btn"
@@ -313,7 +492,7 @@ export const SessionDetail: FC<SessionDetailProps> = ({
               </div>
               <div className="m1-sd-fact">
                 <dt>Total citra</dt>
-                <dd>—</dd>
+                <dd>{imagesLoading ? "…" : images.length}</dd>
               </div>
               <div className="m1-sd-fact">
                 <dt>Dibuat pada</dt>
@@ -343,6 +522,50 @@ export const SessionDetail: FC<SessionDetailProps> = ({
           </section>
         </aside>
       </div>
+
+      <MetadataExtractorPanel image={selectedImage} onClose={() => setSelectedImage(null)} />
+
+      {actionTarget && (
+        <MoveCopyImageDialog
+          key={`${actionTarget.image.id}-${actionTarget.mode}`}
+          image={actionTarget.image}
+          mode={actionTarget.mode}
+          sessions={otherSessions}
+          onClose={() => setActionTarget(null)}
+          onConfirm={handleMoveOrCopy}
+        />
+      )}
+
+      <Alert
+        isOpen={deleteTarget !== null}
+        onClose={() => {
+          if (!actionBusy) {
+            setDeleteTarget(null);
+            setActionError(null);
+          }
+        }}
+        onConfirm={() => void handleDeleteImage()}
+        intent={Intent.DANGER}
+        className="m1-custom-dialog m1-custom-alert"
+        cancelButtonText="Batal"
+        confirmButtonText="Hapus citra"
+        icon="trash"
+        canEscapeKeyCancel={!actionBusy}
+        canOutsideClickCancel={!actionBusy}
+        loading={actionBusy}
+      >
+        <div className="m1-alert-body">
+          <p className="m1-alert-message">
+            Hapus <strong>{deleteTarget ? fileNameOf(deleteTarget.filePath) : ""}</strong> dari sesi
+            ini?
+          </p>
+          <p className="m1-alert-subtext">
+            Salinan di library dipindahkan ke <code>.trash</code>, jadi masih bisa dipulihkan.
+            Pasangan JPEG/DNG yang tersisa kehilangan tautannya.
+          </p>
+          {actionError && <p className="m1-alert-subtext">{actionError}</p>}
+        </div>
+      </Alert>
     </div>
   );
 };

@@ -1115,6 +1115,89 @@ pub fn get_images_by_session(
     Ok(images)
 }
 
+/// Clears `raw_sibling_id` on a JPEG/DNG partner and demotes a DNG that no
+/// longer has a JPEG pair.
+///
+/// A lone DNG is not analysis-ready (Module 1 cannot hand raw pixels to a
+/// plugin); a surviving JPEG stays as it was. One statement so both effects
+/// share the caller's transaction.
+fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionError> {
+    conn.execute(
+        "UPDATE image SET raw_sibling_id = NULL, \
+            analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END \
+         WHERE id = ?1",
+        params![sibling_id.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Deletes one image row, unlinking its raw sibling when it had one.
+///
+/// The caller removes the file itself; this only touches the database. Runs
+/// in one transaction, so a crash cannot leave the sibling pointing at a row
+/// that no longer exists.
+///
+/// # Purity
+///
+/// Impure — deletes a row.
+///
+/// # Errors
+///
+/// [`SessionError::ImageNotFound`] if the id is unknown, [`SessionError::Db`]
+/// on any database error.
+pub fn delete_image_row(conn: &Connection, image_id: Uuid) -> Result<(), SessionError> {
+    let image = get_image(conn, image_id)?;
+    with_immediate_transaction(conn, |conn| {
+        conn.execute(
+            "DELETE FROM image WHERE id = ?1",
+            params![image_id.to_string()],
+        )?;
+        if let Some(sibling_id) = image.raw_sibling_id {
+            unlink_sibling(conn, sibling_id)?;
+        }
+        Ok(())
+    })
+}
+
+/// Moves one image row to another session and points it at its relocated file.
+///
+/// The caller has already verified the sessions share a project and has
+/// already moved the file to `new_file_path`. The moved image loses its pair
+/// link and a DNG partner left behind is demoted; moving one half of a pair
+/// never silently keeps a link across sessions.
+///
+/// # Purity
+///
+/// Impure — updates a row.
+///
+/// # Errors
+///
+/// [`SessionError::ImageNotFound`] if the id is unknown, [`SessionError::Db`]
+/// on any database error.
+pub fn move_image_row(
+    conn: &Connection,
+    image_id: Uuid,
+    target_session_id: Uuid,
+    new_file_path: &str,
+) -> Result<(), SessionError> {
+    let image = get_image(conn, image_id)?;
+    with_immediate_transaction(conn, |conn| {
+        conn.execute(
+            "UPDATE image SET session_id = ?2, file_path = ?3, raw_sibling_id = NULL \
+             WHERE id = ?1",
+            params![
+                image_id.to_string(),
+                target_session_id.to_string(),
+                new_file_path
+            ],
+        )?;
+        if let Some(sibling_id) = image.raw_sibling_id {
+            unlink_sibling(conn, sibling_id)?;
+        }
+        Ok(())
+    })
+}
+
 /// Lists the content hashes of every image already stored in a project.
 ///
 /// This is the duplicate scope for an import: an image is a duplicate when
@@ -2395,5 +2478,94 @@ mod tests {
 
         assert_eq!(count_images_by_project(&conn, p1.id).expect("count p1"), 3);
         assert_eq!(count_images_by_project(&conn, p2.id).expect("count p2"), 1);
+    }
+
+    #[test]
+    fn moving_a_row_unlinks_the_pair_and_demotes_a_left_behind_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let source = create_session(&conn, project.id, None).expect("source session");
+        let target = create_session(&conn, project.id, None).expect("target session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            source.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            source.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        move_image_row(&conn, jpeg_id, target.id, "/lib/target/a.jpg").expect("move");
+
+        let moved = get_image(&conn, jpeg_id).expect("moved row");
+        assert_eq!(moved.session_id, target.id);
+        assert_eq!(moved.file_path, "/lib/target/a.jpg");
+        assert_eq!(moved.raw_sibling_id, None, "a moved image leaves its pair");
+        let partner = get_image(&conn, dng_id).expect("partner row");
+        assert_eq!(partner.raw_sibling_id, None);
+        assert_eq!(
+            partner.analysis_ready,
+            Some(false),
+            "a dng whose jpeg moved away is not analysable"
+        );
+    }
+
+    #[test]
+    fn deleting_a_row_keeps_a_surviving_jpeg_analysable() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            session.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        delete_image_row(&conn, dng_id).expect("delete dng");
+
+        assert!(matches!(
+            get_image(&conn, dng_id),
+            Err(SessionError::ImageNotFound { .. })
+        ));
+        let jpeg = get_image(&conn, jpeg_id).expect("jpeg survives");
+        assert_eq!(jpeg.raw_sibling_id, None);
+        assert_eq!(
+            jpeg.analysis_ready,
+            Some(true),
+            "a lone jpeg stays analysable"
+        );
     }
 }

@@ -1,6 +1,11 @@
 .m1-dialog-portal .m1-meta-dialog {
   width: 560px;
   max-width: 92vw;
+  /* The dialog portals out of `.m1-page`, so page-scoped tokens are re-declared here for the
+     panel content (facts, notes, section borders) that is styled against them. */
+  --m1-text-main: #111827;
+  --m1-text-muted: #5b6472;
+  --m1-border: #e3e7ee;
 }
 
 .m1-meta-content {

@@ -13,7 +13,6 @@ import { Button, Callout, Intent, NonIdealState } from "@blueprintjs/core";
 import {
   type Session,
   type SessionStatus,
-  assignImageToSession,
   commandErrorMessage,
   createSession,
   deleteSession,
@@ -348,20 +347,13 @@ function Module01PageInner() {
     }
   };
 
-  // Assign image
-  const handleAssignImage = async (sessionId: string, imageId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await assignImageToSession(sessionId, imageId);
-      showToast("Gambar ditambahkan");
-      setAssignTarget(null);
-      await fetchSessions(projectId, false);
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setBusy(false);
-    }
+  const [imageRevision, setImageRevision] = useState(0);
+
+  const handleImagesImported = async (message: string) => {
+    showToast(message);
+    setAssignTarget(null);
+    setImageRevision((revision) => revision + 1);
+    if (projectId) await fetchSessions(projectId, false);
   };
 
   // Delete session
@@ -370,8 +362,12 @@ function Module01PageInner() {
     setBusy(true);
     setError(null);
     try {
-      await deleteSession(deleteTarget.id);
-      showToast("Sesi dihapus");
+      const outcome = await deleteSession(deleteTarget.id);
+      showToast(
+        outcome.filesLeft
+          ? "Sesi dihapus, tapi beberapa salinan tersisa di disk dan tidak bisa dibersihkan"
+          : "Sesi dihapus",
+      );
       setDeleteTarget(null);
       await fetchSessions(projectId, false);
     } catch (err) {
@@ -509,10 +505,11 @@ function Module01PageInner() {
 
       {detailSession ? (
         <SessionDetail
-          key={detailSession.id}
+          key={`${detailSession.id}-${imageRevision}`}
           session={detailSession}
           projectName={selectedProject?.name ?? ""}
           busy={busy}
+          otherSessions={sessions.filter((s) => s.id !== detailSession.id)}
           onBack={() => setView({ kind: "list" })}
           onToggleStatus={(s) => {
             void handleToggleStatus(s);
@@ -521,6 +518,7 @@ function Module01PageInner() {
           onCopyId={(id) => {
             void handleCopyId(id);
           }}
+          onImagesChanged={handleImagesImported}
         />
       ) : (
         <>
@@ -1036,7 +1034,7 @@ function Module01PageInner() {
         session={assignTarget}
         isOpen={assignTarget !== null}
         onClose={() => setAssignTarget(null)}
-        onSubmit={handleAssignImage}
+        onImported={handleImagesImported}
         busy={busy}
       />
 
