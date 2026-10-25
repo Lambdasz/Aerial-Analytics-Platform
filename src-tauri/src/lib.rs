@@ -485,6 +485,7 @@ pub fn run() {
             map_controller::ortho_source::commands::start_import_ortho_job,
             map_controller::ortho_source::commands::cancel_import_job,
             map_controller::ortho_source::commands::get_import_job_status,
+            map_controller::ortho_source::commands::get_instance_status,
             // Module 3 — Photos
             map_controller::photos::commands::get_photos,
             map_controller::photos::commands::import_photo,

@@ -27,7 +27,7 @@ import { MapTypeThumbnail } from "./atoms/MapTypeThumbnail";
 import type { BasemapKey } from "./config/mapConfig";
 import type { LayerPayload } from "./types/map";
 import type { LayerState, AnnotationFeature } from "./types/layer";
-import { getStorageRootPath } from "./services/api";
+import { getStorageRootPath, getInstanceStatus } from "./services/api";
 import { setCachedStorageRoot } from "./lib/fieldResolution";
 import { isTauri } from "@tauri-apps/api/core";
 
@@ -79,15 +79,24 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
   const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isReadOnly, setIsReadOnly] = useState<boolean>(false);
 
   useEffect(() => {
     if (isTauri()) {
-      getStorageRootPath()
+      void getStorageRootPath()
         .then((path) => {
           setCachedStorageRoot(path);
         })
         .catch((err) => {
           console.warn("Gagal mengambil storage root path:", err);
+        });
+
+      void getInstanceStatus()
+        .then((status) => {
+          setIsReadOnly(status.is_read_only);
+        })
+        .catch((err) => {
+          console.warn("Gagal mengambil status instance:", err);
         });
     }
   }, []);
@@ -121,6 +130,35 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
 
   return (
     <ImageSyncProvider>
+      {isReadOnly && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            top: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 3000,
+            backgroundColor: "#fff3cd",
+            color: "#856404",
+            border: "1px solid #ffeeba",
+            borderRadius: 6,
+            padding: "8px 16px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            fontSize: 13,
+            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            pointerEvents: "auto",
+          }}
+        >
+          <span>
+            ⚠️ <strong>Mode Hanya-Baca:</strong> Aplikasi dibuka sebagai instansi sekunder.
+            Modifikasi data storage dinonaktifkan demi perlindungan file.
+          </span>
+        </div>
+      )}
       <MapExplorerLayout
         className={className}
         style={mergedStyle}

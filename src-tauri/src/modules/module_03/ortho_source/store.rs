@@ -622,7 +622,10 @@ pub fn reconcile_storage_layers() -> Result<(), MapControllerError> {
                     if name.starts_with(".trash_") {
                         // Format penamaan: .trash_{id}_{timestamp}
                         // Contoh: .trash_ortho_1792850000000_1792850005000
-                        let without_prefix = name.trim_start_matches(".trash_");
+                        let without_prefix = match name.strip_prefix(".trash_") {
+                            Some(w) => w,
+                            None => continue,
+                        };
                         let image_id = if let Some(last_under) = without_prefix.rfind('_') {
                             &without_prefix[..last_under]
                         } else {

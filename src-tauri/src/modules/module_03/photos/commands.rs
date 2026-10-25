@@ -17,6 +17,7 @@ pub fn get_photos() -> Result<Vec<PhotoMetadata>, CommandError> {
 /// Mengimpor foto drone dari path lokal, mengekstrak EXIF, dan menyimpannya.
 #[tauri::command]
 pub fn import_photo(source_path: String) -> Result<PhotoMetadata, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     let path = Path::new(&source_path);
     if !path.exists() {
         return Err(CommandError {

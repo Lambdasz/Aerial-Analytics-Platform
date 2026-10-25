@@ -41,20 +41,44 @@ pub fn delete_ortho_image(id: String) -> Result<DeleteOrthoSummary, CommandError
     Ok(get_global_state().delete_ortho_image(&id)?)
 }
 
-/// Mengimpor berkas citra orthomosaic JPG/PNG beserta koordinat area WGS84 ke dalam storage Modul 3.
-#[tauri::command]
-pub fn import_ortho_image(
-    payload: ImportImagePayload,
-) -> Result<StoredImageMetadata, CommandError> {
-    super::instance_lock::require_primary_instance()?;
-    Ok(get_global_state().import_ortho_image(payload)?)
+/// Status instansi aplikasi untuk visualisasi banner UI.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InstanceStatus {
+    pub is_primary: bool,
+    pub is_read_only: bool,
 }
 
-/// Menyimpan file citra ke storage dari path file yang sudah ada di sistem.
+/// Memeriksa status instansi aplikasi (primer / sekunder baca-saja).
 #[tauri::command]
-pub fn save_image_from_path(source_path: String) -> Result<StoredImageMetadata, CommandError> {
+pub fn get_instance_status() -> Result<InstanceStatus, CommandError> {
+    let is_primary = super::instance_lock::is_primary_instance();
+    Ok(InstanceStatus {
+        is_primary,
+        is_read_only: !is_primary,
+    })
+}
+
+/// Mengimpor berkas citra orthomosaic JPG/PNG secara sinkron (DINONAKTIFKAN).
+/// Jalur ini dinonaktifkan demi keamanan staging, cancel token, dan single job guard.
+#[tauri::command]
+pub fn import_ortho_image(
+    _payload: ImportImagePayload,
+) -> Result<StoredImageMetadata, CommandError> {
     super::instance_lock::require_primary_instance()?;
-    Ok(get_global_state().save_image_from_path(&source_path)?)
+    Err(CommandError {
+        code: "LEGACY_ENDPOINT_DISABLED".to_string(),
+        message: "Endpoint import_ortho_image lama telah dinonaktifkan. Gunakan start_import_ortho_job untuk proses asinkron yang aman dengan staging dan pembatalan.".to_string(),
+    })
+}
+
+/// Menyimpan file citra ke storage dari path file yang sudah ada di sistem (DINONAKTIFKAN).
+#[tauri::command]
+pub fn save_image_from_path(_source_path: String) -> Result<StoredImageMetadata, CommandError> {
+    super::instance_lock::require_primary_instance()?;
+    Err(CommandError {
+        code: "LEGACY_ENDPOINT_DISABLED".to_string(),
+        message: "Endpoint save_image_from_path lama telah dinonaktifkan. Gunakan start_import_ortho_job untuk proses asinkron yang aman.".to_string(),
+    })
 }
 
 /// Mengambil daftar seluruh citra yang tersimpan di storage Modul 3 (legacy).

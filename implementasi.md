@@ -200,10 +200,27 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
 
 ### 3.2 Opsi B: TIFF -> Konversi (GeoTIFF)
 
-- **Spesifikasi Resampling (Box Filter / Area Averaging)**:
-  - Menggunakan algoritma _Area Averaging_ untuk menghindari distorsi aliasing foto udara.
-  - Untuk menghemat memori, sistem menerapkan **Band Processing (Akumulator per Baris Tile)**:
-    Akumulator intensitas `u32` per kanal hanya dialokasikan untuk rentang baris output yang bersinggungan dengan baris tile yang sedang aktif dibaca. Memori akumulator band hanya berukuran $\approx \mathbf{8{,}4\text{ MB}}$.
+- **Model Memori & Pemilihan Arsitektur Resampling (Pilihan Sadar Opsi B)**:
+  - _Karakteristik Masukan vs Pemrosesan_: Decoder TIFF (`tiff 0.9.1`) mengembalikan data raster dalam bentuk blok tile ($TileWidth \times TileHeight$, lazimnya $512 \times 512\text{ px}$) untuk Tiled TIFF, atau strip horizontal ($W \times rows\_per\_strip$) untuk Stripped TIFF. Sementara itu, `StreamingResampler` dirancang murni berbasis aliran baris horizontal (`push_row_u8` / `push_row_u16`).
+  - _Evaluasi Dua Pendekatan Arsitektur_:
+    1. **Opsi (i) - Merakit Strip Tile-Row Penuh (DIPILIH SECARA SADAR)**:
+       Sistem membaca satu baris tile horizontal penuh (mis. $\lceil W / 512 \rceil$ blok tile) dan merakitnya ke dalam buffer memori sementara selebar citra dengan tinggi 512 baris ($W \times 512$). Setelah satu baris tile terakit penuh, 512 baris disuapkan secara sekuensial per baris ke `resampler.push_row()`. Buffer strip ini dialokasikan satu kali dan digunakan kembali (_reused_) untuk baris tile berikutnya.
+    2. **Opsi (ii) - Menambah API `push_block(x, y, w, h)` dengan Akumulator Band 2D (DITOLAK)**:
+       Mengharuskan penampung akumulator 2D per kolom tile dengan pelacakan kontribusi fraksional koordinat $X$ dan $Y$ non-integer. Menambah kompleksitas state-machine secara signifikan tanpa manfaat memori yang berarti pada batas ukuran citra yang didukung.
+  - _Kalkulasi Matematis Puncak Memori Kasus Terburuk (Citra 500 MP / Lebar 22.000 px)_:
+    - **Buffer Strip Tile-Row ($22.000 \times 512\text{ px}$)**:
+      - Data 8-bit RGBA: $22.000 \times 512 \times 4\text{ byte} = 45{,}05\text{ MB} \approx 43{,}0\text{ MiB}$.
+      - Data 16-bit RGBA: $22.000 \times 512 \times 8\text{ byte} = 90{,}11\text{ MB} \approx 85{,}9\text{ MiB}$.
+    - **Buffer Output Display ($4.096 \times 4.096\text{ px}$)**:
+      - Display RGBA: $4.096 \times 4.096 \times 4\text{ byte} = 67{,}11\text{ MiB}$.
+      - Display RGB: $4.096 \times 4.096 \times 3\text{ byte} = 50{,}33\text{ MiB}$.
+    - **Akumulator Aktif `StreamingResampler` (2 Baris Aktif f64, RGBA 4.096 px)**:
+      - 2 baris output aktif $\times (4.096 \times 4 \text{ kanal} \times 8\text{ byte} + 4.096 \times 8\text{ byte bobot}) = 327.680\text{ bytes} \approx \mathbf{0{,}26\text{ MB} - 0{,}31\text{ MiB}}$.
+    - **Puncak Memori Total Kasus Terburuk (16-bit RGBA 500 MP)**:
+      $$\text{Total RAM} \approx 85{,}9\text{ MiB (Strip)} + 67{,}11\text{ MiB (Display)} + 0{,}31\text{ MiB (Resampler)} + 25\text{ MiB (Heap/Decompress)} \approx \mathbf{178{,}3\text{ MiB}}$$
+      Puncak ini **sangat aman di bawah batas pagu $400\text{ MiB}$** ($\approx 44{,}6\%$ dari batas maksimum yang diizinkan).
+  - _Penanganan TIFF Stripped_:
+    Pada Stripped TIFF, data raster disimpan per strip horizontal memanjang ($W \times rows\_per\_strip$, dengan $rows\_per\_strip$ umumnya 1 hingga 32 baris). Buffer strip untuk $22.000 \times 32$ hanya berukuran $\approx 2{,}8\text{ MiB}$ (8-bit) atau $\approx 5{,}6\text{ MiB}$ (16-bit). Membaca TIFF stripped langsung mengisi buffer strip dan disuapkan ke `push_row()`, sehingga performa dan efisiensi memorinya bahkan lebih optimal daripada tiled TIFF.
 - **Optimasi Piramida Internal (Overview IFD)**:
   Jika berkas GeoTIFF merupakan Cloud Optimized GeoTIFF (COG) atau memiliki sub-IFD piramida resolusi, dekoder memilih sub-IFD yang dimensinya paling mendekati target display ($\ge 4.096\text{ px}$), menghemat waktu dekompresi hingga $4–10\times$.
 - **Evaluasi Kompresi TIFF (Crate `tiff 0.9.1`)**:
@@ -215,10 +232,16 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
   - Jika band $\ge 4$ tanpa tag `ExtraSamples` (mis. citra multispektral RGB+NIR): Sistem mengambil 3 band pertama (RGB) untuk visualisasi display dengan mencatat pesan peringatan pada `warnings`.
   - Nodata: Jika terdapat tag `GDAL_NODATA`, piksel bernilai nodata diubah menjadi transparan (Alpha = 0) **HANYA JIKA SEMUA KANAL bernilai nodata** (mencegah atap/tanah berwarna hitam murni berubah menjadi bolong).
   - Jika citra memiliki Alpha atau Nodata, keluaran display **wajib berformat PNG**. Jika RGB murni tanpa alpha, keluaran berformat **JPEG**.
-- **Konversi Bit Depth (16-bit ke 8-bit)**:
-  Diterapkan formula linier deterministik cepat:
-  $$v_8 = \left\lfloor \frac{v_{16}}{257.0} \right\rfloor = (v_{16} \gg 8) \text{ as u8}$$
-  Menghasilkan pemetaan seragam dari $[0 .. 65535] \rightarrow [0 .. 255]$ tanpa distorsi kontras.
+- **Konversi Bit Depth 16-bit ke 8-bit (Percentile Stretch $p_{0{,}5} - p_{99{,}5}$ Deterministik)**:
+  - Data sensor drone 16-bit lazimnya tidak memanfaatkan rentang penuh 16-bit (mis. sensor 10-bit atau 12-bit disimpan dalam kontainer 16-bit sehingga intensitas maksimum $\le 4.095$, yang jika di-shift kanan $8$ akan tampil hitam pekat). Sebaliknya, min-max stretch rentan terhadap satu piksel derau/hot-pixel.
+  - _Metode Deterministik_:
+    1. Mengumpulkan histogram 16-bit (65.536 bins) dari sampel tile deterministik ($N \ge 9$ tile yang tersebar merata di grid koordinat citra, bukan acak).
+    2. Mengecualikan piksel yang bernilai nodata atau memiliki alpha = 0.
+    3. Menghitung persentil kumulatif $p_{0{,}5}$ (batas bawah $lo$) dan $p_{99{,}5}$ (batas atas $hi$) secara **bersama/shared** untuk seluruh kanal warna (satu pasang $[lo, hi]$ yang sama untuk RGB guna menjaga keseimbangan warna dan mencegah distorsi tinting warna).
+    4. _Pengecualian_: Jika data terdeteksi sudah full-range ($lo \le 50$ dan $hi \ge 65.400$), stretch dilewati dan diterapkan pemetaan linier langsung ($v \gg 8$).
+    5. Fungsi `push_row_u16` menerima parameter $(lo, hi)$ hasil analisis untuk memetakan nilai $[lo .. hi] \rightarrow [0 .. 255]$:
+       $$v_8 = \left\lfloor \frac{\text{clamp}(v_{16}, lo, hi) - lo}{hi - lo} \times 255.0 + 0{,}5 \right\rfloor \text{ as u8}$$
+    6. Metode peregangan kontras, nilai $lo$, dan nilai $hi$ dicatat secara transparan pada `metadata.json` dan daftar `warnings`.
 - **Matriks Format Sampel**:
   - RGB 8-bit / 16-bit $\rightarrow$ **Didukung**.
   - RGBA 8-bit / 16-bit $\rightarrow$ **Didukung** (output PNG).

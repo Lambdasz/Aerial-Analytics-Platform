@@ -336,6 +336,11 @@ mod tests {
         let (easting, northing) =
             wgs84_to_utm(orig_lat, orig_lon, 50, true).expect("Forward UTM 50S");
 
+        println!(
+            "BALIKPAPAN UTM FORWARD: easting={:.6}, northing={:.6}",
+            easting, northing
+        );
+
         let (inv_lat, inv_lon) =
             utm_to_wgs84(easting, northing, 50, true).expect("Inverse UTM 50S");
 
@@ -363,15 +368,16 @@ mod tests {
         let (easting, northing) =
             wgs84_to_utm(orig_lat, orig_lon, 30, false).expect("Forward UTM 30N Greenwich");
 
-        // Pada batas timur (delta 3 derajat dari meridian sentral -3°), Easting bernilai sekitar 708.000 m
+        // Golden reference independen (deret Krüger WGS84 n-orde 4 terpisah):
+        // E = 708322.41 m, N = 5707123.41 m
         assert!(
-            easting > 700000.0 && easting < 720000.0,
-            "Easting Greenwich batas zona: {}",
+            (easting - 708322.41).abs() < 0.5,
+            "Forward Easting Greenwich selisih > 0.5m: ref=708322.41, actual={}",
             easting
         );
         assert!(
-            northing > 5700000.0 && northing < 5710000.0,
-            "Northing Greenwich: {}",
+            (northing - 5707123.41).abs() < 0.5,
+            "Forward Northing Greenwich selisih > 0.5m: ref=5707123.41, actual={}",
             northing
         );
 
@@ -394,22 +400,23 @@ mod tests {
     fn test_utm_north_paris_zone_31n() {
         // Paris / Eiffel Tower (UTM Zona 31N, EPSG:32631):
         // Meridian sentral Zona 31N adalah 3.0°E. Paris berada di 2.29448°E (sebelah barat meridian sentral).
-        // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen)
+        // Diverifikasi independen via kalkulasi deret Krüger n-orde 4 terpisah:
+        // E = 448250.50 m, N = 5411951.59 m
         let orig_lat = 48.858370;
         let orig_lon = 2.294480;
 
         let (easting, northing) =
             wgs84_to_utm(orig_lat, orig_lon, 31, false).expect("Forward UTM 31N Paris");
 
-        // Easting harus berada di sebelah barat meridian sentral (E < 500.000 m)
+        // Forward assertion (< 0.5m)
         assert!(
-            easting > 440000.0 && easting < 460000.0,
-            "Easting Paris: {}",
+            (easting - 448250.50).abs() < 0.5,
+            "Forward Easting Paris selisih > 0.5m: ref=448250.50, actual={}",
             easting
         );
         assert!(
-            northing > 5410000.0 && northing < 5420000.0,
-            "Northing Paris: {}",
+            (northing - 5411951.59).abs() < 0.5,
+            "Forward Northing Paris selisih > 0.5m: ref=5411951.59, actual={}",
             northing
         );
 
@@ -418,12 +425,12 @@ mod tests {
 
         assert!(
             (inv_lat - orig_lat).abs() < 1e-6,
-            "Selisih lat Paris: {}",
+            "Selisih lat: {}",
             (inv_lat - orig_lat).abs()
         );
         assert!(
             (inv_lon - orig_lon).abs() < 1e-6,
-            "Selisih lon Paris: {}",
+            "Selisih lon: {}",
             (inv_lon - orig_lon).abs()
         );
     }

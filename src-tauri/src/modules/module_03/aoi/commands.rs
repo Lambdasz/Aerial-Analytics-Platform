@@ -39,6 +39,7 @@ pub fn save_new_aoi_cmd(
     polygon: Polygon,
     created_at: Option<String>,
 ) -> Result<AoiFeature, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     geometry::validate_polygon(&polygon)?;
 
     let area_sq_m = geometry::calculate_area(&polygon);
@@ -61,6 +62,7 @@ pub fn save_new_aoi_cmd(
 /// Menyimpan data AOI ke file JSON pada `map_storage/aois/{id}.json`.
 #[tauri::command]
 pub fn save_aoi(aoi: AoiFeature) -> Result<AoiFeature, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     Ok(aoi::store::save_aoi(aoi)?)
 }
 
@@ -73,5 +75,6 @@ pub fn get_saved_aois() -> Result<Vec<AoiFeature>, CommandError> {
 /// Menghapus AOI yang tersimpan berdasarkan ID.
 #[tauri::command]
 pub fn delete_saved_aoi(aoi_id: String) -> Result<bool, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     Ok(aoi::store::delete_saved_aoi(&aoi_id)?)
 }

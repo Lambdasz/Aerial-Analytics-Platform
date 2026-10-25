@@ -84,8 +84,8 @@ fn test_single_instance_lock_rejection_and_release() {
     // Instansi kedua harus langsung ditolak oleh kernel OS
     let res_2 = AppInstanceLock::try_acquire(lock_path.clone());
     assert!(
-        matches!(res_2, Err(OrthoImportError::JobSedangBerjalan(_))),
-        "Instansi 2 harus ditolak dengan JobSedangBerjalan saat lock aktif"
+        matches!(res_2, Err(OrthoImportError::AplikasiSudahBerjalan(_))),
+        "Instansi 2 harus ditolak dengan AplikasiSudahBerjalan saat lock aktif"
     );
 
     // Lepaskan instansi 1 (drop)
@@ -249,21 +249,21 @@ fn test_cleanup_stale_import_jobs_and_retention() {
 #[test]
 fn test_projection_independent_references_utm_50s_balikpapan() {
     // 3 Titik referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (UTM Zona 50S, EPSG:32750):
-    // Toleransi: < 1 meter (< 9e-6 derajat lintang / bujur)
+    // Toleransi: forward < 0.5 meter, inverse < 9e-6 derajat lintang / bujur (< 1.0 meter)
 
     // Titik 1: Bandara SAMS Sepinggan Balikpapan (-1.268270, 116.894450)
-    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 488257.78, N = 9859817.59
+    // Nilai referensi independen deret Krüger (EPSG:32750): E = 488257.78, N = 9859817.59
     let (lat1, lon1) = (-1.268270, 116.894450);
     let (ref_e1, ref_n1) = (488257.78, 9859817.59);
     let (fwd_e1, fwd_n1) = wgs84_to_utm(lat1, lon1, 50, true).expect("UTM forward Sepinggan");
     assert!(
-        (fwd_e1 - ref_e1).abs() < 1.0,
-        "Easting selisih > 1m: {}",
+        (fwd_e1 - ref_e1).abs() < 0.5,
+        "Easting selisih > 0.5m: {}",
         (fwd_e1 - ref_e1).abs()
     );
     assert!(
-        (fwd_n1 - ref_n1).abs() < 1.0,
-        "Northing selisih > 1m: {}",
+        (fwd_n1 - ref_n1).abs() < 0.5,
+        "Northing selisih > 0.5m: {}",
         (fwd_n1 - ref_n1).abs()
     );
     let (calc_lat1, calc_lon1) =
@@ -272,28 +272,91 @@ fn test_projection_independent_references_utm_50s_balikpapan() {
     assert!((calc_lon1 - lon1).abs() < 9e-6, "Lon selisih > 1m");
 
     // Titik 2: Kawasan Industri Kariangau (-1.173800, 116.812300)
-    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 479118.01, N = 9870258.95
+    // Nilai referensi independen deret Krüger (EPSG:32750): E = 479118.01, N = 9870258.95
     let (lat2, lon2) = (-1.173800, 116.812300);
     let (ref_e2, ref_n2) = (479118.01, 9870258.95);
     let (fwd_e2, fwd_n2) = wgs84_to_utm(lat2, lon2, 50, true).expect("UTM forward Kariangau");
-    assert!((fwd_e2 - ref_e2).abs() < 1.0);
-    assert!((fwd_n2 - ref_n2).abs() < 1.0);
+    assert!((fwd_e2 - ref_e2).abs() < 0.5);
+    assert!((fwd_n2 - ref_n2).abs() < 0.5);
     let (calc_lat2, calc_lon2) =
         utm_to_wgs84(ref_e2, ref_n2, 50, true).expect("UTM 50S Kariangau ke WGS84");
     assert!((calc_lat2 - lat2).abs() < 9e-6);
     assert!((calc_lon2 - lon2).abs() < 9e-6);
 
     // Titik 3: Pelabuhan Semayang Balikpapan (-1.282500, 116.817200)
-    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 479663.96, N = 9858244.25
+    // Nilai referensi independen deret Krüger (EPSG:32750): E = 479663.96, N = 9858244.25
     let (lat3, lon3) = (-1.282500, 116.817200);
     let (ref_e3, ref_n3) = (479663.96, 9858244.25);
     let (fwd_e3, fwd_n3) = wgs84_to_utm(lat3, lon3, 50, true).expect("UTM forward Semayang");
-    assert!((fwd_e3 - ref_e3).abs() < 1.0);
-    assert!((fwd_n3 - ref_n3).abs() < 1.0);
+    assert!((fwd_e3 - ref_e3).abs() < 0.5);
+    assert!((fwd_n3 - ref_n3).abs() < 0.5);
     let (calc_lat3, calc_lon3) =
         utm_to_wgs84(ref_e3, ref_n3, 50, true).expect("UTM 50S Semayang ke WGS84");
     assert!((calc_lat3 - lat3).abs() < 9e-6);
     assert!((calc_lon3 - lon3).abs() < 9e-6);
+}
+
+#[test]
+fn test_projection_independent_references_utm_north_paris_and_greenwich() {
+    // Paris / Eiffel Tower (48.858370 N, 2.294480 E) - UTM Zona 31N (EPSG:32631)
+    // Diverifikasi independen via kalkulasi deret Krüger WGS84 terpisah:
+    // E = 448250.50 m, N = 5411951.59 m
+    let (lat_paris, lon_paris) = (48.858370, 2.294480);
+    let (ref_e_paris, ref_n_paris) = (448250.50, 5411951.59);
+    let (fwd_e_paris, fwd_n_paris) =
+        wgs84_to_utm(lat_paris, lon_paris, 31, false).expect("Forward UTM 31N Paris");
+    assert!(
+        (fwd_e_paris - ref_e_paris).abs() < 0.5,
+        "Forward Easting Paris selisih > 0.5m: ref={}, actual={}",
+        ref_e_paris,
+        fwd_e_paris
+    );
+    assert!(
+        (fwd_n_paris - ref_n_paris).abs() < 0.5,
+        "Forward Northing Paris selisih > 0.5m: ref={}, actual={}",
+        ref_n_paris,
+        fwd_n_paris
+    );
+    let (inv_lat_paris, inv_lon_paris) =
+        utm_to_wgs84(ref_e_paris, ref_n_paris, 31, false).expect("Inverse UTM 31N Paris");
+    assert!(
+        (inv_lat_paris - lat_paris).abs() < 9e-6,
+        "Lat Paris selisih > 1m"
+    );
+    assert!(
+        (inv_lon_paris - lon_paris).abs() < 9e-6,
+        "Lon Paris selisih > 1m"
+    );
+
+    // Greenwich Royal Observatory (51.476852 N, 0.000000 E) - UTM Zona 30N (EPSG:32630)
+    // Diverifikasi independen via kalkulasi deret Krüger WGS84 terpisah:
+    // E = 708322.41 m, N = 5707123.41 m
+    let (lat_gw, lon_gw) = (51.476852, 0.000000);
+    let (ref_e_gw, ref_n_gw) = (708322.41, 5707123.41);
+    let (fwd_e_gw, fwd_n_gw) =
+        wgs84_to_utm(lat_gw, lon_gw, 30, false).expect("Forward UTM 30N Greenwich");
+    assert!(
+        (fwd_e_gw - ref_e_gw).abs() < 0.5,
+        "Forward Easting Greenwich selisih > 0.5m: ref={}, actual={}",
+        ref_e_gw,
+        fwd_e_gw
+    );
+    assert!(
+        (fwd_n_gw - ref_n_gw).abs() < 0.5,
+        "Forward Northing Greenwich selisih > 0.5m: ref={}, actual={}",
+        ref_n_gw,
+        fwd_n_gw
+    );
+    let (inv_lat_gw, inv_lon_gw) =
+        utm_to_wgs84(ref_e_gw, ref_n_gw, 30, false).expect("Inverse UTM 30N Greenwich");
+    assert!(
+        (inv_lat_gw - lat_gw).abs() < 9e-6,
+        "Lat Greenwich selisih > 1m"
+    );
+    assert!(
+        (inv_lon_gw - lon_gw).abs() < 9e-6,
+        "Lon Greenwich selisih > 1m"
+    );
 }
 
 #[test]
@@ -412,9 +475,13 @@ fn test_store_dot_folder_ignored() {
 fn test_reconcile_trash_restored_if_layer_exists() {
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
-    let test_id = "ortho_88888888801";
+    let test_id = format!(
+        "ortho_8881_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_micros()
+    );
 
-    let image_dir = images_dir.join(test_id);
+    let image_dir = images_dir.join(&test_id);
     let trash_dir = images_dir.join(format!(".trash_{}_123456", test_id));
     let layer_file = layers_dir.join(format!("{}.json", test_id));
 
@@ -422,17 +489,17 @@ fn test_reconcile_trash_restored_if_layer_exists() {
     let _ = fs::create_dir_all(&trash_dir);
     // Layer masih ada di disk
     let layer_state = LayerState {
-        layer_id: test_id.to_string(),
+        layer_id: test_id.clone(),
         layer_name: "Trash Restore Test".to_string(),
         category: "raster".to_string(),
         is_visible: true,
         opacity: 1.0,
         z_index: 10,
         source_type: Some("raster".to_string()),
-        source_id: Some(test_id.to_string()),
+        source_id: Some(test_id.clone()),
     };
-    let _ =
-        aerial_analytics_platform_lib::modules::module_03::layers::store::save_layer(layer_state);
+    aerial_analytics_platform_lib::modules::module_03::layers::store::save_layer(layer_state)
+        .expect("save_layer must succeed in test");
 
     // Jalankan rekonsiliasi: karena layer masih ada, trash harus di-rollback ke images/{id}
     reconcile_storage_layers().expect("reconcile");
@@ -452,7 +519,11 @@ fn test_reconcile_trash_restored_if_layer_exists() {
 fn test_reconcile_trash_purged_if_layer_gone() {
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
-    let test_id = "ortho_88888888802";
+    let test_id = format!(
+        "ortho_8882_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_micros()
+    );
 
     let trash_dir = images_dir.join(format!(".trash_{}_999999", test_id));
     let layer_file = layers_dir.join(format!("{}.json", test_id));
@@ -656,6 +727,238 @@ fn test_delete_ortho_clean_cascade() {
                 !name.starts_with(&format!(".trash_{}_", test_id)),
                 "Folder karantina .trash_* tidak boleh tertinggal"
             );
+        }
+    }
+}
+
+#[test]
+fn test_secondary_instance_blocks_all_storage_mutating_commands() {
+    use aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::{
+        is_primary_instance, set_is_primary_instance,
+    };
+
+    // Pastikan instansi diset sekunder (false)
+    let prev = is_primary_instance();
+    set_is_primary_instance(false);
+
+    // 1. Anotasi commands
+    let res_anno_create =
+        aerial_analytics_platform_lib::modules::module_03::annotations::commands::create_annotation_cmd(
+            "anno_mock_sec".to_string(),
+            "Text".to_string(),
+            SpatialGeometry::Point {
+                coordinates: vec![116.8, -1.2],
+            },
+            chrono::Utc::now().to_rfc3339(),
+        );
+    assert!(
+        res_anno_create.is_err(),
+        "create_annotation_cmd harus ditolak pada instansi sekunder"
+    );
+
+    let res_anno_update =
+        aerial_analytics_platform_lib::modules::module_03::annotations::commands::update_annotation_cmd(
+            AnnotationFeature {
+                id: "anno_mock_sec".to_string(),
+                schema_version: 1,
+                text: "Updated".to_string(),
+                geometry: SpatialGeometry::Point {
+                    coordinates: vec![116.8, -1.2],
+                },
+                created_at: chrono::Utc::now().to_rfc3339(),
+                image_id: None,
+            },
+        );
+    assert!(
+        res_anno_update.is_err(),
+        "update_annotation_cmd harus ditolak pada instansi sekunder"
+    );
+
+    let res_anno_del =
+        aerial_analytics_platform_lib::modules::module_03::annotations::commands::delete_annotation_cmd(
+            "anno_mock_sec".to_string(),
+        );
+    assert!(
+        res_anno_del.is_err(),
+        "delete_annotation_cmd harus ditolak pada instansi sekunder"
+    );
+
+    // 2. AOI commands
+    let res_aoi_save_new =
+        aerial_analytics_platform_lib::modules::module_03::aoi::commands::save_new_aoi_cmd(
+            "aoi_mock_sec".to_string(),
+            "Mock AOI".to_string(),
+            None,
+            vec![vec![
+                [116.8, -1.2],
+                [116.9, -1.2],
+                [116.9, -1.1],
+                [116.8, -1.1],
+                [116.8, -1.2],
+            ]],
+            None,
+        );
+    assert!(
+        res_aoi_save_new.is_err(),
+        "save_new_aoi_cmd harus ditolak pada instansi sekunder"
+    );
+
+    let res_aoi_del =
+        aerial_analytics_platform_lib::modules::module_03::aoi::commands::delete_saved_aoi(
+            "aoi_mock_sec".to_string(),
+        );
+    assert!(
+        res_aoi_del.is_err(),
+        "delete_saved_aoi harus ditolak pada instansi sekunder"
+    );
+
+    // 3. Photo commands
+    let res_photo =
+        aerial_analytics_platform_lib::modules::module_03::photos::commands::import_photo(
+            "dummy_path.jpg".to_string(),
+        );
+    assert!(
+        res_photo.is_err(),
+        "import_photo harus ditolak pada instansi sekunder"
+    );
+
+    // 4. Ortho Source commands
+    let res_ortho_job =
+        aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::start_import_ortho_job(
+            aerial_analytics_platform_lib::modules::module_03::ortho_source::types::ImportDualModePayload {
+                mode: "A".to_string(),
+                file_path: "dummy.jpg".to_string(),
+                custom_filename: None,
+                manual_bounds: None,
+                save_original: false,
+            },
+        );
+    assert!(
+        res_ortho_job.is_err(),
+        "start_import_ortho_job harus ditolak pada instansi sekunder"
+    );
+
+    let res_ortho_del =
+        aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::delete_ortho_image(
+            "ortho_mock_sec".to_string(),
+        );
+    assert!(
+        res_ortho_del.is_err(),
+        "delete_ortho_image harus ditolak pada instansi sekunder"
+    );
+
+    let res_ortho_legacy =
+        aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::import_ortho_image(
+            aerial_analytics_platform_lib::modules::module_03::ortho_source::types::ImportImagePayload {
+                file_path: "dummy.jpg".to_string(),
+                west: 116.8,
+                south: -1.2,
+                east: 116.9,
+                north: -1.1,
+            },
+        );
+    assert!(
+        res_ortho_legacy.is_err(),
+        "import_ortho_image harus ditolak"
+    );
+
+    let res_ortho_legacy_save =
+        aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::save_image_from_path(
+            "dummy.jpg".to_string(),
+        );
+    assert!(
+        res_ortho_legacy_save.is_err(),
+        "save_image_from_path harus ditolak"
+    );
+
+    // Kembalikan state awal
+    set_is_primary_instance(prev);
+}
+
+#[test]
+fn test_static_source_code_audit_all_mutating_commands_guarded() {
+    // Audit statis sumber kode Rust di Module 3 untuk memastikan SEMUA command yang memodifikasi
+    // disk storage memanggil require_primary_instance()? secara eksplisit.
+    let base_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("modules")
+        .join("module_03");
+
+    let mutating_command_files = [
+        base_dir.join("annotations").join("commands.rs"),
+        base_dir.join("aoi").join("commands.rs"),
+        base_dir.join("photos").join("commands.rs"),
+        base_dir.join("sp_result").join("commands.rs"),
+        base_dir.join("ortho_source").join("commands.rs"),
+    ];
+
+    for file_path in &mutating_command_files {
+        assert!(
+            file_path.exists(),
+            "File command harus ada: {}",
+            file_path.display()
+        );
+        let content = fs::read_to_string(file_path)
+            .unwrap_or_else(|_| panic!("Gagal membaca file {}", file_path.display()));
+
+        // Cari setiap blok fn #[tauri::command]
+        let mut lines = content.lines().peekable();
+        while let Some(line) = lines.next() {
+            if line.contains("#[tauri::command]") {
+                // Baris berikutnya atau setelahnya adalah deklarasi fungsi
+                let mut fn_decl = String::new();
+                for next_l in lines.by_ref() {
+                    fn_decl.push_str(next_l);
+                    if next_l.contains('{') {
+                        break;
+                    }
+                }
+
+                // Ekstrak nama fungsi
+                if let Some(pos) = fn_decl.find("pub fn ") {
+                    let rest = &fn_decl[pos + 7..];
+                    if let Some(end_name) = rest.find('(') {
+                        let fn_name = rest[..end_name].trim();
+
+                        // Lewati fungsi yang murni query / kalkulasi in-memory (tidak menyentuh disk)
+                        let is_query_or_in_memory = fn_name.starts_with("get_")
+                            || fn_name.starts_with("list_")
+                            || fn_name.starts_with("count_")
+                            || fn_name.starts_with("check_")
+                            || fn_name.starts_with("measure_")
+                            || fn_name == "create_aoi_cmd" // pure in-memory builder (GeoJSON), tidak menulis disk
+                            || fn_name == "cancel_import_job"; // cancel hanya mensinyalkan atomic token
+
+                        if !is_query_or_in_memory {
+                            // Baca tubuh fungsi hingga penutup
+                            let mut body = String::new();
+                            let mut brace_count = 1;
+                            for body_line in lines.by_ref() {
+                                body.push_str(body_line);
+                                body.push('\n');
+                                for ch in body_line.chars() {
+                                    if ch == '{' {
+                                        brace_count += 1;
+                                    } else if ch == '}' {
+                                        brace_count -= 1;
+                                    }
+                                }
+                                if brace_count <= 0 {
+                                    break;
+                                }
+                            }
+
+                            // Pastikan tubuh fungsi memuat pemanggilan require_primary_instance
+                            assert!(
+                                body.contains("require_primary_instance"),
+                                "KEGAGALAN KEAMANAN: Command mutasi '{}' pada '{}' TIDAK memanggil require_primary_instance()!",
+                                fn_name,
+                                file_path.display()
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

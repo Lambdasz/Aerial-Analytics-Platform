@@ -14,6 +14,7 @@ pub fn create_annotation_cmd(
     geometry: SpatialGeometry,
     created_at: String,
 ) -> Result<AnnotationFeature, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     let annotation = pure::create_annotation(annotation_id, text, geometry, created_at);
     Ok(store::save_annotation(annotation)?)
 }
@@ -35,11 +36,13 @@ pub fn get_annotation_by_id(annotation_id: String) -> Result<AnnotationFeature, 
 pub fn update_annotation_cmd(
     annotation: AnnotationFeature,
 ) -> Result<AnnotationFeature, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     Ok(store::update_annotation(annotation)?)
 }
 
 /// Menghapus anotasi dari storage berdasarkan ID.
 #[tauri::command]
 pub fn delete_annotation_cmd(annotation_id: String) -> Result<bool, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     Ok(store::delete_saved_annotation(&annotation_id)?)
 }

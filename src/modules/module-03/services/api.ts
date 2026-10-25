@@ -194,6 +194,21 @@ export function getProjectImageMarkers(): Promise<DroneImageMetadata[]> {
   return invokeMap<DroneImageMetadata[]>("get_photos").catch(() => []);
 }
 
+export interface InstanceStatus {
+  is_primary: boolean;
+  is_read_only: boolean;
+}
+
+/**
+ * Memeriksa apakah instansi saat ini primer atau sekunder (hanya-baca).
+ */
+export function getInstanceStatus(): Promise<InstanceStatus> {
+  return invokeMap<InstanceStatus>("get_instance_status").catch(() => ({
+    is_primary: true,
+    is_read_only: false,
+  }));
+}
+
 /**
  * Mengambil daftar layer dari storage (delegasi ke get_saved_layers).
  */
