@@ -9,7 +9,6 @@ import {
   shortId,
   type SessionStage,
 } from "../sessionStats";
-import { MetadataExtractorPanel } from "./MetadataExtractorPanel";
 import "./SessionDetail.css";
 
 interface SessionDetailProps {
@@ -22,7 +21,7 @@ interface SessionDetailProps {
   onCopyId: (id: string) => void;
 }
 
-export interface ImageRow {
+interface ImageRow {
   id: string;
   name: string;
   /** Capture time in camera-local ISO form, parseable by `parseCameraDate`. */
@@ -103,7 +102,6 @@ export const SessionDetail: FC<SessionDetailProps> = ({
   const [sortKey, setSortKey] = useState<SortKey>("taken");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [visibleCount, setVisibleCount] = useState(PAGE_STEP);
-  const [selectedRow, setSelectedRow] = useState<ImageRow | null>(null);
 
   const rows = useMemo(() => buildMockImageRows(session), [session]);
   const hasImages = rows.length > 0;
@@ -260,15 +258,7 @@ export const SessionDetail: FC<SessionDetailProps> = ({
                     <tbody>
                       {shownRows.map((row) => (
                         <tr key={row.id}>
-                          <td>
-                            <button
-                              type="button"
-                              className="m1-sd-row-btn"
-                              onClick={() => setSelectedRow(row)}
-                            >
-                              {row.name}
-                            </button>
-                          </td>
+                          <td>{row.name}</td>
                           <td>{formatSingleDate(row.takenIso, true)}</td>
                         </tr>
                       ))}
@@ -353,8 +343,6 @@ export const SessionDetail: FC<SessionDetailProps> = ({
           </section>
         </aside>
       </div>
-
-      <MetadataExtractorPanel row={selectedRow} onClose={() => setSelectedRow(null)} />
     </div>
   );
 };
