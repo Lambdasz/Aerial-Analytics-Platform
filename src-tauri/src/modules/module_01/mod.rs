@@ -18,6 +18,7 @@
 //! reader and the import helpers are implemented (see
 //! [`metadata_extractor`], [`dng_preview`] and [`image_importer`]).
 
+pub mod blur_detection;
 pub mod dng_preview;
 pub mod error;
 pub mod flight_session;
