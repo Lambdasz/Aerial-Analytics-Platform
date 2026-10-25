@@ -1,0 +1,1057 @@
+//! Pembaca dan pengurai GeoTIFF pure Rust menggunakan pustaka tiff 0.9.1.
+//!
+//! Mengimplementasikan:
+//! 1. Validasi fast-fail header berkas (ukuran <= 250 MB, magic bytes, dimensi max 25.000 px, total piksel max 500 MP).
+//! 2. Ekstraksi georeferensi ModelTiepointTag (33922), ModelPixelScaleTag (33550), ModelTransformationTag (34264).
+//! 3. Parsing GeoKeyDirectoryTag (34735) untuk ekstraksi CRS (EPSG:4326, EPSG:3857, UTM 1-60 N/S), deteksi raster point vs area.
+//! 4. Perhitungan envelope bounding box 4 sudut yang diproyeksikan ke WGS84 derajat desimal.
+//! 5. Ekstraksi detail teknis raster (kompresi, layout tiled/stripped, planar, bits per sample, photometric).
+//! 6. Deteksi kanal alpha via ExtraSamples (338) dan nilai nodata via GDAL_NODATA (42113).
+//! 7. Analisis persentil deterministik p0,5 - p99,5 dari grid tile untuk peregangan kontras citra 16-bit.
+//! 8. Perakitan strip tile-row penuh (Tile-Row Assembly) dan streaming ke StreamingResampler.
+//! 9. Deteksi dan pemilihan Sub-IFD / Overview piramida (COG).
+
+use std::fs::{self, File};
+use std::io::{BufReader, Read, Seek};
+use std::path::Path;
+
+use tiff::decoder::ifd::Value;
+use tiff::decoder::{ChunkType, Decoder, DecodingResult};
+use tiff::tags::Tag;
+use tiff::ColorType;
+
+use super::constants::{
+    DISPLAY_TARGET_DIMENSION_PX, MAX_OPTION_B_PIXELS, MAX_TIFF_DIMENSION_PX,
+    MAX_TIFF_FILE_SIZE_BYTES,
+};
+use super::job_manager::CancellationToken;
+use super::streaming_resampler::StreamingResampler;
+use super::types::TiffTechnicalDetails;
+use crate::modules::module_03::error::OrthoImportError;
+use crate::modules::module_03::geometry::projection::compute_wgs84_envelope_from_corners;
+
+/// Ringkasan header berkas GeoTIFF setelah validasi awal.
+#[derive(Debug, Clone)]
+pub struct GeoTiffHeaderSummary {
+    pub width: u32,
+    pub height: u32,
+    pub bit_depth: u32,
+    pub samples_per_pixel: u32,
+    pub color_type: ColorType,
+    pub chunk_type: ChunkType,
+    pub tile_dimensions: Option<(u32, u32)>,
+    pub compression_name: String,
+    pub has_alpha: bool,
+    pub nodata_value: Option<f64>,
+}
+
+/// Informasi georeferensi yang diekstrak dari tag GeoTIFF.
+#[derive(Debug, Clone)]
+pub struct GeoTiffGeoreference {
+    pub crs_code: u32,
+    pub crs_string: String,
+    pub bounds: [[f64; 2]; 2],
+    pub pixel_scale: (f64, f64),
+    pub tiepoint: (f64, f64),
+    pub is_point_raster: bool,
+}
+
+// ============================================================================
+// 1. VALIDASI FAST-FAIL HEADER
+// ============================================================================
+
+/// Memeriksa keabsahan berkas TIFF sebelum folder staging dibuat di disk.
+///
+/// Memeriksa ukuran berkas (<= 250 MB), magic bytes (II*, MM*, II+, MM+),
+/// dimensi piksel (<= 25.000 px per sisi), dan batasan megapiksel (<= 500 MP).
+pub fn validate_geotiff_header_fast(path: &Path) -> Result<GeoTiffHeaderSummary, OrthoImportError> {
+    if !path.exists() {
+        return Err(OrthoImportError::FileKorup(format!(
+            "Berkas GeoTIFF tidak ditemukan: {}",
+            path.display()
+        )));
+    }
+
+    let meta = fs::metadata(path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membaca metadata berkas: {}", e))
+    })?;
+    let size = meta.len();
+
+    if size > MAX_TIFF_FILE_SIZE_BYTES {
+        let size_mb = size as f64 / (1024.0 * 1024.0);
+        return Err(OrthoImportError::MelebihiBatas {
+            width: 0,
+            height: 0,
+            max_dimension: 0,
+            message: format!(
+                "Ukuran berkas {:.1} MB melebihi batas maksimal 250 MB untuk impor Opsi B",
+                size_mb
+            ),
+        });
+    }
+
+    // Periksa magic bytes (8 byte pertama)
+    let mut file = File::open(path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuka berkas GeoTIFF: {}", e))
+    })?;
+    let mut header = [0u8; 8];
+    let bytes_read = file
+        .read(&mut header)
+        .map_err(|e| OrthoImportError::FileKorup(format!("Gagal membaca header berkas: {}", e)))?;
+
+    if bytes_read < 4 {
+        return Err(OrthoImportError::FileKorup(
+            "Berkas terlalu kecil untuk menjadi berkas TIFF yang valid".to_string(),
+        ));
+    }
+
+    let is_little_endian_tiff = header[0..4] == [0x49, 0x49, 0x2A, 0x00];
+    let is_big_endian_tiff = header[0..4] == [0x4D, 0x4D, 0x00, 0x2A];
+    let is_little_endian_bigtiff = header[0..4] == [0x49, 0x49, 0x2B, 0x00];
+    let is_big_endian_bigtiff = header[0..4] == [0x4D, 0x4D, 0x00, 0x2B];
+
+    if !is_little_endian_tiff
+        && !is_big_endian_tiff
+        && !is_little_endian_bigtiff
+        && !is_big_endian_bigtiff
+    {
+        return Err(OrthoImportError::FormatTidakDidukung(
+            "Signature berkas bukan format TIFF atau BigTIFF yang valid".to_string(),
+        ));
+    }
+
+    // Buka berkas dengan Decoder tiff untuk membaca IFD0
+    let file = File::open(path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuka berkas TIFF: {}", e))
+    })?;
+    let reader = BufReader::new(file);
+    let mut decoder = Decoder::new(reader)?;
+
+    let (width, height) = decoder.dimensions()?;
+
+    if width == 0 || height == 0 {
+        return Err(OrthoImportError::FileKorup(
+            "Dimensi citra TIFF bernilai nol".to_string(),
+        ));
+    }
+
+    if width > MAX_TIFF_DIMENSION_PX || height > MAX_TIFF_DIMENSION_PX {
+        return Err(OrthoImportError::MelebihiBatas {
+            width,
+            height,
+            max_dimension: MAX_TIFF_DIMENSION_PX,
+            message: format!(
+                "Dimensi citra {}x{} piksel melebihi batas maksimal 25.000 piksel per sisi",
+                width, height
+            ),
+        });
+    }
+
+    let total_pixels = (width as u64) * (height as u64);
+    if total_pixels > MAX_OPTION_B_PIXELS {
+        return Err(OrthoImportError::MelebihiBatas {
+            width,
+            height,
+            max_dimension: MAX_TIFF_DIMENSION_PX,
+            message: format!(
+                "Total piksel {:.1} MP melebihi batas maksimal 500 Megapiksel",
+                total_pixels as f64 / 1_000_000.0
+            ),
+        });
+    }
+
+    let color_type = decoder.colortype()?;
+    let (bit_depth, samples_per_pixel) = match color_type {
+        ColorType::Gray(b) => (b as u32, 1u32),
+        ColorType::RGB(b) => (b as u32, 3u32),
+        ColorType::RGBA(b) => (b as u32, 4u32),
+        ColorType::GrayA(b) => (b as u32, 2u32),
+        ColorType::YCbCr(b) => (b as u32, 3u32),
+        ColorType::Palette(_) => {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "Format warna Indexed/Palette tidak didukung untuk ortofoto. Harap konversi ke RGB."
+                    .to_string(),
+            ));
+        }
+        ColorType::CMYK(_) => {
+            return Err(OrthoImportError::FormatTidakDidukung(
+                "Format warna CMYK tidak didukung untuk tampilan peta. Harap konversi ke RGB."
+                    .to_string(),
+            ));
+        }
+    };
+
+    if bit_depth != 8 && bit_depth != 16 {
+        return Err(OrthoImportError::FormatTidakDidukung(format!(
+            "Kedalaman bit {} bit per kanal belum didukung. Hanya 8-bit dan 16-bit yang didukung.",
+            bit_depth
+        )));
+    }
+
+    let chunk_type = decoder.get_chunk_type();
+    let tile_dimensions = if chunk_type == ChunkType::Tile {
+        Some(decoder.chunk_dimensions())
+    } else {
+        None
+    };
+
+    // Deteksi ExtraSamples (Tag 338) untuk alpha
+    let has_alpha = detect_alpha_from_tags(&mut decoder, samples_per_pixel);
+
+    // Deteksi GDAL_NODATA (Tag 42113)
+    let nodata_value = detect_nodata_from_tags(&mut decoder);
+
+    let compression_name = detect_compression_name(&mut decoder);
+
+    Ok(GeoTiffHeaderSummary {
+        width,
+        height,
+        bit_depth,
+        samples_per_pixel,
+        color_type,
+        chunk_type,
+        tile_dimensions,
+        compression_name,
+        has_alpha,
+        nodata_value,
+    })
+}
+
+// ============================================================================
+// 2. EKSTRAKSI GEOREFERENSI & REPROYEKSI WGS84
+// ============================================================================
+
+/// Mengekstrak koordinat tiepoint, pixel scale, dan direktori GeoKey untuk menghitung
+/// bounding box WGS84 `[[south, west], [north, east]]`.
+pub fn extract_geotiff_georeference<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    width: u32,
+    height: u32,
+) -> Result<GeoTiffGeoreference, OrthoImportError> {
+    // 1. Periksa rotasi / affine matrix (Tag 34264)
+    if let Ok(transform_matrix) = decoder.get_tag_f64_vec(Tag::ModelTransformationTag) {
+        if transform_matrix.len() >= 16 {
+            let m01 = transform_matrix[1];
+            let m10 = transform_matrix[4];
+            if m01.abs() > 1e-9 || m10.abs() > 1e-9 {
+                let rot_rad = m01.atan2(transform_matrix[0]);
+                return Err(OrthoImportError::RotasiTidakDidukung(rot_rad));
+            }
+        }
+    }
+
+    // 2. Baca ModelTiepointTag (Tag 33922)
+    let tiepoints = decoder
+        .get_tag_f64_vec(Tag::ModelTiepointTag)
+        .map_err(|_| {
+            OrthoImportError::CrsTidakDidukung(
+                "Tag ModelTiepointTag (33922) tidak ditemukan dalam berkas TIFF".to_string(),
+            )
+        })?;
+
+    if tiepoints.len() < 6 {
+        return Err(OrthoImportError::FileKorup(
+            "ModelTiepointTag harus memuat minimal 6 nilai koordinat (I, J, K, X, Y, Z)"
+                .to_string(),
+        ));
+    }
+
+    let i_pixel = tiepoints[0];
+    let j_pixel = tiepoints[1];
+    let x_origin_raw = tiepoints[3];
+    let y_origin_raw = tiepoints[4];
+
+    // 3. Baca ModelPixelScaleTag (Tag 33550)
+    let pixel_scales = decoder
+        .get_tag_f64_vec(Tag::ModelPixelScaleTag)
+        .map_err(|_| {
+            OrthoImportError::CrsTidakDidukung(
+                "Tag ModelPixelScaleTag (33550) tidak ditemukan dalam berkas TIFF".to_string(),
+            )
+        })?;
+
+    if pixel_scales.len() < 2 {
+        return Err(OrthoImportError::FileKorup(
+            "ModelPixelScaleTag harus memuat minimal 2 nilai (ScaleX, ScaleY)".to_string(),
+        ));
+    }
+
+    let scale_x = pixel_scales[0];
+    let scale_y = pixel_scales[1];
+
+    if scale_x <= 0.0 || scale_y <= 0.0 {
+        return Err(OrthoImportError::KoordinatTidakValid(format!(
+            "Skala piksel tidak valid: ScaleX={}, ScaleY={}",
+            scale_x, scale_y
+        )));
+    }
+
+    // Sesuaikan origin jika tiepoint tidak berada di (0, 0)
+    let x_origin = x_origin_raw - i_pixel * scale_x;
+    let y_origin = y_origin_raw + j_pixel * scale_y;
+
+    // 4. Baca GeoKeyDirectoryTag (Tag 34735)
+    let geokeys_raw = decoder
+        .get_tag_u16_vec(Tag::GeoKeyDirectoryTag)
+        .map_err(|_| {
+            OrthoImportError::CrsTidakDidukung(
+                "GeoKeyDirectoryTag (34735) tidak ditemukan dalam berkas TIFF".to_string(),
+            )
+        })?;
+
+    let (raster_type, crs_code) = parse_geokeys(&geokeys_raw)?;
+
+    let is_point_raster = raster_type == 2;
+    let half_x = if is_point_raster { 0.5 } else { 0.0 };
+    let half_y = if is_point_raster { 0.5 } else { 0.0 };
+
+    // 5. Hitung batas 4 sudut citra dalam sistem koordinat proyeksi asal
+    let x_min = x_origin - half_x * scale_x;
+    let x_max = x_origin + (width as f64 - half_x) * scale_x;
+    let y_max = y_origin + half_y * scale_y;
+    let y_min = y_origin - (height as f64 - half_y) * scale_y;
+
+    let corners = [
+        (x_min, y_max), // Top-Left
+        (x_max, y_max), // Top-Right
+        (x_min, y_min), // Bottom-Left
+        (x_max, y_min), // Bottom-Right
+    ];
+
+    // 6. Proyeksikan keempat sudut ke WGS84 untuk mendapatkan bounding box envelope
+    let bounds = compute_wgs84_envelope_from_corners(&corners, crs_code)?;
+
+    let crs_string = format_crs_name(crs_code);
+
+    Ok(GeoTiffGeoreference {
+        crs_code,
+        crs_string,
+        bounds,
+        pixel_scale: (scale_x, scale_y),
+        tiepoint: (x_origin, y_origin),
+        is_point_raster,
+    })
+}
+
+/// Mengurai pasangan GeoKey dari array `u16` GeoKeyDirectoryTag.
+///
+/// Format Header: `[DirectoryVersion, KeyRevision, MinorRevision, NumberOfKeys]`
+/// Setiap Key: `[KeyID, TIFFTagLocation, Count, Value_Offset]`
+fn parse_geokeys(keys: &[u16]) -> Result<(u16, u32), OrthoImportError> {
+    if keys.len() < 4 {
+        return Err(OrthoImportError::FileKorup(
+            "Header GeoKeyDirectoryTag tidak lengkap (kurang dari 4 nilai)".to_string(),
+        ));
+    }
+
+    let num_keys = keys[3] as usize;
+    if keys.len() < 4 + num_keys * 4 {
+        return Err(OrthoImportError::FileKorup(
+            "GeoKeyDirectoryTag terpotong (jumlah key tidak sesuai)".to_string(),
+        ));
+    }
+
+    let mut raster_type = 1u16; // Default: RasterPixelIsArea (1)
+    let mut projected_crs: Option<u32> = None;
+    let mut geographic_crs: Option<u32> = None;
+
+    for i in 0..num_keys {
+        let offset = 4 + i * 4;
+        let key_id = keys[offset];
+        let tag_loc = keys[offset + 1];
+        let val_offset = keys[offset + 3];
+
+        // Jika tag_loc == 0, nilai disimpan langsung pada val_offset
+        if tag_loc == 0 {
+            match key_id {
+                1025 => {
+                    // GTRasterTypeGeoKey (1 = PixelIsArea, 2 = PixelIsPoint)
+                    raster_type = val_offset;
+                }
+                2048 => {
+                    // GeographicTypeGeoKey (e.g. 4326)
+                    geographic_crs = Some(val_offset as u32);
+                }
+                3072 => {
+                    // ProjectedCSTypeGeoKey (e.g. 3857, 32601..=32660, 32701..=32760)
+                    if val_offset != 32767 {
+                        projected_crs = Some(val_offset as u32);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let crs_code = if let Some(proj) = projected_crs {
+        proj
+    } else if let Some(geo) = geographic_crs {
+        geo
+    } else {
+        return Err(OrthoImportError::CrsTidakDidukung(
+            "Kode sistem koordinat (CRS) tidak ditemukan dalam GeoKeyDirectory".to_string(),
+        ));
+    };
+
+    Ok((raster_type, crs_code))
+}
+
+fn format_crs_name(code: u32) -> String {
+    match code {
+        4326 => "EPSG:4326 (WGS84 Geodetic)".to_string(),
+        3857 => "EPSG:3857 (Web Mercator)".to_string(),
+        32601..=32660 => format!("EPSG:{} (UTM Zone {}N)", code, code - 32600),
+        32701..=32760 => format!("EPSG:{} (UTM Zone {}S)", code, code - 32700),
+        other => format!("EPSG:{}", other),
+    }
+}
+
+// ============================================================================
+// 3. EKSTRAKSI DETAIL TEKNIS & TAG KHUSUS
+// ============================================================================
+
+fn detect_alpha_from_tags<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    samples_per_pixel: u32,
+) -> bool {
+    // Tag 338: ExtraSamples
+    if let Ok(val) = decoder.get_tag(Tag::ExtraSamples) {
+        match val {
+            Value::Short(v) => {
+                if v == 1 || v == 2 {
+                    return true;
+                }
+            }
+            Value::Unsigned(v) => {
+                if v == 1 || v == 2 {
+                    return true;
+                }
+            }
+            Value::List(list) => {
+                for item in list {
+                    match item {
+                        Value::Short(v) if v == 1 || v == 2 => return true,
+                        Value::Unsigned(v) if v == 1 || v == 2 => return true,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Ok(extra_samples) = decoder.get_tag_u16_vec(Tag::ExtraSamples) {
+        if extra_samples.iter().any(|&v| v == 1 || v == 2) {
+            return true;
+        }
+    }
+
+    // Jika kanal >= 4 dan colortype RGBA murni
+    if samples_per_pixel == 4 {
+        if let Ok(ColorType::RGBA(_)) = decoder.colortype() {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn detect_nodata_from_tags<R: Read + Seek>(decoder: &mut Decoder<R>) -> Option<f64> {
+    // Tag 42113: GDAL_NODATA
+    if let Ok(ascii_str) = decoder.get_tag_ascii_string(Tag::GdalNodata) {
+        let cleaned = ascii_str.trim().trim_matches('\0');
+        if let Ok(parsed) = cleaned.parse::<f64>() {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn detect_compression_name<R: Read + Seek>(decoder: &mut Decoder<R>) -> String {
+    if let Ok(comp_val) = decoder.get_tag_u32(Tag::Compression) {
+        match comp_val {
+            1 => "None (Uncompressed)".to_string(),
+            2 => "CCITT 1D".to_string(),
+            3 => "Group 3 Fax".to_string(),
+            4 => "Group 4 Fax".to_string(),
+            5 => "LZW".to_string(),
+            6 => "Old JPEG".to_string(),
+            7 => "JPEG".to_string(),
+            8 => "Deflate / Adobe ZIP".to_string(),
+            32773 => "PackBits".to_string(),
+            32946 => "Deflate (PKZIP)".to_string(),
+            34887 => "LERC".to_string(),
+            50000 => "ZSTD".to_string(),
+            other => format!("Compression ID {}", other),
+        }
+    } else {
+        "Unknown".to_string()
+    }
+}
+
+/// Mengekstrak detail teknis berkas GeoTIFF untuk disimpan pada `metadata.json`.
+pub fn extract_tiff_technical_details<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    width: u32,
+    height: u32,
+) -> Result<TiffTechnicalDetails, OrthoImportError> {
+    let color_type = decoder.colortype()?;
+    let (bit_depth, bands) = match color_type {
+        ColorType::Gray(b) => (b as u32, 1u32),
+        ColorType::RGB(b) => (b as u32, 3u32),
+        ColorType::RGBA(b) => (b as u32, 4u32),
+        ColorType::GrayA(b) => (b as u32, 2u32),
+        ColorType::YCbCr(b) => (b as u32, 3u32),
+        _ => (8, 3),
+    };
+
+    let sample_format = match bit_depth {
+        16 => "uint16".to_string(),
+        _ => "uint8".to_string(),
+    };
+
+    let chunk_type = decoder.get_chunk_type();
+    let (layout, chunk_dimensions, total_chunks) = match chunk_type {
+        ChunkType::Tile => {
+            let (tw, th) = decoder.chunk_dimensions();
+            let count = decoder.tile_count().unwrap_or(0);
+            ("tiled".to_string(), [tw, th], count as u64)
+        }
+        ChunkType::Strip => {
+            let count = decoder.strip_count().unwrap_or(0);
+            let rows_per_strip = if count > 0 {
+                height.div_ceil(count)
+            } else {
+                height
+            };
+            (
+                "stripped".to_string(),
+                [width, rows_per_strip],
+                count as u64,
+            )
+        }
+    };
+
+    let compression = detect_compression_name(decoder);
+    let has_alpha = detect_alpha_from_tags(decoder, bands);
+    let nodata_value = detect_nodata_from_tags(decoder);
+
+    let photometric_interpretation = match color_type {
+        ColorType::Gray(_) | ColorType::GrayA(_) => "BlackIsZero (Grayscale)".to_string(),
+        ColorType::RGB(_) | ColorType::RGBA(_) => "RGB".to_string(),
+        _ => "Unknown".to_string(),
+    };
+
+    let software = decoder.get_tag_ascii_string(Tag::Software).ok();
+
+    Ok(TiffTechnicalDetails {
+        bands,
+        bit_depth,
+        sample_format,
+        compression,
+        layout,
+        chunk_dimensions,
+        total_chunks,
+        planar_configuration: "Contiguous (Chunky)".to_string(),
+        photometric_interpretation,
+        has_alpha,
+        nodata_value,
+        software,
+    })
+}
+
+// ============================================================================
+// 4. ANALISIS PERSENTIL DETERMINISTIK 16-BIT (p0,5 - p99,5)
+// ============================================================================
+
+/// Menghitung persentil kontras deterministik `p0,5` (lo) dan `p99,5` (hi)
+/// dari sampel grid minimal 9 tile/strip terdistribusi merata.
+///
+/// Mengecualikan piksel transparan (alpha=0) dan nilai nodata.
+/// Mengembalikan `(lo, hi, is_full_range)`.
+pub fn compute_16bit_percentiles<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    width: u32,
+    height: u32,
+    has_alpha: bool,
+    nodata_val: Option<f64>,
+) -> Result<(f64, f64, bool), OrthoImportError> {
+    let mut histogram = vec![0u64; 65536];
+    let mut total_samples = 0u64;
+
+    let chunk_type = decoder.get_chunk_type();
+    let chunk_indices = match chunk_type {
+        ChunkType::Tile => {
+            let (tw, th) = decoder.chunk_dimensions();
+            let tiles_across = width.div_ceil(tw);
+            let tiles_down = height.div_ceil(th);
+
+            let col_mid = tiles_across / 2;
+            let col_end = tiles_across.saturating_sub(1);
+            let row_mid = tiles_down / 2;
+            let row_end = tiles_down.saturating_sub(1);
+
+            let mut indices = Vec::new();
+            for &r in &[0, row_mid, row_end] {
+                for &c in &[0, col_mid, col_end] {
+                    let idx = r * tiles_across + c;
+                    if !indices.contains(&idx) {
+                        indices.push(idx);
+                    }
+                }
+            }
+            indices
+        }
+        ChunkType::Strip => {
+            let count = decoder.strip_count().unwrap_or(1);
+            let mut indices = Vec::new();
+            if count <= 9 {
+                for i in 0..count {
+                    indices.push(i);
+                }
+            } else {
+                for step in 0..9 {
+                    let idx = (step * (count - 1)) / 8;
+                    if !indices.contains(&idx) {
+                        indices.push(idx);
+                    }
+                }
+            }
+            indices
+        }
+    };
+
+    for idx in chunk_indices {
+        if let Ok(DecodingResult::U16(data)) = decoder.read_chunk(idx) {
+            let color_type = decoder.colortype()?;
+            let channels = match color_type {
+                ColorType::Gray(_) => 1,
+                ColorType::GrayA(_) => 2,
+                ColorType::RGB(_) => 3,
+                ColorType::RGBA(_) => 4,
+                ColorType::YCbCr(_) => 3,
+                _ => 3,
+            };
+
+            let num_pixels = data.len() / channels;
+            for p in 0..num_pixels {
+                let offset = p * channels;
+                if has_alpha && channels >= 4 && data[offset + 3] == 0 {
+                    continue;
+                }
+
+                if let Some(nd) = nodata_val {
+                    let nd_u16 = nd.round() as u16;
+                    if channels >= 3 {
+                        if data[offset] == nd_u16
+                            && data[offset + 1] == nd_u16
+                            && data[offset + 2] == nd_u16
+                        {
+                            continue;
+                        }
+                    } else if data[offset] == nd_u16 {
+                        continue;
+                    }
+                }
+
+                // Masukkan saluran warna (RGB atau Gray) ke histogram bersama
+                let color_chans = if channels >= 3 { 3 } else { 1 };
+                for c in 0..color_chans {
+                    let val = data[offset + c] as usize;
+                    histogram[val] += 1;
+                    total_samples += 1;
+                }
+            }
+        }
+    }
+
+    if total_samples == 0 {
+        return Ok((0.0, 65535.0, true));
+    }
+
+    let p05_target = (total_samples as f64 * 0.005).round() as u64;
+    let p995_target = (total_samples as f64 * 0.995).round() as u64;
+
+    let mut cumulative = 0u64;
+    let mut lo = 0.0;
+    let mut hi = 65535.0;
+    let mut found_lo = false;
+
+    for (bin, &count) in histogram.iter().enumerate() {
+        cumulative += count;
+        if !found_lo && cumulative >= p05_target {
+            lo = bin as f64;
+            found_lo = true;
+        }
+        if cumulative >= p995_target {
+            hi = bin as f64;
+            break;
+        }
+    }
+
+    // Periksa apakah data sudah full-range
+    let is_full_range = lo <= 50.0 && hi >= 65400.0;
+
+    Ok((lo, hi, is_full_range))
+}
+
+// ============================================================================
+// 5. STREAMING TILE-ROW ASSEMBLY KE RESAMPLER
+// ============================================================================
+
+/// Memproses seluruh data GeoTIFF dan mengalirkannya ke `StreamingResampler`.
+///
+/// Untuk citra Tiled: Merakit satu strip tile penuh ($W \times TileHeight$) lalu
+/// menyuapkannya per baris ke resampler (pilihan arsitektur Opsi i).
+/// Untuk citra Stripped: Membaca per strip langsung dan menyuapkan baris-barisnya.
+pub fn stream_geotiff_to_resampler<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    width: u32,
+    height: u32,
+    resampler: &mut StreamingResampler,
+    u16_stretch: Option<(f64, f64)>,
+    nodata_val: Option<f64>,
+    cancel_token: Option<&CancellationToken>,
+) -> Result<(), OrthoImportError> {
+    let color_type = decoder.colortype()?;
+    let is_16bit = matches!(
+        color_type,
+        ColorType::Gray(16)
+            | ColorType::GrayA(16)
+            | ColorType::RGB(16)
+            | ColorType::RGBA(16)
+            | ColorType::YCbCr(16)
+    );
+
+    let channels = match color_type {
+        ColorType::Gray(_) => 1,
+        ColorType::GrayA(_) => 2,
+        ColorType::RGB(_) => 3,
+        ColorType::RGBA(_) => 4,
+        ColorType::YCbCr(_) => 3,
+        _ => 3,
+    };
+
+    let target_channels = resampler.channels();
+    let chunk_type = decoder.get_chunk_type();
+
+    match chunk_type {
+        ChunkType::Tile => {
+            let (tw, th) = decoder.chunk_dimensions();
+            let tiles_across = width.div_ceil(tw);
+            let tiles_down = height.div_ceil(th);
+
+            for tr in 0..tiles_down {
+                let actual_h = (height - tr * th).min(th);
+
+                if is_16bit {
+                    let (lo, hi) = u16_stretch.unwrap_or((0.0, 65535.0));
+                    let mut strip_buf =
+                        vec![0u16; width as usize * actual_h as usize * target_channels];
+
+                    for tc in 0..tiles_across {
+                        let chunk_idx = tr * tiles_across + tc;
+                        let tile_x = tc * tw;
+
+                        if let Ok(DecodingResult::U16(tile_data)) = decoder.read_chunk(chunk_idx) {
+                            let (data_w, data_h) = decoder.chunk_data_dimensions(chunk_idx);
+                            let valid_w = data_w.min(width.saturating_sub(tile_x));
+                            let valid_h = data_h.min(actual_h);
+
+                            for y in 0..valid_h {
+                                for x in 0..valid_w {
+                                    let src_idx = (y * data_w + x) as usize * channels;
+                                    let dst_idx =
+                                        ((y * width + (tile_x + x)) as usize) * target_channels;
+
+                                    blit_pixel_u16(
+                                        &tile_data[src_idx..src_idx + channels],
+                                        &mut strip_buf[dst_idx..dst_idx + target_channels],
+                                        channels,
+                                        target_channels,
+                                        nodata_val,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Suapkan baris-baris strip ke resampler
+                    for y in 0..actual_h {
+                        if let Some(token) = cancel_token {
+                            if token.is_cancelled() {
+                                return Err(OrthoImportError::Dibatalkan);
+                            }
+                        }
+                        let y_in = tr * th + y;
+                        let start = (y * width) as usize * target_channels;
+                        let end = start + (width as usize * target_channels);
+                        resampler.push_row_u16(
+                            y_in,
+                            &strip_buf[start..end],
+                            lo,
+                            hi,
+                            cancel_token,
+                        )?;
+                    }
+                } else {
+                    let mut strip_buf =
+                        vec![0u8; width as usize * actual_h as usize * target_channels];
+
+                    for tc in 0..tiles_across {
+                        let chunk_idx = tr * tiles_across + tc;
+                        let tile_x = tc * tw;
+
+                        if let Ok(DecodingResult::U8(tile_data)) = decoder.read_chunk(chunk_idx) {
+                            let (data_w, data_h) = decoder.chunk_data_dimensions(chunk_idx);
+                            let valid_w = data_w.min(width.saturating_sub(tile_x));
+                            let valid_h = data_h.min(actual_h);
+
+                            for y in 0..valid_h {
+                                for x in 0..valid_w {
+                                    let src_idx = (y * data_w + x) as usize * channels;
+                                    let dst_idx =
+                                        ((y * width + (tile_x + x)) as usize) * target_channels;
+
+                                    blit_pixel_u8(
+                                        &tile_data[src_idx..src_idx + channels],
+                                        &mut strip_buf[dst_idx..dst_idx + target_channels],
+                                        channels,
+                                        target_channels,
+                                        nodata_val,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    // Suapkan baris-baris strip ke resampler
+                    for y in 0..actual_h {
+                        if let Some(token) = cancel_token {
+                            if token.is_cancelled() {
+                                return Err(OrthoImportError::Dibatalkan);
+                            }
+                        }
+                        let y_in = tr * th + y;
+                        let start = (y * width) as usize * target_channels;
+                        let end = start + (width as usize * target_channels);
+                        resampler.push_row_u8(y_in, &strip_buf[start..end], cancel_token)?;
+                    }
+                }
+            }
+        }
+        ChunkType::Strip => {
+            let strip_count = decoder.strip_count().unwrap_or(1);
+            let mut current_y = 0u32;
+
+            for si in 0..strip_count {
+                if let Some(token) = cancel_token {
+                    if token.is_cancelled() {
+                        return Err(OrthoImportError::Dibatalkan);
+                    }
+                }
+
+                let (data_w, data_h) = decoder.chunk_data_dimensions(si);
+
+                if is_16bit {
+                    let (lo, hi) = u16_stretch.unwrap_or((0.0, 65535.0));
+                    if let Ok(DecodingResult::U16(strip_data)) = decoder.read_chunk(si) {
+                        let mut row_buf = vec![0u16; width as usize * target_channels];
+
+                        for y in 0..data_h {
+                            if current_y >= height {
+                                break;
+                            }
+                            for x in 0..data_w.min(width) {
+                                let src_idx = (y * data_w + x) as usize * channels;
+                                let dst_idx = x as usize * target_channels;
+
+                                blit_pixel_u16(
+                                    &strip_data[src_idx..src_idx + channels],
+                                    &mut row_buf[dst_idx..dst_idx + target_channels],
+                                    channels,
+                                    target_channels,
+                                    nodata_val,
+                                );
+                            }
+                            resampler.push_row_u16(current_y, &row_buf, lo, hi, cancel_token)?;
+                            current_y += 1;
+                        }
+                    }
+                } else if let Ok(DecodingResult::U8(strip_data)) = decoder.read_chunk(si) {
+                    let mut row_buf = vec![0u8; width as usize * target_channels];
+
+                    for y in 0..data_h {
+                        if current_y >= height {
+                            break;
+                        }
+                        for x in 0..data_w.min(width) {
+                            let src_idx = (y * data_w + x) as usize * channels;
+                            let dst_idx = x as usize * target_channels;
+
+                            blit_pixel_u8(
+                                &strip_data[src_idx..src_idx + channels],
+                                &mut row_buf[dst_idx..dst_idx + target_channels],
+                                channels,
+                                target_channels,
+                                nodata_val,
+                            );
+                        }
+                        resampler.push_row_u8(current_y, &row_buf, cancel_token)?;
+                        current_y += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn blit_pixel_u8(
+    src: &[u8],
+    dst: &mut [u8],
+    src_ch: usize,
+    dst_ch: usize,
+    nodata_val: Option<f64>,
+) {
+    let is_nodata = if let Some(nd) = nodata_val {
+        let nd_u8 = nd.round() as u8;
+        if src_ch >= 3 {
+            src[0] == nd_u8 && src[1] == nd_u8 && src[2] == nd_u8
+        } else {
+            src[0] == nd_u8
+        }
+    } else {
+        false
+    };
+
+    if dst_ch == 4 {
+        // Output RGBA
+        if is_nodata {
+            dst[0] = 0;
+            dst[1] = 0;
+            dst[2] = 0;
+            dst[3] = 0;
+        } else if src_ch >= 4 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+        } else if src_ch >= 3 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 255;
+        } else {
+            // Grayscale
+            dst[0] = src[0];
+            dst[1] = src[0];
+            dst[2] = src[0];
+            dst[3] = 255;
+        }
+    } else if dst_ch == 3 {
+        // Output RGB
+        if src_ch >= 3 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+        } else {
+            dst[0] = src[0];
+            dst[1] = src[0];
+            dst[2] = src[0];
+        }
+    }
+}
+
+fn blit_pixel_u16(
+    src: &[u16],
+    dst: &mut [u16],
+    src_ch: usize,
+    dst_ch: usize,
+    nodata_val: Option<f64>,
+) {
+    let is_nodata = if let Some(nd) = nodata_val {
+        let nd_u16 = nd.round() as u16;
+        if src_ch >= 3 {
+            src[0] == nd_u16 && src[1] == nd_u16 && src[2] == nd_u16
+        } else {
+            src[0] == nd_u16
+        }
+    } else {
+        false
+    };
+
+    if dst_ch == 4 {
+        // Output RGBA
+        if is_nodata {
+            dst[0] = 0;
+            dst[1] = 0;
+            dst[2] = 0;
+            dst[3] = 0;
+        } else if src_ch >= 4 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = src[3];
+        } else if src_ch >= 3 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 65535;
+        } else {
+            dst[0] = src[0];
+            dst[1] = src[0];
+            dst[2] = src[0];
+            dst[3] = 65535;
+        }
+    } else if dst_ch == 3 {
+        // Output RGB
+        if src_ch >= 3 {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+        } else {
+            dst[0] = src[0];
+            dst[1] = src[0];
+            dst[2] = src[0];
+        }
+    }
+}
+
+// ============================================================================
+// 6. DETEKSI PIRAMIDA INTERNAL (OVERVIEW IFD)
+// ============================================================================
+
+/// Memeriksa apakah berkas memiliki sub-IFD piramida resolusi (overview)
+/// dan memilih indeks IFD yang paling mendekati target display (>= 4.096 px).
+pub fn find_best_overview_ifd<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+) -> Result<Option<usize>, OrthoImportError> {
+    if !decoder.more_images() {
+        return Ok(None);
+    }
+
+    let mut best_ifd: Option<usize> = None;
+    let mut best_longest = u32::MAX;
+    let mut ifd_idx = 1usize;
+
+    while decoder.more_images() {
+        if decoder.next_image().is_err() {
+            break;
+        }
+
+        if let Ok((w, h)) = decoder.dimensions() {
+            let longest = w.max(h);
+            if longest >= DISPLAY_TARGET_DIMENSION_PX && longest < best_longest {
+                best_longest = longest;
+                best_ifd = Some(ifd_idx);
+            }
+        }
+        ifd_idx += 1;
+    }
+
+    // Kembalikan cursor ke IFD pertama (indeks 0) jika overview tidak digunakan
+    let _ = decoder.seek_to_image(0);
+
+    Ok(best_ifd)
+}

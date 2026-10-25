@@ -220,10 +220,14 @@ impl StreamingResampler {
     }
 
     /// Memasukkan satu baris sampel `u16` (panjang data harus `src_width * channels`).
+    /// Menerima parameter `(lo, hi)` hasil analisis persentil deterministik p0,5 - p99,5.
+    /// Melewati stretch jika data sudah full-range (lo <= 50 && hi >= 65400).
     pub fn push_row_u16(
         &mut self,
         y_in: u32,
         row_data: &[u16],
+        lo: f64,
+        hi: f64,
         cancel_token: Option<&CancellationToken>,
     ) -> Result<(), OrthoImportError> {
         if let Some(token) = cancel_token {
@@ -243,15 +247,18 @@ impl StreamingResampler {
             )));
         }
 
-        let min_val = self.u16_range_min;
-        let max_val = self.u16_range_max;
-        let diff = (max_val - min_val).max(1.0);
+        let is_full_range = lo <= 50.0 && hi >= 65400.0;
+        let diff = (hi - lo).max(1.0);
 
         self.process_row_generic(y_in, row_data, move |val| {
-            let v = *val as f64;
-            // Normalisasi dinamis ke [0 .. 255]
-            let clamped = v.clamp(min_val, max_val);
-            ((clamped - min_val) * 255.0) / diff
+            if is_full_range {
+                // Lewati peregangan jika data sudah full-range
+                (*val as f64) * 255.0 / 65535.0
+            } else {
+                let v = *val as f64;
+                let clamped = v.clamp(lo, hi);
+                ((clamped - lo) * 255.0) / diff
+            }
         })
     }
 
@@ -556,7 +563,9 @@ mod tests {
             1000u16, 1000, 3000, 3000, 5000, 5000, 1000, 3000, 5000, 5000,
         ];
         for y in 0..src_h {
-            resampler.push_row_u16(y, &row_data, None).unwrap();
+            resampler
+                .push_row_u16(y, &row_data, 1000.0, 5000.0, None)
+                .unwrap();
         }
 
         let res = resampler.finish().unwrap();

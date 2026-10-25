@@ -129,14 +129,11 @@ pub fn start_import_ortho_job(
                 worker_payload,
                 token,
             ),
-            "B" | "b" => {
-                // Placeholder Fase 3 untuk GeoTIFF
-                Err(
-                    crate::modules::module_03::error::OrthoImportError::InternalError(
-                        "Opsi B (GeoTIFF) akan tersedia pada Fase 3.".to_string(),
-                    ),
-                )
-            }
+            "B" | "b" => super::image_pipeline::execute_import_option_b(
+                &worker_job_id,
+                worker_payload,
+                token,
+            ),
             other => Err(
                 crate::modules::module_03::error::OrthoImportError::FormatTidakDidukung(format!(
                     "Mode impor '{}' tidak valid. Pilih Opsi 'A' atau 'B'.",

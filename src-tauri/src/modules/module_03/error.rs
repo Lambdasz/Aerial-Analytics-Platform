@@ -204,3 +204,38 @@ impl From<OrthoImportError> for crate::plugin_manager::error::CommandError {
         }
     }
 }
+
+impl From<tiff::TiffError> for OrthoImportError {
+    fn from(err: tiff::TiffError) -> Self {
+        match err {
+            tiff::TiffError::FormatError(e) => {
+                OrthoImportError::FileKorup(format!("Berkas TIFF rusak atau tidak valid: {}", e))
+            }
+            tiff::TiffError::UnsupportedError(e) => match e {
+                tiff::TiffUnsupportedError::UnsupportedCompressionMethod(c) => {
+                    OrthoImportError::KompresiTidakDidukung(format!("{:?}", c))
+                }
+                tiff::TiffUnsupportedError::UnsupportedColorType(c) => {
+                    OrthoImportError::FormatTidakDidukung(format!("{:?}", c))
+                }
+                other => OrthoImportError::FormatTidakDidukung(format!(
+                    "Fitur TIFF belum didukung: {}",
+                    other
+                )),
+            },
+            tiff::TiffError::LimitsExceeded => OrthoImportError::MelebihiBatas {
+                width: 0,
+                height: 0,
+                max_dimension: 0,
+                message: "Ukuran atau dimensi data TIFF melebihi batas decoding internal"
+                    .to_string(),
+            },
+            tiff::TiffError::IoError(e) => {
+                OrthoImportError::InternalError(format!("Kesalahan I/O berkas TIFF: {}", e))
+            }
+            other => {
+                OrthoImportError::FileKorup(format!("Kesalahan membaca berkas TIFF: {}", other))
+            }
+        }
+    }
+}

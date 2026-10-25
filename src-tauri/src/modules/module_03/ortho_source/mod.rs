@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod constants;
 pub mod exif_reader;
+pub mod geotiff_reader;
 pub mod image_pipeline;
 pub mod instance_lock;
 pub mod job_manager;
@@ -17,6 +18,7 @@ pub mod world_file_reader;
 pub use commands::*;
 pub use constants::*;
 pub use exif_reader::*;
+pub use geotiff_reader::*;
 pub use image_pipeline::*;
 pub use instance_lock::*;
 pub use job_manager::*;

@@ -1289,3 +1289,393 @@ pub fn execute_import_option_a(
 
     Ok(stored_meta)
 }
+
+/// Orkestrasi eksekusi impor Opsi B (GeoTIFF -> Konversi) secara asinkron.
+pub fn execute_import_option_b(
+    job_id: &str,
+    payload: ImportDualModePayload,
+    cancel_token: CancellationToken,
+) -> Result<StoredImageMetadata, OrthoImportError> {
+    let _job_guard = JobRegistrationGuard::new(job_id.to_string());
+    let source_path = PathBuf::from(&payload.file_path);
+
+    let update_progress = |stage: &str, pct: f64, msg: &str| {
+        let record = JobRecord {
+            job_id: job_id.to_string(),
+            status: "running".to_string(),
+            stage: stage.to_string(),
+            progress_percent: pct,
+            message: msg.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            error: None,
+            result_image_id: None,
+        };
+        let _ = save_job_record(&record);
+    };
+
+    // 1. TAHAP VALIDASI FAST-FAIL SEBELUM STAGING
+    update_progress(
+        "validasi",
+        5.0,
+        "Memvalidasi header berkas GeoTIFF dan batas dimensi...",
+    );
+    if cancel_token.is_cancelled() {
+        return Err(OrthoImportError::Dibatalkan);
+    }
+
+    if !source_path.is_file() {
+        return Err(OrthoImportError::FileKorup(format!(
+            "Berkas GeoTIFF tidak ditemukan di disk: {}",
+            source_path.display()
+        )));
+    }
+
+    let source_size_bytes = fs::metadata(&source_path)
+        .map(|m| m.len())
+        .map_err(|e| OrthoImportError::FileKorup(e.to_string()))?;
+
+    let header_summary = super::geotiff_reader::validate_geotiff_header_fast(&source_path)?;
+    let (orig_width, orig_height) = (header_summary.width, header_summary.height);
+
+    // Buka berkas untuk membaca georeferensi dan detail teknis
+    let file = File::open(&source_path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuka berkas GeoTIFF: {}", e))
+    })?;
+    let mut decoder = tiff::decoder::Decoder::new(BufReader::new(file))?;
+
+    let georef_res =
+        super::geotiff_reader::extract_geotiff_georeference(&mut decoder, orig_width, orig_height);
+
+    let (bounds, bounds_source, detected_crs_name) = match georef_res {
+        Ok(ref georef) => (
+            georef.bounds,
+            "geotiff".to_string(),
+            georef.crs_string.clone(),
+        ),
+        Err(e) => {
+            if let Some(ref manual) = payload.manual_bounds {
+                let manual_b =
+                    validate_wgs84_bounds(manual.west, manual.south, manual.east, manual.north)
+                        .map_err(|err| OrthoImportError::KoordinatTidakValid(err.to_string()))?;
+                (manual_b, "manual".to_string(), "Manual (WGS84)".to_string())
+            } else {
+                return Err(e);
+            }
+        }
+    };
+
+    let tiff_details = super::geotiff_reader::extract_tiff_technical_details(
+        &mut decoder,
+        orig_width,
+        orig_height,
+    )?;
+
+    let mut pipeline_warnings = Vec::new();
+
+    // Siapkan Guard Staging RAII yang aman
+    let mut staging_guard = StagingGuard::for_job(job_id)?;
+    let staging_dir = staging_guard.staging_dir().to_path_buf();
+    fs::create_dir_all(&staging_dir).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuat folder staging: {}", e))
+    })?;
+
+    // Preflight cek ruang hard disk
+    check_disk_space_preflight(&staging_dir, source_size_bytes, payload.save_original)?;
+
+    // 2. TAHAP SALIN ORIGINAL STREAMING (JIKA OPSI "Simpan Berkas Asli" DIAKTIFKAN)
+    let original_staging_file = staging_dir.join("original.tif");
+    if payload.save_original {
+        update_progress("salin_asli", 15.0, "Menyalin berkas GeoTIFF asli...");
+        stream_copy_with_cancellation(
+            &source_path,
+            &original_staging_file,
+            &cancel_token,
+            |pct| {
+                let overall = 15.0 + (pct * 0.20); // 15% sampai 35%
+                update_progress("salin_asli", overall, "Menyalin berkas GeoTIFF asli...");
+            },
+        )?;
+    }
+
+    if cancel_token.is_cancelled() {
+        return Err(OrthoImportError::Dibatalkan);
+    }
+
+    // 3. TAHAP DEKODE & STREAMING RESAMPLING
+    update_progress(
+        "dekompresi",
+        40.0,
+        "Mendekompresi tile GeoTIFF dan meresampling...",
+    );
+
+    // Buka ulang decoder untuk streaming (posisi cursor fresh)
+    let file_stream = File::open(&source_path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuka berkas untuk streaming: {}", e))
+    })?;
+    let mut stream_decoder = tiff::decoder::Decoder::new(BufReader::new(file_stream))?;
+
+    // Analisis peregangan 16-bit jika bit_depth == 16
+    let u16_stretch = if header_summary.bit_depth == 16 {
+        let (lo, hi, is_full_range) = super::geotiff_reader::compute_16bit_percentiles(
+            &mut stream_decoder,
+            orig_width,
+            orig_height,
+            header_summary.has_alpha,
+            header_summary.nodata_value,
+        )?;
+        if is_full_range {
+            pipeline_warnings.push(
+                "Citra 16-bit terdeteksi full-range, peregangan kontras dilewati (linear mapping)."
+                    .to_string(),
+            );
+            Some((0.0, 65535.0))
+        } else {
+            pipeline_warnings.push(format!(
+                "Peregangan kontras 16-bit diterapkan: p0,5 = {:.1}, p99,5 = {:.1}",
+                lo, hi
+            ));
+            Some((lo, hi))
+        }
+    } else {
+        None
+    };
+
+    let has_alpha_or_nodata = header_summary.has_alpha || header_summary.nodata_value.is_some();
+    let channel_type = if has_alpha_or_nodata {
+        ChannelCount::Rgba
+    } else {
+        ChannelCount::Rgb
+    };
+
+    let mut resampler = StreamingResampler::new(
+        orig_width,
+        orig_height,
+        DISPLAY_TARGET_DIMENSION_PX,
+        channel_type,
+    )?;
+
+    // Periksa apakah overview sub-IFD piramida dapat dimanfaatkan
+    let best_overview_ifd = super::geotiff_reader::find_best_overview_ifd(&mut stream_decoder)?;
+    if let Some(ifd_idx) = best_overview_ifd {
+        if stream_decoder.seek_to_image(ifd_idx).is_ok() {
+            if let Ok((ow, oh)) = stream_decoder.dimensions() {
+                if ow >= DISPLAY_TARGET_DIMENSION_PX || oh >= DISPLAY_TARGET_DIMENSION_PX {
+                    resampler =
+                        StreamingResampler::new(ow, oh, DISPLAY_TARGET_DIMENSION_PX, channel_type)?;
+                    pipeline_warnings.push(format!(
+                        "Piramida internal IFD {} ({}x{}) digunakan untuk akselerasi dekompresi display.",
+                        ifd_idx, ow, oh
+                    ));
+                    super::geotiff_reader::stream_geotiff_to_resampler(
+                        &mut stream_decoder,
+                        ow,
+                        oh,
+                        &mut resampler,
+                        u16_stretch,
+                        header_summary.nodata_value,
+                        Some(&cancel_token),
+                    )?;
+                } else {
+                    let _ = stream_decoder.seek_to_image(0);
+                    super::geotiff_reader::stream_geotiff_to_resampler(
+                        &mut stream_decoder,
+                        orig_width,
+                        orig_height,
+                        &mut resampler,
+                        u16_stretch,
+                        header_summary.nodata_value,
+                        Some(&cancel_token),
+                    )?;
+                }
+            }
+        }
+    } else {
+        super::geotiff_reader::stream_geotiff_to_resampler(
+            &mut stream_decoder,
+            orig_width,
+            orig_height,
+            &mut resampler,
+            u16_stretch,
+            header_summary.nodata_value,
+            Some(&cancel_token),
+        )?;
+    }
+
+    if cancel_token.is_cancelled() {
+        return Err(OrthoImportError::Dibatalkan);
+    }
+
+    let resampled = resampler.finish()?;
+    let dynamic_image = if has_alpha_or_nodata {
+        let rgba = image::RgbaImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError(
+                    "Buffer RGBA hasil resampling tidak sesuai".to_string(),
+                )
+            })?;
+        image::DynamicImage::ImageRgba8(rgba)
+    } else {
+        let rgb = image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError(
+                    "Buffer RGB hasil resampling tidak sesuai".to_string(),
+                )
+            })?;
+        image::DynamicImage::ImageRgb8(rgb)
+    };
+
+    if cancel_token.is_cancelled() {
+        return Err(OrthoImportError::Dibatalkan);
+    }
+
+    // 4. TAHAP LOOP ADAPTIF DISPLAY <= 5 MB
+    update_progress(
+        "loop_adaptif",
+        70.0,
+        "Mengoptimalkan ukuran berkas display GeoTIFF...",
+    );
+    let encode_res = adaptive_encode_display(&dynamic_image, &staging_dir, has_alpha_or_nodata)?;
+
+    if cancel_token.is_cancelled() {
+        return Err(OrthoImportError::Dibatalkan);
+    }
+
+    // 5. TAHAP POINT OF NO RETURN: RENAME FOLDER & REGISTRASI ATOMIK
+    update_progress(
+        "registrasi",
+        90.0,
+        "Mendaftarkan layer dan menyimpan metadata...",
+    );
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let image_id = format!("ortho_{}", now_ms);
+    let final_image_dir = get_images_dir().join(&image_id);
+
+    // Tulis TechnicalMetadata (metadata.json) ke staging sebelum rename
+    let tech_meta = TechnicalMetadata {
+        schema_version: 1,
+        image_id: image_id.clone(),
+        import_mode: "B".to_string(),
+        source_format: "geotiff".to_string(),
+        source_filename: payload.custom_filename.clone().unwrap_or_else(|| {
+            source_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("geotiff_image")
+                .to_string()
+        }),
+        source_dimensions: [orig_width, orig_height],
+        display_dimensions: encode_res.final_dimensions,
+        source_file_size_bytes: source_size_bytes,
+        display_file_size_bytes: encode_res.display_size_bytes,
+        display_format: encode_res.format.clone(),
+        bounds: BoundsMetadata {
+            south: bounds[0][0],
+            west: bounds[0][1],
+            north: bounds[1][0],
+            east: bounds[1][1],
+            source: bounds_source,
+        },
+        source_crs: detected_crs_name,
+        exif_summary: None,
+        tiff_technical_details: Some(tiff_details),
+        imported_at: chrono::Utc::now().to_rfc3339(),
+        warnings: {
+            let mut w = encode_res.warnings.clone();
+            w.extend(pipeline_warnings);
+            w
+        },
+    };
+
+    let tech_json_path = staging_dir.join("metadata.json");
+    let tech_json_str = serde_json::to_string_pretty(&tech_meta).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal serialisasi metadata.json: {}", e))
+    })?;
+    write_atomic(&tech_json_path, &tech_json_str).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal menulis metadata.json: {}", e))
+    })?;
+
+    // Tulis StoredImageMetadata (meta.json) ke staging sebelum rename
+    let final_size_bytes = if payload.save_original {
+        source_size_bytes
+    } else {
+        encode_res.display_size_bytes
+    };
+    let final_ext = if payload.save_original {
+        "tif".to_string()
+    } else {
+        encode_res.format.clone()
+    };
+
+    let display_rel_url = format!(
+        "/map_storage/images/{}/display.{}",
+        image_id, encode_res.format
+    );
+    let original_rel_url = if payload.save_original {
+        format!("/map_storage/images/{}/original.tif", image_id)
+    } else {
+        display_rel_url.clone()
+    };
+
+    let layer_name = payload
+        .custom_filename
+        .clone()
+        .unwrap_or_else(|| tech_meta.source_filename.clone());
+
+    let stored_meta = StoredImageMetadata {
+        schema_version: 1,
+        id: image_id.clone(),
+        filename: layer_name.clone(),
+        category: ImageCategory::Ortho,
+        extension: final_ext,
+        file_path: original_rel_url,
+        size_bytes: final_size_bytes,
+        dimensions: Some([orig_width, orig_height]),
+        thumbnail_url: Some(display_rel_url),
+        bounds: Some(bounds),
+        aspect_ratio: Some(orig_width as f64 / orig_height as f64),
+        display_size_bytes: Some(encode_res.display_size_bytes),
+        imported_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: None,
+        is_corrupted: Some(false),
+    };
+
+    let meta_json_path = staging_dir.join("meta.json");
+    let meta_json_str = serde_json::to_string_pretty(&stored_meta).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal serialisasi meta.json: {}", e))
+    })?;
+    write_atomic(&meta_json_path, &meta_json_str)
+        .map_err(|e| OrthoImportError::InternalError(format!("Gagal menulis meta.json: {}", e)))?;
+
+    // POINT OF NO RETURN: Rename folder staging ke final
+    fs::rename(&staging_dir, &final_image_dir).map_err(|e| {
+        OrthoImportError::InternalError(format!(
+            "Gagal memindahkan folder staging ke tujuan akhir: {}",
+            e
+        ))
+    })?;
+    staging_guard.disarm(); // Matikan guard agar folder final tidak dihapus saat drop
+
+    // Registrasi layer atomik ke map_storage/layers/{id}.json
+    let _ = register_ortho_layer(&image_id, &layer_name);
+
+    // 6. TAHAP SELESAI
+    let final_record = JobRecord {
+        job_id: job_id.to_string(),
+        status: "completed".to_string(),
+        stage: "selesai".to_string(),
+        progress_percent: 100.0,
+        message: "Impor GeoTIFF berhasil diselesaikan".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        error: None,
+        result_image_id: Some(image_id),
+    };
+    let _ = save_job_record(&final_record);
+
+    Ok(stored_meta)
+}
