@@ -48,13 +48,16 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
             content_hash  TEXT,
             file_size     INTEGER,
             raw_sibling_id TEXT,
-            analysis_ready INTEGER";
+            analysis_ready INTEGER,
+            blur_score    REAL,
+            is_blurry     INTEGER";
 
 /// Columns of the `image` table in canonical order, for `SELECT`s and for
 /// the data-preserving copy in [`migrate_image_schema`].
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
     captured_at, gps_altitude_m, width, height, format, make, camera_model, \
-    source_path, content_hash, file_size, raw_sibling_id, analysis_ready";
+    source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
+    blur_score, is_blurry";
 
 /// Canonical `image` columns. A table carrying all of them with nullable
 /// location columns is already current and is never rebuilt, so any columns
@@ -77,6 +80,8 @@ const IMAGE_COLUMN_NAMES: &[&str] = &[
     "file_size",
     "raw_sibling_id",
     "analysis_ready",
+    "blur_score",
+    "is_blurry",
 ];
 
 /// Index used by project-scope duplicate detection, which looks images up by
@@ -1011,7 +1016,9 @@ fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
 /// The copy-on-import provenance columns (`source_path`, `content_hash`,
 /// `file_size`, `raw_sibling_id`, `analysis_ready`) start as `None`: the
 /// import I/O layer fills them in once the copy exists and the stem pair is
-/// known. A record built here is otherwise complete.
+/// known. `blur_score`/`is_blurry` likewise start as `None`: scoring reads
+/// pixels from the copy, so it only happens once the copy exists. A record
+/// built here is otherwise complete.
 pub fn image_from_metadata(
     image_id: Uuid,
     session_id: Uuid,
@@ -1036,6 +1043,8 @@ pub fn image_from_metadata(
         file_size: None,
         raw_sibling_id: None,
         analysis_ready: None,
+        blur_score: None,
+        is_blurry: None,
     }
 }
 
@@ -1052,8 +1061,9 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
     conn.execute(
         "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
             captured_at, gps_altitude_m, width, height, format, make, camera_model, \
-            source_path, content_hash, file_size, raw_sibling_id, analysis_ready)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
+            blur_score, is_blurry)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             image.id.to_string(),
             image.session_id.to_string(),
@@ -1072,6 +1082,8 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
             image.file_size.and_then(|size| i64::try_from(size).ok()),
             image.raw_sibling_id.map(|id| id.to_string()),
             image.analysis_ready.map(i64::from),
+            image.blur_score,
+            image.is_blurry.map(i64::from),
         ],
     )?;
     Ok(())
@@ -1234,6 +1246,8 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let file_size: Option<i64> = row.get(14)?;
     let raw_sibling_id: Option<String> = row.get(15)?;
     let analysis_ready: Option<i64> = row.get(16)?;
+    let blur_score: Option<f64> = row.get(17)?;
+    let is_blurry: Option<i64> = row.get(18)?;
 
     let captured_at = captured_at
         .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
@@ -1272,6 +1286,21 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
             )),
         })
         .transpose()?;
+    // Stored as 0/1; anything else is not a boolean this code wrote.
+    let is_blurry = is_blurry
+        .map(|v| match v {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(conversion_err(
+                18,
+                rusqlite::types::Type::Integer,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("is_blurry must be 0 or 1, found {other}"),
+                ),
+            )),
+        })
+        .transpose()?;
 
     Ok(Image {
         id: uuid_col(row, 0)?,
@@ -1291,6 +1320,8 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         file_size,
         raw_sibling_id,
         analysis_ready,
+        blur_score,
+        is_blurry,
     })
 }
 
@@ -1347,6 +1378,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
@@ -1369,6 +1402,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: None,
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
