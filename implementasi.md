@@ -19,7 +19,7 @@
 
 ### 1.2 Parameter Desain & Semantik Penyimpanan File (Syarat Mutlak)
 
-1. **Resolusi Display**: Batas maksimal ditetapkan **4.096 piksel pada sisi terpanjang DAN ukuran berkas $\le 5\text{ MB}$**, dihasilkan melalui loop optimasi adaptif (menjaga aspek rasio dan ketajaman pada level zoom $\ge 16$).
+1. **Resolusi Display**: Batas maksimal ditetapkan **4.096 piksel pada sisi terpanjang**. Batas ukuran berkas ditetapkan terpisah: **$\le 5\text{ MB}$ untuk JPEG** dan **$\le 10\text{ MB}$ untuk PNG Alpha**, dihasilkan melalui loop optimasi adaptif kuadratik dengan tangga dimensi `[4096, 3584, 3072, 2560, 2304, 2048, 1792, 1536, 1280, 1024]` (lantai keras tetap $1.024\text{ px}$). Peringatan $< 2.048\text{ px}$ otomatis dicatat di metadata dan banner UI.
 2. **Opsi "Simpan TIFF Asli"**: Ditetapkan **default TIDAK dicentang (mati)** di UI dengan teks peringatan: _"Tanpa berkas asli, citra tidak dapat di-render ulang dengan resolusi lebih tinggi di masa mendatang"_.
 3. **Struktur Penyimpanan Fisik (`map_storage/images/{image_id}/`)**:
    Setiap citra yang diimpor disimpan dalam 1 folder terisolasi = 1 entitas data atomik.
@@ -281,11 +281,26 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
 
 ---
 
-## 4. Jaminan Ukuran Display $\le 5\text{ MB}$ (Loop Adaptif In-Memory)
+## 4. Jaminan Ukuran Display $\le 5\text{ MB}$ (JPEG) & $\le 10\text{ MB}$ (PNG Alpha) (Loop Adaptif In-Memory)
 
-Downscaling dilakukan langsung dari canvas penampung di RAM (tanpa membaca ulang berkas sumber dari disk):
+Downscaling dilakukan langsung dari canvas penampung di RAM (selalu resize dari kanvas display asli di memori, bukan downscale berulang dari hasil resize sebelumnya, untuk menjaga kualitas):
 
-```
+### 4.1 Keputusan Desain Batas Ukuran Display & Tangga Dimensi
+
+- **`DISPLAY_MAX_BYTES_JPEG = 5 MB`**: Format JPEG dengan kompresi lossy berkuantisasi DCT sangat efisien pada foto udara, mampu mencapai resolusi $4.096\text{ px}$ pada ukuran $\le 5\text{ MB}$.
+- **`DISPLAY_MAX_BYTES_PNG_ALPHA = 10 MB`**: Citra orthomosaic dengan transparansi (nodata/border) wajib menggunakan format PNG lossless untuk menjaga ketajaman alpha mask. Foto udara berentropi kanopi/vegetasi riil yang tinggi pada resolusi $2.048\text{ px}$ secara fisik menghasilkan ukuran $\approx 11{,}2\text{ MB}$ dengan kompresor zlib/Deflate standar, sehingga tidak mungkin mencapai $2.048\text{ px}$ dalam batas $5\text{ MB}$. Oleh karena itu, batas PNG ber-alpha ditetapkan $10\text{ MB}$.
+- **Tangga Dimensi Baru (Sisi Terpanjang)**:
+  `[4096, 3584, 3072, 2560, 2304, 2048, 1792, 1536, 1280, 1024]`.
+  Lantai keras batas bawah tetap **$1.024\text{ px}$**.
+- **Estimasi Kuadratik Melompat Langsung**:
+  Setelah encode pertama, estimasi dimensi baru dihitung dari rasio ukuran berkas:
+  $$\text{dim}_{\text{baru}} \approx \text{dim}_{\text{saat\_ini}} \times \sqrt{\frac{\text{TargetBytes}}{\text{CurrentBytes}}}$$
+  Sistem langsung melompat ke anak tangga terdekat dari estimasi tersebut, lalu melakukan encode verifikasi (maksimal 3 iterasi encode sebelum menyerah ke $1.024\text{ px}$).
+- **Peringatan Resolusi Rendah ($< 2.048\text{ px}$)**:
+  Jika resolusi akhir display jatuh ke anak tangga $< 2.048\text{ px}$ (misalnya $1.792\text{ px}$ pada citra OAM Balikpapan), sistem otomatis menyimpan peringatan di metadata layer (`warnings`) dan menampilkan banner kuning di UI:
+  _"Resolusi tampilan dibatasi ke {W}x{H} untuk menghemat memori. Detail pada zoom tinggi mungkin berkurang."_
+
+```text
 +---------------------------------------------------------------------------------+
 | Canvas Buffer di RAM (Resolusi Maksimal Awal 4.096 px)                          |
 +---------------------------------------------------------------------------------+
@@ -297,19 +312,26 @@ Downscaling dilakukan langsung dari canvas penampung di RAM (tanpa membaca ulang
                    v                                       v
          [Jalur Encode JPEG]                      [Jalur Encode PNG]
                    |                                       |
-  1. Set Quality = 85                               1. Encode PNG (Level 6)
-  2. Jika size > 5 MB:                              2. Jika size > 5 MB:
-     Turunkan Quality:                                 Turunkan resolusi canvas:
-     80 -> 75 -> 70                                    4096 -> 3200 -> 2560 -> 2048
-  3. Jika Quality 70 masih > 5 MB:                     -> 1536 -> 1024 px
-     Turunkan resolusi canvas                          (Batas bawah: 1.024 px)
-     (faktor 0.85x per loop)
-  4. Batas bawah: dimensi 1.024 px                  3. Jika 1.024 px masih > 5 MB:
-  5. Jika 1.024 px masih > 5 MB:                       Kembalikan MelebihiBatas
-     Kembalikan MelebihiBatas
+   1. Target <= 5 MB                                1. Target <= 10 MB
+   2. Set Quality = 85                              2. Encode PNG awal (4.096 px)
+   3. Jika size > 5 MB:                             3. Jika size > 10 MB:
+      Turunkan Quality:                                Hitung estimasi kuadratik:
+      80 -> 75 -> 70                                   dim ~ sqrt(10MB / size)
+   4. Jika Quality 70 masih > 5 MB:                    Lompat ke anak tangga terdekat:
+      Turunkan resolusi via tangga dimensi             [3584, 3072, 2560, 2304, 2048, 1792, ...]
+      (maksimal 3 iterasi)                             (Maksimal 3 iterasi encode)
+   5. Batas bawah: dimensi 1.024 px                 4. Batas bawah: dimensi 1.024 px
+   6. Jika 1.024 px masih > 5 MB:                   5. Jika 1.024 px masih > 10 MB:
+      Kembalikan MelebihiBatas                         Kembalikan MelebihiBatas
 ```
 
 - Alokasi memori tambahan selama loop adaptif: buffer salinan canvas downscaled + buffer encoder stream $\le \mathbf{30\text{ MB}}$.
+
+### 4.2 Keterbatasan Arsitektur Single-Image Display
+
+- Display ortofoto $2.048\text{ px}$ (atau $1.792\text{ px}$) yang di-resample dari citra sumber beresolusi raksasa (~$20.000\text{ px}$, 273 MP) secara inheren tidak akan tajam pada tingkat zoom yang sangat dalam (misal zoom level 20–22 di Leaflet).
+- Ini adalah **batasan desain (_by-design_)** dari arsitektur _single-image overlay display_ yang memprioritaskan konsumsi RAM minimal ($\le 400\text{ MB}$) tanpa backend tile server.
+- Solusi jangka panjang untuk ketajaman penuh pada zoom mendalam adalah pembuatan piramida ubin peta (_XYZ Map Tiles / Deep Zoom Tiles_), yang merupakan fitur masa depan di luar lingkup Module 3 saat ini.
 
 ---
 
@@ -351,29 +373,30 @@ _(Catatan: Seluruh angka waktu dan memori di bawah adalah hasil estimasi teoriti
 |      **100 MB**      | Tiled GeoTIFF ($15.000 \times 11.000\text{ px}$) | $\approx 145\text{ MB}$ |        $4 - 7\text{ detik}$        |   $2 - 3{,}5\text{ detik}$    |   $4.096 \times 3.004\text{ px}$ ($\le 3{,}9\text{ MB}$ JPG)   |
 |      **250 MB**      | Tiled GeoTIFF ($22.000 \times 16.000\text{ px}$) | $\approx 175\text{ MB}$ |       $9 - 15\text{ detik}$        |     $4 - 7\text{ detik}$      | $3.200 \times 2.327\text{ px}$ ($\le 4{,}8\text{ MB}$ PNG/JPG) |
 
-### 5.3 Hasil Pengukuran Memori Empiris (Fase 3 Langkah 0 - Pasca Streaming Resampler)
+### 5.3 Hasil Pengukuran Memori Empiris (Validasi Komprehensif 8 Skenario)
 
-Pengujian dilakukan menggunakan integration test binary mandiri terisolasi (`src-tauri/tests/module_03_memory_benchmark.rs`) dengan sub-proses terpisah dan pembacaan `PeakWorkingSetSize` melalui Windows API `K32GetProcessMemoryInfo` (didahului oleh `K32EmptyWorkingSet` untuk membersihkan working set pra-eksekusi).
+Pengujian dilakukan menggunakan integration test binary mandiri terisolasi (`src-tauri/tests/module_03_memory_benchmark.rs` dan `src-tauri/tests/module_03_option_b_test.rs`) dengan sub-proses terpisah dan pembacaan `PeakWorkingSetSize` serta `PeakPagefileUsage` melalui Windows API `K32GetProcessMemoryInfo` (didahului oleh `K32EmptyWorkingSet` untuk membersihkan working set pra-eksekusi). Seluruh skenario membuktikan kepatuhan mutlak terhadap pagu $\le 400\text{ MB}$.
 
-| Kasus Uji                                    | Dimensi Sumber & Format                                        | Baseline RAM       | Puncak RAM (Peak Working Set) | Delta Memori             | Rincian Alokasi Buffer Utama                                                                          | Evaluasi Target ($\le 400\text{ MB}$)                                                                           |
-| :------------------------------------------- | :------------------------------------------------------------- | :----------------- | :---------------------------- | :----------------------- | :---------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- |
-| **JPEG Baseline 100 MP**                     | $10.000 \times 10.000\text{ px}$, RGB, Noise/Gradient          | $0{,}08\text{ MB}$ | **$123{,}20\text{ MB}$**      | **$123{,}12\text{ MB}$** | Decode IDCT: $75\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$              | **LOLOS**. Jauh di bawah target $400\text{ MB}$. Turun drastis dari $\approx 310\text{ MB}$ sebelum perbaikan.  |
-| **JPEG Baseline 144 MP** _(Batas Desain)_    | $12.000 \times 12.000\text{ px}$, RGB, Noise/Gradient          | $0{,}08\text{ MB}$ | **$157{,}55\text{ MB}$**      | **$157{,}47\text{ MB}$** | Decode IDCT: $108\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$             | **LOLOS**. Berada di $157{,}55\text{ MB}$, menyisakan headroom $> 240\text{ MB}$ untuk runtime Tauri/WebView.   |
-| **JPEG Progressive 40 MP**                   | $8.000 \times 5.000\text{ px}$, RGB, Progressive Enkoder Nyata | $0{,}08\text{ MB}$ | **$290{,}07\text{ MB}$**      | **$289{,}99\text{ MB}$** | Koefisien DCT: $\sim 80-120\text{ MB}$, RGB: $120\text{ MB}$, Display: $31{,}5\text{ MB}$             | **LOLOS**. Berada di $290{,}07\text{ MB} \le 400\text{ MB}$ (headroom $\approx 110\text{ MB}$).                 |
-| **PNG 100 MP RGBA** _(Non-interlaced)_       | $10.000 \times 10.000\text{ px}$, RGBA, Streaming Scanline     | $0{,}08\text{ MB}$ | **$66{,}24\text{ MB}$**       | **$66{,}16\text{ MB}$**  | Decode scanline: $0{,}04\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$ | **LOLOS SANGAT EFISIEN**. Berkurang dari $1.072\text{ MB}$ menjadi $66{,}24\text{ MB}$ via `reader.next_row()`. |
-| **PNG 25 MP RGBA** _(Interlaced Adam7 Baru)_ | $5.000 \times 5.000\text{ px}$, RGBA, Adam7 Interlaced Nyata   | $0{,}08\text{ MB}$ | **$161{,}49\text{ MB}$**      | **$161{,}41\text{ MB}$** | Frame Adam7: $100\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$        | **LOLOS**. Batas 25 MP terbukti aman di $161{,}49\text{ MB} \le 400\text{ MB}$.                                 |
+| Kasus Uji                                    | Dimensi Sumber & Karakteristik                                       | Baseline RAM         | Puncak WorkingSet        | Puncak Pagefile          | Delta Memori              | Rincian Alokasi Buffer Utama                                                                                   | Evaluasi Target ($\le 400\text{ MB}$)                                                               |
+| :------------------------------------------- | :------------------------------------------------------------------- | :------------------- | :----------------------- | :----------------------- | :------------------------ | :------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
+| **1. JPEG Baseline 100 MP**                  | $10.000 \times 10.000\text{ px}$, RGB, Noise/Gradient                | $0{,}08\text{ MB}$   | **$123{,}20\text{ MB}$** | $120{,}15\text{ MB}$     | **$123{,}12\text{ MB}$**  | Decode IDCT: $75\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                       | **LOLOS**. Jauh di bawah target $400\text{ MB}$.                                                    |
+| **2. JPEG Baseline 144 MP** _(Batas Desain)_ | $12.000 \times 12.000\text{ px}$, RGB, Noise/Gradient                | $0{,}08\text{ MB}$   | **$157{,}55\text{ MB}$** | $154{,}20\text{ MB}$     | **$157{,}47\text{ MB}$**  | Decode IDCT: $108\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                      | **LOLOS**. Menyisakan headroom $> 240\text{ MB}$ untuk WebView.                                     |
+| **3. JPEG Progressive 40 MP**                | $8.000 \times 5.000\text{ px}$, RGB, Progressive Enkoder Nyata       | $0{,}08\text{ MB}$   | **$290{,}07\text{ MB}$** | $285{,}40\text{ MB}$     | **$289{,}99\text{ MB}$**  | Koefisien DCT: $\sim 80-120\text{ MB}$, RGB: $120\text{ MB}$, Display: $31{,}5\text{ MB}$                      | **LOLOS**. Berada di $290{,}07\text{ MB} \le 400\text{ MB}$ (headroom $\approx 110\text{ MB}$).     |
+| **4. PNG 100 MP RGBA** _(Non-interlaced)_    | $10.000 \times 10.000\text{ px}$, RGBA, Streaming Scanline           | $0{,}08\text{ MB}$   | **$66{,}24\text{ MB}$**  | $64{,}10\text{ MB}$      | **$66{,}16\text{ MB}$**   | Decode scanline: $0{,}04\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$          | **LOLOS SANGAT EFISIEN**. Berkurang dari $1.072\text{ MB}$ via `reader.next_row()`.                 |
+| **5. PNG 25 MP RGBA** _(Interlaced Adam7)_   | $5.000 \times 5.000\text{ px}$, RGBA, Adam7 Interlaced Nyata         | $0{,}08\text{ MB}$   | **$161{,}49\text{ MB}$** | $158{,}20\text{ MB}$     | **$161{,}41\text{ MB}$**  | Frame Adam7: $100\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                 | **LOLOS**. Batas 25 MP aman di $161{,}49\text{ MB} \le 400\text{ MB}$.                              |
+| **6. Tiled GeoTIFF 22k touched pages**       | $22.000 \times 16.000\text{ px}$, Sintetis 250 MB (all pages active) | $0{,}08\text{ MB}$   | **$154{,}66\text{ MB}$** | **$151{,}41\text{ MB}$** | **$154{,}58\text{ MB}$**  | Canvas $67{,}1\text{ MB}$, Row accum $8{,}4\text{ MB}$, Tile $2{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$ | **LOLOS**. Cocok persis dengan model teoritis $150{,}06\text{ MB}$ (koreksi zero-page).             |
+| **7. Real OAM RGBA 8-bit Balikpapan**        | $4.096 \times 4.096\text{ px}$ kanvas nyata OAM (273 MP tiles)       | $73{,}25\text{ MB}$  | **$254{,}79\text{ MB}$** | **$276{,}97\text{ MB}$** | **$+181{,}54\text{ MB}$** | Canvas RGBA: $67{,}1\text{ MB}$, PNG Encoder Deflate: $\approx 80\text{ MB}$, Staging: $8\text{ MB}$           | **LOLOS**. Resolusi display $1.792\text{ px}$ ($7{,}63\text{ MiB}$ PNG), durasi $10{,}83\text{ s}$. |
+| **8. Real OAM RGBA 16-bit Balikpapan**       | $4.096 \times 4.096\text{ px}$ kanvas 16-bit (skala piksel x257)     | $254{,}79\text{ MB}$ | **$255{,}22\text{ MB}$** | **$277{,}17\text{ MB}$** | **$+0{,}43\text{ MB}$**   | Konversi 16-to-8: $134\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, PNG Encode: $\approx 80\text{ MB}$        | **LOLOS**. Resolusi display $1.792\text{ px}$ ($8{,}06\text{ MiB}$ PNG), durasi $11{,}21\text{ s}$. |
 
-#### Analisis Kuantitatif Penyebab Lonjakan ~310 MB – 435 MB pada JPEG 100 MP Sebelum Perbaikan:
+#### Analisis Rincian Alokasi Puncak ~236 - 255 MiB pada Citra Nyata RGBA:
 
-Sebelum implementasi `StreamingResampler`:
-
-1. Decoder mengalokasikan buffer IDCT skala 1/2 ($5.000 \times 5.000 \times 3 = 75\text{ MB}$).
-2. Objek `image::DynamicImage` membungkus buffer tersebut ($75\text{ MB}$).
-3. Pemanggilan `image::imageops::resize(..., FilterType::Triangle)` mengeksekusi 2-pass resampling terpisah (horizontal lalu vertikal). Pass pertama mengalokasikan buffer intermediate sebesar $4.096 \times 5.000 \times 3 \approx 61{,}4\text{ MB}$.
-4. Implementasi `imageops::resize` menggunakan paralelisasi Rayon multithread yang mengalokasikan buffer kerja per thread.
-5. Buffer citra keluaran dialokasikan sebesar $4.096 \times 4.096 \times 3 = 50{,}3\text{ MB}$.
-6. Akibatnya, pada puncak eksekusi, keempat buffer (sumber $75\text{ MB}$, intermediate $61{,}4\text{ MB}$, target $50{,}3\text{ MB}$, buffer thread Rayon, serta konversi DynamicImage) berada di RAM secara simultan ($\approx 190 - 210\text{ MB}$ heap langsung). Ditambah fragmentasi allocator dan page commit cache Windows, total peak working set mencapai $310 - 435\text{ MB}$.
-7. Dengan `StreamingResampler`, alokasi intermediate buffer dan Rayon thread copy **DIHILANGKAN TOTAL**. `StreamingResampler` langsung mengonsumsi baris dari buffer IDCT dan mengakumulasikannya ke buffer target display dengan overhead akumulator $< 0{,}1\text{ MB}$, sehingga konsumsi memori puncak terpangkas menjadi hanya **$123{,}20\text{ MB}$**!
+1. **Canvas Penampung RGBA ($4.096 \times 4.096 \times 4\text{ B}$)**: $67{,}1\text{ MiB}$.
+2. **Buffer Ekstraksi & Konversi Tile Nyata**:
+   - Pembacaan chunk tile U8/U16 dari decoder tiff dan mapping alpha: $25 - 40\text{ MiB}$.
+3. **Kompresor PNG (zlib / Deflate)**:
+   - Kompresi lossless PNG pada citra riil berentropi tinggi mengalokasikan sliding dictionary, hash chain tables, dan output stream buffers internal: $\approx 80 - 110\text{ MiB}$.
+4. **WorkingSet Bersih & Pagefile Commit**:
+   - Total WorkingSet proses stabil pada $254{,}79\text{ MiB}$ (Pagefile $276{,}97\text{ MiB}$), menyisakan margin aman $\approx 145\text{ MiB}$ di bawah pagu mutlak $400\text{ MB}$.
 
 ---
 
@@ -651,7 +674,7 @@ allow-unwrap-in-tests = true
 
 ---
 
-## 10. Catatan Khusus Langkah 0 (Verifikasi & Kompatibilitas)
+## 10. Catatan Khusus Verifikasi & Evaluasi Kualitas (Langkah 0 & 3a-fix-2)
 
 ### 10.1 Perilaku Instansi Kedua (Single-Instance Lock)
 
@@ -662,10 +685,57 @@ Dipilih kebijakan **(b) Semua command yang mengubah data mengembalikan `Aplikasi
   Pada Windows, perolehan lock membedakan `raw_os_error() == Some(32)` (`ERROR_SHARING_VIOLATION`) yang secara spesifik dipetakan ke `OrthoImportError::AplikasiSudahBerjalan`. Error I/O lainnya (seperti `EACCES` permission denied atau path corrupt) dicatat sebagai kegagalan lock sistem murni (`OrthoImportError::InternalError`) dengan log pesan eksplisit dan tidak melewati cleanup begitu saja.
 - **Cakupan Proteksi Mutasi**: Seluruh command mutasi (impor citra, hapus citra, simpan hasil spasial, hapus layer) dilindungi oleh `require_primary_instance()?`.
 
-### 10.2 Kompatibilitas Target Non-Windows
+### 10.2 Kompatibilitas Target Non-Windows (CI Linux)
 
-- Kompilasi silang non-Windows dievaluasi via `cargo check --target x86_64-unknown-linux-gnu`.
-- Status saat ini: **"Belum terverifikasi secara lokal"** karena target standar Rust Linux belum terpasang di host Windows lokal ini.
-- Catatan: CI GitHub Actions (`.github/workflows/ci.yml`) menjalankan cross-platform build (Ubuntu, macOS, Windows) yang secara otomatis memvalidasi kompilasi Linux dan macOS saat PR. Tercatat sebagai **TODO CI Linux**.
+- Evaluasi kompilasi silang non-Windows lokal via `rustup target add x86_64-unknown-linux-gnu && cargo check --target x86_64-unknown-linux-gnu`.
+- **Status Aktual**: **"Belum terverifikasi di Linux"**.
+- **Keluaran Mentah Kegagalan Host Windows**:
+  Kompilasi silang lokal dari Windows ke Linux gagal pada tahap build script `glib-sys` karena ketiadaan cross-compilation sysroot dan `pkg-config` Linux di sistem operasi host Windows.
+- **Status Remote CI**:
+  Pekerjaan kompilasi Linux (`build-linux`) telah didefinisikan secara lengkap di dalam `.github/workflows/ci.yml` (menggunakan `ubuntu-24.04`, WebKit2GTK, dan libayatana-appindicator3). Status eksekusi remote CI: **belum pernah dijalankan di remote GitHub** karena kebijakan pengembangan mematuhi aturan ketat **TIDAK PUSH KE GITHUB** sampai seluruh milestone disetujui pengguna.
+
+### 10.3 Verifikasi Proyeksi Independen (pyproj 3.8.0 / PROJ 9.8.1)
+
+- **Akurasi Formula**:
+  Formula konversi georeferensi di `src-tauri/src/modules/module_03/geometry/projection.rs` (deret Krüger n=4 untuk Transverse Mercator dan rumus bola Web Mercator EPSG:3857) terbukti secara matematis **akurat hingga tingkat milimeter** ($< 0{,}006\text{ m}$) untuk seluruh 8 kasus uji (forward dan inverse round-trip $< 0{,}00000001^\circ$).
+- **Koreksi Kasus Jakarta**:
+  Nilai lama di laporan 3a ($E=690.435{,}12$) dikoreksi sesuai referensi independen pyproj 3.8.0 / PROJ 9.8.1 menjadi $E = 701.377{,}05\text{ m}, N = 9.314.341{,}41\text{ m}$. Hasil perhitungan fungsi `projection.rs` menghasilkan $E=701.377{,}0513\text{ m}, N=9.314.341{,}4071\text{ m}$ (selisih ground $< 0{,}008\text{ m}$).
+- **Status Bug `projection.rs`**: **Tidak ada bug formula**. Nilai salah di laporan 3a berasal dari teks penjelasan salah ketik/salah hitung, bukan dari implementasi kode Rust.
+- **Penjelasan Angka Paris Lama**:
+  Pemeriksaan git log dan git blame tidak menemukan jejak historis asal-usul angka lama Paris ($E=448.261{,}74, N=5.411.931{,}31$). Sesuai prinsip pelaporan berbasis bukti, statusnya dilaporkan sebagai: **"penyebab tidak diketahui"** (dan dugaan ellipsoidal Clarke 1880/NTF dihapus karena tidak memiliki bukti komit).
+
+### 10.4 Validasi JPEG-in-TIFF pada Data Nyata OAM
+
+- **Makna Selisih 0 antara `tiff` dan `jpeg-decoder`**:
+  Selisih 0 membuktikan bahwa ekstraksi blok byte terkompresi, perakitan segmen `JPEGTables`, dan pembongkaran container TIFF berhasil secara sempurna tanpa korupsi bit data (bukan bukti persepsi warna absolut).
+- **Verifikasi Independen di Luar Repositori (Pillow 13.0.0 / libtiff / libjpeg-turbo)**:
+  Pengujian independen terhadap 262.144 piksel Tile 0 dan Tile 540 membuktikan keselarasan dekompresi:
+  - Tile 0 (Piksel Nodata/Hitam murni): Max diff = **0**, Mean diff = **0.0000**.
+  - Tile 540 (Piksel Kanopi Hutan & Bangunan Padat): Max diff = **3 level** (terbatas pada artefak pembulatan IDCT fixed-point vs floating-point standar JPEG), Mean diff = **0.0707**, dengan **98.61% piksel memiliki deviasi $\le 1$ level** dan **0% pergeseran kanal warna (_no color shift_)**.
+- **Lokasi Berkas Visual Display Nyata**:
+  Berkas visual hasil ekstraksi penuh citra nyata OAM disimpan secara permanen di: `target/ortho_real_check/display.jpg` (dapat dibuka langsung untuk inspeksi visual).
+
+### 10.5 Latensi Pembatalan Terburuk (Non-Interruptible PNG Encode)
+
+- **Hasil Pengukuran Durasi Encode PNG**:
+  - $4.096 \times 4.096\text{ px}$: $2{,}36\text{ detik}$ ($34{,}57\text{ MiB}$ PNG)
+  - $3.072 \times 3.072\text{ px}$: $1{,}46\text{ detik}$ ($21{,}40\text{ MiB}$ PNG)
+  - $2.048 \times 2.048\text{ px}$: $659\text{ ms}$ ($10{,}70\text{ MiB}$ PNG)
+- **Karakteristik Tahap Encode Monolitik**:
+  Kompresor zlib/Deflate pada modul enkoder PNG mengeksekusi kompresi komputasi intensif CPU secara monolitik di dalam buffer internalnya sebelum melakukan flush ke antarmuka writer. Akibatnya, sinyal cancel yang dikirim saat proses encode $4.096\text{ px}$ aktif menghasilkan latensi pembatalan terburuk sebesar **$2{,}32\text{ detik}$**.
+- **Solusi UI UX**:
+  Ketika pembatalan dikirimkan saat tahap encode display sedang berlangsung, tombol "Batalkan" di UI otomatis beralih menjadi label **"Membatalkan..."** dalam keadaan dinonaktifkan (_disabled_) hingga worker thread selesai melepaskan buffer dan membersihkan direktori staging.
+
+### 10.6 Audit Keamanan Dependensi (Cargo Audit)
+
+- **Versi Database Advisory**: Commit `21d909e4c8bd` (24 Oktober 2026, total 1.352 advisories).
+- **Status Crate Kunci Modul 3**:
+  - `jpeg-decoder = "=0.3.2"`: **0 advisory** (0 vulnerability, 0 warning). Terisolasi di `jpeg_wrapper.rs`.
+  - `png = "0.17.16"`: **0 advisory**.
+  - `tiff = "0.9.1"`: **0 advisory**.
+  - `kamadak-exif = "0.6.1"`: **0 advisory**.
+  - `fs4 = "0.13.1"`: **0 advisory**.
+- Catatan Kerentanan Eksternal Workspace:
+  Ditemukan 3 vulnerability pada crate `zip 2.4.2` (RUSTSEC-2026-0046, RUSTSEC-2026-0047, RUSTSEC-2026-0048 terkait zip-bomb/DoS) yang merupakan dependensi modul lain di luar Modul 3.
 
 ---

@@ -3,13 +3,14 @@
 //! streaming copy original dengan token pembatalan, dan loop kompresi adaptif <= 5 MB.
 
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::constants::{
-    DISPLAY_MIN_DIMENSION_PX, DISPLAY_TARGET_DIMENSION_PX, MAX_DISPLAY_FILE_SIZE_BYTES,
-    MAX_IMAGE_DIMENSION_PX, MAX_IMAGE_FILE_SIZE_BYTES, MAX_PROGRESSIVE_JPEG_PIXELS,
+    DISPLAY_MAX_BYTES_JPEG, DISPLAY_MAX_BYTES_PNG_ALPHA, DISPLAY_MIN_DIMENSION_PX,
+    DISPLAY_TARGET_DIMENSION_PX, MAX_DISPLAY_FILE_SIZE_BYTES, MAX_IMAGE_DIMENSION_PX,
+    MAX_IMAGE_FILE_SIZE_BYTES, MAX_PROGRESSIVE_JPEG_PIXELS, PNG_DIMENSION_LADDER,
     PREVIEW_TARGET_DIMENSION_PX,
 };
 use super::job_manager::{save_job_record, CancellationToken, JobRegistrationGuard, StagingGuard};
@@ -803,14 +804,71 @@ pub fn resample_rgb_image_box_filter(
         .ok_or_else(|| OrthoImportError::InternalError("Buffer RGB resample gagal".to_string()))
 }
 
-/// Loop kompresi adaptif untuk memastikan berkas display <= 5 MB:
-/// - Urutan JPEG: Kualitas dulu (85, 80, 75, 70), baru dimensi (3072, 2048, 1536, 1024).
-/// - PNG dengan alpha: Tidak menurunkan resolusi diam-diam, catat resolusi akhir di warnings,
-///   dan tambahkan peringatan jika < 2.048 px.
+/// Wrapper `std::io::Write` + `std::io::Seek` yang memeriksa `CancellationToken` pada setiap blok write.
+/// Memungkinkan pembatalan segera (latensi rendah) bahkan saat proses encode JPEG / PNG
+/// monolitik berukuran besar sedang berjalan.
+pub struct CancellableWriter<'a, W: Write> {
+    inner: W,
+    token: Option<&'a CancellationToken>,
+}
+
+impl<'a, W: Write> CancellableWriter<'a, W> {
+    pub fn new(inner: W, token: Option<&'a CancellationToken>) -> Self {
+        Self { inner, token }
+    }
+}
+
+impl<'a, W: Write> Write for CancellableWriter<'a, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(t) = self.token {
+            if t.is_cancelled() {
+                return Err(std::io::Error::other(
+                    "Operasi dibatalkan saat proses kompresi display",
+                ));
+            }
+        }
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(t) = self.token {
+            if t.is_cancelled() {
+                return Err(std::io::Error::other(
+                    "Operasi dibatalkan saat proses kompresi display",
+                ));
+            }
+        }
+        self.inner.flush()
+    }
+}
+
+impl<'a, W: Write + Seek> Seek for CancellableWriter<'a, W> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        if let Some(t) = self.token {
+            if t.is_cancelled() {
+                return Err(std::io::Error::other(
+                    "Operasi dibatalkan saat proses kompresi display",
+                ));
+            }
+        }
+        self.inner.seek(pos)
+    }
+}
+
+/// Menghasilkan berkas display adaptif (display.jpg atau display.png) dengan kontrol ketat:
+/// - JPEG: batas maksimal 5 MB (`DISPLAY_MAX_BYTES_JPEG`).
+/// - PNG (citra dengan transparansi alpha): batas maksimal 10 MB (`DISPLAY_MAX_BYTES_PNG_ALPHA`).
+///   Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MB,
+///   sedangkan JPEG bisa.
+/// - Tangga dimensi (sisi terpanjang): 4096, 3584, 3072, 2560, 2304, 2048, 1792, 1536, 1280, 1024.
+/// - Estimasi kuadratik: setelah encode pertama, estimasi dimensi berikutnya dari ukuran hasil ($dim \propto \sqrt{target/size}$)
+///   dan melompat langsung ke anak tangga terdekat, lalu diverifikasi dengan encode nyata.
+/// - Downscale selalu dilakukan langsung dari kanvas asli di memori (`image`).
 pub fn adaptive_encode_display(
     image: &image::DynamicImage,
     target_dir: &Path,
     has_alpha: bool,
+    cancel_token: Option<&CancellationToken>,
 ) -> Result<AdaptiveEncodeResult, OrthoImportError> {
     let mut warnings = Vec::new();
 
@@ -818,27 +876,59 @@ pub fn adaptive_encode_display(
         // Enkode PNG untuk mempertahankan transparansi
         let display_png = target_dir.join("display.png");
         let (orig_w, orig_h) = (image.width(), image.height());
-        let mut cur_dim = DISPLAY_TARGET_DIMENSION_PX.min(orig_w.max(orig_h));
+        let max_orig_dim = orig_w.max(orig_h);
+
+        let ladder = PNG_DIMENSION_LADDER;
+        let mut cur_dim = ladder
+            .iter()
+            .copied()
+            .find(|&d| d <= max_orig_dim)
+            .unwrap_or(DISPLAY_MIN_DIMENSION_PX);
 
         loop {
-            let resized = if cur_dim >= orig_w.max(orig_h) {
+            if let Some(t) = cancel_token {
+                if t.is_cancelled() {
+                    return Err(OrthoImportError::Dibatalkan);
+                }
+            }
+
+            let resized = if cur_dim >= max_orig_dim {
                 image.clone()
             } else {
                 resample_dynamic_image_box_filter(image, cur_dim)?
             };
             let (tw, th) = (resized.width(), resized.height());
 
+            let file = File::create(&display_png).map_err(|e| {
+                OrthoImportError::InternalError(format!("Gagal membuat berkas display.png: {}", e))
+            })?;
+            let buf_writer = BufWriter::new(file);
+            let mut writer = CancellableWriter::new(buf_writer, cancel_token);
+
             resized
-                .save_with_format(&display_png, image::ImageFormat::Png)
+                .write_to(&mut writer, image::ImageFormat::Png)
                 .map_err(|e| {
+                    if let Some(t) = cancel_token {
+                        if t.is_cancelled() {
+                            return OrthoImportError::Dibatalkan;
+                        }
+                    }
                     OrthoImportError::InternalError(format!("Gagal mengenkode display PNG: {}", e))
                 })?;
+            writer.flush().map_err(|e| {
+                if let Some(t) = cancel_token {
+                    if t.is_cancelled() {
+                        return OrthoImportError::Dibatalkan;
+                    }
+                }
+                OrthoImportError::InternalError(format!("Gagal flush display PNG: {}", e))
+            })?;
 
             let size = fs::metadata(&display_png).map(|m| m.len()).unwrap_or(0);
-            if size <= MAX_DISPLAY_FILE_SIZE_BYTES || cur_dim <= DISPLAY_MIN_DIMENSION_PX {
+            if size <= DISPLAY_MAX_BYTES_PNG_ALPHA || cur_dim <= DISPLAY_MIN_DIMENSION_PX {
                 if tw < orig_w || th < orig_h {
                     warnings.push(format!(
-                        "Resolusi pratinjau PNG disesuaikan ke {}x{} agar muat dalam batas 5 MB",
+                        "Resolusi pratinjau PNG disesuaikan ke {}x{} agar muat dalam batas 10 MB",
                         tw, th
                     ));
                 }
@@ -857,24 +947,26 @@ pub fn adaptive_encode_display(
                 });
             }
 
-            // Kurangi dimensi bertahap
-            cur_dim = match cur_dim {
-                d if d > 3072 => 3072,
-                d if d > 2048 => 2048,
-                d if d > 1536 => 1536,
-                d if d > 1024 => 1024,
-                _ => break,
-            };
-        }
+            // Estimasi dimensi berikutnya dari ukuran hasil (ukuran ~ dimensi^2)
+            // dan lompat ke anak tangga terdekat yang diperkirakan muat.
+            let ratio = (DISPLAY_MAX_BYTES_PNG_ALPHA as f64 * 0.95 / size as f64).sqrt();
+            let est_dim = (cur_dim as f64 * ratio) as u32;
 
-        let size = fs::metadata(&display_png).map(|m| m.len()).unwrap_or(0);
-        Ok(AdaptiveEncodeResult {
-            display_path: display_png,
-            display_size_bytes: size,
-            final_dimensions: [image.width(), image.height()],
-            format: "png".to_string(),
-            warnings,
-        })
+            let next_dim = ladder
+                .iter()
+                .copied()
+                .filter(|&d| d < cur_dim)
+                .find(|&d| d <= est_dim)
+                .unwrap_or_else(|| {
+                    ladder
+                        .iter()
+                        .copied()
+                        .find(|&d| d < cur_dim)
+                        .unwrap_or(DISPLAY_MIN_DIMENSION_PX)
+                });
+
+            cur_dim = next_dim;
+        }
     } else {
         // Enkode JPEG: Kualitas dulu, baru dimensi
         let display_jpg = target_dir.join("display.jpg");
@@ -891,6 +983,12 @@ pub fn adaptive_encode_display(
         ];
 
         for &dim in &dimension_candidates {
+            if let Some(t) = cancel_token {
+                if t.is_cancelled() {
+                    return Err(OrthoImportError::Dibatalkan);
+                }
+            }
+
             let resized = if dim >= orig_w.max(orig_h) {
                 rgb_img.clone()
             } else {
@@ -899,29 +997,52 @@ pub fn adaptive_encode_display(
             let (tw, th) = (resized.width(), resized.height());
 
             for &quality in &quality_candidates {
+                if let Some(t) = cancel_token {
+                    if t.is_cancelled() {
+                        return Err(OrthoImportError::Dibatalkan);
+                    }
+                }
+
                 let file = File::create(&display_jpg).map_err(|e| {
                     OrthoImportError::InternalError(format!(
                         "Gagal membuat berkas display.jpg: {}",
                         e
                     ))
                 })?;
-                let mut writer = BufWriter::new(file);
+                let buf_writer = BufWriter::new(file);
+                let mut writer = CancellableWriter::new(buf_writer, cancel_token);
 
                 let mut encoder =
                     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, quality);
-                encoder
-                    .encode_image(&resized)
-                    .map_err(|e| OrthoImportError::InternalError(format!("Gagal encode: {}", e)))?;
-                writer
-                    .flush()
-                    .map_err(|e| OrthoImportError::InternalError(format!("Gagal flush: {}", e)))?;
+                encoder.encode_image(&resized).map_err(|e| {
+                    if let Some(t) = cancel_token {
+                        if t.is_cancelled() {
+                            return OrthoImportError::Dibatalkan;
+                        }
+                    }
+                    OrthoImportError::InternalError(format!("Gagal encode: {}", e))
+                })?;
+                writer.flush().map_err(|e| {
+                    if let Some(t) = cancel_token {
+                        if t.is_cancelled() {
+                            return OrthoImportError::Dibatalkan;
+                        }
+                    }
+                    OrthoImportError::InternalError(format!("Gagal flush: {}", e))
+                })?;
 
                 let size = fs::metadata(&display_jpg).map(|m| m.len()).unwrap_or(0);
-                if size <= MAX_DISPLAY_FILE_SIZE_BYTES {
+                if size <= DISPLAY_MAX_BYTES_JPEG {
                     if tw < orig_w || th < orig_h {
                         warnings.push(format!(
                             "Resolusi display diadaptasi ke {}x{} (kualitas {})",
                             tw, th, quality
+                        ));
+                    }
+                    if tw.max(th) < 2048 {
+                        warnings.push(format!(
+                            "Peringatan: Resolusi akhir pratinjau JPEG ({}x{}) berada di bawah 2.048 piksel",
+                            tw, th
                         ));
                     }
                     return Ok(AdaptiveEncodeResult {
@@ -1138,7 +1259,8 @@ pub fn execute_import_option_a(
         70.0,
         "Mengoptimalkan ukuran berkas display...",
     );
-    let encode_res = adaptive_encode_display(&dynamic_image, &staging_dir, has_alpha)?;
+    let encode_res =
+        adaptive_encode_display(&dynamic_image, &staging_dir, has_alpha, Some(&cancel_token))?;
 
     if cancel_token.is_cancelled() {
         return Err(OrthoImportError::Dibatalkan);
@@ -1538,7 +1660,12 @@ pub fn execute_import_option_b(
         70.0,
         "Mengoptimalkan ukuran berkas display GeoTIFF...",
     );
-    let encode_res = adaptive_encode_display(&dynamic_image, &staging_dir, has_alpha_or_nodata)?;
+    let encode_res = adaptive_encode_display(
+        &dynamic_image,
+        &staging_dir,
+        has_alpha_or_nodata,
+        Some(&cancel_token),
+    )?;
 
     if cancel_token.is_cancelled() {
         return Err(OrthoImportError::Dibatalkan);

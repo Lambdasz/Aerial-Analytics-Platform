@@ -1209,8 +1209,12 @@ fn test_worst_case_model_synthetic_22k_width_16bit_deflate() {
     // Buffer tile band row mentah 16-bit: 22000 * 512 * 4 * 2 byte = 90.11 MiB
     let tile_band_bytes = width * height * channels * 2;
     let mut tile_band_buffer: Vec<u8> = vec![0u8; tile_band_bytes];
-    tile_band_buffer[0] = 42;
-    tile_band_buffer[tile_band_bytes - 1] = 99;
+    // Sentuh seluruh halaman fisik 4 KiB secara aktif dengan data gradien non-nol
+    // agar OS menaruhnya di Working Set fisik (RAM fisik), bukan hanya reservasi virtual commit.
+    for page_idx in (0..tile_band_bytes).step_by(4096) {
+        let val = ((page_idx / 4096) & 0xFF) as u8;
+        tile_band_buffer[page_idx] = val.max(1);
+    }
 
     // Akumulator StreamingResampler: lebar input 22.000 px -> target 4.096 px
     // Buffer band akumulator: 4 channel * 4096 px * 8 byte (f64) = 131 KB
@@ -1221,8 +1225,11 @@ fn test_worst_case_model_synthetic_22k_width_16bit_deflate() {
 
     // Final Display RGB/RGBA Buffer 4096 x 4096 x 4 = 64 MiB (67.1 MB)
     let display_buffer_bytes = 4096 * 4096 * 4;
-    let mut display_buffer: Vec<u8> = vec![255u8; display_buffer_bytes];
-    display_buffer[display_buffer_bytes - 1] = 128;
+    let mut display_buffer: Vec<u8> = vec![0u8; display_buffer_bytes];
+    for page_idx in (0..display_buffer_bytes).step_by(4096) {
+        let val = ((page_idx / 4096) & 0xFF) as u8;
+        display_buffer[page_idx] = val.max(1);
+    }
 
     #[cfg(windows)]
     let (ws_peak, pf_peak) = get_process_memory_counters();
@@ -1477,6 +1484,13 @@ fn test_real_oam_balikpapan_numerical_and_chunk_validation() {
             other => panic!("Expected U8 decoded tile, got {:?}", other),
         };
 
+        if tile_idx == 540 {
+            let _ = fs::write("target/ortho_real_check/tile_540_rust.raw", &tiff_chunk_buf);
+        }
+        if tile_idx == 0 {
+            let _ = fs::write("target/ortho_real_check/tile_0_rust.raw", &tiff_chunk_buf);
+        }
+
         // C. Perbandingan piksel pada dimensi valid chunk (bebas padding)
         let tc = tile_idx % tiles_x;
         let tr = tile_idx / tiles_x;
@@ -1618,10 +1632,10 @@ fn test_real_oam_rgba_png_and_16bit_pipeline() {
     let mut decoder = Decoder::new(BufReader::new(file)).unwrap();
     let (chunk_w, chunk_h) = decoder.chunk_dimensions();
 
-    // Baca 8 x 8 tile nyata = 4096 x 4096 piksel
+    // Baca 8 x 8 tile nyata dari pusat Balikpapan (row 10-17, col 16-23) = 4096 x 4096 piksel
     for ty in 0..8 {
         for tx in 0..8 {
-            let tile_idx = ty * 40 + tx;
+            let tile_idx = (ty + 10) * 40 + (tx + 16);
             if let Ok(DecodingResult::U8(chunk_data)) = decoder.read_chunk(tile_idx) {
                 for cy in 0..chunk_h {
                     for cx in 0..chunk_w {
@@ -1686,7 +1700,7 @@ fn test_real_oam_rgba_png_and_16bit_pipeline() {
 
     // 3. Jalankan Pipeline Opsi B pada RGBA 8-bit
     #[cfg(windows)]
-    let (_ws_before_8, _pf_before_8) = get_process_memory_counters();
+    let (ws_before_8, pf_before_8) = get_process_memory_counters();
 
     let job_id_8 = format!("job_rgba8_{}", chrono::Utc::now().timestamp_millis());
     let payload_8 = ImportDualModePayload {
@@ -1728,6 +1742,11 @@ fn test_real_oam_rgba_png_and_16bit_pipeline() {
     #[cfg(windows)]
     {
         println!(
+            "- Baseline WorkingSet: {:.2} MiB, Pagefile: {:.2} MiB",
+            ws_before_8 as f64 / (1024.0 * 1024.0),
+            pf_before_8 as f64 / (1024.0 * 1024.0)
+        );
+        println!(
             "- Peak WorkingSet: {:.2} MiB",
             ws_peak_8 as f64 / (1024.0 * 1024.0)
         );
@@ -1735,34 +1754,120 @@ fn test_real_oam_rgba_png_and_16bit_pipeline() {
             "- Peak Pagefile: {:.2} MiB",
             pf_peak_8 as f64 / (1024.0 * 1024.0)
         );
-    }
-
-    // Estimasi ukuran PNG pada 2.048 dan 3.072 px berdasarkan rasio kuadratik area piksel
-    let ratio_2048 = (2048.0 * 2048.0) / (dims_8.0 as f64 * dims_8.1 as f64);
-    let ratio_3072 = (3072.0 * 3072.0) / (dims_8.0 as f64 * dims_8.1 as f64);
-    let est_bytes_2048 = (size_bytes_8 as f64 * ratio_2048) as u64;
-    let est_bytes_3072 = (size_bytes_8 as f64 * ratio_3072) as u64;
-
-    println!("\nEstimasi Ukuran PNG Display pada Berbagai Resolusi:");
-    println!(
-        "- Pada 2.048 px: ~{:.2} MiB ({} bytes)",
-        est_bytes_2048 as f64 / (1024.0 * 1024.0),
-        est_bytes_2048
-    );
-    println!(
-        "- Pada 3.072 px: ~{:.2} MiB ({} bytes)",
-        est_bytes_3072 as f64 / (1024.0 * 1024.0),
-        est_bytes_3072
-    );
-
-    let max_dim = dims_8.0.max(dims_8.1);
-    println!("- Resolusi Akhir Maksimum: {} px", max_dim);
-    if max_dim < 2048 {
         println!(
-            "\n[PERINGATAN KRUSIAL]: Resolusi akhir display PNG adalah {} px (< 2.048 px) demi memenuhi batas ukuran <= 5 MB.",
-            max_dim
+            "- Delta WorkingSet: +{:.2} MiB",
+            (ws_peak_8.saturating_sub(ws_before_8)) as f64 / (1024.0 * 1024.0)
         );
     }
+
+    let max_dim_8 = dims_8.0.max(dims_8.1);
+    println!("- Resolusi Akhir Maksimum 8-bit: {} px", max_dim_8);
+    assert!(
+        max_dim_8 >= 1792,
+        "Resolusi akhir display PNG harus >= 1.792 px dengan batas 10 MB (aktual: {} px)",
+        max_dim_8
+    );
+
+    // 4. Varian 16-bit RGBA (nilai piksel x257)
+    let rgba16_path = test_dir.join("real_oam_rgba16.tif");
+    {
+        let mut real_rgba_16 = vec![0u16; (canvas_size * canvas_size * 4) as usize];
+        for i in 0..real_rgba_8.len() {
+            real_rgba_16[i] = (real_rgba_8[i] as u16) * 257;
+        }
+
+        let file = File::create(&rgba16_path).unwrap();
+        let mut encoder = TiffEncoder::new(file).unwrap();
+        let mut img = encoder
+            .new_image::<colortype::RGBA16>(canvas_size, canvas_size)
+            .unwrap();
+
+        let tiepoints = [0.0f64, 0.0, 0.0, 500000.0, 9866000.0, 0.0];
+        img.encoder()
+            .write_tag(Tag::ModelTiepointTag, &tiepoints[..])
+            .unwrap();
+        let pixel_scales = [1.0f64, 1.0, 0.0];
+        img.encoder()
+            .write_tag(Tag::ModelPixelScaleTag, &pixel_scales[..])
+            .unwrap();
+        let geokeys = [
+            1u16, 1, 0, 3, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, 32750,
+        ];
+        img.encoder()
+            .write_tag(Tag::GeoKeyDirectoryTag, &geokeys[..])
+            .unwrap();
+        img.encoder()
+            .write_tag(Tag::ExtraSamples, &[2u16][..])
+            .unwrap();
+
+        img.write_data(&real_rgba_16).unwrap();
+    }
+
+    #[cfg(windows)]
+    let (ws_before_16, pf_before_16) = get_process_memory_counters();
+
+    let job_id_16 = format!("job_rgba16_{}", chrono::Utc::now().timestamp_millis());
+    let payload_16 = ImportDualModePayload {
+        mode: "B".to_string(),
+        file_path: rgba16_path.to_string_lossy().to_string(),
+        save_original: false,
+        manual_bounds: None,
+        custom_filename: Some("Real OAM RGBA 16-bit".to_string()),
+    };
+
+    let start_16 = Instant::now();
+    let meta_16 = execute_import_option_b(&job_id_16, payload_16, CancellationToken::new())
+        .expect("Impor RGBA 16-bit harus berhasil");
+    let dur_16 = start_16.elapsed();
+
+    #[cfg(windows)]
+    let (ws_peak_16, pf_peak_16) = get_process_memory_counters();
+
+    let display_file_16 = get_storage_root()
+        .join("images")
+        .join(&meta_16.id)
+        .join(format!("display.{}", meta_16.extension));
+    let dims_16 = image::image_dimensions(&display_file_16).unwrap();
+    let size_bytes_16 = fs::metadata(&display_file_16).unwrap().len();
+
+    println!("\nHasil Pipeline RGBA 16-bit:");
+    println!("- Ekstensi Display: {}", meta_16.extension);
+    assert_eq!(meta_16.extension, "png");
+    println!("- Resolusi Display Akhir: {} x {} px", dims_16.0, dims_16.1);
+    println!(
+        "- Ukuran PNG Akhir: {} bytes ({:.2} MiB)",
+        size_bytes_16,
+        size_bytes_16 as f64 / (1024.0 * 1024.0)
+    );
+    println!("- Durasi: {:.2?}", dur_16);
+    #[cfg(windows)]
+    {
+        println!(
+            "- Baseline WorkingSet: {:.2} MiB, Pagefile: {:.2} MiB",
+            ws_before_16 as f64 / (1024.0 * 1024.0),
+            pf_before_16 as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "- Peak WorkingSet: {:.2} MiB",
+            ws_peak_16 as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "- Peak Pagefile: {:.2} MiB",
+            pf_peak_16 as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "- Delta WorkingSet: +{:.2} MiB",
+            (ws_peak_16.saturating_sub(ws_before_16)) as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    let max_dim_16 = dims_16.0.max(dims_16.1);
+    println!("- Resolusi Akhir Maksimum 16-bit: {} px", max_dim_16);
+    assert!(
+        max_dim_16 >= 1792,
+        "Resolusi akhir display PNG 16-bit harus >= 1.792 px dengan batas 10 MB (aktual: {} px)",
+        max_dim_16
+    );
 
     // Pembersihan
     let _ = fs::remove_dir_all(get_storage_root().join("images").join(&meta_8.id));
@@ -1775,6 +1880,139 @@ fn test_real_oam_rgba_png_and_16bit_pipeline() {
         get_storage_root()
             .join(".jobs")
             .join(format!("{}.json", job_id_8)),
+    );
+    let _ = fs::remove_dir_all(get_storage_root().join("images").join(&meta_16.id));
+    let _ = fs::remove_file(
+        get_storage_root()
+            .join("layers")
+            .join(format!("{}.json", meta_16.id)),
+    );
+    let _ = fs::remove_file(
+        get_storage_root()
+            .join(".jobs")
+            .join(format!("{}.json", job_id_16)),
+    );
+}
+
+/// (Butir 6) Pengukuran Waktu Encode PNG per Dimensi dan Latensi Cancel Terburuk
+#[test]
+#[ignore]
+fn test_png_encode_timings_and_worst_case_cancel_latency() {
+    let tiff_path_str = match std::env::var("ORTHO_REAL_TIFF") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return,
+    };
+    let tiff_path = PathBuf::from(&tiff_path_str);
+    if !tiff_path.exists() {
+        return;
+    }
+
+    println!("\n================================================================================");
+    println!("PENGUKURAN WAKTU ENCODE PNG DAN LATENSI CANCEL TERBURUK");
+    println!("================================================================================");
+
+    let test_dir = setup_test_env("png_encode_bench");
+    let canvas_size = 4096u32;
+    let mut real_rgba = vec![0u8; (canvas_size * canvas_size * 4) as usize];
+
+    let file = File::open(&tiff_path).unwrap();
+    let mut decoder = Decoder::new(BufReader::new(file)).unwrap();
+    let (chunk_w, chunk_h) = decoder.chunk_dimensions();
+
+    for ty in 0..8 {
+        for tx in 0..8 {
+            let tile_idx = (ty + 10) * 40 + (tx + 16);
+            if let Ok(DecodingResult::U8(chunk_data)) = decoder.read_chunk(tile_idx) {
+                for cy in 0..chunk_h {
+                    for cx in 0..chunk_w {
+                        let src_idx = ((cy * chunk_w + cx) * 3) as usize;
+                        let dst_x = tx * chunk_w + cx;
+                        let dst_y = ty * chunk_h + cy;
+                        let dst_idx = ((dst_y * canvas_size + dst_x) * 4) as usize;
+                        real_rgba[dst_idx] = chunk_data[src_idx];
+                        real_rgba[dst_idx + 1] = chunk_data[src_idx + 1];
+                        real_rgba[dst_idx + 2] = chunk_data[src_idx + 2];
+                        real_rgba[dst_idx + 3] = 255;
+                    }
+                }
+            }
+        }
+    }
+
+    let dyn_img = image::DynamicImage::ImageRgba8(
+        image::RgbaImage::from_raw(canvas_size, canvas_size, real_rgba.clone()).unwrap(),
+    );
+
+    // 1. (Butir 6a) Ukur Waktu Encode PNG per Dimensi
+    for &dim in &[4096u32, 3072, 2048] {
+        let resized = if dim == 4096 {
+            dyn_img.clone()
+        } else {
+            dyn_img.resize_exact(dim, dim, image::imageops::FilterType::Nearest)
+        };
+        let out_path = test_dir.join(format!("bench_{}.png", dim));
+        let start = Instant::now();
+        resized
+            .save_with_format(&out_path, image::ImageFormat::Png)
+            .unwrap();
+        let elapsed = start.elapsed();
+        let file_size = fs::metadata(&out_path).unwrap().len();
+        println!(
+            "-> Dimensi {} x {} px: Durasi Encode = {:.2?} ({:.1} ms), Ukuran PNG = {} bytes ({:.2} MiB)",
+            dim,
+            dim,
+            elapsed,
+            elapsed.as_secs_f64() * 1000.0,
+            file_size,
+            file_size as f64 / (1024.0 * 1024.0)
+        );
+    }
+
+    // 2. (Butir 6b) Latensi Cancel Terburuk saat Encode PNG Besar Berlangsung
+    println!("\nPengukuran Latensi Cancel Terburuk (Interupsi saat write PNG 4096 px):");
+    let token = CancellationToken::new();
+    let token_clone = token.clone();
+    let dyn_img_clone = dyn_img.clone();
+    let staging_dir = test_dir.join("staging_cancel_test");
+    fs::create_dir_all(&staging_dir).unwrap();
+    let staging_dir_clone = staging_dir.clone();
+
+    let handle = std::thread::spawn(move || {
+        aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::adaptive_encode_display(
+            &dyn_img_clone,
+            &staging_dir_clone,
+            true,
+            Some(&token_clone),
+        )
+    });
+
+    // Tunggu 50 ms agar writer mulai aktif mengenkode blok PNG
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let cancel_start = Instant::now();
+    token.cancel();
+    let res = handle.join().expect("thread join");
+    let cancel_latency = cancel_start.elapsed();
+
+    println!("- Status Hasil Encode: {:?}", res.is_err());
+    println!(
+        "- Latensi Pembatalan Terburuk: {:.2?} ({:.2} ms)",
+        cancel_latency,
+        cancel_latency.as_secs_f64() * 1000.0
+    );
+    assert!(
+        res.is_err(),
+        "Encode display harus diinterupsi oleh token pembatalan"
+    );
+    println!(
+        "- Catatan Tahap Monolitik: Kompresi PNG zlib berjalan hingga buffer flush. Latensi cancel terburuk = {:.2} s ({:.1} ms)",
+        cancel_latency.as_secs_f64(),
+        cancel_latency.as_secs_f64() * 1000.0
+    );
+    assert!(
+        cancel_latency.as_secs() <= 5,
+        "Latensi pembatalan terburuk tahap monolitik encode harus selesai dalam batas wajar (< 5s, aktual: {:?})",
+        cancel_latency
     );
 }
 

@@ -33,8 +33,20 @@ pub const PREVIEW_TARGET_DIMENSION_PX: u32 = DISPLAY_TARGET_DIMENSION_PX;
 /// Batas resolusi minimal saat adaptasi kompresi display: 1.024 piksel.
 pub const DISPLAY_MIN_DIMENSION_PX: u32 = 1_024;
 
-/// Batas maksimal ukuran berkas display (display.jpg/display.png): 5 MB (5.242.880 bytes).
-pub const MAX_DISPLAY_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+/// Batas maksimal ukuran berkas display JPEG: 5 MB (5.242.880 bytes).
+pub const DISPLAY_MAX_BYTES_JPEG: u64 = 5 * 1024 * 1024;
+
+/// Batas maksimal ukuran berkas display PNG ber-alpha: 10 MB (10.485.760 bytes).
+/// Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MB,
+/// sedangkan JPEG bisa.
+pub const DISPLAY_MAX_BYTES_PNG_ALPHA: u64 = 10 * 1024 * 1024;
+
+/// Batas maksimal ukuran berkas display default (kompatibilitas mundur).
+pub const MAX_DISPLAY_FILE_SIZE_BYTES: u64 = DISPLAY_MAX_BYTES_JPEG;
+
+/// Tangga dimensi target adaptif untuk display PNG ber-alpha (sisi terpanjang).
+pub const PNG_DIMENSION_LADDER: [u32; 10] =
+    [4096, 3584, 3072, 2560, 2304, 2048, 1792, 1536, 1280, 1024];
 
 /// Jumlah maksimal riwayat job yang disimpan di map_storage/.jobs/
 pub const MAX_JOB_HISTORY_RETENTION: usize = 20;

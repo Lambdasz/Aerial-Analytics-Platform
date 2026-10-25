@@ -413,6 +413,220 @@ fn test_projection_independent_references_epsg3857() {
     assert!((calc_lon3 - lon3).abs() < 9e-6);
 }
 
+/// (Butir 2) Uji Validasi Georeferensi Ketat terhadap Referensi Independen pyproj 3.8.0 / PROJ 9.8.1
+/// Perintah verifikasi independen:
+/// `uv run --with pyproj python -c "import pyproj; ..."`
+/// Titik Uji:
+/// 1. Paris UTM 31N (EPSG:32631)
+/// 2. Balikpapan UTM 50S (EPSG:32750)
+/// 3. Jakarta UTM 48S (EPSG:32748) (Nilai koreksi independen: E=701377.05, N=9314341.41)
+/// 4. New York UTM 18N (EPSG:32618)
+/// 5. Zona 48S Dekat Batas (lon=107.95, EPSG:32748)
+/// 6. Null Island (EPSG:3857)
+/// 7. Monas Jakarta (EPSG:3857)
+/// 8. Paris Eiffel (EPSG:3857)
+#[test]
+fn test_projection_rigorous_independent_forward_and_inverse() {
+    use aerial_analytics_platform_lib::modules::module_03::geometry::haversine::calculate_distance;
+
+    println!("\n================================================================================");
+    println!("VERIFIKASI PROYEKSI TERHADAP REFERENSI INDEPENDEN pyproj 3.8.0 / PROJ 9.8.1");
+    println!("================================================================================");
+
+    // Kasus 1: Paris UTM 31N
+    let (lat1, lon1) = (48.858370, 2.294480);
+    let (ref_e1, ref_n1) = (448250.50, 5411951.59);
+    let (fwd_e1, fwd_n1) = wgs84_to_utm(lat1, lon1, 31, false).expect("Forward Paris");
+    let diff_e1 = (fwd_e1 - ref_e1).abs();
+    let diff_n1 = (fwd_n1 - ref_n1).abs();
+    println!(
+        "1. Paris UTM 31N: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_e1, fwd_n1, ref_e1, ref_n1, diff_e1, diff_n1
+    );
+    assert!(
+        diff_e1 < 0.5,
+        "Paris Easting selisih > 0.5m: {:.4}",
+        diff_e1
+    );
+    assert!(
+        diff_n1 < 0.5,
+        "Paris Northing selisih > 0.5m: {:.4}",
+        diff_n1
+    );
+    let (inv_lat1, inv_lon1) = utm_to_wgs84(ref_e1, ref_n1, 31, false).expect("Inverse Paris");
+    let dist1 = calculate_distance([lon1, lat1], [inv_lon1, inv_lat1]);
+    println!("   Inverse Paris ground error: {:.4} m", dist1);
+    assert!(
+        dist1 < 0.5,
+        "Paris Inverse ground error > 0.5m: {:.4}",
+        dist1
+    );
+
+    // Kasus 2: Balikpapan UTM 50S
+    let (lat2, lon2) = (-1.260000, 116.830000);
+    let (ref_e2, ref_n2) = (481087.77, 9860731.30);
+    let (fwd_e2, fwd_n2) = wgs84_to_utm(lat2, lon2, 50, true).expect("Forward Balikpapan");
+    let diff_e2 = (fwd_e2 - ref_e2).abs();
+    let diff_n2 = (fwd_n2 - ref_n2).abs();
+    println!(
+        "2. Balikpapan UTM 50S: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_e2, fwd_n2, ref_e2, ref_n2, diff_e2, diff_n2
+    );
+    assert!(
+        diff_e2 < 0.5,
+        "Balikpapan Easting selisih > 0.5m: {:.4}",
+        diff_e2
+    );
+    assert!(
+        diff_n2 < 0.5,
+        "Balikpapan Northing selisih > 0.5m: {:.4}",
+        diff_n2
+    );
+    let (inv_lat2, inv_lon2) = utm_to_wgs84(ref_e2, ref_n2, 50, true).expect("Inverse Balikpapan");
+    let dist2 = calculate_distance([lon2, lat2], [inv_lon2, inv_lat2]);
+    println!("   Inverse Balikpapan ground error: {:.4} m", dist2);
+    assert!(
+        dist2 < 0.5,
+        "Balikpapan Inverse ground error > 0.5m: {:.4}",
+        dist2
+    );
+
+    // Kasus 3: Jakarta UTM 48S (Nilai Koreksi Independen)
+    let (lat3, lon3) = (-6.200000, 106.820000);
+    let (ref_e3, ref_n3) = (701377.05, 9314341.41);
+    let (fwd_e3, fwd_n3) = wgs84_to_utm(lat3, lon3, 48, true).expect("Forward Jakarta");
+    let diff_e3 = (fwd_e3 - ref_e3).abs();
+    let diff_n3 = (fwd_n3 - ref_n3).abs();
+    println!(
+        "3. Jakarta UTM 48S: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_e3, fwd_n3, ref_e3, ref_n3, diff_e3, diff_n3
+    );
+    assert!(
+        diff_e3 < 0.5,
+        "Jakarta Easting selisih > 0.5m: {:.4}",
+        diff_e3
+    );
+    assert!(
+        diff_n3 < 0.5,
+        "Jakarta Northing selisih > 0.5m: {:.4}",
+        diff_n3
+    );
+    let (inv_lat3, inv_lon3) = utm_to_wgs84(ref_e3, ref_n3, 48, true).expect("Inverse Jakarta");
+    let dist3 = calculate_distance([lon3, lat3], [inv_lon3, inv_lat3]);
+    println!("   Inverse Jakarta ground error: {:.4} m", dist3);
+    assert!(
+        dist3 < 0.5,
+        "Jakarta Inverse ground error > 0.5m: {:.4}",
+        dist3
+    );
+
+    // Kasus 4: New York UTM 18N
+    let (lat4, lon4) = (40.689247, -74.044502);
+    let (ref_e4, ref_n4) = (580735.64, 4504700.38);
+    let (fwd_e4, fwd_n4) = wgs84_to_utm(lat4, lon4, 18, false).expect("Forward New York");
+    let diff_e4 = (fwd_e4 - ref_e4).abs();
+    let diff_n4 = (fwd_n4 - ref_n4).abs();
+    println!(
+        "4. New York UTM 18N: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_e4, fwd_n4, ref_e4, ref_n4, diff_e4, diff_n4
+    );
+    assert!(
+        diff_e4 < 0.5,
+        "New York Easting selisih > 0.5m: {:.4}",
+        diff_e4
+    );
+    assert!(
+        diff_n4 < 0.5,
+        "New York Northing selisih > 0.5m: {:.4}",
+        diff_n4
+    );
+    let (inv_lat4, inv_lon4) = utm_to_wgs84(ref_e4, ref_n4, 18, false).expect("Inverse New York");
+    let dist4 = calculate_distance([lon4, lat4], [inv_lon4, inv_lat4]);
+    println!("   Inverse New York ground error: {:.4} m", dist4);
+    assert!(
+        dist4 < 0.5,
+        "New York Inverse ground error > 0.5m: {:.4}",
+        dist4
+    );
+
+    // Kasus 5: Zona 48S Dekat Batas (lon=107.95)
+    let (lat5, lon5) = (-6.200000, 107.950000);
+    let (ref_e5, ref_n5) = (826495.74, 9313778.56);
+    let (fwd_e5, fwd_n5) = wgs84_to_utm(lat5, lon5, 48, true).expect("Forward Near Edge");
+    let diff_e5 = (fwd_e5 - ref_e5).abs();
+    let diff_n5 = (fwd_n5 - ref_n5).abs();
+    println!(
+        "5. Zona 48S Dekat Batas: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_e5, fwd_n5, ref_e5, ref_n5, diff_e5, diff_n5
+    );
+    assert!(
+        diff_e5 < 0.5,
+        "Near Edge Easting selisih > 0.5m: {:.4}",
+        diff_e5
+    );
+    assert!(
+        diff_n5 < 0.5,
+        "Near Edge Northing selisih > 0.5m: {:.4}",
+        diff_n5
+    );
+    let (inv_lat5, inv_lon5) = utm_to_wgs84(ref_e5, ref_n5, 48, true).expect("Inverse Near Edge");
+    let dist5 = calculate_distance([lon5, lat5], [inv_lon5, inv_lat5]);
+    println!("   Inverse Near Edge ground error: {:.4} m", dist5);
+    assert!(
+        dist5 < 0.5,
+        "Near Edge Inverse ground error > 0.5m: {:.4}",
+        dist5
+    );
+
+    // Kasus 6: Null Island EPSG:3857
+    let (lat6, lon6) = (0.0, 0.0);
+    let (ref_x6, ref_y6) = (0.00, 0.00);
+    let (fwd_x6, fwd_y6) = wgs84_to_epsg3857(lat6, lon6).expect("Forward Null Island");
+    println!(
+        "6. Null Island EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2})",
+        fwd_x6, fwd_y6, ref_x6, ref_y6
+    );
+    assert!((fwd_x6 - ref_x6).abs() < 0.5);
+    assert!((fwd_y6 - ref_y6).abs() < 0.5);
+    let (inv_lat6, inv_lon6) = epsg3857_to_wgs84(ref_x6, ref_y6).expect("Inverse Null Island");
+    let dist6 = calculate_distance([lon6, lat6], [inv_lon6, inv_lat6]);
+    assert!(dist6 < 0.5);
+
+    // Kasus 7: Monas Jakarta EPSG:3857
+    let (lat7, lon7) = (-6.1753924, 106.8271528);
+    let (ref_x7, ref_y7) = (11891944.25, -688776.39);
+    let (fwd_x7, fwd_y7) = wgs84_to_epsg3857(lat7, lon7).expect("Forward Monas EPSG:3857");
+    let diff_x7 = (fwd_x7 - ref_x7).abs();
+    let diff_y7 = (fwd_y7 - ref_y7).abs();
+    println!(
+        "7. Monas EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_x7, fwd_y7, ref_x7, ref_y7, diff_x7, diff_y7
+    );
+    assert!(diff_x7 < 0.5);
+    assert!(diff_y7 < 0.5);
+    let (inv_lat7, inv_lon7) = epsg3857_to_wgs84(ref_x7, ref_y7).expect("Inverse Monas EPSG:3857");
+    let dist7 = calculate_distance([lon7, lat7], [inv_lon7, inv_lat7]);
+    println!("   Inverse Monas ground error: {:.4} m", dist7);
+    assert!(dist7 < 0.5);
+
+    // Kasus 8: Paris Eiffel EPSG:3857
+    let (lat8, lon8) = (48.858370, 2.294480);
+    let (ref_x8, ref_y8) = (255420.35, 6250863.83);
+    let (fwd_x8, fwd_y8) = wgs84_to_epsg3857(lat8, lon8).expect("Forward Paris EPSG:3857");
+    let diff_x8 = (fwd_x8 - ref_x8).abs();
+    let diff_y8 = (fwd_y8 - ref_y8).abs();
+    println!(
+        "8. Paris EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
+        fwd_x8, fwd_y8, ref_x8, ref_y8, diff_x8, diff_y8
+    );
+    assert!(diff_x8 < 0.5);
+    assert!(diff_y8 < 0.5);
+    let (inv_lat8, inv_lon8) = epsg3857_to_wgs84(ref_x8, ref_y8).expect("Inverse Paris EPSG:3857");
+    let dist8 = calculate_distance([lon8, lat8], [inv_lon8, inv_lat8]);
+    println!("   Inverse Paris ground error: {:.4} m", dist8);
+    assert!(dist8 < 0.5);
+}
+
 #[test]
 fn test_projection_envelope_calculation() {
     let corners = vec![
@@ -429,8 +643,11 @@ fn test_projection_envelope_calculation() {
     assert!(bounds[0][1] < bounds[1][1]); // west < east
 }
 
+static STORAGE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_atomic_layer_writer() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let test_id = "ortho_77777777701";
     let test_name = "Atomic Layer Writer Test";
     let layers_dir = get_layers_dir();
@@ -452,6 +669,7 @@ fn test_atomic_layer_writer() {
 
 #[test]
 fn test_store_dot_folder_ignored() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let staging_dot = images_dir.join(".staging_ignored_test");
     let trash_dot = images_dir.join(".trash_ignored_test");
@@ -473,6 +691,7 @@ fn test_store_dot_folder_ignored() {
 
 #[test]
 fn test_reconcile_trash_restored_if_layer_exists() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
     let test_id = format!(
@@ -517,6 +736,7 @@ fn test_reconcile_trash_restored_if_layer_exists() {
 
 #[test]
 fn test_reconcile_trash_purged_if_layer_gone() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
     let test_id = format!(
@@ -545,6 +765,7 @@ fn test_reconcile_trash_purged_if_layer_gone() {
 
 #[test]
 fn test_reconcile_kasus_a_auto_heal() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
     let test_id = "ortho_88888888803";
@@ -590,6 +811,7 @@ fn test_reconcile_kasus_a_auto_heal() {
 
 #[test]
 fn test_reconcile_kasus_b_orphan_raster_layer_deleted() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
     let test_id = "ortho_88888888804";
@@ -620,6 +842,7 @@ fn test_reconcile_kasus_b_orphan_raster_layer_deleted() {
 
 #[test]
 fn test_reconcile_kasus_b_preserves_non_ortho_layers() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let layers_dir = get_layers_dir();
     let test_id = "aoi_protected_layer_001";
     let layer_file = layers_dir.join(format!("{}.json", test_id));
@@ -650,6 +873,7 @@ fn test_reconcile_kasus_b_preserves_non_ortho_layers() {
 
 #[test]
 fn test_delete_ortho_clean_cascade() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     let images_dir = get_images_dir();
     let layers_dir = get_layers_dir();
     let anno_dir = get_storage_root().join("annotations");
@@ -733,6 +957,7 @@ fn test_delete_ortho_clean_cascade() {
 
 #[test]
 fn test_secondary_instance_blocks_all_storage_mutating_commands() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
     use aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::{
         is_primary_instance, set_is_primary_instance,
     };
