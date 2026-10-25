@@ -238,6 +238,13 @@
 //!   them orphaned.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
+//! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
+//!   scoring (`compute_blur_score`) on a resized (1280px long-edge) grayscale
+//!   buffer — JPEG decoded directly, DNG from its stored preview. Classified
+//!   relative to the flight session an image belongs to (mean/stddev
+//!   z-score of the session's other scores, plus an absolute hard floor as a
+//!   safety net), frozen at the moment of import. Runs during
+//!   `import_io::run_import`, before each candidate/pair is recorded.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.
@@ -272,6 +279,14 @@
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
 //! The `preview_image` command serves those previews over IPC.
+//! Blur detection (M1-29) is also implemented: every imported image gets a
+//! `blur_score`/`is_blurry` pair persisted alongside it, computed and
+//! classified at import time (no new command — it is not yet exposed over
+//! IPC beyond the `Image` record's own fields). Known, deliberate
+//! limitations: DNGs are scored from their camera-processed preview, not
+//! raw sensor data; no sensor-noise pre-filtering is applied; scoring is
+//! sequential, not parallelised. Surfacing quality flags in the UI (M1-32)
+//! is a separate, not-yet-implemented task.
 //!
 //! ---
 //!
