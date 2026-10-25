@@ -407,6 +407,23 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // Penguncian single instance aplikasi pada map_storage/.app.lock
+            if let Err(e) =
+                map_controller::ortho_source::instance_lock::acquire_global_instance_lock()
+            {
+                eprintln!("[WARN] Single instance lock tidak dapat diperoleh: {}", e);
+            }
+            // Pembersihan crash startup & retensi job impor Module 3 (hanya catat warning, tidak mematikan app)
+            if let Err(e) = map_controller::ortho_source::job_manager::cleanup_stale_import_jobs() {
+                eprintln!("[WARN] cleanup_stale_import_jobs error: {}", e);
+            }
+            // Rekonsiliasi layer dan folder storage Module 3 (hanya catat warning, tidak mematikan app)
+            if let Err(e) = map_controller::ortho_source::store::reconcile_storage_layers() {
+                eprintln!("[WARN] reconcile_storage_layers error: {}", e);
+            }
+            Ok(())
+        })
         .manage(AppState {
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
         })

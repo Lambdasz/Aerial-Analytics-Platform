@@ -134,6 +134,10 @@ pub fn list_ortho_images() -> Result<Vec<StoredImageMetadata>, MapControllerErro
 
         if path.is_dir() {
             let folder_name = entry.file_name().to_string_lossy().to_string();
+            // Abaikan folder tersembunyi / internal (.staging_*, .trash_*, dll)
+            if folder_name.starts_with('.') {
+                continue;
+            }
             // Hanya proses folder yang mengikuti pola ID ortho atau raster
             let is_ortho = validate_ortho_id(&folder_name).is_ok();
             let is_raster = folder_name
@@ -592,4 +596,178 @@ pub fn delete_saved_image(category: &str, filename: &str) -> Result<bool, MapCon
     let _ = crate::modules::module_03::layers::store::delete_saved_layer(&safe_id);
 
     Ok(deleted)
+}
+
+/// Rekonsiliasi konsistensi storage saat startup aplikasi:
+/// 1. Penanganan folder karantina `.trash_*`:
+///    - Jika file `layers/{id}.json` masih ada, pulihkan kembali `.trash_*` ke `images/{id}`.
+///    - Jika file `layers/{id}.json` sudah terhapus, tuntaskan penghapusan permanen `.trash_*`.
+/// 2. Kasus A (Auto-heal layer hilang):
+///    - Jika folder `images/{id}/` ada dengan `meta.json` valid namun `layers/{id}.json` belum ada,
+///      daftarkan ulang layer default secara otomatis.
+/// 3. Kasus B (Hapus layer yatim):
+///    - Jika file `layers/{id}.json` bertipe raster ada namun folder `images/{id}/` tidak ada,
+///      hapus berkas layer yatim tersebut agar tidak merender layer hantu di Leaflet.
+pub fn reconcile_storage_layers() -> Result<(), MapControllerError> {
+    let images_dir = get_images_dir();
+    let layers_dir = crate::modules::module_03::layers::store::get_layers_dir();
+
+    // 1. Tangani sisa folder karantina .trash_*
+    if images_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&images_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(".trash_") {
+                        // Format penamaan: .trash_{id}_{timestamp}
+                        // Contoh: .trash_ortho_1792850000000_1792850005000
+                        let without_prefix = name.trim_start_matches(".trash_");
+                        let image_id = if let Some(last_under) = without_prefix.rfind('_') {
+                            &without_prefix[..last_under]
+                        } else {
+                            without_prefix
+                        };
+
+                        let layer_file = layers_dir.join(format!("{}.json", image_id));
+                        if layer_file.exists() {
+                            let restored_dir = images_dir.join(image_id);
+                            if !restored_dir.exists() {
+                                let _ = fs::rename(&path, &restored_dir);
+                            } else {
+                                let _ = fs::remove_dir_all(&path);
+                            }
+                        } else {
+                            let _ = fs::remove_dir_all(&path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Kasus A (Auto-heal layer hilang)
+    if images_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&images_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let folder_name = entry.file_name().to_string_lossy().to_string();
+                    if folder_name.starts_with('.') {
+                        continue;
+                    }
+                    let is_ortho = validate_ortho_id(&folder_name).is_ok();
+                    let is_raster = folder_name.starts_with("raster_");
+                    if !is_ortho && !is_raster {
+                        continue;
+                    }
+
+                    let layer_file = layers_dir.join(format!("{}.json", folder_name));
+                    if !layer_file.exists() {
+                        let meta_file = path.join("meta.json");
+                        if meta_file.exists() {
+                            if let Ok(content) = fs::read_to_string(&meta_file) {
+                                if let Ok(meta) =
+                                    serde_json::from_str::<StoredImageMetadata>(&content)
+                                {
+                                    let layer_state =
+                                        crate::modules::module_03::layers::types::LayerState {
+                                            layer_id: folder_name.clone(),
+                                            layer_name: meta.filename.clone(),
+                                            category: "raster".to_string(),
+                                            is_visible: true,
+                                            opacity: 1.0,
+                                            z_index: 10,
+                                            source_type: Some("raster".to_string()),
+                                            source_id: Some(folder_name.clone()),
+                                        };
+                                    let _ = crate::modules::module_03::layers::store::save_layer(
+                                        layer_state,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Kasus B (Hapus layer yatim - HANYA untuk layer bertipe raster/ortho)
+    if layers_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&layers_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    let file_stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default();
+                    let is_ortho = validate_ortho_id(file_stem).is_ok();
+                    let is_raster = file_stem.starts_with("raster_");
+                    if is_ortho || is_raster {
+                        // Verifikasi isi file layer: hanya proses jika category bernilai "raster"
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if let Ok(layer_state) = serde_json::from_str::<
+                                crate::modules::module_03::layers::types::LayerState,
+                            >(&content)
+                            {
+                                // Lindungi layer non-raster (mis. vektor, aoi, anotasi) agar tidak terhapus
+                                if layer_state.category != "raster" {
+                                    continue;
+                                }
+
+                                let image_folder = images_dir.join(file_stem);
+                                if !image_folder.exists() {
+                                    let result_img_dir = images_dir.join("result_image");
+                                    let mut found_in_result = false;
+                                    if result_img_dir.is_dir() {
+                                        if let Ok(r_entries) = fs::read_dir(&result_img_dir) {
+                                            for r_entry in r_entries.flatten() {
+                                                let r_name = r_entry
+                                                    .file_name()
+                                                    .to_string_lossy()
+                                                    .to_string();
+                                                if r_name.starts_with(file_stem) {
+                                                    found_in_result = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !found_in_result {
+                                        let _ = fs::remove_file(&path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Mendaftarkan konfigurasi layer orthomosaic baru ke `map_storage/layers/{id}.json` secara atomik
+/// (menulis ke file .tmp terlebih dahulu sebelum di-rename secara atomik).
+pub fn register_ortho_layer(
+    image_id: &str,
+    layer_name: &str,
+) -> Result<crate::modules::module_03::layers::types::LayerState, MapControllerError> {
+    validate_ortho_id(image_id)?;
+
+    let layer_state = crate::modules::module_03::layers::types::LayerState {
+        layer_id: image_id.to_string(),
+        layer_name: layer_name.to_string(),
+        category: "raster".to_string(),
+        is_visible: true,
+        opacity: 1.0,
+        z_index: 10,
+        source_type: Some("raster".to_string()),
+        source_id: Some(image_id.to_string()),
+    };
+
+    crate::modules::module_03::layers::store::save_layer(layer_state)
 }

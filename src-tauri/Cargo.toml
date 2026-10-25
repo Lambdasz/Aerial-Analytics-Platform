@@ -37,6 +37,27 @@ chrono = { version = "0.4", features = ["serde"] }
 geojson = "1"
 tauri-plugin-dialog = "2"
 
+# Module 3 Dependencies
+tiff = "0.9"
+kamadak-exif = "0.6"
+jpeg-decoder = "0.3"
+png = "0.17"
+
+[profile.dev.package.tiff]
+opt-level = 3
+
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.jpeg-decoder]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.kamadak-exif]
+opt-level = 3
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.test]

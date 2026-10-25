@@ -2,11 +2,13 @@
 
 pub mod commands;
 pub mod haversine;
+pub mod projection;
 pub mod spherical_excess;
 pub mod validation;
 
 pub use commands::*;
 pub use haversine::*;
+pub use projection::*;
 pub use spherical_excess::*;
 pub use validation::*;
 
