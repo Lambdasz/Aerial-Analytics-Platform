@@ -46,15 +46,15 @@ export function PluginManager() {
     try {
       const data = await getInstalledPlugins();
       setPlugins(data);
-      if (data.length > 0 && !selectedPluginId) {
-        setSelectedPluginId(data[0].id);
+      if (data.length > 0) {
+        setSelectedPluginId((prev) => prev ?? data[0].id);
       }
     } catch (err) {
       setErrorNotice(formatErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
-  }, [selectedPluginId]);
+  }, []);
 
   useEffect(() => {
     void loadPlugins();
@@ -84,6 +84,13 @@ export function PluginManager() {
     try {
       const health = await checkPluginHealth(pluginId);
       setHealthResults((prev) => ({ ...prev, [pluginId]: health }));
+      setPlugins((prev) =>
+        prev.map((p) =>
+          p.id === pluginId
+            ? { ...p, health_status: health.status === "healthy" ? "healthy" : "unhealthy" }
+            : p,
+        ),
+      );
     } catch (err) {
       setHealthResults((prev) => ({
         ...prev,
@@ -94,6 +101,9 @@ export function PluginManager() {
           error: formatErrorMessage(err),
         },
       }));
+      setPlugins((prev) =>
+        prev.map((p) => (p.id === pluginId ? { ...p, health_status: "unhealthy" } : p)),
+      );
     } finally {
       setHealthCheckingId(null);
     }

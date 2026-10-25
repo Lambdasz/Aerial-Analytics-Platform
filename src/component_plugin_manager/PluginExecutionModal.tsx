@@ -7,6 +7,7 @@ import {
   getPluginDetails,
   startPluginJob,
   abortPluginJob,
+  getJobStatus,
   getJobResult,
   formatErrorMessage,
 } from "./pluginCommands";
@@ -44,6 +45,14 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
   const [executionError, setExecutionError] = useState<string | null>(null);
 
   const activeJobIdRef = useRef<string | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     activeJobIdRef.current = activeJobId;
@@ -96,29 +105,114 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     };
   }, [isOpen, pluginId]);
 
-  // 2. Listen for live progress events from Tauri supervisor
+  // 2. Listen for live progress and completion events from Tauri supervisor
   useEffect(() => {
     if (!activeJobId) return;
 
-    let unlistenFn: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
+    let unlistenCompleted: (() => void) | undefined;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let isFinished = false;
 
-    const setupListener = async () => {
-      const unlisten = await listen<JobProgress>("plugin://progress", (event) => {
-        if (event.payload.job_id === activeJobIdRef.current) {
+    const finishJob = async (jobId: string, resultPayload?: StandardJobResult) => {
+      if (isFinished) return;
+      isFinished = true;
+      if (pollInterval) clearInterval(pollInterval);
+
+      try {
+        let finalResult: StandardJobResult;
+        if (resultPayload && resultPayload.job_id === jobId && resultPayload.status !== undefined) {
+          finalResult = resultPayload;
+        } else {
+          finalResult = await getJobResult(jobId);
+        }
+
+        if (finalResult.status === "failure") {
+          if (isMountedRef.current) {
+            setExecutionError(finalResult.error ?? "Plugin execution failed.");
+            setActiveJobId(null);
+          }
+        } else {
+          onSuccess(finalResult);
+          onClose();
+        }
+      } catch (err) {
+        if (isMountedRef.current) {
+          setExecutionError(formatErrorMessage(err));
+          setActiveJobId(null);
+        }
+      }
+    };
+
+    const setupListeners = async () => {
+      unlistenProgress = await listen<JobProgress>("plugin://progress", (event) => {
+        if (event.payload.job_id === activeJobIdRef.current && isMountedRef.current) {
           setProgress({ percent: event.payload.percent, stage: event.payload.stage });
         }
       });
-      unlistenFn = unlisten;
+
+      unlistenCompleted = await listen<
+        StandardJobResult | { job_id: string; status: string; error?: string }
+      >("plugin://completed", (event) => {
+        if (event.payload.job_id === activeJobIdRef.current) {
+          if (event.payload.status === "failure") {
+            if (isFinished) return;
+            isFinished = true;
+            if (pollInterval) clearInterval(pollInterval);
+            if (isMountedRef.current) {
+              setExecutionError(event.payload.error ?? "Plugin execution failed.");
+              setActiveJobId(null);
+            }
+          } else {
+            void finishJob(event.payload.job_id, event.payload as StandardJobResult);
+          }
+        }
+      });
+
+      // Polling fallback every 1000ms in case completion event is missed or for short jobs
+      pollInterval = setInterval(async () => {
+        const curId = activeJobIdRef.current;
+        if (!curId || isFinished) return;
+
+        try {
+          const statusDto = await getJobStatus(curId);
+          if (statusDto.state === "Completed") {
+            void finishJob(curId);
+          } else if (statusDto.state === "Failed") {
+            if (isFinished) return;
+            isFinished = true;
+            if (pollInterval) clearInterval(pollInterval);
+            if (isMountedRef.current) {
+              const errMsg =
+                statusDto.data && typeof statusDto.data.error === "string"
+                  ? statusDto.data.error
+                  : "Plugin execution failed.";
+              setExecutionError(errMsg);
+              setActiveJobId(null);
+            }
+          } else if (statusDto.state === "Aborted") {
+            if (isFinished) return;
+            isFinished = true;
+            if (pollInterval) clearInterval(pollInterval);
+            if (isMountedRef.current) {
+              setExecutionError("Analysis was aborted.");
+              setActiveJobId(null);
+            }
+          }
+        } catch {
+          // Ignore polling errors
+        }
+      }, 1000);
     };
 
-    void setupListener();
+    void setupListeners();
 
     return () => {
-      if (unlistenFn) {
-        unlistenFn();
-      }
+      if (unlistenProgress) unlistenProgress();
+      if (unlistenCompleted) unlistenCompleted();
+      if (pollInterval) clearInterval(pollInterval);
     };
-  }, [activeJobId]);
+  }, [activeJobId, onSuccess, onClose]);
 
   // 3. Handle Job Submission
   const handleLaunch = useCallback(async () => {
@@ -141,16 +235,12 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
       });
 
       setActiveJobId(handle.job_id);
-
-      // Await final result
-      const result = await getJobResult(handle.job_id);
-      onSuccess(result);
-      onClose();
+      // Wait for job completion via event listener or polling fallback
     } catch (err) {
       setExecutionError(formatErrorMessage(err));
       setActiveJobId(null);
     }
-  }, [paramsDef, paramValues, pluginId, target, onSuccess, onClose]);
+  }, [paramsDef, paramValues, pluginId, target]);
 
   // 4. Handle Abort Job
   const handleAbort = useCallback(async () => {
@@ -158,13 +248,19 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     setIsAborting(true);
     try {
       await abortPluginJob(activeJobId);
-      setActiveJobId(null);
-      setProgress(null);
-      setExecutionError("Analysis was cancelled by user.");
+      if (isMountedRef.current) {
+        setActiveJobId(null);
+        setProgress(null);
+        setExecutionError("Analysis was cancelled by user.");
+      }
     } catch (err) {
-      setExecutionError(formatErrorMessage(err));
+      if (isMountedRef.current) {
+        setExecutionError(formatErrorMessage(err));
+      }
     } finally {
-      setIsAborting(false);
+      if (isMountedRef.current) {
+        setIsAborting(false);
+      }
     }
   }, [activeJobId]);
 

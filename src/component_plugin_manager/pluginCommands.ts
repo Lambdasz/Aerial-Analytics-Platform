@@ -77,6 +77,11 @@ export async function setPluginStatus(pluginId: string, enabled: boolean): Promi
   return invoke<void>("set_plugin_status", { pluginId, enabled });
 }
 
+/**
+ * Updates plugin configuration overrides on the backend.
+ *
+ * @note Backend handler `plugin_manager::lifecycle::update_plugin_config` is registered in `lib.rs`.
+ */
 export async function updatePluginConfig(
   pluginId: string,
   customParams: Record<string, unknown>,

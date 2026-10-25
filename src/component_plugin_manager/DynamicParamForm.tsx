@@ -40,12 +40,28 @@ export const RenderDynamicInput: React.FC<RenderDynamicInputProps> = ({
     >
       {param.type === "number" && (
         <NumericInput
-          value={typeof currentValue === "number" ? currentValue : Number(currentValue) || 0}
+          value={
+            currentValue === "" || currentValue === undefined || currentValue === null
+              ? ""
+              : typeof currentValue === "number"
+                ? currentValue
+                : typeof currentValue === "string"
+                  ? currentValue
+                  : typeof currentValue === "boolean"
+                    ? currentValue.toString()
+                    : ""
+          }
           min={param.min}
           max={param.max}
           stepSize={param.step ?? 0.05}
           intent={intent}
-          onValueChange={(val) => onChange(Number.isNaN(val) ? param.default : val)}
+          onValueChange={(val, valStr) => {
+            if (valStr.trim() === "" || Number.isNaN(val)) {
+              onChange(valStr);
+            } else {
+              onChange(val);
+            }
+          }}
           fill
         />
       )}

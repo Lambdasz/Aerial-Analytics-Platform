@@ -1,24 +1,22 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
 
-:root {
-  color: #e7edf4;
-  background: #11161c;
-  font-family: Manrope, sans-serif;
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-  min-width: 320px;
-}
-button,
-input {
-  font: inherit;
-}
 .plugin-shell {
   min-height: 100%;
   background: #11161c;
+  color: #e7edf4;
+  font-family: Manrope, sans-serif;
+  box-sizing: border-box;
+}
+
+.plugin-shell *,
+.plugin-shell *::before,
+.plugin-shell *::after {
+  box-sizing: border-box;
+}
+
+.plugin-shell button,
+.plugin-shell input {
+  font: inherit;
 }
 .plugin-sidebar {
   width: 228px;
@@ -49,23 +47,23 @@ input {
   margin-top: 5px;
   font-size: 12px;
 }
-nav {
+.plugin-shell nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-nav .nav-label {
+.plugin-shell nav .nav-label {
   margin: 14px 8px 4px;
 }
-nav a {
+.plugin-shell nav a {
   padding: 8px;
   border-radius: 5px;
   color: #9ca8b5;
   font-size: 12px;
   text-decoration: none;
 }
-nav a:hover,
-nav a.active {
+.plugin-shell nav a:hover,
+.plugin-shell nav a.active {
   color: #dce8ef;
   background: #2c3742;
 }
@@ -92,17 +90,17 @@ nav a.active {
   justify-content: space-between;
   gap: 18px;
 }
-h1,
-h2,
-p {
+.plugin-shell h1,
+.plugin-shell h2,
+.plugin-shell p {
   margin-top: 0;
 }
-h1 {
+.plugin-shell h1 {
   margin-bottom: 5px;
   font-size: clamp(24px, 3vw, 34px);
   letter-spacing: -0.03em;
 }
-h2 {
+.plugin-shell h2 {
   margin-bottom: 4px;
   font-size: 15px;
 }

@@ -12,6 +12,17 @@ export function validateParams(
 
     switch (def.type) {
       case "number": {
+        if (rawVal === "" || rawVal === null || rawVal === undefined) {
+          if (def.default !== undefined && def.default !== null && def.default !== "") {
+            const defNum = Number(def.default);
+            if (!Number.isNaN(defNum)) {
+              sanitized[def.name] = defNum;
+              break;
+            }
+          }
+          errors[def.name] = `${def.label} must be a valid number.`;
+          break;
+        }
         const num = Number(rawVal);
         if (Number.isNaN(num)) {
           errors[def.name] = `${def.label} must be a valid number.`;
