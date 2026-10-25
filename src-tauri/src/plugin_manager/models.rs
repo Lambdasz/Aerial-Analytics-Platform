@@ -265,6 +265,34 @@ pub struct PluginBundle {
     pub health_status: String,
 }
 
+impl PluginBundle {
+    pub fn to_summary(&self) -> PluginSummaryDto {
+        PluginSummaryDto {
+            id: self.manifest.metadata.id.clone(),
+            name: self.manifest.metadata.name.clone(),
+            version: self.manifest.metadata.version.clone(),
+            author: self
+                .manifest
+                .metadata
+                .author
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string()),
+            category: self
+                .manifest
+                .metadata
+                .category
+                .clone()
+                .unwrap_or_else(|| "General".to_string()),
+            description: self.manifest.metadata.description.clone(),
+            tags: self.manifest.metadata.tags.clone(),
+            runtime_type: self.manifest.runtime.runtime_type.clone(),
+            enabled: self.enabled,
+            source: self.source.clone(),
+            health_status: self.health_status.clone(),
+        }
+    }
+}
+
 /// Lightweight summary DTO for UI lists, dropdowns, and cards (Modules 1, 3, 11).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginSummaryDto {

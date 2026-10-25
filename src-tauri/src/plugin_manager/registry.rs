@@ -53,32 +53,7 @@ impl PluginRegistry {
 
     /// Returns a list of summaries for all registered plugins.
     pub fn get_summaries(&self) -> Vec<PluginSummaryDto> {
-        self.plugins
-            .values()
-            .map(|bundle| PluginSummaryDto {
-                id: bundle.manifest.metadata.id.clone(),
-                name: bundle.manifest.metadata.name.clone(),
-                version: bundle.manifest.metadata.version.clone(),
-                author: bundle
-                    .manifest
-                    .metadata
-                    .author
-                    .clone()
-                    .unwrap_or_else(|| "Unknown".to_string()),
-                category: bundle
-                    .manifest
-                    .metadata
-                    .category
-                    .clone()
-                    .unwrap_or_else(|| "General".to_string()),
-                description: bundle.manifest.metadata.description.clone(),
-                tags: bundle.manifest.metadata.tags.clone(),
-                runtime_type: bundle.manifest.runtime.runtime_type.clone(),
-                enabled: bundle.enabled,
-                source: bundle.source.clone(),
-                health_status: bundle.health_status.clone(),
-            })
-            .collect()
+        self.plugins.values().map(|b| b.to_summary()).collect()
     }
 
     /// Resolves and returns full contract schemas and details for a specific plugin.

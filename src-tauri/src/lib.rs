@@ -287,16 +287,22 @@
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
+//! | `install_plugin` | Safe extraction and installation of plugin from `.zip` archive |
+//! | `remove_plugin` | Permanent uninstallation of user-installed plugin and state cleanup |
+//! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
+//! | `update_plugin_config` | Update and persist user custom parameters overrides |
+//! | `get_installed_plugins` | Return summary list of all registered plugins |
+//! | `get_plugin_details` | Retrieve full contract schemas for a specific plugin |
+//! | `query_compatible_plugins` | Filter enabled plugins compatible with target imagery or AOI |
+//! | `check_plugin_health` | Execute fast pre-flight dependency healthcheck |
 //! | `start_plugin_job` | Launch an async plugin subprocess |
 //! | `abort_plugin_job` | Kill a running plugin subprocess |
 //! | `get_job_status` | Poll the lifecycle state of a job |
 //! | `get_job_result` | Retrieve the full result of a completed job |
 //!
-//! **Status**: Models, error types, payload assembly, and result handling are
-//! implemented. Registry discovery, lifecycle management, and async execution
-//! are designed but contain `todo!()` stubs.
+//! **Status**: Core plugin manager domains fully implemented: registry discovery,
+//! safe zip installation with Zip-Slip protection, lifecycle state persistence,
+//! health checks, and async isolated subprocess execution.
 //!
 //! ---
 //!
@@ -819,6 +825,9 @@ pub fn run() {
             plugin_manager::registry::query_compatible_plugins,
             plugin_manager::registry::check_plugin_health,
             plugin_manager::lifecycle::set_plugin_status,
+            plugin_manager::lifecycle::install_plugin,
+            plugin_manager::lifecycle::remove_plugin,
+            plugin_manager::lifecycle::update_plugin_config,
             // Plot import
             import_plots,
             get_dummy_spatial_layers,

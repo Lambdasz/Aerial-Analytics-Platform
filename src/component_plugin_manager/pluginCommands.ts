@@ -65,6 +65,14 @@ export async function checkPluginHealth(pluginId: string): Promise<HealthStatusD
 // 2. Lifecycle & State Commands
 // ---------------------------------------------------------------------------
 
+export async function installPlugin(archivePath: string): Promise<PluginSummary> {
+  return invoke<PluginSummary>("install_plugin", { archivePath });
+}
+
+export async function removePlugin(pluginId: string): Promise<void> {
+  return invoke<void>("remove_plugin", { pluginId });
+}
+
 export async function setPluginStatus(pluginId: string, enabled: boolean): Promise<void> {
   return invoke<void>("set_plugin_status", { pluginId, enabled });
 }
