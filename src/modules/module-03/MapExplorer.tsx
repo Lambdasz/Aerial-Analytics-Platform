@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import type * as L from "leaflet";
 import Leaflet from "leaflet";
 
@@ -27,6 +27,9 @@ import { MapTypeThumbnail } from "./atoms/MapTypeThumbnail";
 import type { BasemapKey } from "./config/mapConfig";
 import type { LayerPayload } from "./types/map";
 import type { LayerState, AnnotationFeature } from "./types/layer";
+import { getStorageRootPath } from "./services/api";
+import { setCachedStorageRoot } from "./lib/fieldResolution";
+import { isTauri } from "@tauri-apps/api/core";
 
 // Leaflet default icon fix for Vite bundler
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -77,19 +80,37 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
+  useEffect(() => {
+    if (isTauri()) {
+      getStorageRootPath()
+        .then((path) => {
+          setCachedStorageRoot(path);
+        })
+        .catch((err) => {
+          console.warn("Gagal mengambil storage root path:", err);
+        });
+    }
+  }, []);
+
   const toggleBasemap = () => {
     setActiveBasemap((current) => (current === "osm" ? "satellite" : "osm"));
   };
 
-  const handleLayersChange = (newLayers: LayerState[]) => {
-    setLayers(newLayers);
-    onLayersChange?.(newLayers);
-  };
+  const handleLayersChange = useCallback(
+    (newLayers: LayerState[]) => {
+      setLayers(newLayers);
+      onLayersChange?.(newLayers);
+    },
+    [onLayersChange],
+  );
 
-  const handleAnnotationsChange = (newAnnotations: AnnotationFeature[]) => {
-    setAnnotations(newAnnotations);
-    onAnnotationsChange?.(newAnnotations);
-  };
+  const handleAnnotationsChange = useCallback(
+    (newAnnotations: AnnotationFeature[]) => {
+      setAnnotations(newAnnotations);
+      onAnnotationsChange?.(newAnnotations);
+    },
+    [onAnnotationsChange],
+  );
 
   const mergedStyle: React.CSSProperties = {
     width: "100%",

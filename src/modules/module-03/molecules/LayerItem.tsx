@@ -13,6 +13,14 @@ export const LayerItem: React.FC<LayerItemProps> = ({
   onToggleVisibility,
   onOpacityChange,
 }) => {
+  if (
+    layer?.category === "Base Maps" ||
+    layer?.layer_id === "base_osm" ||
+    layer?.layer_name?.toLowerCase().includes("base map")
+  ) {
+    return null;
+  }
+
   return (
     <div
       style={{

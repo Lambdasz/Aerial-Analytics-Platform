@@ -2,6 +2,7 @@ import React from "react";
 import { ImageGallerySidebar } from "./ImageGallerySidebar";
 import { LayerManager } from "./LayerManager";
 import { AoiToolbar } from "./AoiToolbar";
+import { SpResultListPanel } from "./SpResultListPanel";
 import { MapSearchBar } from "../molecules/MapSearchBar";
 import L from "leaflet";
 
@@ -29,8 +30,16 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
       setActiveTab("gallery");
       setIsCollapsed(false);
     };
+    const handleOpenResults = () => {
+      setActiveTab("results");
+      setIsCollapsed(false);
+    };
     window.addEventListener("open-gallery-tab", handleOpenGallery);
-    return () => window.removeEventListener("open-gallery-tab", handleOpenGallery);
+    window.addEventListener("open-results-tab", handleOpenResults);
+    return () => {
+      window.removeEventListener("open-gallery-tab", handleOpenGallery);
+      window.removeEventListener("open-results-tab", handleOpenResults);
+    };
   }, [setIsCollapsed]);
 
   return (
@@ -88,7 +97,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
           <div
             style={{
               display: "flex",
-              gap: "8px",
+              gap: "6px",
               background: "var(--color-control-gray)",
               padding: "4px",
               borderRadius: "12px",
@@ -97,7 +106,8 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
           >
             {[
               { id: "layers", label: "Layers" },
-              { id: "aoi", label: "AOI Tools" },
+              { id: "aoi", label: "AOI" },
+              { id: "results", label: "Hasil Analisis" },
               { id: "gallery", label: "Gallery" },
             ].map((tab) => (
               <div
@@ -114,15 +124,16 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
                 style={{
                   flex: 1,
                   textAlign: "center",
-                  padding: "6px 12px",
+                  padding: "6px 8px",
                   borderRadius: "8px",
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: activeTab === tab.id ? 600 : 500,
                   color: activeTab === tab.id ? "var(--color-ink)" : "var(--color-slate)",
                   background: activeTab === tab.id ? "var(--color-gallery-white)" : "transparent",
                   boxShadow: activeTab === tab.id ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
                   cursor: "pointer",
                   transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {tab.label}
@@ -144,12 +155,14 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
         >
           {activeTab === "layers" && (
             <LayerManager
+              map={map}
               onAnnotationsChange={onAnnotationsChange}
               onLayersChange={onLayersChange}
             />
           )}
           {activeTab === "aoi" && <AoiToolbar map={map} />}
-          {activeTab === "gallery" && <ImageGallerySidebar />}
+          {activeTab === "results" && <SpResultListPanel map={map} />}
+          {activeTab === "gallery" && <ImageGallerySidebar map={map} />}
         </div>
       </div>
     </div>

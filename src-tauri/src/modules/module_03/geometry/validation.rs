@@ -43,6 +43,59 @@ pub fn validate_coordinate(longitude: f64, latitude: f64) -> Result<(), MapContr
     Ok(())
 }
 
+/// Memvalidasi satu pasangan koordinat WGS84 pada konteks geometri tertentu.
+fn validate_point_coords(lon: f64, lat: f64, context: &str) -> Result<(), MapControllerError> {
+    validate_coordinate(lon, lat)
+        .map_err(|err| MapControllerError::InvalidGeometry(format!("{context}: {err}")))
+}
+
+/// Memvalidasi ring poligon koordinat tetap `&[[f64; 2]]`.
+pub fn validate_fixed_ring(ring_idx: usize, ring: &[[f64; 2]]) -> Result<(), MapControllerError> {
+    if ring.len() < 4 {
+        return Err(MapControllerError::InvalidGeometry(format!(
+            "Ring {ring_idx} minimal butuh 4 titik (termasuk penutup)"
+        )));
+    }
+    if ring.first() != ring.last() {
+        return Err(MapControllerError::InvalidGeometry(format!(
+            "Ring {ring_idx} tidak tertutup"
+        )));
+    }
+    for (point_idx, &[lon, lat]) in ring.iter().enumerate() {
+        validate_point_coords(lon, lat, &format!("Ring {ring_idx}, titik {point_idx}"))?;
+    }
+    Ok(())
+}
+
+/// Memvalidasi ring poligon koordinat dinamis `&[Vec<f64>]`.
+pub fn validate_dynamic_ring(ring_idx: usize, ring: &[Vec<f64>]) -> Result<(), MapControllerError> {
+    if ring.len() < 4 {
+        return Err(MapControllerError::InvalidGeometry(format!(
+            "Ring {ring_idx} minimal butuh 4 titik (termasuk penutup)"
+        )));
+    }
+    let first = ring.first().unwrap();
+    let last = ring.last().unwrap();
+    if first != last {
+        return Err(MapControllerError::InvalidGeometry(format!(
+            "Ring {ring_idx} tidak tertutup"
+        )));
+    }
+    for (point_idx, point) in ring.iter().enumerate() {
+        if point.len() != 2 {
+            return Err(MapControllerError::InvalidGeometry(format!(
+                "Titik ke-{point_idx} pada ring {ring_idx} membutuhkan tepat 2 koordinat [lon, lat]"
+            )));
+        }
+        validate_point_coords(
+            point[0],
+            point[1],
+            &format!("Ring {ring_idx}, titik {point_idx}"),
+        )?;
+    }
+    Ok(())
+}
+
 /// Memvalidasi geometri poligon AOI (ring tertutup, minimal 4 titik, koordinat valid).
 ///
 /// # Example
@@ -66,29 +119,13 @@ pub fn validate_polygon(polygon: &Polygon) -> Result<(), MapControllerError> {
         ));
     }
     for (ring_idx, ring) in polygon.iter().enumerate() {
-        if ring.len() < 4 {
-            return Err(MapControllerError::InvalidGeometry(format!(
-                "Ring {ring_idx} minimal butuh 4 titik (termasuk penutup)"
-            )));
-        }
-        if ring.first() != ring.last() {
-            return Err(MapControllerError::InvalidGeometry(format!(
-                "Ring {ring_idx} tidak tertutup"
-            )));
-        }
-        for (point_idx, &[lon, lat]) in ring.iter().enumerate() {
-            if validate_coordinate(lon, lat).is_err() {
-                return Err(MapControllerError::InvalidGeometry(format!(
-                    "Ring {ring_idx}, titik {point_idx}: koordinat tidak valid"
-                )));
-            }
-        }
+        validate_fixed_ring(ring_idx, ring)?;
     }
     Ok(())
 }
 
 impl SpatialGeometry {
-    /// Memvalidasi integritas koordinat geometri spasial GeoJSON.
+    /// Memvalidasi integritas koordinat geometri spasial GeoJSON secara deterministik.
     pub fn validate(&self) -> Result<(), MapControllerError> {
         match self {
             SpatialGeometry::Point { coordinates } => {
@@ -98,40 +135,16 @@ impl SpatialGeometry {
                         coordinates.len()
                     )));
                 }
+                validate_point_coords(coordinates[0], coordinates[1], "Geometri Point")?;
             }
             SpatialGeometry::Polygon { coordinates } => {
                 if coordinates.is_empty() {
                     return Err(MapControllerError::InvalidGeometry(
-                        "Geometri Polygon kosong (tidak memiliki ring koordinat)".to_string(),
+                        "Polygon tidak memiliki ring".to_string(),
                     ));
                 }
-
                 for (ring_idx, ring) in coordinates.iter().enumerate() {
-                    if ring.len() < 4 {
-                        return Err(MapControllerError::InvalidGeometry(format!(
-                            "Ring {} pada Polygon minimal butuh 4 titik (termasuk titik penutup), mendapat {}",
-                            ring_idx,
-                            ring.len()
-                        )));
-                    }
-
-                    let first_point = &ring[0];
-                    let last_point = ring.last().unwrap();
-                    if first_point != last_point {
-                        return Err(MapControllerError::InvalidGeometry(format!(
-                            "Ring {} pada Polygon tidak tertutup (titik pertama {:?} tidak sama dengan titik terakhir {:?})",
-                            ring_idx, first_point, last_point
-                        )));
-                    }
-
-                    for (point_idx, point) in ring.iter().enumerate() {
-                        if point.len() != 2 {
-                            return Err(MapControllerError::InvalidGeometry(format!(
-                                "Titik ke-{} pada ring {} membutuhkan tepat 2 koordinat [lon, lat]",
-                                point_idx, ring_idx
-                            )));
-                        }
-                    }
+                    validate_dynamic_ring(ring_idx, ring)?;
                 }
             }
             SpatialGeometry::LineString { coordinates } => {
@@ -144,10 +157,14 @@ impl SpatialGeometry {
                 for (point_idx, point) in coordinates.iter().enumerate() {
                     if point.len() != 2 {
                         return Err(MapControllerError::InvalidGeometry(format!(
-                            "Titik ke-{} pada LineString membutuhkan tepat 2 koordinat [lon, lat]",
-                            point_idx
+                            "Titik ke-{point_idx} pada LineString membutuhkan tepat 2 koordinat [lon, lat]"
                         )));
                     }
+                    validate_point_coords(
+                        point[0],
+                        point[1],
+                        &format!("LineString titik ke-{point_idx}"),
+                    )?;
                 }
             }
         }

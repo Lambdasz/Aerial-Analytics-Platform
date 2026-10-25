@@ -423,22 +423,48 @@ pub fn run() {
             // Plot import
             import_plots,
             get_dummy_spatial_layers,
-            // Module 3 — AOI & Spatial Measurement (Person 2)
-            map_controller::commands::measure_distance,
-            map_controller::commands::measure_area,
-            map_controller::commands::measure_perimeter,
-            map_controller::commands::create_aoi_cmd,
-            // Module 3 — Layer Management & Annotation (Person 3)
-            map_controller::layer_commands::toggle_layer_visibility_cmd,
-            map_controller::layer_commands::set_layer_opacity_cmd,
-            map_controller::layer_commands::reorder_layer_stack_cmd,
-            map_controller::layer_commands::filter_layers_by_category_cmd,
-            map_controller::layer_commands::create_annotation_cmd,
-            // Module 3 — Centralized Sample Data
-            map_controller::sample_data_commands::get_project_image_markers,
-            map_controller::sample_data_commands::get_initial_map_layers,
-            map_controller::sample_data_commands::get_sample_aoi,
-            map_controller::sample_data_commands::get_sample_annotations,
+            // Module 3 — Geometry & Measurement
+            map_controller::geometry::commands::measure_distance,
+            map_controller::geometry::commands::measure_area,
+            map_controller::geometry::commands::measure_perimeter,
+            // Module 3 — AOI
+            map_controller::aoi::commands::create_aoi_cmd,
+            map_controller::aoi::commands::save_new_aoi_cmd,
+            map_controller::aoi::commands::save_aoi,
+            map_controller::aoi::commands::get_saved_aois,
+            map_controller::aoi::commands::delete_saved_aoi,
+            // Module 3 — Layer Management
+            map_controller::layers::commands::get_saved_layers,
+            // Module 3 — Annotation
+            map_controller::annotations::commands::create_annotation_cmd,
+            map_controller::annotations::commands::get_saved_annotations,
+            map_controller::annotations::commands::get_annotation_by_id,
+            map_controller::annotations::commands::update_annotation_cmd,
+            map_controller::annotations::commands::delete_annotation_cmd,
+            // Module 3 — Spatial Results
+            map_controller::sp_result::commands::save_spatial_result,
+            map_controller::sp_result::commands::get_saved_spatial_results,
+            map_controller::sp_result::commands::get_saved_spatial_results_summary,
+            map_controller::sp_result::commands::get_saved_spatial_result,
+            map_controller::sp_result::commands::update_saved_spatial_result,
+            map_controller::sp_result::commands::count_spatial_result_dependents,
+            map_controller::sp_result::commands::delete_saved_spatial_result,
+            map_controller::sp_result::commands::check_spatial_result_manual_edits,
+            // Module 3 — Ortho & Raster Images
+            map_controller::ortho_source::commands::list_ortho_images,
+            map_controller::ortho_source::commands::get_ortho_image,
+            map_controller::ortho_source::commands::update_ortho_image,
+            map_controller::ortho_source::commands::get_ortho_cascade_summary,
+            map_controller::ortho_source::commands::delete_ortho_image,
+            map_controller::ortho_source::commands::save_image_from_path,
+            map_controller::ortho_source::commands::get_saved_images,
+            map_controller::ortho_source::commands::delete_saved_image,
+            map_controller::ortho_source::commands::import_ortho_image,
+            // Module 3 — Photos
+            map_controller::photos::commands::get_photos,
+            map_controller::photos::commands::import_photo,
+            // Module 3 — Storage Root
+            map_controller::storage_commands::get_storage_root_path,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,

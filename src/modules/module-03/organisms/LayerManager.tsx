@@ -1,78 +1,40 @@
-import React, { useMemo, useState } from "react";
-import type { LayerState, AnnotationFeature } from "../types/layer";
-import {
-  toggleLayerVisibility,
-  setLayerOpacity,
-  filterLayersByCategory,
-  createAnnotation,
-  getInitialMapLayers,
-  getSampleAnnotations,
-} from "../services/api";
+import React, { useMemo, useState, useEffect } from "react";
+import * as L from "leaflet";
+import "../leaflet-setup";
+import { Button, NonIdealState, Tooltip, Tag } from "@blueprintjs/core";
+import type { LayerState, AnnotationFeature, SpatialGeometry } from "../types/layer";
+import type { LayerPayload } from "../types/map";
+import { getInitialMapLayers, getSavedSpatialResults } from "../services/api";
+import { useAnnotations } from "../hooks/useAnnotations";
 import { LayerCategoryFilter } from "../molecules/LayerCategoryFilter";
 import { LayerItem } from "../molecules/LayerItem";
-import { AnnotationForm } from "../molecules/AnnotationForm";
+import { AnnotationSidebarForm } from "../molecules/AnnotationSidebarForm";
+import { calculateLineLengthMeters, calculateGeodesicAreaMeters } from "../lib/geoJson";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-const INITIAL_LAYERS: LayerState[] = [
-  {
-    layer_id: "base_osm",
-    layer_name: "Base Maps",
-    category: "Base Maps",
-    is_visible: true,
-    opacity: 1,
-    z_index: 0,
-  },
-  {
-    layer_id: "orthomosaic_01",
-    layer_name: "Orthomosaic Drone",
-    category: "Drone Imagery",
-    is_visible: true,
-    opacity: 1,
-    z_index: 5,
-  },
-  {
-    layer_id: "flight_session_01",
-    layer_name: "Drone Imagery",
-    category: "Drone Imagery",
-    is_visible: true,
-    opacity: 1,
-    z_index: 10,
-  },
-  {
-    layer_id: "plugin_veg_mask_01",
-    layer_name: "Vegetation Mask",
-    category: "Analysis Results",
-    is_visible: true,
-    opacity: 0.5,
-    z_index: 20,
-  },
-  {
-    layer_id: "plugin_tree_detect_01",
-    layer_name: "Tree Detection",
-    category: "Analysis Results",
-    is_visible: false,
-    opacity: 1,
-    z_index: 25,
-  },
-];
+const INITIAL_LAYERS: LayerState[] = [];
 
 type LayerManagerProps = {
+  map?: L.Map | null;
   onAnnotationsChange?: (annotations: AnnotationFeature[]) => void;
   onLayersChange?: (layers: LayerState[]) => void;
 };
 
 export const LayerManager: React.FC<LayerManagerProps> = ({
+  map,
   onAnnotationsChange,
   onLayersChange,
 }) => {
   const [layers, setLayers] = useState<LayerState[]>(INITIAL_LAYERS);
   const [selectedCategory, setSelectedCategory] = useState("All");
-  const [annotations, setAnnotations] = useState<AnnotationFeature[]>([]);
-  const [annotationText, setAnnotationText] = useState("");
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
+  const [isAddingAnnotation, setIsAddingAnnotation] = useState(false);
+
+  // Hook manajemen anotasi mandiri
+  const { annotations, addAnnotation, removeAnnotation } = useAnnotations();
 
   // =========================
-  // CATEGORY LIST
+  // CATEGORY LIST (Kategori Base Maps tidak disertakan)
   // =========================
   const categories = useMemo(() => {
     const uniqueCategories = Array.from(new Set(layers.map((layer) => layer.category)));
@@ -92,192 +54,510 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
   // SEND ANNOTATIONS & LAYERS TO PARENT
   // =========================
-  React.useEffect(() => {
+  useEffect(() => {
     onAnnotationsChange?.(annotations);
   }, [annotations, onAnnotationsChange]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     onLayersChange?.(layers);
   }, [layers, onLayersChange]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let cancelled = false;
 
-    getInitialMapLayers()
-      .then((data) => {
-        if (!cancelled && data.length > 0) {
-          setLayers(data);
+    Promise.all([getInitialMapLayers().catch(() => []), getSavedSpatialResults().catch(() => [])])
+      .then(([initialData, spatialData]) => {
+        if (!cancelled) {
+          const savedModes = (() => {
+            try {
+              const raw = localStorage.getItem("aap_ortho_display_modes");
+              return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+            } catch {
+              return {};
+            }
+          })();
+
+          const savedOpacities = (() => {
+            try {
+              const raw = localStorage.getItem("aap_layer_opacities");
+              return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+            } catch {
+              return {};
+            }
+          })();
+
+          // Hapus item Base Maps agar tidak tampil di daftar layer sidebar
+          const filtered = (initialData || [])
+            .filter(
+              (layer) =>
+                layer.category !== "Base Maps" &&
+                layer.layer_id !== "base_osm" &&
+                !layer.layer_name?.toLowerCase().includes("base map"),
+            )
+            .map((layer) => {
+              const key = layer.source_id || layer.layer_id || layer.layer_name;
+              const isVisible = savedModes[key] !== undefined ? savedModes[key] : layer.is_visible;
+              const opacity =
+                savedOpacities[key] !== undefined ? savedOpacities[key] : layer.opacity;
+              return { ...layer, is_visible: isVisible, opacity };
+            });
+
+          const existingIds = new Set(filtered.map((l) => l.layer_id));
+          const spatialLayers: LayerState[] = (spatialData || [])
+            .filter((sr) => !existingIds.has(sr.layer_id))
+            .map((sr) => {
+              const key = sr.layer_id;
+              const isVisible = savedModes[key] !== undefined ? savedModes[key] : true;
+              const opacity = savedOpacities[key] !== undefined ? savedOpacities[key] : 1.0;
+              return {
+                layer_id: sr.layer_id,
+                layer_name: sr.layer_name,
+                category: "spatial_result",
+                is_visible: isVisible,
+                opacity,
+                z_index: 10,
+                source_type: "spatial_result",
+                source_id: sr.layer_id,
+              };
+            });
+
+          setLayers([...filtered, ...spatialLayers]);
         }
       })
       .catch((err) => {
         console.error("Gagal memuat initial layers dari backend:", err);
       });
 
-    getSampleAnnotations()
-      .then((data) => {
-        if (!cancelled && data.length > 0) {
-          setAnnotations(data);
+    // Event listener jika ada spatial result baru yang disimpan atau diperbarui
+    const handleSpatialResultSaved = (event: Event) => {
+      const customEvent = event as CustomEvent<LayerPayload>;
+      const payload = customEvent.detail;
+      if (!payload?.layer_id) return;
+
+      setLayers((prev) => {
+        const existingIndex = prev.findIndex((l) => l.layer_id === payload.layer_id);
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            layer_name: payload.layer_name,
+          };
+          return updated;
+        } else {
+          return [
+            ...prev,
+            {
+              layer_id: payload.layer_id,
+              layer_name: payload.layer_name,
+              category: "spatial_result",
+              is_visible: true,
+              opacity: 1.0,
+              z_index: 10,
+              source_type: "spatial_result",
+              source_id: payload.layer_id,
+            },
+          ];
         }
-      })
-      .catch((err) => {
-        console.error("Gagal memuat sample annotations dari backend:", err);
       });
+    };
+
+    const handleSpatialResultDeleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id: string }>;
+      const id = customEvent.detail?.id;
+      if (!id) return;
+      setLayers((prev) => prev.filter((l) => l.layer_id !== id && l.source_id !== id));
+    };
+
+    window.addEventListener("spatial_result:saved", handleSpatialResultSaved);
+    window.addEventListener("spatial_result:deleted", handleSpatialResultDeleted);
+
+    let unlistenSaved: (() => void) | undefined;
+    let unlistenDeleted: (() => void) | undefined;
+
+    if (isTauri()) {
+      void listen<LayerPayload>("spatial_result:saved", (event) => {
+        handleSpatialResultSaved(
+          new CustomEvent("spatial_result:saved", { detail: event.payload }),
+        );
+      }).then((fn) => {
+        unlistenSaved = fn;
+      });
+
+      void listen<{ id: string }>("spatial_result:deleted", (event) => {
+        handleSpatialResultDeleted(
+          new CustomEvent("spatial_result:deleted", { detail: event.payload }),
+        );
+      }).then((fn) => {
+        unlistenDeleted = fn;
+      });
+    }
 
     return () => {
       cancelled = true;
+      window.removeEventListener("spatial_result:saved", handleSpatialResultSaved);
+      window.removeEventListener("spatial_result:deleted", handleSpatialResultDeleted);
+      unlistenSaved?.();
+      unlistenDeleted?.();
+    };
+  }, []);
+
+  // Sinkronisasi dua arah: dengarkan event toggle dari popup di peta
+  useEffect(() => {
+    const handleToggleLayerVisibility = (e: Event) => {
+      const customEvent = e as CustomEvent<{ layerId: string; nextState?: boolean }>;
+      const { layerId, nextState } = customEvent.detail || {};
+      if (!layerId) return;
+
+      setLayers((currentLayers) =>
+        currentLayers.map((item) => {
+          const matches =
+            item.layer_id === layerId || item.source_id === layerId || item.layer_name === layerId;
+          if (!matches) return item;
+
+          const nextVal = nextState !== undefined ? nextState : !item.is_visible;
+
+          // Perbarui juga preferensi localStorage
+          try {
+            const raw = localStorage.getItem("aap_ortho_display_modes");
+            const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+            const key = item.source_id || item.layer_id;
+            map[key] = nextVal;
+            if (item.layer_name) {
+              map[item.layer_name] = nextVal;
+            }
+            localStorage.setItem("aap_ortho_display_modes", JSON.stringify(map));
+          } catch {
+            // ignore
+          }
+
+          return {
+            ...item,
+            is_visible: nextVal,
+          };
+        }),
+      );
+    };
+
+    window.addEventListener("toggle-layer-visibility", handleToggleLayerVisibility);
+    return () => {
+      window.removeEventListener("toggle-layer-visibility", handleToggleLayerVisibility);
     };
   }, []);
 
   // =========================
   // LAYER MANAGEMENT
   // =========================
-  const handleToggleVisibility = async (layer: LayerState) => {
-    try {
-      const updatedLayer = await toggleLayerVisibility(layer, !layer.is_visible);
-      setLayers((currentLayers) =>
-        currentLayers.map((item) =>
-          item.layer_id === updatedLayer.layer_id ? updatedLayer : item,
-        ),
-      );
-    } catch (error) {
-      console.error("Gagal mengubah visibility layer:", error);
-    }
+  const handleToggleVisibility = (layer: LayerState) => {
+    setLayers((currentLayers) =>
+      currentLayers.map((item) => {
+        if (item.layer_id === layer.layer_id) {
+          const nextVal = !item.is_visible;
+
+          // Simpan sinkronisasi ke localStorage agar persist
+          try {
+            const raw = localStorage.getItem("aap_ortho_display_modes");
+            const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+            const key = item.source_id || item.layer_id;
+            map[key] = nextVal;
+            if (item.layer_name) {
+              map[item.layer_name] = nextVal;
+            }
+            localStorage.setItem("aap_ortho_display_modes", JSON.stringify(map));
+          } catch {
+            // ignore
+          }
+
+          return { ...item, is_visible: nextVal };
+        }
+        return item;
+      }),
+    );
   };
 
-  const handleSetOpacity = async (layer: LayerState, value: number) => {
-    try {
-      const updatedLayer = await setLayerOpacity(layer, value);
-      setLayers((currentLayers) =>
-        currentLayers.map((item) =>
-          item.layer_id === updatedLayer.layer_id ? updatedLayer : item,
-        ),
-      );
-    } catch (error) {
-      console.error("Gagal mengubah opacity layer:", error);
-    }
+  const handleSetOpacity = (layer: LayerState, value: number) => {
+    setLayers((currentLayers) =>
+      currentLayers.map((item) => {
+        if (item.layer_id === layer.layer_id) {
+          try {
+            const raw = localStorage.getItem("aap_layer_opacities");
+            const map = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+            const key = item.source_id || item.layer_id;
+            map[key] = value;
+            if (item.layer_name) {
+              map[item.layer_name] = value;
+            }
+            localStorage.setItem("aap_layer_opacities", JSON.stringify(map));
+          } catch {
+            // ignore
+          }
+          return { ...item, opacity: value };
+        }
+        return item;
+      }),
+    );
   };
 
-  const handleCategoryChange = async (category: string) => {
+  const handleCategoryChange = (category: string) => {
     setSelectedCategory(category);
-    if (category === "All") {
-      return;
-    }
-
-    try {
-      await filterLayersByCategory(layers, category);
-    } catch (error) {
-      console.error("Gagal melakukan filter layer:", error);
-    }
   };
 
   // =========================
-  // SPATIAL ANNOTATION
+  // ANNOTATION ACTIONS
   // =========================
-  const handleCreateAnnotation = async () => {
-    if (!annotationText.trim() || !latitude || !longitude) {
-      console.error("Teks dan koordinat wajib diisi.");
-      return;
-    }
+  const handleSaveAnnotation = async (args: { text: string; geometry: SpatialGeometry }) => {
+    await addAnnotation(args);
+  };
 
-    const lat = Number(latitude);
-    const lng = Number(longitude);
+  const handleDeleteAnnotation = async (id: string) => {
+    if (!id) return;
+    await removeAnnotation(id);
+  };
 
-    if (Number.isNaN(lat) || Number.isNaN(lng)) {
-      console.error("Latitude dan longitude harus berupa angka.");
-      return;
-    }
+  const handleFocusAnnotation = (annotation: AnnotationFeature) => {
+    if (!map) return;
+    const { geometry } = annotation;
 
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      console.error("Koordinat berada di luar batas yang valid.");
-      return;
-    }
-
-    try {
-      const annotation = await createAnnotation({
-        annotationId: `anno_${Date.now()}`,
-        text: annotationText.trim(),
-        geometry: {
-          type: "Point",
-          coordinates: [lng, lat],
-        },
-        createdAt: new Date().toISOString(),
-      });
-
-      setAnnotations((current) => [...current, annotation]);
-      setAnnotationText("");
-      setLatitude("");
-      setLongitude("");
-    } catch (error) {
-      console.error("Gagal membuat annotation:", error);
+    if (geometry.type === "Point") {
+      const [lng, lat] = geometry.coordinates;
+      map.flyTo([lat, lng], 18, { duration: 1.2 });
+    } else if (geometry.type === "LineString") {
+      const positions: [number, number][] = geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+      const bounds = L.latLngBounds(positions);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18, animate: true, duration: 1.2 });
+    } else if (geometry.type === "Polygon") {
+      const ring = (geometry.coordinates[0] || []) as [number, number][];
+      const positions: [number, number][] = ring.map(([lng, lat]) => [lat, lng]);
+      const bounds = L.latLngBounds(positions);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18, animate: true, duration: 1.2 });
     }
   };
+
+  const annotationFormRef = React.useRef<HTMLDivElement | null>(null);
 
   return (
-    <div style={{ paddingBottom: "20px" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Category Filter Pills */}
       <LayerCategoryFilter
         categories={categories}
         selectedCategory={selectedCategory}
-        onSelectCategory={(category) => {
-          void handleCategoryChange(category);
-        }}
+        onSelectCategory={handleCategoryChange}
       />
 
-      {visibleLayers.map((layer) => (
-        <LayerItem
-          key={layer.layer_id}
-          layer={layer}
-          onToggleVisibility={(l) => {
-            void handleToggleVisibility(l);
-          }}
-          onOpacityChange={(l, value) => {
-            void handleSetOpacity(l, value);
-          }}
+      {/* Layer List */}
+      {visibleLayers.length === 0 ? (
+        <NonIdealState
+          icon="layers"
+          title="Tidak ada layer"
+          description="Tidak ada layer dalam kategori ini"
         />
-      ))}
-
-      <AnnotationForm
-        annotationText={annotationText}
-        latitude={latitude}
-        longitude={longitude}
-        onTextChange={setAnnotationText}
-        onLatitudeChange={setLatitude}
-        onLongitudeChange={setLongitude}
-        onSubmit={() => {
-          void handleCreateAnnotation();
-        }}
-      />
-
-      {annotations.length > 0 && (
-        <div style={{ marginTop: "16px" }}>
-          <h6 className="bp5-heading">Annotation Dibuat</h6>
-
-          {annotations.map((annotation) => {
-            const isPoint = annotation.geometry.type === "Point";
-
-            return (
-              <div
-                key={annotation.annotation_id}
-                style={{
-                  padding: "16px",
-                  marginBottom: "12px",
-                  background: "var(--color-gallery-white)",
-                  borderRadius: "var(--radius-cards)",
-                  boxShadow: "var(--shadow-subtle)",
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{annotation.text}</div>
-
-                {isPoint && (
-                  <small>
-                    Koordinat: {annotation.geometry.coordinates[1]},{" "}
-                    {annotation.geometry.coordinates[0]}
-                  </small>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      ) : (
+        visibleLayers.map((layer) => (
+          <LayerItem
+            key={layer.layer_id}
+            layer={layer}
+            onToggleVisibility={(l) => {
+              handleToggleVisibility(l);
+            }}
+            onOpacityChange={(l, value) => {
+              handleSetOpacity(l, value);
+            }}
+          />
+        ))
       )}
+
+      {/* Anotasi Spasial Section */}
+      <div
+        style={{
+          marginTop: "20px",
+          paddingTop: "16px",
+          borderTop: "1px solid var(--color-hairline-silver)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "12px",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: "13px",
+                fontWeight: 700,
+                color: "var(--color-ink)",
+              }}
+            >
+              Anotasi Spasial
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--color-slate)" }}>
+              {annotations.length} catatan inspeksi di peta
+            </div>
+          </div>
+          <Button
+            small
+            intent={isAddingAnnotation ? "none" : "primary"}
+            icon={isAddingAnnotation ? "cross" : "plus"}
+            text={isAddingAnnotation ? "Tutup Form" : "Tambah Anotasi"}
+            onClick={() => {
+              const next = !isAddingAnnotation;
+              setIsAddingAnnotation(next);
+              if (next) {
+                setTimeout(() => {
+                  annotationFormRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                  });
+                }, 80);
+              }
+            }}
+            style={{ borderRadius: "8px", fontWeight: 600 }}
+          />
+        </div>
+
+        {/* Formulir Pembuatan Anotasi di Sidebar (Bukan Modal/Popup, Peta Tidak Terhalang) */}
+        {isAddingAnnotation && (
+          <div
+            ref={annotationFormRef}
+            style={{
+              marginBottom: "16px",
+              padding: "12px",
+              background: "var(--color-gallery-white, #ffffff)",
+              borderRadius: "14px",
+              boxShadow: "var(--shadow-subtle)",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <AnnotationSidebarForm
+              map={map || null}
+              onSaveAnnotation={async (data) => {
+                await handleSaveAnnotation(data);
+                setIsAddingAnnotation(false);
+              }}
+              onCancel={() => setIsAddingAnnotation(false)}
+            />
+          </div>
+        )}
+
+        {/* Daftar Anotasi */}
+        {annotations.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {annotations.map((annotation) => {
+              const { geometry, annotation_id, id, text } = annotation;
+              const targetId = id || annotation_id || "";
+              let metaText = "";
+
+              if (geometry.type === "Point") {
+                const [lng, lat] = geometry.coordinates;
+                metaText = `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+              } else if (geometry.type === "LineString") {
+                const len = calculateLineLengthMeters(geometry.coordinates);
+                const lenStr =
+                  len >= 1000 ? `${(len / 1000).toFixed(2)} km` : `${len.toFixed(0)} m`;
+                metaText = `📏 ${geometry.coordinates.length} titik • ${lenStr}`;
+              } else if (geometry.type === "Polygon") {
+                const ring = (geometry.coordinates[0] || []) as [number, number][];
+                const area = calculateGeodesicAreaMeters(ring);
+                const areaStr =
+                  area >= 10000 ? `${(area / 10000).toFixed(2)} ha` : `${area.toFixed(0)} m²`;
+                metaText = `⬡ ${ring.length} sudut • ${areaStr}`;
+              }
+
+              return (
+                <div
+                  key={targetId}
+                  style={{
+                    padding: "12px",
+                    background: "var(--color-gallery-white)",
+                    borderRadius: "12px",
+                    boxShadow: "var(--shadow-subtle)",
+                    border: "1px solid #e2e8f0",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: "8px",
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          marginBottom: "4px",
+                        }}
+                      >
+                        <Tag
+                          minimal
+                          round
+                          style={{
+                            fontSize: "10px",
+                            background: "rgba(245, 158, 11, 0.12)",
+                            color: "#b45309",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {geometry.type === "Point"
+                            ? "Titik"
+                            : geometry.type === "LineString"
+                              ? "Garis"
+                              : "Poligon"}
+                        </Tag>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: "13px",
+                            color: "var(--color-ink)",
+                          }}
+                        >
+                          {text}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--color-slate)",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {metaText}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "4px" }}>
+                      {map && (
+                        <Tooltip content="Fokuskan peta ke anotasi ini" placement="top">
+                          <Button
+                            minimal
+                            small
+                            icon="locate"
+                            onClick={() => handleFocusAnnotation(annotation)}
+                          />
+                        </Tooltip>
+                      )}
+                      <Tooltip content="Hapus anotasi" placement="top">
+                        <Button
+                          minimal
+                          small
+                          intent="danger"
+                          icon="trash"
+                          onClick={() => void handleDeleteAnnotation(targetId)}
+                        />
+                      </Tooltip>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

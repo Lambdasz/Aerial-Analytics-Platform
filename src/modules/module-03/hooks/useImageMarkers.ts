@@ -3,8 +3,9 @@ import type { DroneImageMetadata } from "../types/marker";
 import { getProjectImageMarkers } from "../services/api";
 
 /**
- * Hook penyedia marker foto drone proyek dari backend Rust secara deterministik.
- * Menggantikan generator acak lokal dengan data georeferensi orthomosaic Kariangau.
+ * Hook penyedia marker foto drone proyek dari backend Rust.
+ * Catatan Arsitektur: Hook ini tidak menjalankan interval atau polling liar di background.
+ * Eksekusi bersifat single-shot berdasarkan parameter `count` saat dipanggil secara on-demand.
  */
 export const useImageMarkers = (count: number = 200) => {
   const [markers, setMarkers] = useState<ReadonlyArray<DroneImageMetadata>>([]);
@@ -12,6 +13,13 @@ export const useImageMarkers = (count: number = 200) => {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Safety timeout: jika dalam 3 detik backend tidak merespon, hentikan spinner
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        setIsLoading(false);
+      }
+    }, 3000);
 
     getProjectImageMarkers()
       .then((data) => {
@@ -23,10 +31,14 @@ export const useImageMarkers = (count: number = 200) => {
         if (cancelled) return;
         console.error("Gagal memuat project image markers dari backend:", err);
         setIsLoading(false);
+      })
+      .finally(() => {
+        clearTimeout(timer);
       });
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [count]);
 

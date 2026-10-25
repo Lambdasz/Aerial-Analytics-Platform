@@ -12,6 +12,28 @@ export const KARIANGAU_BOUNDS = {
   north: -1.2186297002884836,
 } as const;
 
+/**
+ * Batas ukuran berkas citra orthomosaic: maksimal 50 MB (52.428.800 bytes).
+ */
+export const MAX_IMAGE_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Batas dimensi citra orthomosaic: maksimal 16.384 piksel per sisi.
+ */
+export const MAX_IMAGE_DIMENSION_PX = 16384;
+
+/**
+ * Batas maksimal ukuran berkas pratinjau display citra orthomosaic: 5 MB (5.242.880 bytes).
+ * Citra yang melebihi batas ini tidak akan dimuat ke DOM Leaflet demi performa dan stabilitas memori.
+ */
+export const MAX_DISPLAY_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Level zoom minimum untuk me-render citra orthomosaic drone di atas peta (zoom >= 16).
+ * Jika pengguna zoom out di bawah level 16 (zoom < 16), citra tidak akan dimuat/ditampilkan.
+ */
+export const MIN_ORTHO_ZOOM = 16;
+
 export const DEFAULT_MAP_VIEW = {
   center: [-1.22147, 116.859588] as [number, number],
   zoom: 16,
@@ -20,6 +42,20 @@ export const DEFAULT_MAP_VIEW = {
     [-1.2186297002884836, 116.863202751651],
   ] as [[number, number], [number, number]],
 } as const;
+
+/**
+ * Level zoom minimum untuk menampilkan fitur area (Poligon, Persegi/Square, AOI, klasifikasi tutupan lahan).
+ * Di bawah level ini (zoom < 15), layer poligon area disembunyikan agar tampilan overview tetap bersih.
+ */
+export const MIN_POLYGON_FEATURE_ZOOM = 15;
+
+/**
+ * Level zoom minimum untuk menampilkan fitur titik detail (Point, Dot, Titik, Penanda Kecil, Deteksi Pohon, Anotasi Titik, Marker Foto Drone).
+ * Di bawah level ini (zoom < 17), seluruh penanda titik detail otomatis disembunyikan.
+ */
+export const MIN_POINT_FEATURE_ZOOM = 17;
+
+export const MIN_FEATURE_ZOOM = MIN_POLYGON_FEATURE_ZOOM;
 
 export const BASEMAPS = {
   osm: {
@@ -35,15 +71,6 @@ export const BASEMAPS = {
     attribution:
       "Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community",
     maxNativeZoom: 18,
-  },
-  positron: {
-    name: "CartoDB Positron",
-    url: `https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${
-      import.meta.env.VITE_CARTO_API_KEY || ""
-    }`,
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxNativeZoom: 19,
   },
 } as const;
 

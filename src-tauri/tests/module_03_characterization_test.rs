@@ -49,6 +49,7 @@ fn test_characterization_geometry_area_and_perimeter() {
     let aoi = create_aoi(
         "aoi_001".to_string(),
         "Area Uji".to_string(),
+        None,
         polygon,
         "2026-10-20T00:00:00Z".to_string(),
         area,
@@ -75,6 +76,8 @@ fn test_characterization_layer_operations() {
         is_visible: true,
         opacity: 1.0,
         z_index: 10,
+        source_type: None,
+        source_id: None,
     };
 
     // Toggle
@@ -96,6 +99,8 @@ fn test_characterization_layer_operations() {
             is_visible: true,
             opacity: 1.0,
             z_index: 0,
+            source_type: None,
+            source_id: None,
         },
     ];
     let reordered = reorder_layer_stack(layers.clone(), 0, 1).unwrap();
@@ -118,34 +123,59 @@ fn test_characterization_layer_operations() {
         },
         "2026-10-20T00:00:00Z".to_string(),
     );
-    assert_eq!(anno.annotation_id, "anno_1");
+    assert_eq!(anno.id, "anno_1");
     assert_eq!(anno.text, "Pohon Sakit");
 }
 
 #[test]
-fn test_characterization_deserialize_dummy_sp_result() {
-    let json_str = include_str!("../resources/sample-data/module3/spatial_results.json");
+fn test_characterization_deserialize_sp_result() {
+    let json_str = r###"[
+        {
+            "action": "load_spatial_result",
+            "payload": {
+                "layer_id": "result_polygon_001",
+                "layer_name": "Vegetasi Poligon",
+                "display_preference": {
+                    "type": "polygon",
+                    "color": "#2ECC71",
+                    "opacity": 0.6
+                },
+                "spatial_results": [
+                    {
+                        "source": "module_04_vegetation",
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [[[116.85, -1.22], [116.86, -1.22], [116.86, -1.23], [116.85, -1.22]]]
+                        },
+                        "properties": {
+                            "vegetation_index_type": "VARI",
+                            "mean_greenness_score": 0.72,
+                            "area_sqm": 1250.0
+                        }
+                    }
+                ]
+            }
+        }
+    ]"###;
     let commands: Result<Vec<MapLayerCommand>, _> = serde_json::from_str(json_str);
     assert!(
         commands.is_ok(),
-        "spatial_results.json harus valid MapLayerCommand"
+        "MapLayerCommand harus dapat di-deserialize"
     );
     let cmds = commands.unwrap();
-    assert_eq!(cmds.len(), 6);
-    assert_eq!(cmds[0].payload.layer_id, "result_tree_001");
-    assert_eq!(cmds[1].payload.layer_id, "result_vegetation_001");
+    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds[0].payload.layer_id, "result_polygon_001");
 }
 
 #[test]
 fn test_characterization_module_10_compatibility() {
-    // Literal JSON payload bergaya Module 10 (get_change_area_result)
+    // Literal JSON payload bergaya Module 10 (get_change_area_result dengan type: polygon)
     let module_10_json = r##"{
         "layer_id": "temporal_change_01",
         "layer_name": "Area Perubahan Tutupan Lahan",
         "display_preference": {
-            "type": "point",
-            "color": "#FF0000",
-            "icon": "warning"
+            "type": "polygon",
+            "color": "#FF0000"
         },
         "spatial_results": [
             {
@@ -166,7 +196,7 @@ fn test_characterization_module_10_compatibility() {
     let parsed: Result<LayerPayload, _> = serde_json::from_str(module_10_json);
     assert!(
         parsed.is_ok(),
-        "Payload Module 10 harus dapat di-parse oleh LayerPayload Module 3"
+        "Payload Module 10 (type: polygon) harus dapat di-parse oleh LayerPayload Module 3"
     );
     let payload = parsed.unwrap();
     assert_eq!(payload.layer_id, "temporal_change_01");

@@ -1,33 +1,56 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { useMap } from "react-leaflet";
 import { Button, Tooltip } from "@blueprintjs/core";
 import * as L from "leaflet";
 import { DEFAULT_MAP_VIEW } from "../config/mapConfig";
-import { useImageMarkers } from "../hooks/useImageMarkers";
+import { useMapZoom } from "../hooks/useMapZoom";
 import "../styles/MapViewControlBar.css";
 
 export const MapViewControlBar: React.FC = () => {
   const map = useMap();
-  const [zoom, setZoom] = useState(map.getZoom());
-  const { markers } = useImageMarkers(500);
-
-  // Sync state zoom dengan peta Leaflet asli
-  useEffect(() => {
-    const handleZoom = () => setZoom(map.getZoom());
-    map.on("zoomend", handleZoom);
-    return () => {
-      map.off("zoomend", handleZoom);
-    };
-  }, [map]);
+  const zoom = useMapZoom();
 
   const handleZoomIn = () => map.zoomIn();
   const handleZoomOut = () => map.zoomOut();
 
-  // FitBounds: Membingkai semua foto proyek ke layar
+  // FitBounds: Membingkai keseluruhan layer proyek (AOI, Spatial Results, Orthomosaic) atau fallback ke default bounds
   const handleFitBounds = () => {
-    if (markers.length === 0) return;
-    const bounds = L.latLngBounds(markers.map((m) => [m.latitude, m.longitude]));
-    map.fitBounds(bounds, { padding: [40, 40], animate: true, duration: 1.5 });
+    const bounds = L.latLngBounds([]);
+
+    map.eachLayer((layer) => {
+      // Abaikan base tile layers
+      if (layer instanceof L.TileLayer) return;
+
+      if (
+        "getBounds" in layer &&
+        typeof (layer as { getBounds: () => L.LatLngBounds }).getBounds === "function"
+      ) {
+        try {
+          const b = (layer as { getBounds: () => L.LatLngBounds }).getBounds();
+          if (b && typeof b.isValid === "function" && b.isValid()) {
+            bounds.extend(b);
+          }
+        } catch {
+          // Abaikan layer tanpa bounds valid
+        }
+      } else if (
+        "getLatLng" in layer &&
+        typeof (layer as { getLatLng: () => L.LatLng }).getLatLng === "function"
+      ) {
+        try {
+          const latlng = (layer as { getLatLng: () => L.LatLng }).getLatLng();
+          if (latlng) bounds.extend(latlng);
+        } catch {
+          // Abaikan layer tanpa latlng valid
+        }
+      }
+    });
+
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [40, 40], animate: true, duration: 1.5 });
+    } else {
+      map.fitBounds(DEFAULT_MAP_VIEW.bounds, { padding: [40, 40], animate: true, duration: 1.5 });
+    }
   };
 
   // Reset North / Kembali ke tengah orthomosaic Kariangau

@@ -3,14 +3,17 @@ import { MapContainer, TileLayer, ScaleControl } from "react-leaflet";
 import type * as L from "leaflet";
 import { DEFAULT_MAP_VIEW, BASEMAPS, type BasemapKey } from "../config/mapConfig";
 
-import { useImageMarkers } from "../hooks/useImageMarkers";
-import { MapSyncHandler } from "./MapSyncHandler";
 import { MapViewControlBar } from "./MapViewControlBar";
 import { SpatialResultLayer } from "./SpatialResultLayer";
+import { SavedAoiLayer } from "./SavedAoiLayer";
+import { SavedOrthoImageLayer } from "./SavedOrthoImageLayer";
 import { ManagedMapLayers } from "./ManagedMapLayers";
-import { AnnotationMarkers } from "../molecules/AnnotationMarkers";
+import { AnnotationLayer } from "./AnnotationLayer";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
+import type { DroneImageMetadata } from "../types/marker";
+
+const EMPTY_MARKERS: ReadonlyArray<DroneImageMetadata> = [];
 
 export interface MapCanvasProps {
   /** Basemap aktif yang sedang digunakan */
@@ -35,8 +38,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   onMapReady,
   onActiveLayersChange,
 }) => {
-  const { markers } = useImageMarkers(500);
-
   return (
     <MapContainer
       center={DEFAULT_MAP_VIEW.center}
@@ -48,19 +49,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       zoomControl={false}
       ref={onMapReady}
     >
-      <MapSyncHandler />
-
-      <SpatialResultLayer onLayersChange={onActiveLayersChange} />
-
       {/* =========================
-          MAP CONTROLS
-          ========================= */}
-      <MapViewControlBar />
-
-      <ScaleControl position="bottomright" imperial={false} />
-
-      {/* =========================
-          BASEMAP
+          BASEMAP (TILE LAYER - TILE PANE Z-INDEX 200)
           ========================= */}
       <TileLayer
         key={activeBasemap}
@@ -71,14 +61,36 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       />
 
       {/* =========================
-          SPATIAL ANNOTATIONS
+          ORTHOMOSAIC IMAGE OVERLAYS (ORTHO PANE Z-INDEX 250)
           ========================= */}
-      <AnnotationMarkers annotations={annotations} />
+      <SavedOrthoImageLayer layers={layers} />
 
       {/* =========================
-          IMAGE LOCATION MARKERS
+          AREA OF INTEREST (AOI PANE Z-INDEX 350)
           ========================= */}
-      <ManagedMapLayers layers={layers} markers={markers} />
+      <SavedAoiLayer />
+
+      {/* =========================
+          SPATIAL RESULTS (OVERLAY PANE Z-INDEX 400 & MARKER PANE 600)
+          ========================= */}
+      <SpatialResultLayer layers={layers} onLayersChange={onActiveLayersChange} />
+
+      {/* =========================
+          SPATIAL ANNOTATIONS (OVERLAY PANE Z-INDEX 400 & MARKER PANE 600)
+          ========================= */}
+      <AnnotationLayer annotations={annotations} />
+
+      {/* =========================
+          IMAGE LOCATION MARKERS (MARKER PANE Z-INDEX 600)
+          ========================= */}
+      <ManagedMapLayers layers={layers} markers={EMPTY_MARKERS} />
+
+      {/* =========================
+          MAP CONTROLS
+          ========================= */}
+      <MapViewControlBar />
+
+      <ScaleControl position="bottomright" imperial={false} />
     </MapContainer>
   );
 };

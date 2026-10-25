@@ -11,7 +11,7 @@ export const MapTypeThumbnail: React.FC<Props> = ({
   onToggle,
   isSidebarCollapsed,
 }) => {
-  const isOsm = activeBasemap === "osm" || activeBasemap === "positron";
+  const isOsm = activeBasemap === "osm";
   // Gunakan tile yang lebih reliable untuk preview
   const bgImage = isOsm
     ? "url(https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/8/12)" // Satellite

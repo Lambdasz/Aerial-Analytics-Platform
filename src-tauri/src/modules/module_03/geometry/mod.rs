@@ -1,9 +1,11 @@
 //! Modul geometri murni dan pengukuran spasial.
 
+pub mod commands;
 pub mod haversine;
 pub mod spherical_excess;
 pub mod validation;
 
+pub use commands::*;
 pub use haversine::*;
 pub use spherical_excess::*;
 pub use validation::*;
@@ -19,6 +21,7 @@ pub use crate::modules::module_03::types::aoi_type::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::module_03::types::SpatialGeometry;
 
     fn sample_square() -> Polygon {
         vec![vec![
@@ -95,6 +98,7 @@ mod tests {
         let aoi = create_aoi(
             "aoi_001".into(),
             "Test".into(),
+            None,
             sample_square(),
             "2026-09-14T19:00:15Z".into(),
             12500.5,
@@ -103,5 +107,43 @@ mod tests {
         assert_eq!(aoi.r#type, "Feature");
         assert_eq!(aoi.geometry.r#type, "Polygon");
         assert_eq!(aoi.properties.aoi_id, "aoi_001");
+    }
+
+    #[test]
+    fn spatial_geometry_polygon_validation() {
+        let valid_geom = SpatialGeometry::Polygon {
+            coordinates: vec![vec![
+                vec![116.833, -1.270],
+                vec![116.834, -1.270],
+                vec![116.834, -1.271],
+                vec![116.833, -1.271],
+                vec![116.833, -1.270],
+            ]],
+        };
+        assert!(valid_geom.validate().is_ok());
+
+        let invalid_range_geom = SpatialGeometry::Polygon {
+            coordinates: vec![vec![
+                vec![195.833, -1.270],
+                vec![116.834, -1.270],
+                vec![116.834, -1.271],
+                vec![116.833, -1.271],
+                vec![195.833, -1.270],
+            ]],
+        };
+        assert!(invalid_range_geom.validate().is_err());
+    }
+
+    #[test]
+    fn spatial_geometry_point_validation() {
+        let valid_point = SpatialGeometry::Point {
+            coordinates: vec![116.833, -1.270],
+        };
+        assert!(valid_point.validate().is_ok());
+
+        let invalid_coord = SpatialGeometry::Point {
+            coordinates: vec![116.833, -95.0],
+        };
+        assert!(invalid_coord.validate().is_err());
     }
 }

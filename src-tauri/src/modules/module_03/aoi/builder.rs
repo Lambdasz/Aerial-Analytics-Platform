@@ -19,6 +19,7 @@ use crate::modules::module_03::types::aoi_type::{AoiFeature, AoiGeometry, AoiPro
 /// let aoi = create_aoi(
 ///     "aoi_001".into(),
 ///     "Area Analisis".into(),
+///     Some("Analisis".into()),
 ///     polygon,
 ///     "2026-09-14T19:00:15Z".into(),
 ///     12500.5,
@@ -30,6 +31,7 @@ use crate::modules::module_03::types::aoi_type::{AoiFeature, AoiGeometry, AoiPro
 pub fn create_aoi(
     aoi_id: String,
     name: String,
+    aoi_type: Option<String>,
     polygon: Polygon,
     created_at: String,
     area_sq_m: f64,
@@ -40,6 +42,7 @@ pub fn create_aoi(
         properties: AoiProperties {
             aoi_id,
             name,
+            aoi_type,
             calculated_area_sq_m: area_sq_m,
             perimeter_m,
             created_at,

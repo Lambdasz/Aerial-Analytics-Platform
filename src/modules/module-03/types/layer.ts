@@ -5,13 +5,18 @@ export type LayerState = {
   is_visible: boolean;
   opacity: number;
   z_index: number;
+  source_type?: string;
+  source_id?: string;
 };
 
 export type AnnotationFeature = {
-  annotation_id: string;
+  id: string;
+  schema_version?: number;
   text: string;
   geometry: SpatialGeometry;
   created_at: string;
+  /** Backward compatibility alias */
+  annotation_id?: string;
 };
 
 export type SpatialGeometry =

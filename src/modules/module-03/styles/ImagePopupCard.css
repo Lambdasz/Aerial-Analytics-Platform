@@ -16,6 +16,29 @@
   display: none !important; /* Hilangkan panah segitiga default Leaflet yang kaku */
 }
 
+/* Close button styling for Apple-style cards */
+.leaflet-popup-close-button {
+  top: 12px !important;
+  right: 14px !important;
+  color: #94a3b8 !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 50% !important;
+  text-decoration: none !important;
+  z-index: 10 !important;
+  transition: all 0.15s ease !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: #0f172a !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+
 /* Glassmorphism Popup */
 .glass-popup-card {
   background: var(--color-gallery-white);
@@ -101,4 +124,13 @@
 .apple-popup-button.secondary:hover {
   background: var(--color-control-gray);
   transform: translateY(-1px);
+}
+
+/* Interaktif hover outline untuk citra orthomosaic mode hemat memori */
+.ortho-outline-rect {
+  cursor: pointer;
+  transition:
+    stroke-width 0.2s ease,
+    stroke-opacity 0.2s ease,
+    fill-opacity 0.2s ease;
 }

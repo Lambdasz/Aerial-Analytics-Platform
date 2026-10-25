@@ -16,6 +16,8 @@ export type Polygon = Coordinate[][];
 export interface AoiProperties {
   aoi_id: string;
   name: string;
+  aoi_type?: string;
+  tpe?: string;
   calculated_area_sq_m: number;
   perimeter_m: number;
   created_at: string;

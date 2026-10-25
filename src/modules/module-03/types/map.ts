@@ -12,6 +12,8 @@
  * bukan deteksi objek bangunan individual).
  */
 
+import type { FieldDef } from "./spatialResult";
+
 export interface MapLayerCommand {
   action: string;
   payload: LayerPayload;
@@ -22,28 +24,53 @@ export interface LayerPayload {
   layer_name: string;
   display_preference: LayerDisplayMode;
   spatial_results: SpatialResult[];
+  updated_at?: string;
+  concurrency_token?: string;
 }
 
 export type LayerDisplayMode =
-  | { type: "polygon"; color: string; opacity: number }
-  | { type: "point"; color: string; icon: string }
+  | {
+      type: "polygon";
+      color: string;
+      opacity: number;
+      image_url?: string | null;
+      fields?: FieldDef[] | null;
+    }
+  | {
+      type: "point";
+      color: string;
+      icon: string;
+      image_url?: string | null;
+      fields?: FieldDef[] | null;
+    }
+  | {
+      type: "line";
+      color: string;
+      weight: number;
+      image_url?: string | null;
+      fields?: FieldDef[] | null;
+    }
   | {
       type: "image_overlay";
       image_url: string;
       opacity: number;
       bounds: [[number, number], [number, number]];
+      fields?: FieldDef[] | null;
     };
 
 export interface SpatialResult {
   source: string;
   geometry: SpatialGeometry;
-  properties: SpatialProperties;
+  properties: Record<string, unknown>;
+  image_url?: string;
+  edited_fields?: string[] | null;
 }
 
 // Koordinat mengikuti urutan GeoJSON: [longitude, latitude]
 export type SpatialGeometry =
   | { type: "Point"; coordinates: [number, number] }
   | { type: "Polygon"; coordinates: number[][][] }
+  | { type: "MultiPolygon"; coordinates: number[][][][] }
   | { type: "LineString"; coordinates: [number, number][] }
   | { type: "MultiLineString"; coordinates: [number, number][][] };
 
@@ -52,13 +79,18 @@ export type SpatialGeometry =
  * Sesuai dengan `SpatialProperties` enum di backend Rust.
  */
 export type SpatialProperties =
-  TreeProperties | VegetationProperties | LandCoverProperties | InspectionPathProperties;
+  | TreeProperties
+  | VegetationProperties
+  | LandCoverProperties
+  | InspectionPathProperties
+  | OrthoProperties;
 
 /** Modul 7 — Tree Detection & Counting */
 export interface TreeProperties {
   tree_id: string;
   confidence: number;
   height_est_m: number;
+  image_url?: string;
 }
 
 /** Modul 4 — RGB Vegetation Detection */
@@ -67,6 +99,7 @@ export interface VegetationProperties {
   vegetation_index_type: string;
   mean_greenness_score: number;
   area_sqm: number;
+  image_url?: string;
 }
 
 /**
@@ -79,6 +112,7 @@ export interface LandCoverProperties {
   land_cover_class: string;
   confidence: number;
   area_sqm: number;
+  image_url?: string;
 }
 
 /** Jalur Inspeksi */
@@ -86,6 +120,16 @@ export interface InspectionPathProperties {
   path_id: string;
   type: string;
   length_m: number;
+  image_url?: string;
+}
+
+/** Citra Orthomosaic (JPG/PNG) */
+export interface OrthoProperties {
+  ortho_id: string;
+  crs: string;
+  resolution_cm: number;
+  area_sqm: number;
+  image_url?: string;
 }
 
 // Type guards untuk membedakan tipe properties
@@ -103,4 +147,8 @@ export function isLandCoverProperties(p: SpatialProperties): p is LandCoverPrope
 
 export function isInspectionPathProperties(p: SpatialProperties): p is InspectionPathProperties {
   return "path_id" in p;
+}
+
+export function isOrthoProperties(p: SpatialProperties): p is OrthoProperties {
+  return "ortho_id" in p;
 }

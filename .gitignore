@@ -44,3 +44,6 @@ __pycache__/
 runs/*
 !runs/.gitkeep
 src/map/dummy_image/drone_ortho.png
+
+map_storage/
+map_storage_backup/
