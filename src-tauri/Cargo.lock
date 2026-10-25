@@ -13,12 +13,14 @@ name = "aerial-analytics-platform"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "crc32fast",
  "fs4",
  "geojson",
  "image",
  "jpeg-decoder",
  "jpeg-encoder",
  "kamadak-exif",
+ "miniz_oxide 0.8.9",
  "png 0.17.16",
  "serde",
  "serde_json",

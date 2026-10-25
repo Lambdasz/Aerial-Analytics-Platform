@@ -14,6 +14,7 @@ pub fn save_spatial_result(
     app: tauri::AppHandle,
     payload: LayerPayload,
 ) -> Result<LayerPayload, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     let saved = get_global_state().save_spatial_result(payload)?;
     let _ = app.emit("spatial_result:saved", &saved);
     Ok(saved)
@@ -43,6 +44,7 @@ pub fn update_saved_spatial_result(
     app: tauri::AppHandle,
     payload: UpdateSpatialResultPayload,
 ) -> Result<LayerPayload, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     let updated = get_global_state().update_spatial_result(payload)?;
     let _ = app.emit("spatial_result:saved", &updated);
     Ok(updated)
@@ -62,6 +64,7 @@ pub fn delete_saved_spatial_result(
     app: tauri::AppHandle,
     layer_id: String,
 ) -> Result<bool, CommandError> {
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     let deleted = get_global_state().delete_saved_spatial_result(&layer_id)?;
     let _ = app.emit(
         "spatial_result:deleted",

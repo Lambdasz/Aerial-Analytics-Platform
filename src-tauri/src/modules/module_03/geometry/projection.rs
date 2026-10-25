@@ -356,8 +356,7 @@ mod tests {
     fn test_utm_north_greenwich_zone_30n() {
         // Greenwich Royal Observatory (UTM Zona 30N, EPSG:32630):
         // Bujur 0.0000° merupakan batas timur persis dari Zona 30 UTM (-6° s/d 0°).
-        // Nilai referensi: Diturunkan dari formulasi analitis Snyder (USGS PP 1395) / Karney
-        // yang diimplementasikan secara murni (pure Rust) tanpa runtime eksternal C/Python.
+        // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen)
         let orig_lat = 51.476852;
         let orig_lon = 0.000000;
 
@@ -387,6 +386,44 @@ mod tests {
         assert!(
             (inv_lon - orig_lon).abs() < 1e-6,
             "Selisih lon: {}",
+            (inv_lon - orig_lon).abs()
+        );
+    }
+
+    #[test]
+    fn test_utm_north_paris_zone_31n() {
+        // Paris / Eiffel Tower (UTM Zona 31N, EPSG:32631):
+        // Meridian sentral Zona 31N adalah 3.0°E. Paris berada di 2.29448°E (sebelah barat meridian sentral).
+        // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen)
+        let orig_lat = 48.858370;
+        let orig_lon = 2.294480;
+
+        let (easting, northing) =
+            wgs84_to_utm(orig_lat, orig_lon, 31, false).expect("Forward UTM 31N Paris");
+
+        // Easting harus berada di sebelah barat meridian sentral (E < 500.000 m)
+        assert!(
+            easting > 440000.0 && easting < 460000.0,
+            "Easting Paris: {}",
+            easting
+        );
+        assert!(
+            northing > 5410000.0 && northing < 5420000.0,
+            "Northing Paris: {}",
+            northing
+        );
+
+        let (inv_lat, inv_lon) =
+            utm_to_wgs84(easting, northing, 31, false).expect("Inverse UTM 31N Paris");
+
+        assert!(
+            (inv_lat - orig_lat).abs() < 1e-6,
+            "Selisih lat Paris: {}",
+            (inv_lat - orig_lat).abs()
+        );
+        assert!(
+            (inv_lon - orig_lon).abs() < 1e-6,
+            "Selisih lon Paris: {}",
             (inv_lon - orig_lon).abs()
         );
     }

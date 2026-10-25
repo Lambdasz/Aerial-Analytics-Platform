@@ -7,14 +7,13 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use image::imageops;
-
 use super::constants::{
     DISPLAY_MIN_DIMENSION_PX, DISPLAY_TARGET_DIMENSION_PX, MAX_DISPLAY_FILE_SIZE_BYTES,
     MAX_IMAGE_DIMENSION_PX, MAX_IMAGE_FILE_SIZE_BYTES, MAX_PROGRESSIVE_JPEG_PIXELS,
     PREVIEW_TARGET_DIMENSION_PX,
 };
 use super::job_manager::{save_job_record, CancellationToken, JobRegistrationGuard, StagingGuard};
+use super::streaming_resampler::{ChannelCount, StreamingResampler};
 use super::types::{
     BoundsMetadata, ImageCategory, ImportDualModePayload, ImportImagePayload, JobRecord,
     StoredImageMetadata, TechnicalMetadata,
@@ -167,11 +166,13 @@ pub fn generate_display_preview(
     if let Ok(img) = decoded_img {
         let mut max_dim = PREVIEW_TARGET_DIMENSION_PX.min(width.max(height));
         loop {
-            let scale = max_dim as f32 / width.max(height) as f32;
-            let target_w = ((width as f32 * scale).round() as u32).max(1);
-            let target_h = ((height as f32 * scale).round() as u32).max(1);
-
-            let resized = img.resize(target_w, target_h, image::imageops::FilterType::Nearest);
+            let resized = if max_dim >= width.max(height) {
+                img.clone()
+            } else if let Ok(r) = resample_dynamic_image_box_filter(&img, max_dim) {
+                r
+            } else {
+                break;
+            };
             if resized
                 .save_with_format(&display_jpg, image::ImageFormat::Jpeg)
                 .is_ok()
@@ -445,62 +446,47 @@ pub fn detect_jpeg_progressive_and_dimensions(
 }
 
 /// Mendecode baseline JPEG dengan IDCT Downscaling ke batas target (4.096 px)
-/// tanpa mengalokasikan buffer unscaled 144 MP penuh.
+/// lalu disuapkan per baris ke StreamingResampler (Box filter / Area Averaging)
+/// tanpa mengalokasikan intermediate resize buffer.
 pub fn decode_and_scale_jpeg_idct(
     source_path: &Path,
     target_dim: u32,
 ) -> Result<image::RgbImage, OrthoImportError> {
-    let file = File::open(source_path)
-        .map_err(|e| OrthoImportError::FileKorup(format!("Gagal membuka berkas JPEG: {}", e)))?;
-    let buf_reader = BufReader::new(file);
+    let decoded =
+        crate::modules::module_03::ortho_source::jpeg_wrapper::decode_jpeg_with_idct_scale(
+            source_path,
+            target_dim,
+        )?;
+    let (scaled_w, scaled_h) = (decoded.width, decoded.height);
 
-    let mut decoder = jpeg_decoder::Decoder::new(buf_reader);
-    decoder.read_info().map_err(|e| {
-        OrthoImportError::FileKorup(format!("Gagal membaca info header JPEG: {}", e))
-    })?;
-
-    let info = decoder
-        .info()
-        .ok_or_else(|| OrthoImportError::FileKorup("Header JPEG tidak memuat info".to_string()))?;
-    let (orig_w, orig_h) = (info.width as u32, info.height as u32);
-
-    let longest = orig_w.max(orig_h);
-    let (scaled_w, scaled_h) = if longest > target_dim {
-        let scale = target_dim as f32 / longest as f32;
-        let tw = ((orig_w as f32 * scale).round() as u16).max(1);
-        let th = ((orig_h as f32 * scale).round() as u16).max(1);
-        // Terapkan IDCT scaling pada decoder sebelum decoding piksel
-        decoder.scale(tw, th).map_err(|e| {
-            OrthoImportError::InternalError(format!("Gagal mengatur IDCT scale: {}", e))
-        })?
+    let cur_longest = scaled_w.max(scaled_h);
+    if cur_longest > target_dim && target_dim > 0 {
+        let mut resampler =
+            StreamingResampler::new(scaled_w, scaled_h, target_dim, ChannelCount::Rgb)?;
+        let stride = scaled_w as usize * 3;
+        for y in 0..scaled_h {
+            let row_start = y as usize * stride;
+            let row_end = row_start + stride;
+            resampler.push_row_u8(y, &decoded.pixels[row_start..row_end], None)?;
+        }
+        let resampled = resampler.finish()?;
+        image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data).ok_or_else(
+            || {
+                OrthoImportError::InternalError(
+                    "Ukuran buffer hasil resampling JPEG tidak sesuai".to_string(),
+                )
+            },
+        )
     } else {
-        (orig_w as u16, orig_h as u16)
-    };
-
-    let pixels = decoder
-        .decode()
-        .map_err(|e| OrthoImportError::FileKorup(format!("Gagal mendecode JPEG: {}", e)))?;
-
-    let rgb_img =
-        image::RgbImage::from_raw(scaled_w as u32, scaled_h as u32, pixels).ok_or_else(|| {
+        image::RgbImage::from_raw(scaled_w, scaled_h, decoded.pixels).ok_or_else(|| {
             OrthoImportError::InternalError("Ukuran buffer piksel JPEG tidak sesuai".to_string())
-        })?;
-
-    // Jika hasil IDCT masih sedikit lebih besar dari target_dim (misal 5.000 px),
-    // downsample presisi ke target_dim
-    let cur_longest = (scaled_w as u32).max(scaled_h as u32);
-    if cur_longest > target_dim {
-        let scale = target_dim as f32 / cur_longest as f32;
-        let final_w = ((scaled_w as f32 * scale).round() as u32).max(1);
-        let final_h = ((scaled_h as f32 * scale).round() as u32).max(1);
-        let resized = imageops::resize(&rgb_img, final_w, final_h, imageops::FilterType::Triangle);
-        Ok(resized)
-    } else {
-        Ok(rgb_img)
+        })
     }
 }
 
-/// Mendecode PNG dan memeriksa channel alpha.
+/// Mendecode PNG dan memeriksa channel alpha menggunakan StreamingResampler berbasis baris.
+/// Mencegah alokasi buffer frame 100 MP penuh untuk PNG non-interlaced (Reader::next_row).
+/// Untuk PNG interlaced (Adam7), batas aman ditetapkan <= 25 MP karena butuh frame penuh.
 pub fn decode_and_scale_png(
     source_path: &Path,
     target_dim: u32,
@@ -517,6 +503,7 @@ pub fn decode_and_scale_png(
     let info = reader.info();
     let (orig_w, orig_h) = (info.width, info.height);
     let color_type = info.color_type;
+    let is_interlaced = info.interlaced;
 
     // Penolakan Kasus Tepi: PNG 16-bit
     if info.bit_depth == png::BitDepth::Sixteen {
@@ -537,47 +524,138 @@ pub fn decode_and_scale_png(
     let has_alpha =
         color_type == png::ColorType::Rgba || color_type == png::ColorType::GrayscaleAlpha;
 
-    if orig_w > MAX_IMAGE_DIMENSION_PX || orig_h > MAX_IMAGE_DIMENSION_PX {
+    let total_pixels = orig_w as u64 * orig_h as u64;
+
+    // Batas piksel Opsi A umum (144 MP)
+    if orig_w > MAX_IMAGE_DIMENSION_PX
+        || orig_h > MAX_IMAGE_DIMENSION_PX
+        || total_pixels > 144_000_000
+    {
         return Err(OrthoImportError::MelebihiBatas {
             width: orig_w,
             height: orig_h,
             max_dimension: MAX_IMAGE_DIMENSION_PX,
             message: format!(
-                "Dimensi PNG {}x{} melebihi batas aman {} piksel.",
-                orig_w, orig_h, MAX_IMAGE_DIMENSION_PX
+                "Dimensi PNG {}x{} melebihi batas aman 144 MP.",
+                orig_w, orig_h
             ),
         });
     }
 
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let output_info = reader
-        .next_frame(&mut buf)
-        .map_err(|e| OrthoImportError::FileKorup(format!("Gagal mendecode frame PNG: {}", e)))?;
-    buf.truncate(output_info.buffer_size());
+    // Batas khusus PNG Interlaced (Adam7) <= 25 MP:
+    // Karena Adam7 memerlukan dekompresi buffer frame penuh di memori untuk mengumpulkan semua pass.
+    if is_interlaced && total_pixels > 25_000_000 {
+        return Err(OrthoImportError::MelebihiBatas {
+            width: orig_w,
+            height: orig_h,
+            max_dimension: 5000,
+            message: format!(
+                "PNG interlaced (Adam7) dengan resolusi {}x{} ({:.1} MP) melebihi batas aman 25 MP karena memerlukan alokasi frame penuh di memori. Harap simpan citra sebagai PNG non-interlaced atau JPEG.",
+                orig_w, orig_h, total_pixels as f64 / 1_000_000.0
+            ),
+        });
+    }
 
-    let dynamic_img = if has_alpha {
-        let rgba = image::RgbaImage::from_raw(output_info.width, output_info.height, buf)
-            .ok_or_else(|| {
-                OrthoImportError::InternalError("Buffer RGBA PNG tidak sesuai".to_string())
-            })?;
-        image::DynamicImage::ImageRgba8(rgba)
+    let channel_count = if has_alpha {
+        ChannelCount::Rgba
     } else {
-        let rgb = image::RgbImage::from_raw(output_info.width, output_info.height, buf)
-            .ok_or_else(|| {
-                OrthoImportError::InternalError("Buffer RGB PNG tidak sesuai".to_string())
-            })?;
-        image::DynamicImage::ImageRgb8(rgb)
+        ChannelCount::Rgb
     };
 
-    let longest = orig_w.max(orig_h);
-    if longest > target_dim {
-        let scale = target_dim as f32 / longest as f32;
-        let tw = ((orig_w as f32 * scale).round() as u32).max(1);
-        let th = ((orig_h as f32 * scale).round() as u32).max(1);
-        let resized = dynamic_img.resize(tw, th, imageops::FilterType::Triangle);
-        Ok((resized, has_alpha))
+    let mut resampler = StreamingResampler::new(orig_w, orig_h, target_dim, channel_count)?;
+
+    if is_interlaced {
+        // Interlaced (Adam7) <= 25 MP: decode frame penuh lalu disuapkan per baris ke resampler
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let output_info = reader.next_frame(&mut buf).map_err(|e| {
+            OrthoImportError::FileKorup(format!("Gagal mendecode frame PNG interlaced: {}", e))
+        })?;
+        buf.truncate(output_info.buffer_size());
+
+        let stride = match color_type {
+            png::ColorType::Rgba => 4,
+            png::ColorType::Rgb => 3,
+            png::ColorType::Grayscale => 1,
+            png::ColorType::GrayscaleAlpha => 2,
+            _ => 3,
+        };
+
+        for y in 0..orig_h {
+            let row_start = (y as usize * orig_w as usize) * stride;
+            let row_end = row_start + orig_w as usize * stride;
+            let row_slice = &buf[row_start..row_end];
+
+            match color_type {
+                png::ColorType::Rgba | png::ColorType::Rgb => {
+                    resampler.push_row_u8(y, row_slice, None)?;
+                }
+                png::ColorType::Grayscale => {
+                    let mut rgb_row = Vec::with_capacity(orig_w as usize * 3);
+                    for &g in row_slice {
+                        rgb_row.extend_from_slice(&[g, g, g]);
+                    }
+                    resampler.push_row_u8(y, &rgb_row, None)?;
+                }
+                png::ColorType::GrayscaleAlpha => {
+                    let mut rgba_row = Vec::with_capacity(orig_w as usize * 4);
+                    for chunk in row_slice.chunks_exact(2) {
+                        rgba_row.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+                    }
+                    resampler.push_row_u8(y, &rgba_row, None)?;
+                }
+                _ => {}
+            }
+        }
     } else {
-        Ok((dynamic_img, has_alpha))
+        // Non-interlaced: streaming langsung per baris via reader.next_row()!
+        // Alokasi memori HANYA 1 baris input (< 50 KB), bukan 400 MB!
+        let mut y_in = 0u32;
+        while let Some(row) = reader
+            .next_row()
+            .map_err(|e| OrthoImportError::FileKorup(format!("Gagal membaca baris PNG: {}", e)))?
+        {
+            let row_slice = row.data();
+            match color_type {
+                png::ColorType::Rgba | png::ColorType::Rgb => {
+                    resampler.push_row_u8(y_in, row_slice, None)?;
+                }
+                png::ColorType::Grayscale => {
+                    let mut rgb_row = Vec::with_capacity(orig_w as usize * 3);
+                    for &g in row_slice {
+                        rgb_row.extend_from_slice(&[g, g, g]);
+                    }
+                    resampler.push_row_u8(y_in, &rgb_row, None)?;
+                }
+                png::ColorType::GrayscaleAlpha => {
+                    let mut rgba_row = Vec::with_capacity(orig_w as usize * 4);
+                    for chunk in row_slice.chunks_exact(2) {
+                        rgba_row.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
+                    }
+                    resampler.push_row_u8(y_in, &rgba_row, None)?;
+                }
+                _ => {}
+            }
+            y_in += 1;
+        }
+    }
+
+    let resampled = resampler.finish()?;
+    if has_alpha {
+        let rgba = image::RgbaImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError(
+                    "Buffer RGBA hasil resampling tidak sesuai".to_string(),
+                )
+            })?;
+        Ok((image::DynamicImage::ImageRgba8(rgba), true))
+    } else {
+        let rgb = image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError(
+                    "Buffer RGB hasil resampling tidak sesuai".to_string(),
+                )
+            })?;
+        Ok((image::DynamicImage::ImageRgb8(rgb), false))
     }
 }
 
@@ -647,6 +725,84 @@ pub struct AdaptiveEncodeResult {
     pub warnings: Vec<String>,
 }
 
+/// Resample sebuah DynamicImage ke batas target menggunakan StreamingResampler (Box filter / Area Averaging).
+pub fn resample_dynamic_image_box_filter(
+    image: &image::DynamicImage,
+    target_dim: u32,
+) -> Result<image::DynamicImage, OrthoImportError> {
+    let (orig_w, orig_h) = (image.width(), image.height());
+    let longest = orig_w.max(orig_h);
+    if longest <= target_dim || target_dim == 0 {
+        return Ok(image.clone());
+    }
+
+    let has_alpha = image.color().has_alpha();
+    let channel_count = if has_alpha {
+        ChannelCount::Rgba
+    } else {
+        ChannelCount::Rgb
+    };
+
+    let mut resampler = StreamingResampler::new(orig_w, orig_h, target_dim, channel_count)?;
+    let stride = orig_w as usize * channel_count.channels();
+
+    if has_alpha {
+        let rgba = image.to_rgba8();
+        let raw = rgba.as_raw();
+        for y in 0..orig_h {
+            let start = y as usize * stride;
+            let end = start + stride;
+            resampler.push_row_u8(y, &raw[start..end], None)?;
+        }
+        let resampled = resampler.finish()?;
+        let out_img = image::RgbaImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError("Buffer RGBA resample gagal".to_string())
+            })?;
+        Ok(image::DynamicImage::ImageRgba8(out_img))
+    } else {
+        let rgb = image.to_rgb8();
+        let raw = rgb.as_raw();
+        for y in 0..orig_h {
+            let start = y as usize * stride;
+            let end = start + stride;
+            resampler.push_row_u8(y, &raw[start..end], None)?;
+        }
+        let resampled = resampler.finish()?;
+        let out_img = image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data)
+            .ok_or_else(|| {
+                OrthoImportError::InternalError("Buffer RGB resample gagal".to_string())
+            })?;
+        Ok(image::DynamicImage::ImageRgb8(out_img))
+    }
+}
+
+/// Resample sebuah RgbImage ke batas target menggunakan StreamingResampler (Box filter / Area Averaging).
+pub fn resample_rgb_image_box_filter(
+    rgb: &image::RgbImage,
+    target_dim: u32,
+) -> Result<image::RgbImage, OrthoImportError> {
+    let (orig_w, orig_h) = (rgb.width(), rgb.height());
+    let longest = orig_w.max(orig_h);
+    if longest <= target_dim || target_dim == 0 {
+        return Ok(rgb.clone());
+    }
+
+    let mut resampler = StreamingResampler::new(orig_w, orig_h, target_dim, ChannelCount::Rgb)?;
+    let stride = orig_w as usize * 3;
+    let raw = rgb.as_raw();
+
+    for y in 0..orig_h {
+        let start = y as usize * stride;
+        let end = start + stride;
+        resampler.push_row_u8(y, &raw[start..end], None)?;
+    }
+
+    let resampled = resampler.finish()?;
+    image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data)
+        .ok_or_else(|| OrthoImportError::InternalError("Buffer RGB resample gagal".to_string()))
+}
+
 /// Loop kompresi adaptif untuk memastikan berkas display <= 5 MB:
 /// - Urutan JPEG: Kualitas dulu (85, 80, 75, 70), baru dimensi (3072, 2048, 1536, 1024).
 /// - PNG dengan alpha: Tidak menurunkan resolusi diam-diam, catat resolusi akhir di warnings,
@@ -665,15 +821,12 @@ pub fn adaptive_encode_display(
         let mut cur_dim = DISPLAY_TARGET_DIMENSION_PX.min(orig_w.max(orig_h));
 
         loop {
-            let scale = cur_dim as f32 / orig_w.max(orig_h) as f32;
-            let tw = ((orig_w as f32 * scale).round() as u32).max(1);
-            let th = ((orig_h as f32 * scale).round() as u32).max(1);
-
-            let resized = if tw == orig_w && th == orig_h {
+            let resized = if cur_dim >= orig_w.max(orig_h) {
                 image.clone()
             } else {
-                image.resize(tw, th, imageops::FilterType::Triangle)
+                resample_dynamic_image_box_filter(image, cur_dim)?
             };
+            let (tw, th) = (resized.width(), resized.height());
 
             resized
                 .save_with_format(&display_png, image::ImageFormat::Png)
@@ -738,15 +891,12 @@ pub fn adaptive_encode_display(
         ];
 
         for &dim in &dimension_candidates {
-            let scale = dim as f32 / orig_w.max(orig_h) as f32;
-            let tw = ((orig_w as f32 * scale).round() as u32).max(1);
-            let th = ((orig_h as f32 * scale).round() as u32).max(1);
-
-            let resized = if tw == orig_w && th == orig_h {
+            let resized = if dim >= orig_w.max(orig_h) {
                 rgb_img.clone()
             } else {
-                imageops::resize(&rgb_img, tw, th, imageops::FilterType::Triangle)
+                resample_rgb_image_box_filter(&rgb_img, dim)?
             };
+            let (tw, th) = (resized.width(), resized.height());
 
             for &quality in &quality_candidates {
                 let file = File::create(&display_jpg).map_err(|e| {
@@ -852,21 +1002,44 @@ pub fn execute_import_option_a(
     let ext = validate_magic_bytes(&source_path)
         .map_err(|e| OrthoImportError::FormatTidakDidukung(e.to_string()))?;
 
-    // Periksa fast-fail JPEG progressive > 40 MP
-    if ext == "jpg" {
+    // Periksa fast-fail dimensi dan batas 144 MP serta progressive JPEG > 40 MP
+    let (orig_width, orig_height) = if ext == "jpg" {
         let (is_prog, w, h) = detect_jpeg_progressive_and_dimensions(&source_path)?;
-        if is_prog && (w as u64 * h as u64) > MAX_PROGRESSIVE_JPEG_PIXELS {
+        let total_pixels = w as u64 * h as u64;
+        if is_prog && total_pixels > MAX_PROGRESSIVE_JPEG_PIXELS {
             return Err(OrthoImportError::MelebihiBatas {
                 width: w,
                 height: h,
                 max_dimension: 6324,
-                message: "JPEG progressive di atas 40 MP tidak didukung".to_string(),
+                message: format!(
+                    "JPEG progressive dengan resolusi {}x{} melebihi batas aman 40 MP.",
+                    w, h
+                ),
             });
         }
-    }
-
-    let (orig_width, orig_height) = validate_image_dimensions(&source_path)
-        .map_err(|e| OrthoImportError::FileKorup(e.to_string()))?;
+        if total_pixels > 144_000_000 || w > MAX_IMAGE_DIMENSION_PX || h > MAX_IMAGE_DIMENSION_PX {
+            return Err(OrthoImportError::MelebihiBatas {
+                width: w,
+                height: h,
+                max_dimension: MAX_IMAGE_DIMENSION_PX,
+                message: format!("Dimensi JPEG {}x{} melebihi batas aman 144 MP.", w, h),
+            });
+        }
+        (w, h)
+    } else {
+        let (w, h) = validate_image_dimensions(&source_path)
+            .map_err(|e| OrthoImportError::FileKorup(e.to_string()))?;
+        let total_pixels = w as u64 * h as u64;
+        if total_pixels > 144_000_000 || w > MAX_IMAGE_DIMENSION_PX || h > MAX_IMAGE_DIMENSION_PX {
+            return Err(OrthoImportError::MelebihiBatas {
+                width: w,
+                height: h,
+                max_dimension: MAX_IMAGE_DIMENSION_PX,
+                message: format!("Dimensi PNG {}x{} melebihi batas aman 144 MP.", w, h),
+            });
+        }
+        (w, h)
+    };
 
     // Tentukan Bounding Box (Hierarki: World File -> Sidecar JSON -> Manual)
     let mut bounds_source = "manual".to_string();

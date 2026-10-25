@@ -40,7 +40,7 @@ tauri-plugin-dialog = "2"
 # Module 3 Dependencies
 tiff = "0.9"
 kamadak-exif = "0.6"
-jpeg-decoder = "0.3"
+jpeg-decoder = "=0.3.2"
 png = "0.17"
 fs4 = "1.1"
 
@@ -61,6 +61,8 @@ opt-level = 3
 
 [dev-dependencies]
 jpeg-encoder = "0.7"
+miniz_oxide = "0.8"
+crc32fast = "1.4"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

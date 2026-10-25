@@ -644,3 +644,288 @@ fn test_real_memory_measurement_option_a_large_jpeg() {
         );
     }
 }
+
+#[test]
+fn test_exif_positive_synthetic_extraction_and_orientation_warning() {
+    let tmp = tempdir().expect("tempdir");
+    let jpg_path = tmp.path().join("synthetic_exif.jpg");
+
+    // Bangun segmen JPEG valid dengan EXIF APP1 buatan:
+    // Header TIFF Little Endian ("II", 42, offset IFD0 = 8)
+    // IFD0 memuat:
+    // - Tag 0x010F (Make): "DJI\0"
+    // - Tag 0x0110 (Model): "FC3\0"
+    // - Tag 0x0112 (Orientation): 6 (SHORT, rotasi 90 derajat CW)
+    // - Tag 0x0132 (DateTime): "2026:10:25 12:00:00\0"
+    // - Tag 0x8825 (GPS IFD Pointer): offset ke GPS sub-IFD
+    let mut tiff_data = Vec::new();
+    // TIFF Header: 8 bytes
+    tiff_data.extend_from_slice(b"II\x2A\x00\x08\x00\x00\x00");
+
+    // IFD0: 5 entries (2 bytes count) -> offset 8
+    let ifd0_count = 5u16;
+    tiff_data.extend_from_slice(&ifd0_count.to_le_bytes());
+
+    // Hitung offset untuk data yang > 4 bytes:
+    // Header (8) + Count (2) + 5 entries * 12 (60) + Next IFD (4) = 74 bytes
+    let str_datetime_offset = 74u32; // 20 bytes
+    let gps_ifd_offset = str_datetime_offset + 20; // offset 94
+
+    // Entry 1: Make (0x010F), ASCII (2), len 4, inline "DJI\0"
+    tiff_data.extend_from_slice(&0x010Fu16.to_le_bytes());
+    tiff_data.extend_from_slice(&2u16.to_le_bytes());
+    tiff_data.extend_from_slice(&4u32.to_le_bytes());
+    tiff_data.extend_from_slice(b"DJI\0");
+
+    // Entry 2: Model (0x0110), ASCII (2), len 4, inline "FC3\0"
+    tiff_data.extend_from_slice(&0x0110u16.to_le_bytes());
+    tiff_data.extend_from_slice(&2u16.to_le_bytes());
+    tiff_data.extend_from_slice(&4u32.to_le_bytes());
+    tiff_data.extend_from_slice(b"FC3\0");
+
+    // Entry 3: Orientation (0x0112), SHORT (3), count 1, value 6
+    tiff_data.extend_from_slice(&0x0112u16.to_le_bytes());
+    tiff_data.extend_from_slice(&3u16.to_le_bytes());
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&6u16.to_le_bytes());
+    tiff_data.extend_from_slice(&[0u8, 0u8]); // padding inline value
+
+    // Entry 4: DateTime (0x0132), ASCII (2), count 20, offset str_datetime_offset
+    tiff_data.extend_from_slice(&0x0132u16.to_le_bytes());
+    tiff_data.extend_from_slice(&2u16.to_le_bytes());
+    tiff_data.extend_from_slice(&20u32.to_le_bytes());
+    tiff_data.extend_from_slice(&str_datetime_offset.to_le_bytes());
+
+    // Entry 5: GPSInfo IFD (0x8825), LONG (4), count 1, offset gps_ifd_offset
+    tiff_data.extend_from_slice(&0x8825u16.to_le_bytes());
+    tiff_data.extend_from_slice(&4u16.to_le_bytes());
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&gps_ifd_offset.to_le_bytes());
+
+    // Next IFD = 0
+    tiff_data.extend_from_slice(&0u32.to_le_bytes());
+
+    // Value untuk DateTime: "2026:10:25 12:00:00\0" (20 bytes)
+    tiff_data.extend_from_slice(b"2026:10:25 12:00:00\0");
+
+    // GPS IFD: offset 94
+    // 3 entries: GPSLatitudeRef (0x0001), GPSLatitude (0x0002), GPSAltitude (0x0006)
+    let gps_count = 3u16;
+    tiff_data.extend_from_slice(&gps_count.to_le_bytes());
+
+    let rationals_offset = gps_ifd_offset + 2 + 3 * 12 + 4; // 94 + 2 + 36 + 4 = 136
+
+    // GPS Entry 1: GPSLatitudeRef (1), ASCII (2), len 2, inline "S\0"
+    tiff_data.extend_from_slice(&0x0001u16.to_le_bytes());
+    tiff_data.extend_from_slice(&2u16.to_le_bytes());
+    tiff_data.extend_from_slice(&2u32.to_le_bytes());
+    tiff_data.extend_from_slice(b"S\0\0\0");
+
+    // GPS Entry 2: GPSLatitude (2), RATIONAL (5), count 3, offset rationals_offset
+    tiff_data.extend_from_slice(&0x0002u16.to_le_bytes());
+    tiff_data.extend_from_slice(&5u16.to_le_bytes());
+    tiff_data.extend_from_slice(&3u32.to_le_bytes());
+    tiff_data.extend_from_slice(&rationals_offset.to_le_bytes());
+
+    // GPS Entry 3: GPSAltitude (6), RATIONAL (5), count 1, offset rationals_offset + 24
+    let alt_offset = rationals_offset + 24;
+    tiff_data.extend_from_slice(&0x0006u16.to_le_bytes());
+    tiff_data.extend_from_slice(&5u16.to_le_bytes());
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&alt_offset.to_le_bytes());
+
+    // Next GPS IFD = 0
+    tiff_data.extend_from_slice(&0u32.to_le_bytes());
+
+    // 3 RATIONALs untuk Lat: 1/1 deg, 15/1 min, 137304/10000 sec (= 1.253814 deg)
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&15u32.to_le_bytes());
+    tiff_data.extend_from_slice(&1u32.to_le_bytes());
+    tiff_data.extend_from_slice(&137304u32.to_le_bytes());
+    tiff_data.extend_from_slice(&10000u32.to_le_bytes());
+
+    // 1 RATIONAL untuk Altitude: 1205/10 m (= 120.5 m)
+    tiff_data.extend_from_slice(&1205u32.to_le_bytes());
+    tiff_data.extend_from_slice(&10u32.to_le_bytes());
+
+    // Susun berkas JPEG lengkap: SOI + APP1 + SOF0 minimal + EOI
+    let mut jpg_bytes = vec![0xFF, 0xD8]; // SOI
+    let app1_len = (tiff_data.len() + 6 + 2) as u16; // + "Exif\0\0" (6) + length bytes (2)
+    jpg_bytes.extend_from_slice(&[0xFF, 0xE1]);
+    jpg_bytes.extend_from_slice(&app1_len.to_be_bytes());
+    jpg_bytes.extend_from_slice(b"Exif\0\0");
+    jpg_bytes.extend_from_slice(&tiff_data);
+
+    // SOF0 (dimensi 100 x 100)
+    jpg_bytes.extend_from_slice(&[
+        0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x64, 0x00, 0x64, 0x03, 0x01, 0x11, 0x00, 0x02, 0x11,
+        0x00, 0x03, 0x11, 0x00,
+    ]);
+    // EOI
+    jpg_bytes.extend_from_slice(&[0xFF, 0xD9]);
+
+    fs::write(&jpg_path, &jpg_bytes).expect("tulis synthetic exif jpeg");
+
+    // 1. Uji ekstraksi metadata positif (Make, Model, DateTime, GPS)
+    let meta_res = read_exif_metadata(&jpg_path).expect("read exif metadata");
+    assert!(
+        meta_res.is_some(),
+        "EXIF metadata harus berhasil diekstrak!"
+    );
+    let m = meta_res.unwrap();
+    assert_eq!(m.camera_make.as_deref(), Some("DJI"));
+    assert_eq!(m.camera_model.as_deref(), Some("FC3"));
+    assert_eq!(m.captured_at.as_deref(), Some("2026-10-25 12:00:00"));
+    assert!(m.gps_latitude.is_some(), "GPS latitude harus ada");
+    let lat = m.gps_latitude.unwrap();
+    assert!(
+        (lat - (-1.253814)).abs() < 1e-4,
+        "Latitude harus -1.2538: {}",
+        lat
+    );
+    assert_eq!(m.gps_altitude_agl_m, Some(120.5));
+
+    // 2. Uji peringatan Orientation != 1 (Orientation = 6)
+    let warn = aerial_analytics_platform_lib::modules::module_03::ortho_source::check_exif_orientation_warning(&jpg_path);
+    assert!(
+        warn.is_some(),
+        "Peringatan orientation harus dihasilkan untuk orientation != 1"
+    );
+    let w_text = warn.unwrap();
+    assert!(
+        w_text.contains("Orientation bernilai 6"),
+        "Pesan harus mencantumkan Orientation 6: {}",
+        w_text
+    );
+    assert!(
+        w_text.contains("diabaikan"),
+        "Pesan harus menyatakan rotasi diabaikan"
+    );
+}
+
+#[test]
+fn test_direct_pixel_limit_144mp_rejection() {
+    let tmp = tempdir().expect("tempdir");
+    let p = tmp.path().join("too_many_pixels.jpg");
+
+    // Dimensi 13.000 x 12.000 = 156 MP (> 144 MP)
+    let mut jpg_bytes = vec![0xFF, 0xD8];
+    jpg_bytes.extend_from_slice(&[
+        0xFF, 0xC0, 0x00, 0x11, 0x08, 0x2E, 0xE0, // height = 12000
+        0x32, 0xC8, // width = 13000
+        0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+    ]);
+    jpg_bytes.extend_from_slice(&[0xFF, 0xD9]);
+    fs::write(&p, &jpg_bytes).unwrap();
+
+    let job_id = "job_test_144mp";
+    let payload = ImportDualModePayload {
+        mode: "A".to_string(),
+        file_path: p.to_string_lossy().to_string(),
+        save_original: true,
+        manual_bounds: Some(ImportBoundsPayload {
+            south: -1.0,
+            west: 116.0,
+            north: -0.9,
+            east: 116.1,
+        }),
+        custom_filename: None,
+    };
+
+    let res = execute_import_option_a(job_id, payload, CancellationToken::new());
+    match res {
+        Err(OrthoImportError::MelebihiBatas {
+            width,
+            height,
+            max_dimension,
+            ..
+        }) => {
+            assert_eq!(width, 13000);
+            assert_eq!(height, 12000);
+            assert_eq!(max_dimension, aerial_analytics_platform_lib::modules::module_03::ortho_source::MAX_IMAGE_DIMENSION_PX);
+        }
+        other => panic!("Harusnya MelebihiBatas (144 MP), didapat: {:?}", other),
+    }
+}
+
+#[test]
+fn test_direct_file_size_limit_50mb_rejection() {
+    let tmp = tempdir().expect("tempdir");
+    let p = tmp.path().join("too_large_52mb.jpg");
+
+    // Tulis berkas dengan ukuran > 50 MB (misal 51 MB)
+    let file = File::create(&p).unwrap();
+    file.set_len(51 * 1024 * 1024).unwrap();
+
+    let job_id = "job_test_50mb";
+    let payload = ImportDualModePayload {
+        mode: "A".to_string(),
+        file_path: p.to_string_lossy().to_string(),
+        save_original: true,
+        manual_bounds: Some(ImportBoundsPayload {
+            south: -1.0,
+            west: 116.0,
+            north: -0.9,
+            east: 116.1,
+        }),
+        custom_filename: None,
+    };
+
+    let res = execute_import_option_a(job_id, payload, CancellationToken::new());
+    match res {
+        Err(OrthoImportError::MelebihiBatas { message, .. }) => {
+            assert!(
+                message.contains("50 MB"),
+                "Pesan harus mencantumkan batas 50 MB: {}",
+                message
+            );
+        }
+        other => panic!("Harusnya MelebihiBatas (50 MB), didapat: {:?}", other),
+    }
+}
+
+#[test]
+fn test_secondary_instance_blocks_mutating_operations() {
+    use aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::{
+        delete_saved_image, start_import_ortho_job,
+    };
+    use aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::{
+        is_primary_instance, require_primary_instance, set_is_primary_instance,
+    };
+
+    let original_status = is_primary_instance();
+
+    // 1. Simulasikan instansi sekunder (is_primary = false)
+    set_is_primary_instance(false);
+
+    let res_guard = require_primary_instance();
+    assert!(
+        matches!(res_guard, Err(OrthoImportError::AplikasiSudahBerjalan(_))),
+        "require_primary_instance harus menolak ketika bukan instansi primer"
+    );
+
+    // Command start_import_ortho_job harus menolak
+    let payload = ImportDualModePayload {
+        mode: "A".to_string(),
+        file_path: "test.jpg".to_string(),
+        save_original: false,
+        manual_bounds: None,
+        custom_filename: None,
+    };
+    let res_import = start_import_ortho_job(payload);
+    assert!(
+        res_import.is_err(),
+        "start_import_ortho_job harus ditolak pada instansi sekunder"
+    );
+
+    // Command delete_saved_image harus menolak
+    let res_del = delete_saved_image("ortho".to_string(), "sample".to_string());
+    assert!(
+        res_del.is_err(),
+        "delete_saved_image harus ditolak pada instansi sekunder"
+    );
+
+    // 2. Pulihkan status
+    set_is_primary_instance(original_status);
+}

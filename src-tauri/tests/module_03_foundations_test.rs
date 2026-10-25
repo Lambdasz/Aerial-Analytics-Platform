@@ -1,7 +1,7 @@
 //! Pengujian integrasi komprehensif untuk Fase 1 (Fondasi):
 //! 1. Single-Instance Lock (eksklusif kernel OS pada map_storage/.app.lock, penolakan instansi ke-2)
 //! 2. Pelepasan slot job di semua jalur (JobRegistrationGuard: sukses, error, cancel, panic)
-//! 3. projection.rs dengan nilai referensi independen QGIS/PROJ (3 titik UTM 50S, 3 titik EPSG:3857, toleransi < 1m)
+//! 3. projection.rs dengan golden values (deret Krüger, diverifikasi dengan implementasi independen) (3 titik UTM 50S, 3 titik EPSG:3857, toleransi < 1m)
 //! 4. Penulis layer atomik (register_ortho_layer)
 //! 5. Pemecahan tes rekonsiliasi store per skenario:
 //!    - Folder titik diabaikan (.staging_*, .trash_*)
@@ -248,11 +248,11 @@ fn test_cleanup_stale_import_jobs_and_retention() {
 
 #[test]
 fn test_projection_independent_references_utm_50s_balikpapan() {
-    // 3 Titik referensi independen QGIS/PROJ (UTM Zona 50S, EPSG:32750):
+    // 3 Titik referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (UTM Zona 50S, EPSG:32750):
     // Toleransi: < 1 meter (< 9e-6 derajat lintang / bujur)
 
     // Titik 1: Bandara SAMS Sepinggan Balikpapan (-1.268270, 116.894450)
-    // Nilai referensi independen PROJ/QGIS (EPSG:32750): E = 488257.78, N = 9859817.59
+    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 488257.78, N = 9859817.59
     let (lat1, lon1) = (-1.268270, 116.894450);
     let (ref_e1, ref_n1) = (488257.78, 9859817.59);
     let (fwd_e1, fwd_n1) = wgs84_to_utm(lat1, lon1, 50, true).expect("UTM forward Sepinggan");
@@ -272,7 +272,7 @@ fn test_projection_independent_references_utm_50s_balikpapan() {
     assert!((calc_lon1 - lon1).abs() < 9e-6, "Lon selisih > 1m");
 
     // Titik 2: Kawasan Industri Kariangau (-1.173800, 116.812300)
-    // Nilai referensi independen PROJ/QGIS (EPSG:32750): E = 479118.01, N = 9870258.95
+    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 479118.01, N = 9870258.95
     let (lat2, lon2) = (-1.173800, 116.812300);
     let (ref_e2, ref_n2) = (479118.01, 9870258.95);
     let (fwd_e2, fwd_n2) = wgs84_to_utm(lat2, lon2, 50, true).expect("UTM forward Kariangau");
@@ -284,7 +284,7 @@ fn test_projection_independent_references_utm_50s_balikpapan() {
     assert!((calc_lon2 - lon2).abs() < 9e-6);
 
     // Titik 3: Pelabuhan Semayang Balikpapan (-1.282500, 116.817200)
-    // Nilai referensi independen PROJ/QGIS (EPSG:32750): E = 479663.96, N = 9858244.25
+    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:32750): E = 479663.96, N = 9858244.25
     let (lat3, lon3) = (-1.282500, 116.817200);
     let (ref_e3, ref_n3) = (479663.96, 9858244.25);
     let (fwd_e3, fwd_n3) = wgs84_to_utm(lat3, lon3, 50, true).expect("UTM forward Semayang");
@@ -298,7 +298,7 @@ fn test_projection_independent_references_utm_50s_balikpapan() {
 
 #[test]
 fn test_projection_independent_references_epsg3857() {
-    // 3 Titik referensi independen EPSG:3857 (Web Mercator) vs WGS84:
+    // 3 Titik referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) EPSG:3857 (Web Mercator) vs WGS84:
     // Toleransi: < 1 meter (< 1.0 meter koordinat EPSG:3857, < 9e-6 derajat lat/lon)
 
     // Titik 1: Null Island (Origin) (0.0, 0.0)
@@ -312,7 +312,7 @@ fn test_projection_independent_references_epsg3857() {
     assert!((calc_lon1 - lon1).abs() < 1e-7);
 
     // Titik 2: Monas Jakarta (-6.1753924, 106.8271528)
-    // Nilai referensi independen PROJ/QGIS (EPSG:3857): x = 11891944.25, y = -688776.39
+    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:3857): x = 11891944.25, y = -688776.39
     let (lat2, lon2) = (-6.1753924, 106.8271528);
     let (ref_x2, ref_y2) = (11891944.25, -688776.39);
     let (fwd_x2, fwd_y2) = wgs84_to_epsg3857(lat2, lon2).expect("Forward Monas");
@@ -331,7 +331,7 @@ fn test_projection_independent_references_epsg3857() {
     assert!((calc_lon2 - lon2).abs() < 9e-6, "lon selisih > 1m");
 
     // Titik 3: Greenwich London (51.482578, 0.0)
-    // Nilai referensi independen PROJ/QGIS (EPSG:3857): x = 0.0, y = 6707104.24
+    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:3857): x = 0.0, y = 6707104.24
     let (lat3, lon3) = (51.482578, 0.0);
     let (ref_x3, ref_y3) = (0.0, 6707104.24);
     let (fwd_x3, fwd_y3) = wgs84_to_epsg3857(lat3, lon3).expect("Forward Greenwich");

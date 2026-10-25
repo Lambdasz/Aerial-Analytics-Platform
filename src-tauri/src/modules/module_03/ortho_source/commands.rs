@@ -24,6 +24,7 @@ pub fn get_ortho_image(id: String) -> Result<StoredImageMetadata, CommandError> 
 pub fn update_ortho_image(
     payload: UpdateOrthoImagePayload,
 ) -> Result<StoredImageMetadata, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     Ok(get_global_state().update_ortho_image(payload)?)
 }
 
@@ -36,6 +37,7 @@ pub fn get_ortho_cascade_summary(id: String) -> Result<DeleteOrthoSummary, Comma
 /// Menghapus satu citra orthomosaic secara tuntas beserta layer dan anotasi terikat.
 #[tauri::command]
 pub fn delete_ortho_image(id: String) -> Result<DeleteOrthoSummary, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     Ok(get_global_state().delete_ortho_image(&id)?)
 }
 
@@ -44,12 +46,14 @@ pub fn delete_ortho_image(id: String) -> Result<DeleteOrthoSummary, CommandError
 pub fn import_ortho_image(
     payload: ImportImagePayload,
 ) -> Result<StoredImageMetadata, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     Ok(get_global_state().import_ortho_image(payload)?)
 }
 
 /// Menyimpan file citra ke storage dari path file yang sudah ada di sistem.
 #[tauri::command]
 pub fn save_image_from_path(source_path: String) -> Result<StoredImageMetadata, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     Ok(get_global_state().save_image_from_path(&source_path)?)
 }
 
@@ -62,6 +66,7 @@ pub fn get_saved_images() -> Result<Vec<StoredImageMetadata>, CommandError> {
 /// Menghapus citra dari storage berdasarkan kategori dan nama file / image_id (legacy).
 #[tauri::command]
 pub fn delete_saved_image(category: String, filename: String) -> Result<bool, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     Ok(get_global_state().delete_saved_image(&category, &filename)?)
 }
 
@@ -71,6 +76,7 @@ pub fn delete_saved_image(category: String, filename: String) -> Result<bool, Co
 pub fn start_import_ortho_job(
     payload: super::types::ImportDualModePayload,
 ) -> Result<String, CommandError> {
+    super::instance_lock::require_primary_instance()?;
     let job_id = format!("job_{}", chrono::Utc::now().timestamp_millis());
     let token = super::job_manager::try_acquire_job(&job_id)?;
 
