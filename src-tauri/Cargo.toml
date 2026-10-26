@@ -30,6 +30,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
+sha2 = "0.10"
+dunce = "1"
 tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -39,6 +41,11 @@ tauri-plugin-dialog = "2"
 
 # Module 1.4 Dependencies
 rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Module 1 Dependencies
+kamadak-exif = "0.6.1"
+unicode-normalization = "0.1"
+base64 = "0.22"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

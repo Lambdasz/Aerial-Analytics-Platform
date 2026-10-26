@@ -3,8 +3,8 @@
 //!
 //! This file holds two related but distinct families of types:
 //! - **Import pipeline types** ([`ContentHash`], [`SessionTarget`],
-//!   [`ImportRequest`], [`ImportCandidate`], [`NameConflict`],
-//!   [`DuplicateFlag`], [`RejectedFile`], [`ImportReport`],
+//!   [`ImportRequest`], [`ImportCandidate`], [`DuplicateFlag`],
+//!   [`RejectedFile`], [`ImportReport`],
 //!   [`ImportError`]) — describe an in-flight import operation, before any
 //!   image has become a persisted record.
 //! - **Format/metadata types** ([`ImageFormat`], [`ImageMetadata`]) — the
@@ -58,18 +58,10 @@ pub struct ImportCandidate {
     pub content_hash: ContentHash,
 }
 
-/// A destination-basename collision found among incoming candidates or
-/// against files already in the session folder.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NameConflict {
-    pub dest_name: String,
-    /// Incoming source paths that want `dest_name`.
-    pub sources: Vec<String>,
-    /// Path already in the session folder with `dest_name`. `None` if only incoming files collide.
-    pub existing_path: Option<String>,
-}
-
-/// A candidate whose content hash matches an image already in the project.
+/// A candidate whose content hash matches another image.
+///
+/// In [`ImportReport::duplicates`], `existing_image_id` is a persisted image
+/// id or the id of an earlier candidate that is being imported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DuplicateFlag {
     pub source_path: String,
@@ -84,6 +76,26 @@ pub struct RejectedFile {
     pub reason: ImportError,
 }
 
+/// An imported image whose extracted metadata lacks required fields.
+///
+/// The image stays imported (its id is still in
+/// [`ImportReport::imported_image_ids`]); this flag tells the frontend and
+/// Image Quality Checking to display it as "incomplete metadata".
+/// `missing` holds required field names from
+/// `crate::modules::module_01::REQUIRED_METADATA_FIELDS`. When extraction
+/// was attempted but failed (corrupt or unreadable metadata), the I/O layer
+/// records a default (all-`None`) metadata value, so the flag lists every
+/// required field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteMetadataFlag {
+    /// `ImportCandidate.id` of the imported image.
+    pub candidate_id: String,
+    /// Absolute source path, for display and correlation.
+    pub source_path: String,
+    /// Required field names absent from the extracted metadata.
+    pub missing: Vec<String>,
+}
+
 /// Outcome of one [`ImportRequest`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportReport {
@@ -95,8 +107,14 @@ pub struct ImportReport {
     pub duplicates: Vec<DuplicateFlag>,
     /// Candidates that failed to import, with reasons.
     pub rejected: Vec<RejectedFile>,
-    /// Destination-basename collisions found during the import.
-    pub name_conflicts: Vec<NameConflict>,
+    /// Ids of imported images that need a raw decode before analysis: DNG
+    /// files with no same-stem JPEG to stand in for them.
+    ///
+    /// They are imported and listed in [`Self::imported_image_ids`] — this
+    /// only tells the UI they cannot be sent to a plugin yet. A DNG with a
+    /// same-stem JPEG is not listed: the JPEG is its analysis input.
+    #[serde(default)]
+    pub not_analysis_ready: Vec<String>,
 }
 
 /// Reasons an import operation or a single candidate within it can fail.
@@ -106,6 +124,21 @@ pub enum ImportError {
     NoImagesFound,
     /// `session_id` does not reference an existing session.
     SessionNotFound { session_id: String },
+    /// Transient development marker: the extraction pipeline hit a function
+    /// that is declared but not implemented yet. Never a statement about the
+    /// file itself — kept distinct from [`ImportError::UnsupportedFormat`]
+    /// so an unfinished backend is not misreported as a user file problem.
+    NotImplemented { path: String },
+    /// File name cannot be used as a destination name: it is empty, `.`,
+    /// `..`, or ends in a path separator, so no basename can be derived
+    /// from it. This is a naming problem, not a format problem — kept
+    /// separate from [`ImportError::UnsupportedFormat`] so the UI reports
+    /// the real cause instead of misleading the user about the file format.
+    InvalidFileName { path: String },
+    /// `content_hash` is empty, so the file's content was never hashed
+    /// (for example the read failed). It cannot be deduplicated, and an
+    /// empty value would make unrelated files look identical.
+    MissingContentHash { path: String },
     /// Extension is not jpeg/jpg/dng (or missing). `extension` has no leading dot.
     ///
     /// Also used as a defensive fallback by `module_01::image_importer::classify_file`
@@ -114,6 +147,93 @@ pub enum ImportError {
     UnsupportedFormat { path: String, extension: String },
     /// Extension is jpeg/dng but `header` magic does not match.
     MagicMismatch { path: String },
+    /// The picked path is not a regular file: a folder, a FIFO, or a device
+    /// node. Reported separately from [`ImportError::CopyFailed`] because
+    /// nothing was copied — the user picked the wrong kind of path.
+    NotAFile { path: String },
+    /// Copying the source into the project's library failed. `path` is the
+    /// source path the user picked when it is known, and `reason` says what
+    /// went wrong. The failed file leaves no row and no half-written copy
+    /// behind.
+    CopyFailed { path: String, reason: String },
+    /// The copy exists, but the database row could not be written. The copy
+    /// is deleted again, so this is a database problem rather than a file
+    /// problem — reported separately from [`ImportError::CopyFailed`] so the
+    /// UI does not blame the image.
+    RecordFailed { path: String, reason: String },
+    /// The destination name is already taken by a file that appeared after
+    /// the plan was made. The import never overwrites: re-plan with the new
+    /// folder contents to get a name-conflict prompt.
+    DestinationExists { path: String },
+    /// The image cannot be handed to a plugin: it is a DNG with no
+    /// same-stem JPEG, and Module 1 does not decode DNG pixels.
+    NotAnalysisReady { image_id: String },
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoImagesFound => f.write_str("no importable images were found"),
+            Self::SessionNotFound { session_id } => {
+                write!(f, "session '{session_id}' does not exist")
+            }
+            Self::NotImplemented { path } => {
+                write!(f, "import is not implemented for '{path}' yet")
+            }
+            Self::InvalidFileName { path } => {
+                write!(f, "'{path}' has no usable file name")
+            }
+            Self::MissingContentHash { path } => {
+                write!(f, "'{path}' could not be read for hashing")
+            }
+            Self::UnsupportedFormat { path, extension } => {
+                write!(
+                    f,
+                    "'{path}' is not a JPEG or DNG file (extension '.{extension}')"
+                )
+            }
+            Self::MagicMismatch { path } => {
+                write!(f, "'{path}' does not contain a valid JPEG or DNG signature")
+            }
+            Self::NotAFile { path } => {
+                write!(f, "'{path}' is not a file")
+            }
+            Self::CopyFailed { path, reason } => {
+                write!(f, "could not copy '{path}': {reason}")
+            }
+            Self::RecordFailed { path, reason } => {
+                write!(f, "could not record '{path}': {reason}")
+            }
+            Self::DestinationExists { path } => {
+                write!(f, "'{path}' already exists in the library")
+            }
+            Self::NotAnalysisReady { image_id } => {
+                write!(f, "image '{image_id}' cannot be analysed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+impl ImportError {
+    /// Returns a short error code for client-side programmatic matching.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NoImagesFound => "NO_IMAGES_FOUND",
+            Self::SessionNotFound { .. } => "SESSION_NOT_FOUND",
+            Self::NotImplemented { .. } => "NOT_IMPLEMENTED",
+            Self::InvalidFileName { .. } => "INVALID_FILE_NAME",
+            Self::MissingContentHash { .. } => "MISSING_CONTENT_HASH",
+            Self::UnsupportedFormat { .. } => "UNSUPPORTED_FORMAT",
+            Self::MagicMismatch { .. } => "MAGIC_MISMATCH",
+            Self::NotAFile { .. } => "NOT_A_FILE",
+            Self::CopyFailed { .. } => "COPY_FAILED",
+            Self::RecordFailed { .. } => "RECORD_FAILED",
+            Self::DestinationExists { .. } => "DESTINATION_EXISTS",
+            Self::NotAnalysisReady { .. } => "IMAGE_NOT_READY",
+        }
+    }
 }
 
 /// Supported image file formats.
@@ -123,6 +243,16 @@ pub enum ImageFormat {
     Jpeg,
     /// DNG (Digital Negative) raw image.
     Dng,
+}
+
+impl ImageFormat {
+    /// Lowercase name used in the database and plugin payloads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImageFormat::Jpeg => "jpeg",
+            ImageFormat::Dng => "dng",
+        }
+    }
 }
 
 /// Complete metadata for a single aerial RGB image.
