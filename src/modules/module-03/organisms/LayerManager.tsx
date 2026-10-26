@@ -95,8 +95,16 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                 !layer.layer_name?.toLowerCase().includes("base map"),
             )
             .map((layer) => {
+              const saved =
+                layer.source_id && savedModes[layer.source_id] !== undefined
+                  ? savedModes[layer.source_id]
+                  : layer.layer_id && savedModes[layer.layer_id] !== undefined
+                    ? savedModes[layer.layer_id]
+                    : layer.layer_name && savedModes[layer.layer_name] !== undefined
+                      ? savedModes[layer.layer_name]
+                      : undefined;
+              const isVisible = saved !== undefined ? saved : layer.is_visible;
               const key = layer.source_id || layer.layer_id || layer.layer_name;
-              const isVisible = savedModes[key] !== undefined ? savedModes[key] : layer.is_visible;
               const opacity =
                 savedOpacities[key] !== undefined ? savedOpacities[key] : layer.opacity;
               return { ...layer, is_visible: isVisible, opacity };
@@ -106,8 +114,14 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           const spatialLayers: LayerState[] = (spatialData || [])
             .filter((sr) => !existingIds.has(sr.layer_id))
             .map((sr) => {
+              const saved =
+                sr.layer_id && savedModes[sr.layer_id] !== undefined
+                  ? savedModes[sr.layer_id]
+                  : sr.layer_name && savedModes[sr.layer_name] !== undefined
+                    ? savedModes[sr.layer_name]
+                    : undefined;
+              const isVisible = saved !== undefined ? saved : true;
               const key = sr.layer_id;
-              const isVisible = savedModes[key] !== undefined ? savedModes[key] : true;
               const opacity = savedOpacities[key] !== undefined ? savedOpacities[key] : 1.0;
               return {
                 layer_id: sr.layer_id,
@@ -168,8 +182,56 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       setLayers((prev) => prev.filter((l) => l.layer_id !== id && l.source_id !== id));
     };
 
+    const handleOrthoImageSaved = () => {
+      getInitialMapLayers()
+        .then((initialData) => {
+          setLayers((prev) => {
+            const savedModes = (() => {
+              try {
+                const raw = localStorage.getItem("aap_ortho_display_modes");
+                return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+              } catch {
+                return {};
+              }
+            })();
+            const filtered = (initialData || [])
+              .filter(
+                (layer) =>
+                  layer.category !== "Base Maps" &&
+                  layer.layer_id !== "base_osm" &&
+                  !layer.layer_name?.toLowerCase().includes("base map"),
+              )
+              .map((layer) => {
+                const saved =
+                  layer.source_id && savedModes[layer.source_id] !== undefined
+                    ? savedModes[layer.source_id]
+                    : layer.layer_id && savedModes[layer.layer_id] !== undefined
+                      ? savedModes[layer.layer_id]
+                      : layer.layer_name && savedModes[layer.layer_name] !== undefined
+                        ? savedModes[layer.layer_name]
+                        : undefined;
+                const isVisible = saved !== undefined ? saved : layer.is_visible;
+                return { ...layer, is_visible: isVisible };
+              });
+            const rasterIds = new Set(filtered.map((l) => l.layer_id));
+            const nonRasters = prev.filter((l) => !rasterIds.has(l.layer_id));
+            return [...filtered, ...nonRasters];
+          });
+        })
+        .catch(() => {});
+    };
+
+    const handleOrthoImageDeleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id: string }>;
+      const id = customEvent.detail?.id;
+      if (!id) return;
+      setLayers((prev) => prev.filter((l) => l.layer_id !== id && l.source_id !== id));
+    };
+
     window.addEventListener("spatial_result:saved", handleSpatialResultSaved);
     window.addEventListener("spatial_result:deleted", handleSpatialResultDeleted);
+    window.addEventListener("ortho_image:saved", handleOrthoImageSaved);
+    window.addEventListener("ortho_image:deleted", handleOrthoImageDeleted);
 
     let unlistenSaved: (() => void) | undefined;
     let unlistenDeleted: (() => void) | undefined;
@@ -196,6 +258,8 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       cancelled = true;
       window.removeEventListener("spatial_result:saved", handleSpatialResultSaved);
       window.removeEventListener("spatial_result:deleted", handleSpatialResultDeleted);
+      window.removeEventListener("ortho_image:saved", handleOrthoImageSaved);
+      window.removeEventListener("ortho_image:deleted", handleOrthoImageDeleted);
       unlistenSaved?.();
       unlistenDeleted?.();
     };
@@ -220,8 +284,10 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           try {
             const raw = localStorage.getItem("aap_ortho_display_modes");
             const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
-            const key = item.source_id || item.layer_id;
-            map[key] = nextVal;
+            map[item.layer_id] = nextVal;
+            if (item.source_id) {
+              map[item.source_id] = nextVal;
+            }
             if (item.layer_name) {
               map[item.layer_name] = nextVal;
             }
@@ -257,8 +323,10 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           try {
             const raw = localStorage.getItem("aap_ortho_display_modes");
             const map = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
-            const key = item.source_id || item.layer_id;
-            map[key] = nextVal;
+            map[item.layer_id] = nextVal;
+            if (item.source_id) {
+              map[item.source_id] = nextVal;
+            }
             if (item.layer_name) {
               map[item.layer_name] = nextVal;
             }
@@ -281,8 +349,10 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           try {
             const raw = localStorage.getItem("aap_layer_opacities");
             const map = raw ? (JSON.parse(raw) as Record<string, number>) : {};
-            const key = item.source_id || item.layer_id;
-            map[key] = value;
+            map[item.layer_id] = value;
+            if (item.source_id) {
+              map[item.source_id] = value;
+            }
             if (item.layer_name) {
               map[item.layer_name] = value;
             }

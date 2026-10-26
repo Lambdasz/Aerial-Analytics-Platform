@@ -338,9 +338,23 @@ export const SavedOrthoImageLayer: React.FC<SavedOrthoImageLayerProps> = ({ laye
         }),
       );
 
-      // 2. Simpan juga ke displayModes & localStorage
+      // 2. Simpan juga ke displayModes & localStorage tanpa menimpa data layer lain
       setDisplayModes((prev) => {
-        const nextMap = { ...prev, [targetId]: nextVal };
+        let currentStored: Record<string, boolean> = {};
+        try {
+          const raw = localStorage.getItem("aap_ortho_display_modes");
+          if (raw) {
+            currentStored = JSON.parse(raw) as Record<string, boolean>;
+          }
+        } catch {
+          // ignore
+        }
+        const nextMap = { ...currentStored, ...prev, [targetId]: nextVal };
+        if (matchingLayer) {
+          if (matchingLayer.layer_id) nextMap[matchingLayer.layer_id] = nextVal;
+          if (matchingLayer.source_id) nextMap[matchingLayer.source_id] = nextVal;
+          if (matchingLayer.layer_name) nextMap[matchingLayer.layer_name] = nextVal;
+        }
         try {
           localStorage.setItem("aap_ortho_display_modes", JSON.stringify(nextMap));
         } catch (err) {

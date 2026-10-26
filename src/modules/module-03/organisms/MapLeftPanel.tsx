@@ -143,26 +143,62 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
         </div>
 
         <div
-          className="no-scrollbar"
           style={{
             flex: 1,
-            overflowY: "auto",
             position: "relative",
-            padding: "15px",
+            overflow: "hidden",
             color: "var(--color-ink)",
             background: "var(--color-studio-mist)",
           }}
         >
-          {activeTab === "layers" && (
+          <div
+            className="no-scrollbar"
+            style={{
+              display: activeTab === "layers" ? "block" : "none",
+              height: "100%",
+              overflowY: "auto",
+              padding: "15px",
+            }}
+          >
             <LayerManager
               map={map}
               onAnnotationsChange={onAnnotationsChange}
               onLayersChange={onLayersChange}
             />
-          )}
-          {activeTab === "aoi" && <AoiToolbar map={map} />}
-          {activeTab === "results" && <SpResultListPanel map={map} />}
-          {activeTab === "gallery" && <ImageGallerySidebar map={map} />}
+          </div>
+          <div
+            className="no-scrollbar"
+            style={{
+              display: activeTab === "aoi" ? "block" : "none",
+              height: "100%",
+              overflowY: "auto",
+              padding: "15px",
+            }}
+          >
+            <AoiToolbar map={map} />
+          </div>
+          <div
+            className="no-scrollbar"
+            style={{
+              display: activeTab === "results" ? "block" : "none",
+              height: "100%",
+              overflowY: "auto",
+              padding: "15px",
+            }}
+          >
+            <SpResultListPanel map={map} />
+          </div>
+          <div
+            className="no-scrollbar"
+            style={{
+              display: activeTab === "gallery" ? "block" : "none",
+              height: "100%",
+              overflowY: "auto",
+              padding: "15px",
+            }}
+          >
+            <ImageGallerySidebar map={map} />
+          </div>
         </div>
       </div>
     </div>
