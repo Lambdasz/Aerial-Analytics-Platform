@@ -19,6 +19,3 @@ pub use pure::*;
 pub use types::*;
 
 pub use crate::modules::module_03::types::sp_result_type::SPATIAL_RESULT_EVENT;
-pub mod dummy {
-    pub use super::reader::get_dummy_spatial_layers;
-}

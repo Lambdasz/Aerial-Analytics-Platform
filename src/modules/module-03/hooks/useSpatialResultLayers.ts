@@ -326,7 +326,7 @@ export function useSpatialResultLayers(
       enforceZOrderHierarchy();
     };
 
-    // Muat dari storage `/storage/spatial_results/` jika tersedia, atau fallback ke dummy
+    // Muat data hasil spasial dari storage `/storage/spatial_results/`
     invokeMap<LayerPayload[]>("get_saved_spatial_results")
       .then((savedPayloads) => {
         if (cancelled) return;
@@ -336,23 +336,10 @@ export function useSpatialResultLayers(
             payload,
           }));
           renderCommands(cmds);
-        } else {
-          invokeMap<MapLayerCommand[]>("get_dummy_spatial_layers")
-            .then((dummyCmds) => {
-              if (cancelled) return;
-              renderCommands(dummyCmds);
-            })
-            .catch((err) => console.error("Gagal memuat dummy spatial layers:", err));
         }
       })
       .catch((err) => {
-        console.warn("Gagal memuat saved spatial layers, fallback ke dummy:", err);
-        invokeMap<MapLayerCommand[]>("get_dummy_spatial_layers")
-          .then((dummyCmds) => {
-            if (cancelled) return;
-            renderCommands(dummyCmds);
-          })
-          .catch((e) => console.error("Gagal memuat dummy spatial layers:", e));
+        console.warn("Gagal memuat saved spatial layers:", err);
       });
 
     // Event listener jika ada spatial result baru yang disimpan

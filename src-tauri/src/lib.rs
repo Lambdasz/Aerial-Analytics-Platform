@@ -102,8 +102,7 @@
 //! |---------|-------------|
 //! | `get_project_image_markers` | Generate pseudo-random drone image markers for the map explorer |
 //! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
-//! | `get_dummy_spatial_layers` | Load dummy spatial layers (dev/testing only) |
+
 //!
 //! ### Key Functions
 //!
@@ -167,11 +166,7 @@
 //! - `dispatch_spatial_result(app_handle, layer_payload)` → main entry point
 //!   of inter-module communication: validates the payload, then emits the
 //!   `map://spatial-result` Tauri event so the Leaflet frontend renders the
-//!   layer (replacing existing `layer_id` if present).
-//! - `dummy::get_dummy_spatial_layers()` → parses embedded
-//!   `dummy_sp_result.json` (3 dummy layers: tree detection, vegetation
-//!   index, building detection) so the UI can be built in parallel with
-//!   Modul 4/7/8. **Dev/testing only — must not be used in production flow.**
+
 //! - `SpatialGeometry::validate()` → GeoJSON-level geometry integrity checks
 //!   (closed rings, ≥4 points, exactly 2 coordinates per point).
 //! - `SpatialResult::validate()` → delegates to `SpatialGeometry::validate()`;
@@ -253,8 +248,7 @@
 //! | **Backend** | `reorder_layer_stack` | `layers, from_index, to_index` | `Result<Array, LayerError>`|
 //! | **Backend** | `create_annotation` | `id, text, geometry, date` | `AnnotationFeature` |
 //! | **Backend** | `filter_layers_by_category`| `layers`, `category: String` | `Array of Layer` |
-//! | **Backend** | `dispatch_spatial_result` | `&AppHandle`, `LayerPayload` | `Ok(())` atau `Err` |
-//! | **Backend** | `dummy::get_dummy_spatial_layers`| `()` | `Ok(Vec<MapLayerCommand>)` |
+
 //! | **Backend** | `SpatialGeometry::validate` | `&self` | `Ok(())` atau `Err` |
 //! | **Backend** | `SpatialResult::validate` | `&self` | `Ok(())` atau `Err` |
 //! | **Backend** | `LayerPayload::validate` | `&self` | `Ok(())` atau `Err` |
@@ -369,8 +363,6 @@ pub mod modules;
 mod plot;
 mod plugin_manager;
 
-use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
-
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
 use std::sync::Arc;
@@ -444,7 +436,6 @@ pub fn run() {
             plugin_manager::executor::get_job_result,
             // Plot import
             import_plots,
-            get_dummy_spatial_layers,
             // Module 3 — Geometry & Measurement
             map_controller::geometry::commands::measure_distance,
             map_controller::geometry::commands::measure_area,

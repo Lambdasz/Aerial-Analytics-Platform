@@ -13,17 +13,6 @@ use super::types::{LayerDisplayMode, LayerPayload, SpatialProperties, SpatialRes
 use super::writer::{StoredFeatureFile, StoredLayerFile};
 use crate::modules::module_03::error::MapControllerError;
 use crate::modules::module_03::storage_utils::{get_storage_root, sanitize_filename};
-use crate::modules::module_03::types::sp_result_type::MapLayerCommand;
-
-/// Memuat dan mem-parsing data dummy hasil spasial yang di-embed saat compile time.
-#[tauri::command]
-pub fn get_dummy_spatial_layers() -> Result<Vec<MapLayerCommand>, String> {
-    Ok(vec![])
-}
-
-pub mod dummy {
-    pub use super::get_dummy_spatial_layers;
-}
 
 /// Menghitung token konkurensi (updated_at string mentah atau {size}_{mtime_millis}).
 pub fn compute_concurrency_token(path: &Path, updated_at: Option<&str>) -> String {

@@ -36,3 +36,4 @@
 - **Langkah 1 [K-01]**: Pembersihan data sisa test `ortho_8881_148640_1792951376935076.json` ("Trash Restore Test") di `map_storage/layers/`. File telah dipastikan dibersihkan dari direktori storage.
 - **Langkah 2 [K-02]**: Penghapusan unused type alias `AoiDemoToolbarProps` di `src/modules/module-03/organisms/AoiToolbar.tsx`. Verifikasi linting dan build passed.
 - **Langkah 3 [K-03]**: Penghapusan dead wrapper function `getSampleAnnotations()` di `src/modules/module-03/services/api.ts` dan mock check terkait di `services/error.ts`.
+- **Langkah 4 [K-04]**: Penghapusan `get_dummy_spatial_layers` (dev mock/dummy command dan fallback frontend) sesuai instruksi persetujuan pengguna. Tag rollback: `rollback/01-remove-dummy-spatial-layers`. Berkas yang diubah: `reader.rs`, `sp_result/mod.rs`, `lib.rs`, dan `useSpatialResultLayers.ts`. Seluruh pengujian (Clippy, ESLint, Prettier, rustfmt, tsc/Vite build) passed.
