@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792992029316",
+  "filename": "5d2bcc3ff416f40006cffca8",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792992029316/original.tif",
+  "size_bytes": 70435547,
+  "dimensions": [
+    13423,
+    21184
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792992029316/display.png",
+  "bounds": [
+    [
+      -1.2117366797633382,
+      116.9449600810181
+    ],
+    [
+      -1.1997368758593383,
+      116.9525144246111
+    ]
+  ],
+  "aspect_ratio": 0.6336385951661632,
+  "display_size_bytes": 8363701,
+  "display_dimensions": [
+    1623,
+    2560
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 1623x2560 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 3 (3356x5296) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:20:29.319433600+00:00",
+  "is_corrupted": false
+}

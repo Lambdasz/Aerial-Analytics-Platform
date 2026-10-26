@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "image_id": "ortho_1792991238248",
+  "import_mode": "B",
+  "source_format": "geotiff",
+  "source_filename": "Balikpapan 1e",
+  "source_dimensions": [
+    20111,
+    13583
+  ],
+  "display_dimensions": [
+    2560,
+    1729
+  ],
+  "source_file_size_bytes": 61095918,
+  "display_file_size_bytes": 9063596,
+  "display_format": "png",
+  "bounds": {
+    "south": -1.2538140294876108,
+    "west": 116.85064763161965,
+    "north": -1.2475290259746108,
+    "east": 116.85989316109465,
+    "source": "geotiff"
+  },
+  "source_crs": "EPSG:4326 (WGS84 Geodetic)",
+  "tiff_technical_details": {
+    "bands": 3,
+    "bit_depth": 8,
+    "sample_format": "uint8",
+    "compression": "JPEG",
+    "layout": "tiled",
+    "chunk_dimensions": [
+      512,
+      512
+    ],
+    "total_chunks": 1080,
+    "planar_configuration": "Contiguous (Chunky)",
+    "photometric_interpretation": "Unknown",
+    "has_alpha": false,
+    "nodata_value": 0.0
+  },
+  "imported_at": "2026-10-26T05:07:18.249399500+00:00",
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 2560x1729 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 3 (5028x3396) digunakan untuk akselerasi dekompresi display."
+  ]
+}

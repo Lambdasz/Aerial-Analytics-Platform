@@ -45,5 +45,13 @@ runs/*
 !runs/.gitkeep
 src/map/dummy_image/drone_ortho.png
 
-map_storage/
+# Map storage: ignore heavy raw GeoTIFF files, OS lock, jobs, and staging
+map_storage/**/*.tif
+map_storage/**/*.tiff
+map_storage/.app.lock
+map_storage/.jobs/
+map_storage/**/.staging_*
+map_storage/**/.trash_*
+
 map_storage_backup/
+

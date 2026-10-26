@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792991693176",
+  "filename": "Balikpapan r4",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792991693176/original.tif",
+  "size_bytes": 63449001,
+  "dimensions": [
+    13343,
+    21247
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792991693176/display.png",
+  "bounds": [
+    [
+      -1.1772443700065984,
+      116.9502347514033
+    ],
+    [
+      -1.1652527756765985,
+      116.9577165717933
+    ]
+  ],
+  "aspect_ratio": 0.6279945404057043,
+  "display_size_bytes": 9944474,
+  "display_dimensions": [
+    1929,
+    3072
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 1929x3072 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 3 (3336x5312) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:14:53.177724700+00:00",
+  "updated_at": "2026-10-26T05:15:15.644866800+00:00",
+  "is_corrupted": false
+}

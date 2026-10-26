@@ -4,14 +4,14 @@ Welcome to the documentation repository for the **Aerial Analytics Platform** (T
 
 ## Repository Documentation Index
 
-| Section                                   | Description                                                              | Target Path                                                |
-| :---------------------------------------- | :----------------------------------------------------------------------- | :--------------------------------------------------------- |
-| **System Overview & Getting Started**     | General architecture, setup guide, and PBL 2026 requirements             | [`README.md`](../README.md)                                |
-| **Contributing Guidelines**               | Development workflow, branching, commit convention, and gates            | [`CONTRIBUTING.md`](../CONTRIBUTING.md)                    |
-| **Agent Instructions**                    | Rules and boundaries for AI coding assistants                            | [`AGENTS.md`](../AGENTS.md)                                |
-| **Security Policy**                       | Reporting vulnerabilities and isolation model                            | [`SECURITY.md`](../SECURITY.md)                            |
-| **Spatial Results Specification**         | Data contract, schema, and storage mechanics (Bilingual: EN / ID)        | [`spatial_result.md`](spatial_result.md)                   |
-| **Module 03 — Aerial Image Map Explorer** | Full architectural and implementation documentation (Bilingual: EN / ID) | [`modules/module_3/README.md`](modules/module_3/README.md) |
+| Section                                   | Description                                                              | Target Path                                                                                               |
+| :---------------------------------------- | :----------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
+| **System Overview & Getting Started**     | General architecture, setup guide, and PBL 2026 requirements             | [`README.md`](../README.md)                                                                               |
+| **Contributing Guidelines**               | Development workflow, branching, commit convention, and gates            | [`CONTRIBUTING.md`](../CONTRIBUTING.md)                                                                   |
+| **Agent Instructions**                    | Rules and boundaries for AI coding assistants                            | [`AGENTS.md`](../AGENTS.md)                                                                               |
+| **Security Policy**                       | Reporting vulnerabilities and isolation model                            | [`SECURITY.md`](../SECURITY.md)                                                                           |
+| **Spatial Results Specification**         | Data contract, schema, and storage mechanics (Bilingual: EN / ID)        | [EN](modules/module_3/en/backend/spatial_result.md) / [ID](modules/module_3/id/backend/spatial_result.md) |
+| **Module 03 — Aerial Image Map Explorer** | Full architectural and implementation documentation (Bilingual: EN / ID) | [`modules/module_3/README.md`](modules/module_3/README.md)                                                |
 
 ---
 
@@ -42,7 +42,6 @@ To maintain documentation integrity across the codebase, the following table lis
 | `CLAUDE.md`                                   | Assistant guidance file                                                       | Retained at root                                 |
 | `.github/pull_request_template.md`            | Standard pull request checklist                                               | Retained in `.github/`                           |
 | `docs/README.md`                              | Central documentation index (this file)                                       | Active documentation index                       |
-| `docs/spatial_result.md`                      | Full specification & storage architecture for spatial results (Bilingual)     | Active specification document                    |
 | `docs/modules/module_3/README.md`             | Module 3 landing page and language switcher                                   | Active documentation index                       |
 | `plugins/*/README.md`                         | Documentation for individual plugins (`template`, `mock_rust`, etc.)          | Retained in respective plugin directories        |
 | `src-tauri/src/plugin_manager/DOCS/*.md`      | Deep architectural documentation for the plugin supervisor                    | Retained in plugin manager directory             |
