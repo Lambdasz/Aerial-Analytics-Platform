@@ -37,3 +37,23 @@
 - **Langkah 2 [K-02]**: Penghapusan unused type alias `AoiDemoToolbarProps` di `src/modules/module-03/organisms/AoiToolbar.tsx`. Verifikasi linting dan build passed.
 - **Langkah 3 [K-03]**: Penghapusan dead wrapper function `getSampleAnnotations()` di `src/modules/module-03/services/api.ts` dan mock check terkait di `services/error.ts`.
 - **Langkah 4 [K-04]**: Penghapusan `get_dummy_spatial_layers` (dev mock/dummy command dan fallback frontend) sesuai instruksi persetujuan pengguna. Tag rollback: `rollback/01-remove-dummy-spatial-layers`. Berkas yang diubah: `reader.rs`, `sp_result/mod.rs`, `lib.rs`, dan `useSpatialResultLayers.ts`. Seluruh pengujian (Clippy, ESLint, Prettier, rustfmt, tsc/Vite build) passed.
+
+---
+
+## FASE 5: Laporan Akhir & Verifikasi
+
+### Ringkasan Pembersihan
+
+- **Item Terhapus per Kategori**:
+  - Kategori A (Sisa Data Test & Mock Dev Command): 2 item (K-01, K-04)
+  - Kategori B (Unused Export & Dead Wrapper Function): 2 item (K-02, K-03)
+- **Total Berkas Diubah**: 6 berkas kode sumber + 1 berkas log
+- **Daftar Tag Rollback Tersedia**:
+  - `cleanup-baseline` (commit `96fdcab`): Titik awal sebelum branch cleanup
+  - `rollback/01-remove-dummy-spatial-layers` (commit `f24e05c`): Titik sebelum K-04
+- **Perbandingan dengan Baseline**:
+  - `npm run lint`: PASS (0 errors)
+  - `npm run lint:rust`: PASS (0 warnings)
+  - `npm run format:check`: PASS
+  - `npm run format:rust:check`: PASS
+  - `npm run build`: PASS
