@@ -3,11 +3,24 @@
 //!
 //! [`compute_blur_score`] is pure: a 3x3 Laplacian convolution over a
 //! grayscale buffer, followed by the variance of the response. Scoring a
-//! file end-to-end ([`blur_score_for_copy`]) resizes first so the score is
-//! comparable across source resolutions, and never fails its caller — a
-//! corrupt or undecodable file simply yields `None`, the same fallback
-//! philosophy [`super::import_io::metadata_from_copy`] uses for EXIF
-//! extraction failures.
+//! file end-to-end ([`blur_score_for_copy`]) downscales first (never
+//! upscales — see below) so the score is comparable across source
+//! resolutions, and never fails its caller — a corrupt or undecodable file
+//! simply yields `None`, the same fallback philosophy
+//! [`super::import_io::metadata_from_copy`] uses for EXIF extraction
+//! failures.
+//!
+//! # Why only downscale, never upscale
+//!
+//! Interpolating a small source up to [`BLUR_SCORE_LONG_EDGE_PX`] smooths
+//! away exactly the high-frequency edges the Laplacian measures, so an
+//! upscaled image scores as falsely blurry regardless of its real
+//! sharpness. A DNG's embedded preview ([`super::dng_preview`]) is often
+//! smaller than the scoring cap, and small JPEGs hit this too. A source
+//! already below the cap is therefore left unscored (`None`) rather than
+//! upscaled into a misleading number — and because [`classify_blur`] is
+//! frozen at import, a wrong score would otherwise become a permanent wrong
+//! flag.
 //!
 //! # Why session-relative, not a single global threshold
 //!
@@ -100,12 +113,17 @@ fn variance(values: &[f64]) -> f64 {
     values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64
 }
 
-/// Reads, decodes, resizes, and scores one imported copy.
+/// Reads, decodes, and scores one imported copy, downscaling first when the
+/// source is larger than [`BLUR_SCORE_LONG_EDGE_PX`].
 ///
 /// Never fails its caller: any read or decode error is logged and yields
 /// `None` so import always proceeds. DNG is scored from its embedded
 /// preview ([`super::dng_preview::read_dng_preview`]) since no raw decoder
 /// exists in this codebase; JPEG decodes directly.
+///
+/// A source whose long edge is already below the cap is left unscored
+/// (`None`) rather than upscaled — see the module-level "why only
+/// downscale" note.
 ///
 /// # Purity
 ///
@@ -129,12 +147,25 @@ pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f6
             return None;
         }
     };
+    if !meets_scoring_size(decoded.width(), decoded.height()) {
+        return None;
+    }
     let resized = decoded.resize(
         BLUR_SCORE_LONG_EDGE_PX,
         BLUR_SCORE_LONG_EDGE_PX,
         image::imageops::FilterType::Triangle,
     );
     Some(compute_blur_score(&resized.to_luma8()))
+}
+
+/// Whether a decoded image's long edge is already at or above
+/// [`BLUR_SCORE_LONG_EDGE_PX`], i.e. scoring it only ever downscales.
+///
+/// # Purity
+///
+/// Pure, total.
+fn meets_scoring_size(width: u32, height: u32) -> bool {
+    width.max(height) >= BLUR_SCORE_LONG_EDGE_PX
 }
 
 /// Mean/stddev/count of a set of blur scores, used as a session's relative
@@ -295,5 +326,23 @@ mod tests {
         };
         assert!(classify_blur(70.0, &stats, 20.0, -1.5)); // z = -3.0
         assert!(!classify_blur(95.0, &stats, 20.0, -1.5)); // z = -0.5
+    }
+
+    #[test]
+    fn meets_scoring_size_rejects_a_source_below_the_cap() {
+        assert!(!meets_scoring_size(
+            BLUR_SCORE_LONG_EDGE_PX - 1,
+            BLUR_SCORE_LONG_EDGE_PX - 1
+        ));
+        // A DNG's embedded preview, or a small JPEG: short on both edges.
+        assert!(!meets_scoring_size(960, 540));
+    }
+
+    #[test]
+    fn meets_scoring_size_accepts_a_source_at_or_above_the_cap() {
+        // Exactly at the cap on the long edge is fine — scoring it is a
+        // no-op resize, not an upscale.
+        assert!(meets_scoring_size(BLUR_SCORE_LONG_EDGE_PX, 480));
+        assert!(meets_scoring_size(4000, 3000));
     }
 }

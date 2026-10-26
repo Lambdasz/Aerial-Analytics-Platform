@@ -1939,6 +1939,19 @@ mod tests {
         path
     }
 
+    /// A synthetic JPEG whose long edge is `size` pixels, for tests that
+    /// need to clear (or deliberately stay under) the blur-scoring cap.
+    fn write_jpeg_sized(dir: &Path, name: &str, size: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(size, size, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 64])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
     fn write_jpeg_seeded(dir: &Path, name: &str, seed: u8) -> PathBuf {
         let path = dir.join(name);
         let image = image::RgbImage::from_fn(8, 8, |x, y| {
@@ -2057,7 +2070,13 @@ mod tests {
         let library = tempfile::tempdir().expect("library");
         let db = test_db();
         let session_id = session(&db);
-        let source = write_jpeg(source_dir.path(), "DJI_0001.JPG");
+        // At the scoring cap's long edge, so it clears meets_scoring_size
+        // and is actually scored (not left unscored for being too small).
+        let source = write_jpeg_sized(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
 
         let report = run_import(
             &db,
@@ -2075,7 +2094,36 @@ mod tests {
         assert_eq!(images.len(), 1);
         assert!(
             images[0].blur_score.is_some(),
-            "a decodable JPEG should get a blur score"
+            "a decodable JPEG at or above the scoring cap should get a blur score"
+        );
+    }
+
+    #[test]
+    fn small_source_image_is_not_scored_to_avoid_upscaling() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // write_jpeg's 8x8 source is far below the scoring cap.
+        let source = write_jpeg(source_dir.path(), "DJI_0002.JPG");
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].blur_score.is_none(),
+            "upscaling a tiny source would score it falsely blurry"
         );
     }
 

@@ -239,12 +239,16 @@
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
-//!   scoring (`compute_blur_score`) on a resized (1280px long-edge) grayscale
-//!   buffer — JPEG decoded directly, DNG from its stored preview. Classified
-//!   relative to the flight session an image belongs to (mean/stddev
-//!   z-score of the session's other scores, plus an absolute hard floor as a
-//!   safety net), frozen at the moment of import. Runs during
-//!   `import_io::run_import`, before each candidate/pair is recorded.
+//!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
+//!   1280px long edge when the source is larger — never upscaled, since that
+//!   would smooth away the edges the Laplacian measures and score a small
+//!   source as falsely blurry, so a source already below the cap (a DNG's
+//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
+//!   decoded directly, DNG from its stored preview. Classified relative to
+//!   the flight session an image belongs to (mean/stddev z-score of the
+//!   session's other scores, plus an absolute hard floor as a safety net),
+//!   frozen at the moment of import. Runs during `import_io::run_import`,
+//!   before each candidate/pair is recorded.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.
