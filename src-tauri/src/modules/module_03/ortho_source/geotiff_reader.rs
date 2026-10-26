@@ -269,9 +269,19 @@ pub fn validate_geotiff_header_fast(path: &Path) -> Result<GeoTiffHeaderSummary,
     let has_alpha = detect_alpha_from_tags(&mut decoder, samples_per_pixel);
 
     // Deteksi GDAL_NODATA (Tag 42113)
-    let nodata_value = detect_nodata_from_tags(&mut decoder);
+    let mut nodata_value = detect_nodata_from_tags(&mut decoder);
 
     let compression_name = detect_compression_name(&mut decoder);
+
+    // Jika tag GDAL_NODATA tidak ada dan citra tidak memiliki alpha eksplisit,
+    // periksa apakah sudut-sudut citra berwarna hitam pekat (0, 0, 0)
+    // yang mencerminkan padding batas NoData penerbangan drone.
+    if nodata_value.is_none()
+        && !has_alpha
+        && detect_black_border_nodata(&mut decoder, width, height, samples_per_pixel as usize)
+    {
+        nodata_value = Some(0.0);
+    }
 
     Ok(GeoTiffHeaderSummary {
         width,
@@ -559,6 +569,205 @@ fn detect_compression_name<R: Read + Seek>(decoder: &mut Decoder<R>) -> String {
     }
 }
 
+/// Memeriksa apakah sudut-sudut citra GeoTIFF berwarna hitam pekat (0, 0, 0),
+/// yang mencerminkan padding batas NoData penerbangan drone tanpa tag GDAL_NODATA eksplisit.
+fn detect_black_border_nodata<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    width: u32,
+    height: u32,
+    channels: usize,
+) -> bool {
+    let chunk_type = decoder.get_chunk_type();
+    let mut black_corners = 0;
+    let mut checked_corners = 0;
+
+    let check_pixel_is_black = |data: &[u8], ch: usize| -> bool {
+        if ch >= 3 {
+            data[0] <= 2 && data[1] <= 2 && data[2] <= 2
+        } else if ch >= 1 {
+            data[0] <= 2
+        } else {
+            false
+        }
+    };
+
+    let check_pixel_is_black_u16 = |data: &[u16], ch: usize| -> bool {
+        if ch >= 3 {
+            data[0] <= 500 && data[1] <= 500 && data[2] <= 500
+        } else if ch >= 1 {
+            data[0] <= 500
+        } else {
+            false
+        }
+    };
+
+    match chunk_type {
+        ChunkType::Tile => {
+            let (tw, th) = decoder.chunk_dimensions();
+            if tw == 0 || th == 0 {
+                return false;
+            }
+            let tiles_across = width.div_ceil(tw);
+            let _tiles_down = height.div_ceil(th);
+
+            let corner_coords = [
+                (0u32, 0u32),
+                (width.saturating_sub(1), 0u32),
+                (0u32, height.saturating_sub(1)),
+                (width.saturating_sub(1), height.saturating_sub(1)),
+            ];
+
+            for (cx, cy) in corner_coords {
+                let tc = cx / tw;
+                let tr = cy / th;
+                let chunk_idx = tr * tiles_across + tc;
+
+                let px_in_tile_x = (cx % tw) as usize;
+                let px_in_tile_y = (cy % th) as usize;
+
+                let (data_w, _data_h) = decoder.chunk_data_dimensions(chunk_idx);
+                let data_w = if data_w > 0 {
+                    data_w as usize
+                } else {
+                    tw as usize
+                };
+
+                if let Ok(chunk_res) = decoder.read_chunk(chunk_idx) {
+                    checked_corners += 1;
+                    match chunk_res {
+                        DecodingResult::U8(bytes) => {
+                            let idx = (px_in_tile_y * data_w + px_in_tile_x) * channels;
+                            if idx + channels <= bytes.len()
+                                && check_pixel_is_black(&bytes[idx..idx + channels], channels)
+                            {
+                                black_corners += 1;
+                            }
+                        }
+                        DecodingResult::U16(words) => {
+                            let idx = (px_in_tile_y * data_w + px_in_tile_x) * channels;
+                            if idx + channels <= words.len()
+                                && check_pixel_is_black_u16(&words[idx..idx + channels], channels)
+                            {
+                                black_corners += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        ChunkType::Strip => {
+            let strip_count = decoder.strip_count().unwrap_or(1);
+            if strip_count == 0 {
+                return false;
+            }
+
+            if let Ok(chunk_res) = decoder.read_chunk(0) {
+                let (data_w, _data_h) = decoder.chunk_data_dimensions(0);
+                let data_w = if data_w > 0 {
+                    data_w as usize
+                } else {
+                    width as usize
+                };
+
+                match chunk_res {
+                    DecodingResult::U8(bytes) => {
+                        if bytes.len() >= channels {
+                            checked_corners += 1;
+                            if check_pixel_is_black(&bytes[0..channels], channels) {
+                                black_corners += 1;
+                            }
+                        }
+                        let tr_idx = (data_w.saturating_sub(1)) * channels;
+                        if tr_idx + channels <= bytes.len() {
+                            checked_corners += 1;
+                            if check_pixel_is_black(&bytes[tr_idx..tr_idx + channels], channels) {
+                                black_corners += 1;
+                            }
+                        }
+                    }
+                    DecodingResult::U16(words) => {
+                        if words.len() >= channels {
+                            checked_corners += 1;
+                            if check_pixel_is_black_u16(&words[0..channels], channels) {
+                                black_corners += 1;
+                            }
+                        }
+                        let tr_idx = (data_w.saturating_sub(1)) * channels;
+                        if tr_idx + channels <= words.len() {
+                            checked_corners += 1;
+                            if check_pixel_is_black_u16(&words[tr_idx..tr_idx + channels], channels)
+                            {
+                                black_corners += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if strip_count > 1 {
+                let last_strip = strip_count - 1;
+                if let Ok(chunk_res) = decoder.read_chunk(last_strip) {
+                    let (data_w, data_h) = decoder.chunk_data_dimensions(last_strip);
+                    let data_w = if data_w > 0 {
+                        data_w as usize
+                    } else {
+                        width as usize
+                    };
+                    let last_y = if data_h > 0 { (data_h - 1) as usize } else { 0 };
+
+                    match chunk_res {
+                        DecodingResult::U8(bytes) => {
+                            let bl_idx = (last_y * data_w) * channels;
+                            if bl_idx + channels <= bytes.len() {
+                                checked_corners += 1;
+                                if check_pixel_is_black(&bytes[bl_idx..bl_idx + channels], channels)
+                                {
+                                    black_corners += 1;
+                                }
+                            }
+                            let br_idx = (last_y * data_w + data_w.saturating_sub(1)) * channels;
+                            if br_idx + channels <= bytes.len() {
+                                checked_corners += 1;
+                                if check_pixel_is_black(&bytes[br_idx..br_idx + channels], channels)
+                                {
+                                    black_corners += 1;
+                                }
+                            }
+                        }
+                        DecodingResult::U16(words) => {
+                            let bl_idx = (last_y * data_w) * channels;
+                            if bl_idx + channels <= words.len() {
+                                checked_corners += 1;
+                                if check_pixel_is_black_u16(
+                                    &words[bl_idx..bl_idx + channels],
+                                    channels,
+                                ) {
+                                    black_corners += 1;
+                                }
+                            }
+                            let br_idx = (last_y * data_w + data_w.saturating_sub(1)) * channels;
+                            if br_idx + channels <= words.len() {
+                                checked_corners += 1;
+                                if check_pixel_is_black_u16(
+                                    &words[br_idx..br_idx + channels],
+                                    channels,
+                                ) {
+                                    black_corners += 1;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    checked_corners >= 2 && black_corners >= 2
+}
+
 /// Mengekstrak detail teknis berkas GeoTIFF untuk disimpan pada `metadata.json`.
 pub fn extract_tiff_technical_details<R: Read + Seek>(
     decoder: &mut Decoder<R>,
@@ -604,7 +813,13 @@ pub fn extract_tiff_technical_details<R: Read + Seek>(
 
     let compression = detect_compression_name(decoder);
     let has_alpha = detect_alpha_from_tags(decoder, bands);
-    let nodata_value = detect_nodata_from_tags(decoder);
+    let mut nodata_value = detect_nodata_from_tags(decoder);
+    if nodata_value.is_none()
+        && !has_alpha
+        && detect_black_border_nodata(decoder, width, height, bands as usize)
+    {
+        nodata_value = Some(0.0);
+    }
 
     let photometric_interpretation = match color_type {
         ColorType::Gray(_) | ColorType::GrayA(_) => "BlackIsZero (Grayscale)".to_string(),
@@ -1078,9 +1293,15 @@ fn blit_pixel_u8(
     let is_nodata = if let Some(nd) = nodata_val {
         let nd_u8 = nd.round() as u8;
         if src_ch >= 3 {
-            src[0] == nd_u8 && src[1] == nd_u8 && src[2] == nd_u8
+            if nd_u8 == 0 {
+                src[0] <= 2 && src[1] <= 2 && src[2] <= 2
+            } else {
+                src[0] == nd_u8 && src[1] == nd_u8 && src[2] == nd_u8
+            }
+        } else if nd_u8 == 0 {
+            src_g <= 2
         } else {
-            src[0] == nd_u8
+            src_g == nd_u8
         }
     } else {
         false
@@ -1141,9 +1362,15 @@ fn blit_pixel_u16(
     let is_nodata = if let Some(nd) = nodata_val {
         let nd_u16 = nd.round() as u16;
         if src_ch >= 3 {
-            src[0] == nd_u16 && src[1] == nd_u16 && src[2] == nd_u16
+            if nd_u16 == 0 {
+                src[0] <= 500 && src[1] <= 500 && src[2] <= 500
+            } else {
+                src[0] == nd_u16 && src[1] == nd_u16 && src[2] == nd_u16
+            }
+        } else if nd_u16 == 0 {
+            src_g <= 500
         } else {
-            src[0] == nd_u16
+            src_g == nd_u16
         }
     } else {
         false
@@ -1222,4 +1449,24 @@ pub fn find_best_overview_ifd<R: Read + Seek>(
     let _ = decoder.seek_to_image(0);
 
     Ok(best_ifd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_black_border_on_real_or_synthetic() {
+        let test_real_path =
+            std::path::Path::new(r"C:\Users\x0776\Downloads\600fcc9055481e0005e312a1.tif");
+        if test_real_path.exists() {
+            let summary =
+                validate_geotiff_header_fast(test_real_path).expect("Header validasi harus sukses");
+            assert_eq!(
+                summary.nodata_value,
+                Some(0.0),
+                "Batas hitam harus terdeteksi sebagai NoData = 0.0"
+            );
+        }
+    }
 }

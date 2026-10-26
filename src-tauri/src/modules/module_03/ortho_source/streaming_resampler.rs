@@ -354,9 +354,28 @@ impl StreamingResampler {
             let src_px_idx = x_out * channels;
 
             if weight > 0.0 {
-                for c in 0..channels {
-                    let avg = acc.channel_sums[src_px_idx + c] / weight;
-                    self.final_output[dst_px_idx + c] = avg.round().clamp(0.0, 255.0) as u8;
+                if channels == 4 {
+                    let alpha_sum = acc.channel_sums[src_px_idx + 3];
+                    let alpha_weight = alpha_sum / 255.0;
+
+                    if alpha_weight > 0.001 {
+                        for c in 0..3 {
+                            let avg = acc.channel_sums[src_px_idx + c] / alpha_weight;
+                            self.final_output[dst_px_idx + c] = avg.round().clamp(0.0, 255.0) as u8;
+                        }
+                        let avg_a = alpha_sum / weight;
+                        self.final_output[dst_px_idx + 3] = avg_a.round().clamp(0.0, 255.0) as u8;
+                    } else {
+                        self.final_output[dst_px_idx] = 0;
+                        self.final_output[dst_px_idx + 1] = 0;
+                        self.final_output[dst_px_idx + 2] = 0;
+                        self.final_output[dst_px_idx + 3] = 0;
+                    }
+                } else {
+                    for c in 0..channels {
+                        let avg = acc.channel_sums[src_px_idx + c] / weight;
+                        self.final_output[dst_px_idx + c] = avg.round().clamp(0.0, 255.0) as u8;
+                    }
                 }
             } else {
                 // Fallback jika tidak ada bobot (edge case pembulatan numerik)
@@ -577,5 +596,42 @@ mod tests {
         assert!((res.data[1] as i32 - 128).abs() <= 2);
         // Piksel ketiga adalah rata-rata dari 5000 -> harus 255
         assert_eq!(res.data[2], 255);
+    }
+
+    #[test]
+    fn test_rgba_straight_alpha_resampling_no_dark_fringe() {
+        let src_w = 4u32;
+        let src_h = 4u32;
+        let mut resampler = StreamingResampler::new(src_w, src_h, 2, ChannelCount::Rgba).unwrap();
+
+        // 4 baris:
+        // Baris 0, 1: 2 piksel transparan (0,0,0,0), lalu 2 piksel opaque (100, 150, 200, 255)
+        // Baris 2, 3: seluruh 4 piksel transparan (0,0,0,0)
+        let top_row = vec![
+            0u8, 0, 0, 0, // Px 0: transparan
+            0, 0, 0, 0, // Px 1: transparan
+            100, 150, 200, 255, // Px 2: opaque
+            100, 150, 200, 255, // Px 3: opaque
+        ];
+        let transparent_row = vec![0u8; 16];
+
+        resampler.push_row_u8(0, &top_row, None).unwrap();
+        resampler.push_row_u8(1, &top_row, None).unwrap();
+        resampler.push_row_u8(2, &transparent_row, None).unwrap();
+        resampler.push_row_u8(3, &transparent_row, None).unwrap();
+
+        let res = resampler.finish().unwrap();
+        assert_eq!(res.width, 2);
+        assert_eq!(res.height, 2);
+
+        // Px (0,0) [Top-Left] di output 2x2 menggabungkan 4 piksel transparan (0,0,0,0) -> harus (0,0,0,0)
+        assert_eq!(&res.data[0..4], &[0, 0, 0, 0]);
+
+        // Px (1,0) [Top-Right] di output 2x2 menggabungkan 4 piksel opaque (100, 150, 200, 255) -> harus (100, 150, 200, 255)
+        assert_eq!(&res.data[4..8], &[100, 150, 200, 255]);
+
+        // Px (0,1) & Px (1,1) [Bottom row] di output 2x2 menggabungkan baris transparan -> harus (0,0,0,0)
+        assert_eq!(&res.data[8..12], &[0, 0, 0, 0]);
+        assert_eq!(&res.data[12..16], &[0, 0, 0, 0]);
     }
 }
