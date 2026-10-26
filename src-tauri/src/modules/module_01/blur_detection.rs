@@ -42,9 +42,9 @@ use image::GrayImage;
 
 use crate::models::image::ImageFormat;
 
-/// Long edge (px) images are resized to before scoring, so raw variance is
-/// comparable across source resolutions. Matches
-/// [`crate::commands::image_preview`]'s preview cap.
+/// Long edge (px) images are downscaled to before scoring, so raw variance
+/// is comparable across source resolutions. Sources smaller than this are
+/// not scored at all: upscaling smooths away the edges the score measures.
 pub(crate) const BLUR_SCORE_LONG_EDGE_PX: u32 = 1280;
 
 /// Absolute safety net: a score below this is always classified as blurry,
