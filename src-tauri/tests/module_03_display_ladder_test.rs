@@ -192,3 +192,85 @@ fn test_banded_png_cancel_between_bands_is_fast() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_proxy_3b_display_jpg_png_alpha_combinations() {
+    use aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::resample_dynamic_image_box_filter;
+
+    let img_path = std::path::Path::new("target/ortho_real_check/display.jpg");
+    if !img_path.exists() {
+        println!(
+            "display.jpg tidak ditemukan di target/ortho_real_check/display.jpg, melewati tes."
+        );
+        return;
+    }
+    let dyn_img = image::open(img_path).expect("open display.jpg");
+    let (orig_w, orig_h) = (dyn_img.width(), dyn_img.height());
+    assert_eq!((orig_w, orig_h), (4096, 2767));
+
+    // Tambahkan mask elips transparan: radius 0.45 x W dan 0.40 x H
+    let mut rgba = dyn_img.to_rgba8();
+    let (cx, cy) = (orig_w as f64 / 2.0, orig_h as f64 / 2.0);
+    let (rx, ry) = (orig_w as f64 * 0.45, orig_h as f64 * 0.40);
+    for y in 0..orig_h {
+        let dy = y as f64 - cy;
+        for x in 0..orig_w {
+            let dx = x as f64 - cx;
+            let inside = ((dx * dx) / (rx * rx)) + ((dy * dy) / (ry * ry)) <= 1.0;
+            if !inside {
+                rgba.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+            }
+        }
+    }
+    let base_rgba = image::DynamicImage::ImageRgba8(rgba);
+
+    let dims = [4096u32, 3072, 2048, 1792];
+    let settings_list = [
+        (
+            "Default (Default + Sub + Adaptive)",
+            PngEncodeSettings::default(),
+        ),
+        (
+            "Adaptive+Best (Best + Sub + Adaptive)",
+            PngEncodeSettings {
+                compression: png::Compression::Best,
+                filter: png::FilterType::Sub,
+                adaptive: png::AdaptiveFilterType::Adaptive,
+            },
+        ),
+    ];
+
+    let dir = temp_dir("proxy_3b");
+    println!("\n================================================================================");
+    println!("PENGUKURAN PROKSI 3B: DISPLAY.JPG REAL OAM DENGAN ALPHA ELIPS");
+    println!("Resolusi Asal: {} x {} px", orig_w, orig_h);
+    println!("================================================================================");
+
+    for &dim in &dims {
+        let resized = if dim >= orig_w.max(orig_h) {
+            base_rgba.clone()
+        } else {
+            resample_dynamic_image_box_filter(&base_rgba, dim).expect("resample")
+        };
+        let (rw, rh) = (resized.width(), resized.height());
+
+        for (label, settings) in &settings_list {
+            let out_file = dir.join(format!("out_{}_{}.png", dim, label.replace(' ', "_")));
+            let t0 = Instant::now();
+            let size = encode_png_banded(&resized, &out_file, *settings, None).expect("encode");
+            let dur = t0.elapsed();
+            let mib = size as f64 / (1024.0 * 1024.0);
+            println!(
+                "PROXI_3B_RESULT|dim_max={}|actual={}x{}|settings={}|bytes={}|mib={:.3}|secs={:.2}",
+                dim,
+                rw,
+                rh,
+                label,
+                size,
+                mib,
+                dur.as_secs_f64()
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

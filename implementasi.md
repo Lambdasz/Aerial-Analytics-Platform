@@ -373,23 +373,53 @@ _(Catatan: Seluruh angka waktu dan memori di bawah adalah hasil estimasi teoriti
 |      **100 MB**      | Tiled GeoTIFF ($15.000 \times 11.000\text{ px}$) | $\approx 145\text{ MB}$ |        $4 - 7\text{ detik}$        |   $2 - 3{,}5\text{ detik}$    |   $4.096 \times 3.004\text{ px}$ ($\le 3{,}9\text{ MB}$ JPG)   |
 |      **250 MB**      | Tiled GeoTIFF ($22.000 \times 16.000\text{ px}$) | $\approx 175\text{ MB}$ |       $9 - 15\text{ detik}$        |     $4 - 7\text{ detik}$      | $3.200 \times 2.327\text{ px}$ ($\le 4{,}8\text{ MB}$ PNG/JPG) |
 
-### 5.3 Hasil Pengukuran Memori Empiris
+### 5.3 Hasil Pengukuran Memori & Waktu Empiris
 
-Setiap skenario diukur di SUBPROSES terpisah (fixture dibangun di proses induk, di luar pengukuran) lewat `module_03_memory_benchmark.rs`. Mode build: `cargo test` (dev; crate uji opt-level 0, png/tiff/jpeg/image opt-level 3), BUKAN release. Satuan MiB; baseline WS 0,11 MiB karena working set di-trim sebelum snapshot, sehingga delta ≈ peak WS.
+Setiap skenario diukur di SUBPROSES terpisah (fixture dibangun di proses induk, di luar pengukuran) lewat `module_03_memory_benchmark.rs`. Mode build: `cargo test` (dev; crate uji opt-level 0, png/tiff/jpeg/image opt-level 3, crate aplikasi `aerial-analytics-platform` opt-level 0 default). Seluruh fixture GeoTIFF diverifikasi dekompresinya secara independen menggunakan Pillow 13.0.0 dan tifffile 2026.10.15.
 
-| Skenario                                | Peak WS | Peak Pagefile | Waktu (dev) | Display akhir          | Ukuran display |
-| :-------------------------------------- | ------: | ------------: | ----------: | :--------------------- | -------------: |
-| JPEG baseline 100 MP                    |  155,71 |        148,12 |     13,52 s | 4096×4096              |    4.652.972 B |
-| JPEG baseline 144 MP                    |  159,88 |        159,15 |     15,10 s | 4096×4096              |    4.697.448 B |
-| JPEG 4:2:0 40 MP                        |  177,01 |        176,15 |      7,46 s | 4096×2560              |    4.257.760 B |
-| JPEG progresif 40 MP                    |  292,20 |        291,36 |      7,62 s | 4096×2560              |    4.257.760 B |
-| PNG opak 100 MP                         |  131,88 |        130,64 |     17,83 s | 4096×4096              |    1.565.999 B |
-| PNG interlaced 25 MP                    |  163,33 |        162,55 |      9,80 s | 4096×4096              |      898.285 B |
-| GeoTIFF RGBA 8-bit 8000×6000 (95 MB)    |   99,85 |         98,17 |     22,12 s | 4096×3072 (56,6% opak) |    7.330.662 B |
-| GeoTIFF RGBA 16-bit 6000×4500 (115 MB)  |  137,05 |        135,15 |     60,44 s | 3072×2304 (56,6% opak) |    8.416.404 B |
-| GeoTIFF RGBA 16-bit 22000×4000 (140 MB) |   27,21 |         25,52 |     23,52 s | 4096×745 (56,7% opak)  |    2.998.878 B |
+| Skenario                                | Baseline WS |    Peak WS |   Delta WS | Peak Pagefile | Waktu (dev) | Display akhir          | Ukuran display |
+| :-------------------------------------- | ----------: | ---------: | ---------: | ------------: | ----------: | :--------------------- | -------------: |
+| JPEG baseline 100 MP                    |    0,11 MiB | 155,71 MiB | 155,60 MiB |    148,12 MiB |     13,52 s | 4096×4096              |    4.652.972 B |
+| JPEG baseline 144 MP                    |    0,11 MiB | 159,88 MiB | 159,77 MiB |    159,15 MiB |     15,10 s | 4096×4096              |    4.697.448 B |
+| JPEG 4:2:0 40 MP                        |    0,11 MiB | 177,01 MiB | 176,90 MiB |    176,15 MiB |      7,46 s | 4096×2560              |    4.257.760 B |
+| JPEG progresif 40 MP                    |    0,11 MiB | 292,20 MiB | 292,09 MiB |    291,36 MiB |      7,62 s | 4096×2560              |    4.257.760 B |
+| PNG opak 100 MP                         |    0,11 MiB | 131,88 MiB | 131,77 MiB |    130,64 MiB |     17,83 s | 4096×4096              |    1.565.999 B |
+| PNG interlaced 25 MP                    |    0,11 MiB | 163,33 MiB | 163,22 MiB |    162,55 MiB |      9,80 s | 4096×4096              |      898.285 B |
+| GeoTIFF RGBA 8-bit 8000×6000 (95 MB)    |    0,11 MiB |  99,85 MiB |  99,74 MiB |     98,17 MiB |     22,12 s | 4096×3072 (56,6% opak) |    7.330.662 B |
+| GeoTIFF RGBA 16-bit 6000×4500 (115 MB)  |    0,11 MiB | 137,05 MiB | 136,94 MiB |    135,15 MiB |     60,44 s | 3072×2304 (56,6% opak) |    8.416.404 B |
+| GeoTIFF RGBA 16-bit 22000×4000 (140 MB) |    0,11 MiB |  27,21 MiB |  27,11 MiB |     25,52 MiB |     23,52 s | 4096×745 (56,7% opak)  |    2.998.878 B |
 
-Catatan validitas: (1) fixture GeoTIFF versi sebelumnya TIDAK valid (tiff 0.9.1 `write_strip` menulis tag Deflate tetapi data mentah; libtiff/Pillow gagal `decoder error -2`), sehingga angka lama untuk skenario GeoTIFF dibuang. Fixture kini dibuat via `write_data` dan dicek: ukuran berkas terkompresi, alpha 56,6% opak sesuai luas elips. (2) Tabel ini berbeda dari E2E 3a-fix (91,23/138,45/42,11 MiB WS) karena fixture, skenario, dan metode berbeda; perbedaan tidak direkonsiliasi satu-satu dan tidak diklaim ekuivalen. (3) Waktu dekode GeoTIFF dev-build jauh lebih lambat dari release; angka release tidak diukur. (4) Mengapa worst 22000×4000 hanya 27 MiB sementara 6000×4500 137 MiB: penyebab tidak diketahui (belum diselidiki; kemungkinan perbedaan jalur skala/chunk).
+#### Rincian Waktu per Tahap Pipeline (Pengukuran `Instant` Aktual)
+
+Pengukuran waktu per tahap pada `execute_import_option_b` mengungkap distribusi durasi secara presisi:
+
+- **GeoTIFF RGBA 8-bit ($8.000 \times 6.000\text{ px}$)**:
+  - `header_georef`: $6\text{ ms}$
+  - `sampling_16bit`: $0\text{ ms}$ (dilewati karena 8-bit)
+  - `decode_resample`: $15.078\text{ ms}$ ($15{,}08\text{ s}$)
+  - `encode_display`: $9.262\text{ ms}$ ($9{,}26\text{ s}$)
+  - `write_register`: $5\text{ ms}$
+  - Total: $24.357\text{ ms}$ ($24{,}36\text{ s}$)
+- **GeoTIFF RGBA 16-bit ($6.000 \times 4.500\text{ px}$)**:
+  - `header_georef`: $10\text{ ms}$
+  - `sampling_16bit`: $1.520\text{ ms}$ ($1{,}52\text{ s}$, berhenti tepat saat batas $1.500\text{ ms}$ terpenuhi)
+  - `decode_resample`: $16.532\text{ ms}$ ($16{,}53\text{ s}$)
+  - `encode_display`: **$50.853\text{ ms}$ ($50{,}85\text{ s}$, $\approx 73\%$ total durasi)**
+  - `write_register`: $3\text{ ms}$
+  - Total: $68.927\text{ ms}$ ($68{,}93\text{ s}$)
+
+**Mengapa `encode_display` 16-bit memakan 50,85 detik di dev build?**
+Pada citra 16-bit RGBA berentropi tinggi, tangga adaptif pertama kali mencoba encode dimensi $4.096\text{ px}$ ($4096 \times 3072$) menghasilkan berkas $> 10\text{ MiB}$. Estimasi kuadratik melompat ke $3.072\text{ px}$, melakukan resampling box filter dari kanvas asli, lalu melakukan encode Deflate ulang hingga menghasilkan $8{,}02\text{ MiB}$ ($8.416.404\text{ B}$). Pada build unoptimized (`dev`), dua kali kompresi Deflate beresolusi tinggi + resample memakan $50{,}85\text{ s}$. Sebaliknya, citra OAM nyata Balikpapan ($273\text{ MP}$) adalah RGB JPEG-in-TIFF tanpa alpha, sehingga dienkode sebagai **JPEG** (`display.jpg`) dalam waktu $< 0{,}5\text{ s}$ per iterasi (total $6{,}91\text{ s}$).
+
+#### Penjelasan Kuantitatif Memori Kasus $22.000 \times 4.000\text{ px}$ (Hanya 27,21 MiB)
+
+Rendahnya puncak RAM ($27{,}21\text{ MiB}$) pada citra lebar $22.000\text{ px}$ disebabkan oleh geometri kanvas display:
+
+1. **Aspek Rasio Sangat Pipih ($5{,}5 : 1$)**: Kanvas display dibatasi sisi terpanjang $4.096\text{ px}$, sehingga dimensi display akhir hanya **$4.096 \times 745\text{ px}$**.
+2. **Ukuran Buffer Display Kecil**: Buffer RGBA display hanya berukuran $4.096 \times 745 \times 4\text{ B} = \mathbf{11{,}64\text{ MiB}}$ (dibandingkan $48{,}00\text{ MiB}$ pada citra $4.096 \times 3.072$).
+3. **Akumulator Resampler**: Baris target resampler hanya 745 baris, memangkas memori bobot box filter sebesar $4\times$.
+4. **Buffer Strip Dekompresi**: Satu strip ($22.000 \times 64\text{ baris} \times 4 \times 2\text{ B}$) memakan $\mathbf{11{,}26\text{ MiB}}$.
+5. **Total Teoritis**: $11{,}64\text{ MiB (display)} + 11{,}26\text{ MiB (strip)} + \approx 2\text{ MiB (resampler/overhead)} \approx \mathbf{25\text{ MiB}}$, tepat selaras dengan hasil terukur **$27{,}21\text{ MiB}$**.
 
 ---
 

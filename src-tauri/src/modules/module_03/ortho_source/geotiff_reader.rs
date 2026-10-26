@@ -78,7 +78,21 @@ pub fn validate_geotiff_header_fast(path: &Path) -> Result<GeoTiffHeaderSummary,
     })?;
     let size = meta.len();
 
+    #[cfg(not(test))]
     if size > MAX_TIFF_FILE_SIZE_BYTES {
+        let size_mb = size as f64 / (1024.0 * 1024.0);
+        return Err(OrthoImportError::MelebihiBatas {
+            width: 0,
+            height: 0,
+            max_dimension: 0,
+            message: format!(
+                "Ukuran berkas {:.1} MB melebihi batas maksimal 250 MB untuk impor Opsi B",
+                size_mb
+            ),
+        });
+    }
+    #[cfg(test)]
+    if size > MAX_TIFF_FILE_SIZE_BYTES && std::env::var("AAP_BYPASS_MAX_TIFF_SIZE").is_err() {
         let size_mb = size as f64 / (1024.0 * 1024.0);
         return Err(OrthoImportError::MelebihiBatas {
             width: 0,

@@ -5,7 +5,7 @@
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::constants::{
     DISPLAY_MAX_BYTES_JPEG, DISPLAY_MAX_BYTES_PNG_ALPHA, DISPLAY_MIN_DIMENSION_PX,
@@ -1533,7 +1533,10 @@ pub fn execute_import_option_b(
         let _ = save_job_record(&record);
     };
 
+    let t_total_start = Instant::now();
+
     // 1. TAHAP VALIDASI FAST-FAIL SEBELUM STAGING
+    let t_header_start = Instant::now();
     update_progress(
         "validasi",
         5.0,
@@ -1601,6 +1604,8 @@ pub fn execute_import_option_b(
 
     // Preflight cek ruang hard disk
     check_disk_space_preflight(&staging_dir, source_size_bytes, payload.save_original)?;
+    let t_header_ms = t_header_start.elapsed().as_millis();
+    println!("STAGE_TIMING|stage=header_georef|ms={}", t_header_ms);
 
     // 2. TAHAP SALIN ORIGINAL STREAMING (JIKA OPSI "Simpan Berkas Asli" DIAKTIFKAN)
     let original_staging_file = staging_dir.join("original.tif");
@@ -1635,6 +1640,7 @@ pub fn execute_import_option_b(
     let mut stream_decoder = tiff::decoder::Decoder::new(BufReader::new(file_stream))?;
 
     // Analisis peregangan 16-bit jika bit_depth == 16
+    let t_sample_start = Instant::now();
     let u16_stretch = if header_summary.bit_depth == 16 {
         let (lo, hi, is_full_range) = super::geotiff_reader::compute_16bit_percentiles(
             &mut stream_decoder,
@@ -1659,6 +1665,8 @@ pub fn execute_import_option_b(
     } else {
         None
     };
+    let t_sample_ms = t_sample_start.elapsed().as_millis();
+    println!("STAGE_TIMING|stage=sampling_16bit|ms={}", t_sample_ms);
 
     let has_alpha_or_nodata = header_summary.has_alpha || header_summary.nodata_value.is_some();
     let channel_type = if has_alpha_or_nodata {
@@ -1674,6 +1682,7 @@ pub fn execute_import_option_b(
         channel_type,
     )?;
 
+    let t_stream_start = Instant::now();
     // Periksa apakah overview sub-IFD piramida dapat dimanfaatkan
     let best_overview_ifd = super::geotiff_reader::find_best_overview_ifd(&mut stream_decoder)?;
     if let Some(ifd_idx) = best_overview_ifd {
@@ -1729,6 +1738,9 @@ pub fn execute_import_option_b(
     }
 
     let resampled = resampler.finish()?;
+    let t_stream_ms = t_stream_start.elapsed().as_millis();
+    println!("STAGE_TIMING|stage=decode_resample|ms={}", t_stream_ms);
+
     let dynamic_image = if has_alpha_or_nodata {
         let rgba = image::RgbaImage::from_raw(resampled.width, resampled.height, resampled.data)
             .ok_or_else(|| {
@@ -1757,18 +1769,22 @@ pub fn execute_import_option_b(
         70.0,
         "Mengoptimalkan ukuran berkas display GeoTIFF...",
     );
+    let t_encode_start = Instant::now();
     let encode_res = adaptive_encode_display(
         &dynamic_image,
         &staging_dir,
         has_alpha_or_nodata,
         Some(&cancel_token),
     )?;
+    let t_encode_ms = t_encode_start.elapsed().as_millis();
+    println!("STAGE_TIMING|stage=encode_display|ms={}", t_encode_ms);
 
     if cancel_token.is_cancelled() {
         return Err(OrthoImportError::Dibatalkan);
     }
 
     // 5. TAHAP POINT OF NO RETURN: RENAME FOLDER & REGISTRASI ATOMIK
+    let t_write_start = Instant::now();
     update_progress(
         "registrasi",
         90.0,
@@ -1825,6 +1841,11 @@ pub fn execute_import_option_b(
     write_atomic(&tech_json_path, &tech_json_str).map_err(|e| {
         OrthoImportError::InternalError(format!("Gagal menulis metadata.json: {}", e))
     })?;
+
+    let t_write_ms = t_write_start.elapsed().as_millis();
+    let t_total_ms = t_total_start.elapsed().as_millis();
+    println!("STAGE_TIMING|stage=write_register|ms={}", t_write_ms);
+    println!("STAGE_TIMING|stage=total|ms={}", t_total_ms);
 
     // Tulis StoredImageMetadata (meta.json) ke staging sebelum rename
     let final_size_bytes = if payload.save_original {
