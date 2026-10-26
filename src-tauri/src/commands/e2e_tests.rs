@@ -628,3 +628,87 @@ fn e2e_image_actions_refuse_other_projects() {
     let same = move_image_impl(&env.state, image.id, source_id).expect_err("same session");
     assert_eq!(same.code, "SAME_SESSION");
 }
+
+/// The macOS shape: `library_root` reaches the files through a symlink while
+/// the import stores the resolved path, so a text `starts_with` check can
+/// miss the app's own copy and leave it on disk after a delete.
+#[cfg(unix)]
+#[test]
+fn e2e_delete_image_works_when_the_library_root_is_a_symlink() {
+    let root = tempfile::tempdir().expect("test root");
+    let conn = rusqlite::Connection::open(root.path().join("aerial.db")).expect("scratch db");
+    flight_session::init_schema(&conn).expect("scratch schema");
+    let real_library = root.path().join("library-real");
+    std::fs::create_dir_all(&real_library).expect("real library");
+    let link_library = root.path().join("library");
+    std::os::unix::fs::symlink(&real_library, &link_library).expect("symlink library");
+    let env = TestEnv {
+        state: AppState {
+            jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+            db: Arc::new(Mutex::new(conn)),
+            library_root: Arc::new(link_library),
+        },
+        _root: root,
+        source_dir: tempfile::tempdir().expect("source dir"),
+    };
+
+    let session_id = env_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0015.JPG", 15);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, session_id);
+    assert!(
+        image
+            .file_path
+            .starts_with(&real_library.display().to_string()),
+        "the import stored the resolved path"
+    );
+
+    let outcome = delete_image_impl(&env.state, image.id, true).expect("delete");
+    assert!(
+        !outcome.files_left,
+        "the copy must be recognized and removed"
+    );
+    let project = env_session_project(&env, session_id);
+    let session_dir =
+        session_images_dir(&env.state.library_root, &project, &session_id.to_string());
+    assert!(
+        files_under(&session_dir).is_empty(),
+        "copy removed from disk through the symlink"
+    );
+}
+
+#[test]
+fn e2e_move_refuses_a_row_pointing_at_the_users_original() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let original = write_jpeg(env.source_dir.path(), "DJI_0016.JPG", 16);
+
+    let image_id = Uuid::new_v4();
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let metadata = crate::modules::module_01::metadata_extractor::extract_metadata(&original)
+            .expect("metadata");
+        let image = flight_session::image_from_metadata(
+            image_id,
+            source_id,
+            original.display().to_string(),
+            &metadata,
+        );
+        flight_session::insert_image(&conn, &image).expect("row");
+    }
+
+    let refusal = move_image_impl(&env.state, image_id, target_id).expect_err("refused");
+    assert_eq!(refusal.code, "NOT_A_LIBRARY_COPY");
+    assert!(original.exists(), "the user's file stays where it is");
+    let conn = env.state.db.lock().expect("db lock");
+    let row = flight_session::get_image(&conn, image_id).expect("row stays");
+    assert_eq!(row.session_id, source_id, "the row did not move");
+}

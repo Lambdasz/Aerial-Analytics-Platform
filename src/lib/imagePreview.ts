@@ -37,11 +37,14 @@ export async function loadImagePreview(path: string): Promise<string> {
 }
 
 /**
- * Object URLs already produced this session, keyed by source path.
+ * Object URLs already produced this session, keyed by path and file size.
  *
  * A thumbnail is a few kilobytes and immutable for a given file, so
- * re-rendering a list must not re-fetch it. The URLs live for the session:
- * components share them and must not revoke them on unmount.
+ * re-rendering a list must not re-fetch it. The key includes the file size
+ * because a new file can reuse a path (replace-then-reimport): the backend
+ * decides real freshness by path, mtime, and size, and the row's size is the
+ * only part the frontend knows. The URLs live for the session: components
+ * share them and must not revoke them on unmount.
  */
 const thumbnailUrls = new Map<string, Promise<string>>();
 
@@ -54,11 +57,14 @@ const thumbnailUrls = new Map<string, Promise<string>>();
  * the same path share one request.
  *
  * @param path - Absolute path of the image on disk.
+ * @param fileSize - The row's recorded size, when known; a part of the cache
+ *   identity so a new file at a reused path is not served a stale thumbnail.
  * @returns The thumbnail as an object URL, ready for an `<img src>`.
  * @throws The backend error. Check `code` for `PREVIEW_UNAVAILABLE`.
  */
-export function loadImageThumbnail(path: string): Promise<string> {
-  const cached = thumbnailUrls.get(path);
+export function loadImageThumbnail(path: string, fileSize?: number | null): Promise<string> {
+  const key = `${path}\u0000${fileSize ?? ""}`;
+  const cached = thumbnailUrls.get(key);
   if (cached) return cached;
   const pending = invoke<ImagePreview>("thumbnail_image", { path })
     .then((preview) => {
@@ -67,10 +73,10 @@ export function loadImageThumbnail(path: string): Promise<string> {
     })
     .catch((error) => {
       // A transient failure must not poison the cache for later attempts.
-      thumbnailUrls.delete(path);
+      thumbnailUrls.delete(key);
       throw error;
     });
-  thumbnailUrls.set(path, pending);
+  thumbnailUrls.set(key, pending);
   return pending;
 }
 

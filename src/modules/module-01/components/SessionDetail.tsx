@@ -64,13 +64,17 @@ function cameraLabel(image: StoredImage): string {
   return parts.length > 0 ? parts.join(" ") : "Kamera tidak diketahui";
 }
 
-const ImageThumb: FC<{ path: string; format: string | null }> = ({ path, format }) => {
+const ImageThumb: FC<{ path: string; format: string | null; fileSize: number | null }> = ({
+  path,
+  format,
+  fileSize,
+}) => {
   const [url, setUrl] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    loadImageThumbnail(path)
+    loadImageThumbnail(path, fileSize)
       .then((next) => {
         if (alive) setUrl(next);
       })
@@ -82,7 +86,7 @@ const ImageThumb: FC<{ path: string; format: string | null }> = ({ path, format 
       // The URL is owned by the session-wide thumbnail cache and shared with
       // other views, so it is deliberately not revoked here.
     };
-  }, [path]);
+  }, [path, fileSize]);
 
   if (url) return <img className="m1-meta__thumb" src={url} alt="" />;
   return (
@@ -355,7 +359,11 @@ export const SessionDetail: FC<SessionDetailProps> = ({
                 <ul className="m1-meta-list">
                   {shownRows.map((image) => (
                     <li key={image.id} className="m1-meta">
-                      <ImageThumb path={image.filePath} format={image.format} />
+                      <ImageThumb
+                        path={image.filePath}
+                        format={image.format}
+                        fileSize={image.fileSize}
+                      />
                       <div className="m1-meta__body">
                         <button
                           type="button"

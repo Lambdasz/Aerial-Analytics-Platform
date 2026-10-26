@@ -317,10 +317,12 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
     setImporting(true);
     setError(null);
     setProgress({ done: 0, total: picked.length });
+    // Declared before the try so a failure in a later batch can still report
+    // the batches that already succeeded.
+    let report = emptyReport(session.id);
     try {
       const files = picked.filter((item) => item.kind === "file").map((item) => item.path);
       const folders = picked.filter((item) => item.kind === "folder").map((item) => item.path);
-      let report = emptyReport(session.id);
       const onProgress = (step: { done: number; total: number }) => setProgress(step);
       if (files.length > 0) {
         report = mergeReports(
@@ -343,7 +345,18 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
       }
       await onImported(reportSummary(report));
     } catch (err) {
-      setError(commandErrorMessage(err));
+      // A saved batch is on disk and in the database even when a later one
+      // fails, so refresh through the same path as a full success — carrying
+      // the failure into the summary, because that path closes the dialog.
+      if (report.imported_image_ids.length > 0) {
+        try {
+          await onImported(`${reportSummary(report)} — gagal: ${commandErrorMessage(err)}`);
+        } catch {
+          /* The summary toast is best-effort; the import already happened. */
+        }
+      } else {
+        setError(commandErrorMessage(err));
+      }
     } finally {
       setImporting(false);
       setProgress(null);

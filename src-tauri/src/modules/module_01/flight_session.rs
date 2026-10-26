@@ -1164,7 +1164,9 @@ pub fn delete_image_row(conn: &Connection, image_id: Uuid) -> Result<(), Session
 /// The caller has already verified the sessions share a project and has
 /// already moved the file to `new_file_path`. The moved image loses its pair
 /// link and a DNG partner left behind is demoted; moving one half of a pair
-/// never silently keeps a link across sessions.
+/// never silently keeps a link across sessions. A moved DNG is demoted too:
+/// it leaves its JPEG behind, so it is exactly as analysable as any other
+/// lone DNG.
 ///
 /// # Purity
 ///
@@ -1183,7 +1185,8 @@ pub fn move_image_row(
     let image = get_image(conn, image_id)?;
     with_immediate_transaction(conn, |conn| {
         conn.execute(
-            "UPDATE image SET session_id = ?2, file_path = ?3, raw_sibling_id = NULL \
+            "UPDATE image SET session_id = ?2, file_path = ?3, raw_sibling_id = NULL, \
+                analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END \
              WHERE id = ?1",
             params![
                 image_id.to_string(),
@@ -2522,6 +2525,55 @@ mod tests {
             partner.analysis_ready,
             Some(false),
             "a dng whose jpeg moved away is not analysable"
+        );
+    }
+
+    #[test]
+    fn moving_a_dng_demotes_it_and_keeps_the_jpeg_analysable() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let source = create_session(&conn, project.id, None).expect("source session");
+        let target = create_session(&conn, project.id, None).expect("target session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            source.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            source.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        move_image_row(&conn, dng_id, target.id, "/lib/target/a.dng").expect("move");
+
+        let moved = get_image(&conn, dng_id).expect("moved row");
+        assert_eq!(moved.session_id, target.id);
+        assert_eq!(moved.raw_sibling_id, None, "a moved image leaves its pair");
+        assert_eq!(
+            moved.analysis_ready,
+            Some(false),
+            "a moved dng is a lone dng and not analysable"
+        );
+        let partner = get_image(&conn, jpeg_id).expect("partner row");
+        assert_eq!(partner.raw_sibling_id, None);
+        assert_eq!(
+            partner.analysis_ready,
+            Some(true),
+            "the jpeg left behind stays analysable"
         );
     }
 

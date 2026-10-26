@@ -154,6 +154,27 @@ pub(crate) fn session_images_dir(
         .join("images")
 }
 
+/// True when `path` is a file the app itself placed under
+/// `<library_root>/projects`.
+///
+/// Both sides are resolved before comparing: a library root that reaches the
+/// file through a symlink (macOS temp folders do) must not make an
+/// app-owned copy look like the user's original file.
+///
+/// # Purity
+///
+/// Impure — canonicalizing touches the file system.
+pub(crate) fn is_library_copy(library_root: &Path, path: &Path) -> bool {
+    let projects = library_root.join("projects");
+    let resolved_projects = projects.canonicalize().unwrap_or_else(|_| projects.clone());
+    if let Ok(resolved) = path.canonicalize() {
+        return resolved.starts_with(&resolved_projects);
+    }
+    // The file may already be gone: fall back to text, accepting both the
+    // resolved and the unresolved form of the library.
+    path.starts_with(&projects) || path.starts_with(&resolved_projects)
+}
+
 /// Returns the file name of a stored image, for suffix-named relocations.
 fn stored_file_name(path: &Path) -> Result<String, SessionError> {
     path.file_name()

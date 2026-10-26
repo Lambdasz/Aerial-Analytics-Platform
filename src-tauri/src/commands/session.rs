@@ -226,9 +226,9 @@ pub(crate) fn delete_image_impl(
         image.file_path
     };
     // Only files inside the app-owned project layout are removed.
-    let owned = Path::new(&file_path).starts_with(state.library_root.join("projects"));
-    let files_left =
-        owned && import_io::discard_image_file(&state.library_root, Path::new(&file_path)).is_err();
+    let path = Path::new(&file_path);
+    let files_left = import_io::is_library_copy(&state.library_root, path)
+        && import_io::discard_image_file(&state.library_root, path).is_err();
     Ok(DeleteImageOutcome { files_left })
 }
 
@@ -238,13 +238,15 @@ pub(crate) fn delete_image_impl(
 /// session's `images/` folder first, then the row is updated to the new path
 /// in one transaction. If the row update fails the file is moved back, so
 /// the row and the disk cannot disagree. The moved image loses its pair
-/// link; a DNG partner left behind is demoted.
+/// link; a DNG partner left behind is demoted, and the moved DNG itself is
+/// demoted too when it was one.
 ///
 /// # Errors
 ///
 /// `IMAGE_NOT_FOUND`/`SESSION_NOT_FOUND` for unknown ids, `SAME_SESSION` when
 /// the target is the image's own session, `CROSS_PROJECT_IMAGE` for another
-/// project (an image only ever belongs to one project), and `STORAGE_ERROR`
+/// project (an image only ever belongs to one project), `NOT_A_LIBRARY_COPY`
+/// when the row still points outside the app library, and `STORAGE_ERROR`
 /// when the file cannot be moved.
 #[tauri::command]
 pub fn move_image_to_session(
@@ -262,27 +264,49 @@ pub(crate) fn move_image_impl(
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
     let (image, source, target) = load_image_and_target(state, image_id, target_session_id)?;
+    // Moving touches the user's disk: only the app's own copies may leave
+    // their folder. A migrated row may still point at the user's original,
+    // which must never be moved out from under them.
+    if !import_io::is_library_copy(&state.library_root, Path::new(&image.file_path)) {
+        return Err(CommandError {
+            code: "NOT_A_LIBRARY_COPY".to_string(),
+            message: "this row points outside the app library, so its file is left where it \
+                 is; only images the app copied can move between sessions"
+                .to_string(),
+        });
+    }
     let dest_dir = import_io::session_images_dir(
         &state.library_root,
         &target.project_id.to_string(),
         &target_session_id.to_string(),
     );
+    // The lock is held across the file move so no other command can see the
+    // new path before the row is updated (or the old path after the move).
+    let conn = state.db.lock().map_err(lock_err)?;
     let new_path = import_io::relocate_image_file(Path::new(&image.file_path), &dest_dir)?;
+    // Store the resolved form so later library checks never trip over a
+    // symlinked library root. `dunce` matches what import stores: it leaves
+    // the `\\?\` prefix off on Windows, so every stored path has one shape.
+    let new_path = dunce::canonicalize(&new_path).unwrap_or(new_path);
     let new_path_string = new_path.display().to_string();
-    let row = {
-        let conn = state.db.lock().map_err(lock_err)?;
+    if let Err(err) =
         flight_session::move_image_row(&conn, image_id, target_session_id, &new_path_string)
-    };
-    if let Err(err) = row {
-        // Roll the file back so the row and the disk cannot disagree.
+    {
+        // Roll the file back so the row and the disk cannot disagree. If even
+        // the rollback fails, say so: the row still points at the source
+        // session while the file sits under the target session.
         let source_dir = Path::new(&image.file_path)
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .to_path_buf();
-        let _ = import_io::relocate_image_file(&new_path, &source_dir);
+        if import_io::relocate_image_file(&new_path, &source_dir).is_err() {
+            eprintln!(
+                "warning: a failed move could not be rolled back on disk; \
+                 the row and its file disagree until the next move succeeds"
+            );
+        }
         return Err(err.into());
     }
-    let conn = state.db.lock().map_err(lock_err)?;
     flight_session::recalculate_session_date_range(&conn, source.id)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
     Ok(())
@@ -322,23 +346,33 @@ pub(crate) fn copy_image_impl(
         &target_session_id.to_string(),
     );
     let new_path = import_io::copy_image_file(Path::new(&image.file_path), &dest_dir)?;
+    // Store the resolved form so later library checks never trip over a
+    // symlinked library root. `dunce` matches what import stores: it leaves
+    // the `\\?\` prefix off on Windows, so every stored path has one shape.
+    let stored_path = dunce::canonicalize(&new_path).unwrap_or_else(|_| new_path.clone());
     let copy = Image {
         id: Uuid::new_v4(),
         session_id: target_session_id,
-        file_path: new_path.display().to_string(),
+        file_path: stored_path.display().to_string(),
         raw_sibling_id: None,
         analysis_ready: Some(image.format.as_deref() == Some("jpeg")),
         ..image
     };
-    let inserted = {
-        let conn = state.db.lock().map_err(lock_err)?;
-        flight_session::insert_image(&conn, &copy)
-    };
-    if let Err(err) = inserted {
-        let _ = std::fs::remove_file(&new_path);
+    // The lock is held across the insert and its cleanup so a failed insert
+    // never leaves a rowless file behind another command could trip over.
+    let conn = state.db.lock().map_err(lock_err)?;
+    if let Err(err) = flight_session::insert_image(&conn, &copy) {
+        // The row is the source of truth; a copy that never got one is
+        // removed again. If even that fails, say so — the file is an orphan
+        // the background sweep will collect.
+        if std::fs::remove_file(&new_path).is_err() {
+            eprintln!(
+                "warning: a copy whose row failed to insert stays on disk; \
+                 the background sweep will collect it"
+            );
+        }
         return Err(err.into());
     }
-    let conn = state.db.lock().map_err(lock_err)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
     Ok(())
 }
