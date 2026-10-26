@@ -1,6 +1,6 @@
 //! Tauri IPC commands for plugin payload validation and result processing.
 //!
-//! These commands are registered in [`crate::lib::run`] via
+//! These commands are registered in [`crate::run`] via
 //! `invoke_handler(tauri::generate_handler![...])` and consumed by the
 //! Plugin Manager frontend component.
 

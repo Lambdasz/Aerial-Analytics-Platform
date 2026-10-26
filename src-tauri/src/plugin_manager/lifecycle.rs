@@ -17,7 +17,7 @@
 //!
 //! ## Security
 //!
-//! Every ZIP entry is validated by [`verify_and_extract_entry`] to prevent
+//! Every ZIP entry is validated by `verify_and_extract_entry` to prevent
 //! path traversal attacks (Zip-Slip vulnerability).
 //!
 //! For the full specification see

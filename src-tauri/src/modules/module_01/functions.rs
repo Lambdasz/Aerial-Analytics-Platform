@@ -4,7 +4,7 @@
 //!
 //! Extracts GPS coordinates, acquisition date, altitude, resolution, and
 //! camera/flight tags from EXIF and XMP DJI data embedded in aerial images,
-//! populating [`ImageMetadata`](crate::models::ImageMetadata).
+//! populating [`ImageMetadata`].
 //!
 //! ## Purity Boundary
 //!

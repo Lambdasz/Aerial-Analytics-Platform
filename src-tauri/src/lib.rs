@@ -361,7 +361,7 @@ mod commands;
 pub mod map_controller;
 pub mod modules;
 mod plot;
-mod plugin_manager;
+pub mod plugin_manager;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
