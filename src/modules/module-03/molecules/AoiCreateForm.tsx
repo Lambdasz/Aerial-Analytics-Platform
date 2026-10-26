@@ -245,7 +245,7 @@ export const AoiCreateForm: React.FC<AoiCreateFormProps> = ({
       <div style={{ marginTop: "10px" }}>
         <Button
           icon="floppy-disk"
-          text={editingAoiId ? "Simpan Perubahan ke Rust" : "Simpan ke Rust"}
+          text={editingAoiId ? "Simpan Perubahan " : "Simpan "}
           fill
           onClick={onSave}
           disabled={isSaveDisabled}
