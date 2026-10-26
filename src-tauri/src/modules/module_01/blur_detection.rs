@@ -71,10 +71,10 @@ pub(crate) const HARD_FLOOR_BLUR_SCORE: f64 = 20.0;
 /// stricter (fewer images flagged).
 pub(crate) const BLUR_Z_THRESHOLD: f64 = -1.5;
 
-/// Minimum number of session samples (including the image being classified)
-/// before relative (z-score) classification applies. Below this, only the
-/// hard floor applies: a mean/stddev computed from too few points is not a
-/// meaningful baseline.
+/// Minimum number of *other* scored images in the session (excluding the one
+/// being classified — see [`classify_blur`]) before relative (z-score)
+/// classification applies. Below this, only the hard floor applies: a
+/// mean/stddev computed from too few points is not a meaningful baseline.
 pub(crate) const MIN_SESSION_SAMPLE_FOR_RELATIVE: usize = 5;
 
 /// Laplacian-variance sharpness score. Higher means sharper (more and/or
@@ -213,11 +213,18 @@ pub(crate) fn compute_session_blur_stats(scores: &[f64]) -> SessionBlurStats {
 
 /// Classifies one raw score as blurry, given its session's baseline stats.
 ///
+/// `stats` must be built from the *other* scored images in the session,
+/// excluding `raw_score` itself — see [`classify_against_session`]. Folding
+/// the candidate into its own mean/stddev caps how far its z-score can ever
+/// read (a population stddev including the point bounds `|z|` at
+/// `(n-1)/sqrt(n)`), which quietly under-flags real outliers in small
+/// sessions.
+///
 /// A score below `hard_floor` is always blurry. Otherwise, with fewer than
-/// [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] samples or a zero stddev, there is no
-/// meaningful baseline yet, so nothing beyond the hard floor is flagged.
-/// Past that minimum, a z-score below `z_threshold` standard deviations
-/// under the session mean is also classified as blurry.
+/// [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a zero stddev, there
+/// is no meaningful baseline yet, so nothing beyond the hard floor is
+/// flagged. Past that minimum, a z-score below `z_threshold` standard
+/// deviations under the session mean is also classified as blurry.
 ///
 /// # Purity
 ///
@@ -355,6 +362,16 @@ mod tests {
         };
         assert!(classify_blur(70.0, &stats, 20.0, -1.5)); // z = -3.0
         assert!(!classify_blur(95.0, &stats, 20.0, -1.5)); // z = -0.5
+    }
+
+    #[test]
+    fn classify_against_session_excludes_the_candidate_from_its_own_baseline() {
+        // Including the candidate in its own mean/stddev caps |z| at
+        // (n-1)/sqrt(n) — here that would read z ≈ -1.27 (not blurry),
+        // under-flagging a real outlier. Excluding it (the correct
+        // behaviour) reads z ≈ -1.70, past the -1.5 threshold.
+        let others = [100.0, 120.0, 80.0, 110.0, 90.0];
+        assert!(classify_against_session(76.0, &others));
     }
 
     #[test]
