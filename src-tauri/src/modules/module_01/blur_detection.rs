@@ -345,4 +345,37 @@ mod tests {
         assert!(meets_scoring_size(BLUR_SCORE_LONG_EDGE_PX, 480));
         assert!(meets_scoring_size(4000, 3000));
     }
+
+    /// A sharp (2px checkerboard) JPEG of the given size, on disk.
+    fn textured_jpeg(dir: &Path, name: &str, width: u32, height: u32) -> std::path::PathBuf {
+        let path = dir.join(name);
+        image::RgbImage::from_fn(width, height, |x, y| {
+            let v = if (x / 2 + y / 2) % 2 == 0 { 0 } else { 255 };
+            image::Rgb([v, v, v])
+        })
+        .save(&path)
+        .expect("write jpeg");
+        path
+    }
+
+    // Regression coverage for `blur_score_for_copy` itself (not just the
+    // `meets_scoring_size` predicate it calls): pins the end-to-end
+    // decode-resize-score pipeline so an upscale-before-scoring bug would
+    // fail here directly, rather than only surfacing indirectly through an
+    // `import_io` integration test.
+    #[test]
+    fn sources_below_the_long_edge_are_not_scored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let small = textured_jpeg(dir.path(), "small.jpg", 640, 480);
+        assert_eq!(blur_score_for_copy(&small, ImageFormat::Jpeg), None);
+    }
+
+    #[test]
+    fn sources_at_or_above_the_long_edge_are_scored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exact = textured_jpeg(dir.path(), "exact.jpg", 1280, 960);
+        let large = textured_jpeg(dir.path(), "large.jpg", 2560, 1920);
+        assert!(blur_score_for_copy(&exact, ImageFormat::Jpeg).is_some());
+        assert!(blur_score_for_copy(&large, ImageFormat::Jpeg).is_some());
+    }
 }
