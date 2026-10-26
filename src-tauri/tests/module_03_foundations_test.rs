@@ -908,3 +908,60 @@ fn test_static_source_code_audit_all_mutating_commands_guarded() {
         }
     }
 }
+
+#[test]
+fn test_start_import_ortho_job_spawns_without_tokio_reactor_requirement() {
+    let _lock = STORAGE_TEST_MUTEX.lock().unwrap();
+    use aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::{
+        is_primary_instance, set_is_primary_instance,
+    };
+    let prev = is_primary_instance();
+    set_is_primary_instance(true);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dummy_jpg = temp.path().join("dummy.jpg");
+    // Write valid minimal JPEG header
+    fs::write(
+        &dummy_jpg,
+        [
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9,
+        ],
+    )
+    .unwrap();
+
+    let payload = aerial_analytics_platform_lib::modules::module_03::ortho_source::types::ImportDualModePayload {
+        mode: "A".to_string(),
+        file_path: dummy_jpg.to_string_lossy().to_string(),
+        custom_filename: Some("test_reactor".to_string()),
+        manual_bounds: Some(aerial_analytics_platform_lib::modules::module_03::ortho_source::types::ImportBoundsPayload {
+            west: 116.85,
+            south: -1.25,
+            east: 116.86,
+            north: -1.24,
+        }),
+        save_original: false,
+    };
+
+    // Ini dipanggil dari thread tes biasa (tanpa runtime Tokio).
+    // Harus berhasil mengembalikan Ok(job_id) tanpa panic "there is no reactor running".
+    let res = aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::start_import_ortho_job(payload);
+    assert!(
+        res.is_ok(),
+        "start_import_ortho_job harus berhasil mengalokasikan job"
+    );
+    let job_id = res.unwrap();
+    assert!(job_id.starts_with("job_"));
+
+    // Tunggu sebentar agar thread pekerja mencatat status
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // Bersihkan status job dari storage
+    let job_record_path =
+        aerial_analytics_platform_lib::modules::module_03::storage_utils::get_storage_root()
+            .join(".jobs")
+            .join(format!("{}.json", job_id));
+    let _ = fs::remove_file(job_record_path);
+
+    set_is_primary_instance(prev);
+}

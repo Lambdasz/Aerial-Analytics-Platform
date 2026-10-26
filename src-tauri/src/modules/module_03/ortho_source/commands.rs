@@ -121,45 +121,54 @@ pub fn start_import_ortho_job(
     let worker_job_id = job_id.clone();
     let worker_payload = payload.clone();
 
-    // Spawn async background task
-    tokio::spawn(async move {
-        let res = match worker_payload.mode.as_str() {
-            "A" | "a" => super::image_pipeline::execute_import_option_a(
-                &worker_job_id,
-                worker_payload,
-                token,
-            ),
-            "B" | "b" => super::image_pipeline::execute_import_option_b(
-                &worker_job_id,
-                worker_payload,
-                token,
-            ),
-            other => Err(
-                crate::modules::module_03::error::OrthoImportError::FormatTidakDidukung(format!(
-                    "Mode impor '{}' tidak valid. Pilih Opsi 'A' atau 'B'.",
-                    other
-                )),
-            ),
-        };
+    // Spawn background worker thread
+    std::thread::Builder::new()
+        .name(format!("ortho-worker-{}", worker_job_id))
+        .spawn(move || {
+            let res = match worker_payload.mode.as_str() {
+                "A" | "a" => super::image_pipeline::execute_import_option_a(
+                    &worker_job_id,
+                    worker_payload,
+                    token,
+                ),
+                "B" | "b" => super::image_pipeline::execute_import_option_b(
+                    &worker_job_id,
+                    worker_payload,
+                    token,
+                ),
+                other => Err(
+                    crate::modules::module_03::error::OrthoImportError::FormatTidakDidukung(
+                        format!(
+                            "Mode impor '{}' tidak valid. Pilih Opsi 'A' atau 'B'.",
+                            other
+                        ),
+                    ),
+                ),
+            };
 
-        if let Err(e) = res {
-            // Jika terjadi kesalahan dan job belum berstatus cancelled/interrupted, simpan status gagal
-            if let Ok(Some(mut rec)) = super::job_manager::load_job_record(&worker_job_id) {
-                if rec.status == "running" {
-                    if e == crate::modules::module_03::error::OrthoImportError::Dibatalkan {
-                        rec.status = "cancelled".to_string();
-                        rec.message = "Proses impor telah dibatalkan oleh pengguna.".to_string();
-                    } else {
-                        rec.status = "failed".to_string();
-                        rec.error = Some(e.code().to_string());
-                        rec.message = e.user_friendly_message();
+            if let Err(e) = res {
+                // Jika terjadi kesalahan dan job belum berstatus cancelled/interrupted, simpan status gagal
+                if let Ok(Some(mut rec)) = super::job_manager::load_job_record(&worker_job_id) {
+                    if rec.status == "running" {
+                        if e == crate::modules::module_03::error::OrthoImportError::Dibatalkan {
+                            rec.status = "cancelled".to_string();
+                            rec.message =
+                                "Proses impor telah dibatalkan oleh pengguna.".to_string();
+                        } else {
+                            rec.status = "failed".to_string();
+                            rec.error = Some(e.code().to_string());
+                            rec.message = e.user_friendly_message();
+                        }
+                        rec.updated_at = chrono::Utc::now().to_rfc3339();
+                        let _ = super::job_manager::save_job_record(&rec);
                     }
-                    rec.updated_at = chrono::Utc::now().to_rfc3339();
-                    let _ = super::job_manager::save_job_record(&rec);
                 }
             }
-        }
-    });
+        })
+        .map_err(|e| CommandError {
+            code: "THREAD_ERROR".to_string(),
+            message: format!("Gagal membuat thread pekerja: {}", e),
+        })?;
 
     Ok(job_id)
 }
