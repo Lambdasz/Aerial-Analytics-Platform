@@ -29,7 +29,8 @@ docs/modules/module_3/
 │       ├── README.md                  # Rust backend architecture & cargo doc build commands
 │       ├── mapping.md                 # Complete 39 Tauri IPC commands mapping & permissions
 │       ├── pipeline.md                # Storage<->Backend<->Frontend bidirectional pipelines
-│       └── decisions-and-limitations.md # Architectural decisions, resource limits, 25 audit findings
+│       ├── decisions-and-limitations.md # Architectural decisions, resource limits, 25 audit findings
+│       └── spatial_result.md          # Data contract, JSON schema, dual-storage, & mutation lifecycle
 └── id/                                 # Dokumentasi lengkap Bahasa Indonesia
     ├── project-structure.md           # Pohon direktori lengkap (Rust, React, storage)
     ├── frontend/
@@ -41,7 +42,8 @@ docs/modules/module_3/
         ├── README.md                  # Arsitektur backend Rust & perintah build cargo doc
         ├── mapping.md                 # Pemetaan lengkap 39 Tauri IPC command & perizinan
         ├── pipeline.md                # Alur data storage<->backend<->frontend dua arah
-        └── decisions-and-limitations.md # Keputusan arsitektur, batasan sumber daya, 25 temuan audit
+        ├── decisions-and-limitations.md # Keputusan arsitektur, batasan sumber daya, 25 temuan audit
+        └── spatial_result.md          # Kontrak data, skema JSON, dual-storage, & siklus mutasi
 ```
 
 ---
