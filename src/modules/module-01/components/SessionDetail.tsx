@@ -222,7 +222,7 @@ export const SessionDetail: FC<SessionDetailProps> = ({
   }, [session.id]);
 
   const hasImages = images.length > 0;
-  const stage = getSessionStage(session);
+  const stage = getSessionStage(session, hasImages);
   const isActive = session.status === "active";
 
   const sortedRows = useMemo(() => {
