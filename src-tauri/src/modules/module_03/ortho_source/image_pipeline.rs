@@ -1,6 +1,6 @@
 //! Pipeline pemrosesan impor citra orthomosaic JPG/PNG dengan koordinat WGS84 murni Rust.
 //! Menerapkan fast-fail validation, deteksi JPEG progressive (SOF2), IDCT downscaling (jpeg-decoder),
-//! streaming copy original dengan token pembatalan, dan loop kompresi adaptif <= 5 MB.
+//! streaming copy original dengan token pembatalan, dan loop kompresi adaptif (JPEG <= 5 MiB, PNG alpha <= 10 MiB).
 
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Seek, Write};
@@ -201,7 +201,7 @@ pub fn generate_display_preview(
     }
 
     Err(MapControllerError::InvalidGeometry(
-        "Gagal membuat pratinjau display.jpg berukuran di bawah 5 MB dari citra sumber."
+        "Gagal membuat pratinjau display.jpg berukuran di bawah 5 MiB dari citra sumber."
             .to_string(),
     ))
 }
@@ -855,14 +855,198 @@ impl<'a, W: Write + Seek> Seek for CancellableWriter<'a, W> {
     }
 }
 
+/// Batas ukuran berkas display dalam bytes (MiB, basis 1024): JPEG 5 MiB, PNG ber-alpha 10 MiB.
+pub fn display_limit_bytes(has_alpha: bool) -> u64 {
+    if has_alpha {
+        DISPLAY_MAX_BYTES_PNG_ALPHA
+    } else {
+        DISPLAY_MAX_BYTES_JPEG
+    }
+}
+
+/// Anak tangga awal: dimensi tangga terbesar yang tidak melebihi sisi terpanjang sumber;
+/// jika sumber lebih kecil dari lantai, kembalikan lantai (1.024 px).
+pub fn png_initial_dimension(max_orig_dim: u32) -> u32 {
+    PNG_DIMENSION_LADDER
+        .iter()
+        .copied()
+        .find(|&d| d <= max_orig_dim)
+        .unwrap_or(DISPLAY_MIN_DIMENSION_PX)
+}
+
+/// Anak tangga berikutnya setelah encode berukuran `size` pada dimensi `cur_dim`.
+/// Estimasi kuadratik (ukuran ~ dimensi^2) dengan margin 5%, melompat ke anak tangga terdekat
+/// yang diperkirakan muat; minimal turun satu anak tangga; tidak pernah di bawah lantai 1.024 px.
+pub fn png_next_dimension(cur_dim: u32, size: u64, limit_bytes: u64) -> u32 {
+    if cur_dim <= DISPLAY_MIN_DIMENSION_PX {
+        return DISPLAY_MIN_DIMENSION_PX;
+    }
+    let ratio = (limit_bytes as f64 * 0.95 / size.max(1) as f64).sqrt();
+    let est_dim = (cur_dim as f64 * ratio) as u32;
+    PNG_DIMENSION_LADDER
+        .iter()
+        .copied()
+        .filter(|&d| d < cur_dim)
+        .find(|&d| d <= est_dim)
+        .unwrap_or_else(|| {
+            PNG_DIMENSION_LADDER
+                .iter()
+                .copied()
+                .find(|&d| d < cur_dim)
+                .unwrap_or(DISPLAY_MIN_DIMENSION_PX)
+        })
+}
+
+/// Parameter encode PNG (kompresi dan filter).
+#[derive(Debug, Clone, Copy)]
+pub struct PngEncodeSettings {
+    pub compression: png::Compression,
+    pub filter: png::FilterType,
+    pub adaptive: png::AdaptiveFilterType,
+}
+
+impl Default for PngEncodeSettings {
+    fn default() -> Self {
+        Self {
+            compression: png::Compression::Default,
+            filter: png::FilterType::Sub,
+            adaptive: png::AdaptiveFilterType::Adaptive,
+        }
+    }
+}
+
+/// Jumlah baris per band saat menulis PNG; token pembatalan diperiksa di antara band.
+pub const PNG_ENCODE_BAND_ROWS: usize = 64;
+
+/// Encode RGBA8 ke PNG per band baris lewat `png::StreamWriter` sehingga pembatalan dapat
+/// terjadi di antara band (bukan satu panggilan monolitik). Mengembalikan ukuran berkas (bytes).
+pub fn encode_png_banded(
+    image: &image::DynamicImage,
+    path: &Path,
+    settings: PngEncodeSettings,
+    cancel_token: Option<&CancellationToken>,
+) -> Result<u64, OrthoImportError> {
+    let is_cancelled = || cancel_token.map(|t| t.is_cancelled()).unwrap_or(false);
+    let owned;
+    let rgba: &image::RgbaImage = match image.as_rgba8() {
+        Some(r) => r,
+        None => {
+            owned = image.to_rgba8();
+            &owned
+        }
+    };
+    let (w, h) = rgba.dimensions();
+    let file = File::create(path).map_err(|e| {
+        OrthoImportError::InternalError(format!("Gagal membuat berkas display.png: {}", e))
+    })?;
+    let writer = CancellableWriter::new(BufWriter::new(file), cancel_token);
+    let mut encoder = png::Encoder::new(writer, w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(settings.compression);
+    encoder.set_filter(settings.filter);
+    encoder.set_adaptive_filter(settings.adaptive);
+
+    let map_err = |what: &str, e: String| -> OrthoImportError {
+        if is_cancelled() {
+            OrthoImportError::Dibatalkan
+        } else {
+            OrthoImportError::InternalError(format!("{}: {}", what, e))
+        }
+    };
+
+    let mut png_writer = encoder
+        .write_header()
+        .map_err(|e| map_err("Gagal menulis header PNG", e.to_string()))?;
+    {
+        let mut stream = png_writer
+            .stream_writer()
+            .map_err(|e| map_err("Gagal membuka stream PNG", e.to_string()))?;
+        let row_bytes = w as usize * 4;
+        for band in rgba.as_raw().chunks(row_bytes * PNG_ENCODE_BAND_ROWS) {
+            if is_cancelled() {
+                return Err(OrthoImportError::Dibatalkan);
+            }
+            stream
+                .write_all(band)
+                .map_err(|e| map_err("Gagal menulis band PNG", e.to_string()))?;
+        }
+        stream
+            .finish()
+            .map_err(|e| map_err("Gagal menyelesaikan stream PNG", e.to_string()))?;
+    }
+    png_writer
+        .finish()
+        .map_err(|e| map_err("Gagal menyelesaikan PNG", e.to_string()))?;
+
+    Ok(fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+}
+
+/// Loop adaptif PNG ber-alpha: encode, lalu lompat kuadratik ke anak tangga berikutnya
+/// sampai ukuran <= `limit_bytes` atau mencapai lantai 1.024 px. Selalu mengubah ukuran
+/// dari kanvas asli di memori.
+pub fn adaptive_encode_png(
+    image: &image::DynamicImage,
+    target_dir: &Path,
+    cancel_token: Option<&CancellationToken>,
+    limit_bytes: u64,
+    settings: PngEncodeSettings,
+) -> Result<AdaptiveEncodeResult, OrthoImportError> {
+    let mut warnings = Vec::new();
+    let display_png = target_dir.join("display.png");
+    let (orig_w, orig_h) = (image.width(), image.height());
+    let max_orig_dim = orig_w.max(orig_h);
+    let limit_mib = limit_bytes as f64 / (1024 * 1024) as f64;
+    let mut cur_dim = png_initial_dimension(max_orig_dim);
+
+    loop {
+        if let Some(t) = cancel_token {
+            if t.is_cancelled() {
+                return Err(OrthoImportError::Dibatalkan);
+            }
+        }
+
+        let resized = if cur_dim >= max_orig_dim {
+            image.clone()
+        } else {
+            resample_dynamic_image_box_filter(image, cur_dim)?
+        };
+        let (tw, th) = (resized.width(), resized.height());
+        let size = encode_png_banded(&resized, &display_png, settings, cancel_token)?;
+
+        if size <= limit_bytes || cur_dim <= DISPLAY_MIN_DIMENSION_PX {
+            if tw < orig_w || th < orig_h {
+                warnings.push(format!(
+                    "Resolusi pratinjau PNG disesuaikan ke {}x{} agar muat dalam batas {} MiB",
+                    tw, th, limit_mib
+                ));
+            }
+            if tw.max(th) < 2048 {
+                warnings.push(format!(
+                    "Peringatan: Resolusi akhir pratinjau PNG ({}x{}) berada di bawah 2.048 piksel",
+                    tw, th
+                ));
+            }
+            return Ok(AdaptiveEncodeResult {
+                display_path: display_png,
+                display_size_bytes: size,
+                final_dimensions: [tw, th],
+                format: "png".to_string(),
+                warnings,
+            });
+        }
+
+        cur_dim = png_next_dimension(cur_dim, size, limit_bytes);
+    }
+}
+
 /// Menghasilkan berkas display adaptif (display.jpg atau display.png) dengan kontrol ketat:
-/// - JPEG: batas maksimal 5 MB (`DISPLAY_MAX_BYTES_JPEG`).
-/// - PNG (citra dengan transparansi alpha): batas maksimal 10 MB (`DISPLAY_MAX_BYTES_PNG_ALPHA`).
-///   Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MB,
+/// - JPEG: batas maksimal 5 MiB (`DISPLAY_MAX_BYTES_JPEG`).
+/// - PNG (citra dengan transparansi alpha): batas maksimal 10 MiB (`DISPLAY_MAX_BYTES_PNG_ALPHA`).
+///   Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MiB,
 ///   sedangkan JPEG bisa.
 /// - Tangga dimensi (sisi terpanjang): 4096, 3584, 3072, 2560, 2304, 2048, 1792, 1536, 1280, 1024.
-/// - Estimasi kuadratik: setelah encode pertama, estimasi dimensi berikutnya dari ukuran hasil ($dim \propto \sqrt{target/size}$)
-///   dan melompat langsung ke anak tangga terdekat, lalu diverifikasi dengan encode nyata.
+/// - Estimasi kuadratik: lihat [`png_next_dimension`].
 /// - Downscale selalu dilakukan langsung dari kanvas asli di memori (`image`).
 pub fn adaptive_encode_display(
     image: &image::DynamicImage,
@@ -873,100 +1057,13 @@ pub fn adaptive_encode_display(
     let mut warnings = Vec::new();
 
     if has_alpha {
-        // Enkode PNG untuk mempertahankan transparansi
-        let display_png = target_dir.join("display.png");
-        let (orig_w, orig_h) = (image.width(), image.height());
-        let max_orig_dim = orig_w.max(orig_h);
-
-        let ladder = PNG_DIMENSION_LADDER;
-        let mut cur_dim = ladder
-            .iter()
-            .copied()
-            .find(|&d| d <= max_orig_dim)
-            .unwrap_or(DISPLAY_MIN_DIMENSION_PX);
-
-        loop {
-            if let Some(t) = cancel_token {
-                if t.is_cancelled() {
-                    return Err(OrthoImportError::Dibatalkan);
-                }
-            }
-
-            let resized = if cur_dim >= max_orig_dim {
-                image.clone()
-            } else {
-                resample_dynamic_image_box_filter(image, cur_dim)?
-            };
-            let (tw, th) = (resized.width(), resized.height());
-
-            let file = File::create(&display_png).map_err(|e| {
-                OrthoImportError::InternalError(format!("Gagal membuat berkas display.png: {}", e))
-            })?;
-            let buf_writer = BufWriter::new(file);
-            let mut writer = CancellableWriter::new(buf_writer, cancel_token);
-
-            resized
-                .write_to(&mut writer, image::ImageFormat::Png)
-                .map_err(|e| {
-                    if let Some(t) = cancel_token {
-                        if t.is_cancelled() {
-                            return OrthoImportError::Dibatalkan;
-                        }
-                    }
-                    OrthoImportError::InternalError(format!("Gagal mengenkode display PNG: {}", e))
-                })?;
-            writer.flush().map_err(|e| {
-                if let Some(t) = cancel_token {
-                    if t.is_cancelled() {
-                        return OrthoImportError::Dibatalkan;
-                    }
-                }
-                OrthoImportError::InternalError(format!("Gagal flush display PNG: {}", e))
-            })?;
-
-            let size = fs::metadata(&display_png).map(|m| m.len()).unwrap_or(0);
-            if size <= DISPLAY_MAX_BYTES_PNG_ALPHA || cur_dim <= DISPLAY_MIN_DIMENSION_PX {
-                if tw < orig_w || th < orig_h {
-                    warnings.push(format!(
-                        "Resolusi pratinjau PNG disesuaikan ke {}x{} agar muat dalam batas 10 MB",
-                        tw, th
-                    ));
-                }
-                if cur_dim < 2048 {
-                    warnings.push(format!(
-                        "Peringatan: Resolusi akhir pratinjau PNG ({}x{}) berada di bawah 2.048 piksel",
-                        tw, th
-                    ));
-                }
-                return Ok(AdaptiveEncodeResult {
-                    display_path: display_png,
-                    display_size_bytes: size,
-                    final_dimensions: [tw, th],
-                    format: "png".to_string(),
-                    warnings,
-                });
-            }
-
-            // Estimasi dimensi berikutnya dari ukuran hasil (ukuran ~ dimensi^2)
-            // dan lompat ke anak tangga terdekat yang diperkirakan muat.
-            let ratio = (DISPLAY_MAX_BYTES_PNG_ALPHA as f64 * 0.95 / size as f64).sqrt();
-            let est_dim = (cur_dim as f64 * ratio) as u32;
-
-            let next_dim = ladder
-                .iter()
-                .copied()
-                .filter(|&d| d < cur_dim)
-                .find(|&d| d <= est_dim)
-                .unwrap_or_else(|| {
-                    ladder
-                        .iter()
-                        .copied()
-                        .find(|&d| d < cur_dim)
-                        .unwrap_or(DISPLAY_MIN_DIMENSION_PX)
-                });
-
-            cur_dim = next_dim;
-        }
+        adaptive_encode_png(
+            image,
+            target_dir,
+            cancel_token,
+            display_limit_bytes(true),
+            PngEncodeSettings::default(),
+        )
     } else {
         // Enkode JPEG: Kualitas dulu, baru dimensi
         let display_jpg = target_dir.join("display.jpg");
@@ -1253,7 +1350,7 @@ pub fn execute_import_option_a(
         return Err(OrthoImportError::Dibatalkan);
     }
 
-    // 4. TAHAP LOOP ADAPTIF DISPLAY <= 5 MB
+    // 4. TAHAP LOOP ADAPTIF DISPLAY (JPEG <= 5 MiB, PNG alpha <= 10 MiB)
     update_progress(
         "loop_adaptif",
         70.0,
@@ -1654,7 +1751,7 @@ pub fn execute_import_option_b(
         return Err(OrthoImportError::Dibatalkan);
     }
 
-    // 4. TAHAP LOOP ADAPTIF DISPLAY <= 5 MB
+    // 4. TAHAP LOOP ADAPTIF DISPLAY (JPEG <= 5 MiB, PNG alpha <= 10 MiB)
     update_progress(
         "loop_adaptif",
         70.0,

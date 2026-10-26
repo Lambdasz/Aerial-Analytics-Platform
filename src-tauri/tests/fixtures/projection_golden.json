@@ -1,0 +1,161 @@
+{
+  "generator": "scripts/gen_projection_golden.py",
+  "pyproj_version": "3.8.0",
+  "proj_version": "9.8.1",
+  "cases": [
+    {
+      "name": "Paris 31N",
+      "kind": "utm",
+      "epsg": 32631,
+      "zone": 31,
+      "south": false,
+      "lat": 48.85837,
+      "lon": 2.29448,
+      "x": 448250.5035,
+      "y": 5411951.5887
+    },
+    {
+      "name": "Greenwich 30N",
+      "kind": "utm",
+      "epsg": 32630,
+      "zone": 30,
+      "south": false,
+      "lat": 51.476852,
+      "lon": 0.0,
+      "x": 708322.4098,
+      "y": 5707123.4139
+    },
+    {
+      "name": "Balikpapan 50S",
+      "kind": "utm",
+      "epsg": 32750,
+      "zone": 50,
+      "south": true,
+      "lat": -1.26539,
+      "lon": 116.8312,
+      "x": 481221.3089,
+      "y": 9860135.5458
+    },
+    {
+      "name": "Sepinggan 50S",
+      "kind": "utm",
+      "epsg": 32750,
+      "zone": 50,
+      "south": true,
+      "lat": -1.26827,
+      "lon": 116.89445,
+      "x": 488257.779,
+      "y": 9859817.5891
+    },
+    {
+      "name": "Kariangau 50S",
+      "kind": "utm",
+      "epsg": 32750,
+      "zone": 50,
+      "south": true,
+      "lat": -1.1738,
+      "lon": 116.8123,
+      "x": 479118.0054,
+      "y": 9870258.9489
+    },
+    {
+      "name": "Semayang 50S",
+      "kind": "utm",
+      "epsg": 32750,
+      "zone": 50,
+      "south": true,
+      "lat": -1.2825,
+      "lon": 116.8172,
+      "x": 479663.9636,
+      "y": 9858244.2521
+    },
+    {
+      "name": "Monas 48S",
+      "kind": "utm",
+      "epsg": 32748,
+      "zone": 48,
+      "south": true,
+      "lat": -6.17539,
+      "lon": 106.82715,
+      "x": 702177.7914,
+      "y": 9317060.508
+    },
+    {
+      "name": "New York 18N",
+      "kind": "utm",
+      "epsg": 32618,
+      "zone": 18,
+      "south": false,
+      "lat": 40.71278,
+      "lon": -74.00594,
+      "x": 583964.4655,
+      "y": 4507348.8355
+    },
+    {
+      "name": "Zona 48S dekat batas timur",
+      "kind": "utm",
+      "epsg": 32748,
+      "zone": 48,
+      "south": true,
+      "lat": -7.0,
+      "lon": 107.95,
+      "x": 825971.2443,
+      "y": 9225227.7642
+    },
+    {
+      "name": "Zona 50S dekat batas barat",
+      "kind": "utm",
+      "epsg": 32750,
+      "zone": 50,
+      "south": true,
+      "lat": -1.2,
+      "lon": 114.05,
+      "x": 171664.4221,
+      "y": 9867186.614
+    },
+    {
+      "name": "Null Island 3857",
+      "kind": "3857",
+      "epsg": 3857,
+      "zone": null,
+      "south": null,
+      "lat": 0.0,
+      "lon": 0.0,
+      "x": 0.0,
+      "y": 0.0
+    },
+    {
+      "name": "Monas 3857",
+      "kind": "3857",
+      "epsg": 3857,
+      "zone": null,
+      "south": null,
+      "lat": -6.17539,
+      "lon": 106.82715,
+      "x": 11891943.9409,
+      "y": -688776.1175
+    },
+    {
+      "name": "Paris 3857",
+      "kind": "3857",
+      "epsg": 3857,
+      "zone": null,
+      "south": null,
+      "lat": 48.85837,
+      "lon": 2.29448,
+      "x": 255420.3452,
+      "y": 6250863.8255
+    },
+    {
+      "name": "Greenwich 3857",
+      "kind": "3857",
+      "epsg": 3857,
+      "zone": null,
+      "south": null,
+      "lat": 51.482578,
+      "lon": 0.0,
+      "x": 0.0,
+      "y": 6707104.2366
+    }
+  ]
+}

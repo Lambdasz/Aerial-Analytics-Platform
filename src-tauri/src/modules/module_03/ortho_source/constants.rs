@@ -33,11 +33,11 @@ pub const PREVIEW_TARGET_DIMENSION_PX: u32 = DISPLAY_TARGET_DIMENSION_PX;
 /// Batas resolusi minimal saat adaptasi kompresi display: 1.024 piksel.
 pub const DISPLAY_MIN_DIMENSION_PX: u32 = 1_024;
 
-/// Batas maksimal ukuran berkas display JPEG: 5 MB (5.242.880 bytes).
+/// Batas maksimal ukuran berkas display JPEG: 5 MiB (5.242.880 bytes).
 pub const DISPLAY_MAX_BYTES_JPEG: u64 = 5 * 1024 * 1024;
 
-/// Batas maksimal ukuran berkas display PNG ber-alpha: 10 MB (10.485.760 bytes).
-/// Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MB,
+/// Batas maksimal ukuran berkas display PNG ber-alpha: 10 MiB (10.485.760 bytes).
+/// Alasan: PNG lossless pada foto udara berentropi tinggi tidak dapat mencapai 2.048 px dalam 5 MiB,
 /// sedangkan JPEG bisa.
 pub const DISPLAY_MAX_BYTES_PNG_ALPHA: u64 = 10 * 1024 * 1024;
 

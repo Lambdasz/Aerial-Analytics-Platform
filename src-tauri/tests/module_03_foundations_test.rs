@@ -1,7 +1,7 @@
 //! Pengujian integrasi komprehensif untuk Fase 1 (Fondasi):
 //! 1. Single-Instance Lock (eksklusif kernel OS pada map_storage/.app.lock, penolakan instansi ke-2)
 //! 2. Pelepasan slot job di semua jalur (JobRegistrationGuard: sukses, error, cancel, panic)
-//! 3. projection.rs dengan golden values (deret Krüger, diverifikasi dengan implementasi independen) (3 titik UTM 50S, 3 titik EPSG:3857, toleransi < 1m)
+//! 3. projection.rs dengan nilai referensi (asal belum terverifikasi terhadap PROJ/pyproj) (3 titik UTM 50S, 3 titik EPSG:3857, toleransi < 1m)
 //! 4. Penulis layer atomik (register_ortho_layer)
 //! 5. Pemecahan tes rekonsiliasi store per skenario:
 //!    - Folder titik diabaikan (.staging_*, .trash_*)
@@ -246,385 +246,103 @@ fn test_cleanup_stale_import_jobs_and_retention() {
     }
 }
 
-#[test]
-fn test_projection_independent_references_utm_50s_balikpapan() {
-    // 3 Titik referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (UTM Zona 50S, EPSG:32750):
-    // Toleransi: forward < 0.5 meter, inverse < 9e-6 derajat lintang / bujur (< 1.0 meter)
-
-    // Titik 1: Bandara SAMS Sepinggan Balikpapan (-1.268270, 116.894450)
-    // Nilai referensi independen deret Krüger (EPSG:32750): E = 488257.78, N = 9859817.59
-    let (lat1, lon1) = (-1.268270, 116.894450);
-    let (ref_e1, ref_n1) = (488257.78, 9859817.59);
-    let (fwd_e1, fwd_n1) = wgs84_to_utm(lat1, lon1, 50, true).expect("UTM forward Sepinggan");
-    assert!(
-        (fwd_e1 - ref_e1).abs() < 0.5,
-        "Easting selisih > 0.5m: {}",
-        (fwd_e1 - ref_e1).abs()
-    );
-    assert!(
-        (fwd_n1 - ref_n1).abs() < 0.5,
-        "Northing selisih > 0.5m: {}",
-        (fwd_n1 - ref_n1).abs()
-    );
-    let (calc_lat1, calc_lon1) =
-        utm_to_wgs84(ref_e1, ref_n1, 50, true).expect("UTM 50S Sepinggan ke WGS84");
-    assert!((calc_lat1 - lat1).abs() < 9e-6, "Lat selisih > 1m");
-    assert!((calc_lon1 - lon1).abs() < 9e-6, "Lon selisih > 1m");
-
-    // Titik 2: Kawasan Industri Kariangau (-1.173800, 116.812300)
-    // Nilai referensi independen deret Krüger (EPSG:32750): E = 479118.01, N = 9870258.95
-    let (lat2, lon2) = (-1.173800, 116.812300);
-    let (ref_e2, ref_n2) = (479118.01, 9870258.95);
-    let (fwd_e2, fwd_n2) = wgs84_to_utm(lat2, lon2, 50, true).expect("UTM forward Kariangau");
-    assert!((fwd_e2 - ref_e2).abs() < 0.5);
-    assert!((fwd_n2 - ref_n2).abs() < 0.5);
-    let (calc_lat2, calc_lon2) =
-        utm_to_wgs84(ref_e2, ref_n2, 50, true).expect("UTM 50S Kariangau ke WGS84");
-    assert!((calc_lat2 - lat2).abs() < 9e-6);
-    assert!((calc_lon2 - lon2).abs() < 9e-6);
-
-    // Titik 3: Pelabuhan Semayang Balikpapan (-1.282500, 116.817200)
-    // Nilai referensi independen deret Krüger (EPSG:32750): E = 479663.96, N = 9858244.25
-    let (lat3, lon3) = (-1.282500, 116.817200);
-    let (ref_e3, ref_n3) = (479663.96, 9858244.25);
-    let (fwd_e3, fwd_n3) = wgs84_to_utm(lat3, lon3, 50, true).expect("UTM forward Semayang");
-    assert!((fwd_e3 - ref_e3).abs() < 0.5);
-    assert!((fwd_n3 - ref_n3).abs() < 0.5);
-    let (calc_lat3, calc_lon3) =
-        utm_to_wgs84(ref_e3, ref_n3, 50, true).expect("UTM 50S Semayang ke WGS84");
-    assert!((calc_lat3 - lat3).abs() < 9e-6);
-    assert!((calc_lon3 - lon3).abs() < 9e-6);
+/// Pembanding toleransi: true jika |actual - expected| < tol (meter).
+fn within_tolerance(actual: f64, expected: f64, tol: f64) -> bool {
+    (actual - expected).abs() < tol
 }
 
-#[test]
-fn test_projection_independent_references_utm_north_paris_and_greenwich() {
-    // Paris / Eiffel Tower (48.858370 N, 2.294480 E) - UTM Zona 31N (EPSG:32631)
-    // Diverifikasi independen via kalkulasi deret Krüger WGS84 terpisah:
-    // E = 448250.50 m, N = 5411951.59 m
-    let (lat_paris, lon_paris) = (48.858370, 2.294480);
-    let (ref_e_paris, ref_n_paris) = (448250.50, 5411951.59);
-    let (fwd_e_paris, fwd_n_paris) =
-        wgs84_to_utm(lat_paris, lon_paris, 31, false).expect("Forward UTM 31N Paris");
-    assert!(
-        (fwd_e_paris - ref_e_paris).abs() < 0.5,
-        "Forward Easting Paris selisih > 0.5m: ref={}, actual={}",
-        ref_e_paris,
-        fwd_e_paris
-    );
-    assert!(
-        (fwd_n_paris - ref_n_paris).abs() < 0.5,
-        "Forward Northing Paris selisih > 0.5m: ref={}, actual={}",
-        ref_n_paris,
-        fwd_n_paris
-    );
-    let (inv_lat_paris, inv_lon_paris) =
-        utm_to_wgs84(ref_e_paris, ref_n_paris, 31, false).expect("Inverse UTM 31N Paris");
-    assert!(
-        (inv_lat_paris - lat_paris).abs() < 9e-6,
-        "Lat Paris selisih > 1m"
-    );
-    assert!(
-        (inv_lon_paris - lon_paris).abs() < 9e-6,
-        "Lon Paris selisih > 1m"
-    );
-
-    // Greenwich Royal Observatory (51.476852 N, 0.000000 E) - UTM Zona 30N (EPSG:32630)
-    // Diverifikasi independen via kalkulasi deret Krüger WGS84 terpisah:
-    // E = 708322.41 m, N = 5707123.41 m
-    let (lat_gw, lon_gw) = (51.476852, 0.000000);
-    let (ref_e_gw, ref_n_gw) = (708322.41, 5707123.41);
-    let (fwd_e_gw, fwd_n_gw) =
-        wgs84_to_utm(lat_gw, lon_gw, 30, false).expect("Forward UTM 30N Greenwich");
-    assert!(
-        (fwd_e_gw - ref_e_gw).abs() < 0.5,
-        "Forward Easting Greenwich selisih > 0.5m: ref={}, actual={}",
-        ref_e_gw,
-        fwd_e_gw
-    );
-    assert!(
-        (fwd_n_gw - ref_n_gw).abs() < 0.5,
-        "Forward Northing Greenwich selisih > 0.5m: ref={}, actual={}",
-        ref_n_gw,
-        fwd_n_gw
-    );
-    let (inv_lat_gw, inv_lon_gw) =
-        utm_to_wgs84(ref_e_gw, ref_n_gw, 30, false).expect("Inverse UTM 30N Greenwich");
-    assert!(
-        (inv_lat_gw - lat_gw).abs() < 9e-6,
-        "Lat Greenwich selisih > 1m"
-    );
-    assert!(
-        (inv_lon_gw - lon_gw).abs() < 9e-6,
-        "Lon Greenwich selisih > 1m"
-    );
+/// Membaca golden proyeksi yang dihasilkan OTOMATIS oleh `scripts/gen_projection_golden.py` (pyproj).
+fn load_projection_golden() -> serde_json::Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("projection_golden.json");
+    let text = fs::read_to_string(&path).expect("projection_golden.json harus ada");
+    serde_json::from_str(&text).expect("projection_golden.json harus JSON valid")
 }
 
-#[test]
-fn test_projection_independent_references_epsg3857() {
-    // 3 Titik referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) EPSG:3857 (Web Mercator) vs WGS84:
-    // Toleransi: < 1 meter (< 1.0 meter koordinat EPSG:3857, < 9e-6 derajat lat/lon)
-
-    // Titik 1: Null Island (Origin) (0.0, 0.0)
-    let (lat1, lon1) = (0.0, 0.0);
-    let (ref_x1, ref_y1) = (0.0, 0.0);
-    let (fwd_x1, fwd_y1) = wgs84_to_epsg3857(lat1, lon1).expect("Forward Null Island");
-    assert!((fwd_x1 - ref_x1).abs() < 1e-7);
-    assert!((fwd_y1 - ref_y1).abs() < 1e-7);
-    let (calc_lat1, calc_lon1) = epsg3857_to_wgs84(ref_x1, ref_y1).expect("EPSG:3857 Null Island");
-    assert!((calc_lat1 - lat1).abs() < 1e-7);
-    assert!((calc_lon1 - lon1).abs() < 1e-7);
-
-    // Titik 2: Monas Jakarta (-6.1753924, 106.8271528)
-    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:3857): x = 11891944.25, y = -688776.39
-    let (lat2, lon2) = (-6.1753924, 106.8271528);
-    let (ref_x2, ref_y2) = (11891944.25, -688776.39);
-    let (fwd_x2, fwd_y2) = wgs84_to_epsg3857(lat2, lon2).expect("Forward Monas");
-    assert!(
-        (fwd_x2 - ref_x2).abs() < 1.0,
-        "x selisih > 1m: {}",
-        (fwd_x2 - ref_x2).abs()
-    );
-    assert!(
-        (fwd_y2 - ref_y2).abs() < 1.0,
-        "y selisih > 1m: {}",
-        (fwd_y2 - ref_y2).abs()
-    );
-    let (calc_lat2, calc_lon2) = epsg3857_to_wgs84(ref_x2, ref_y2).expect("EPSG:3857 Monas");
-    assert!((calc_lat2 - lat2).abs() < 9e-6, "lat selisih > 1m");
-    assert!((calc_lon2 - lon2).abs() < 9e-6, "lon selisih > 1m");
-
-    // Titik 3: Greenwich London (51.482578, 0.0)
-    // Nilai referensi: golden values (deret Krüger, diverifikasi dengan implementasi independen) (EPSG:3857): x = 0.0, y = 6707104.24
-    let (lat3, lon3) = (51.482578, 0.0);
-    let (ref_x3, ref_y3) = (0.0, 6707104.24);
-    let (fwd_x3, fwd_y3) = wgs84_to_epsg3857(lat3, lon3).expect("Forward Greenwich");
-    assert!(
-        (fwd_x3 - ref_x3).abs() < 1.0,
-        "x selisih > 1m: {}",
-        (fwd_x3 - ref_x3).abs()
-    );
-    assert!(
-        (fwd_y3 - ref_y3).abs() < 1.0,
-        "y selisih > 1m: {}",
-        (fwd_y3 - ref_y3).abs()
-    );
-    let (calc_lat3, calc_lon3) = epsg3857_to_wgs84(ref_x3, ref_y3).expect("EPSG:3857 Greenwich");
-    assert!((calc_lat3 - lat3).abs() < 9e-6);
-    assert!((calc_lon3 - lon3).abs() < 9e-6);
+fn forward_case(case: &serde_json::Value) -> (f64, f64) {
+    let lat = case["lat"].as_f64().unwrap();
+    let lon = case["lon"].as_f64().unwrap();
+    if case["kind"] == "utm" {
+        let zone = case["zone"].as_u64().unwrap() as u8;
+        let south = case["south"].as_bool().unwrap();
+        wgs84_to_utm(lat, lon, zone, south).expect("forward UTM")
+    } else {
+        wgs84_to_epsg3857(lat, lon).expect("forward 3857")
+    }
 }
 
-/// (Butir 2) Uji Validasi Georeferensi Ketat terhadap Referensi Independen pyproj 3.8.0 / PROJ 9.8.1
-/// Perintah verifikasi independen:
-/// `uv run --with pyproj python -c "import pyproj; ..."`
-/// Titik Uji:
-/// 1. Paris UTM 31N (EPSG:32631)
-/// 2. Balikpapan UTM 50S (EPSG:32750)
-/// 3. Jakarta UTM 48S (EPSG:32748) (Nilai koreksi independen: E=701377.05, N=9314341.41)
-/// 4. New York UTM 18N (EPSG:32618)
-/// 5. Zona 48S Dekat Batas (lon=107.95, EPSG:32748)
-/// 6. Null Island (EPSG:3857)
-/// 7. Monas Jakarta (EPSG:3857)
-/// 8. Paris Eiffel (EPSG:3857)
+fn inverse_case(case: &serde_json::Value) -> (f64, f64) {
+    let x = case["x"].as_f64().unwrap();
+    let y = case["y"].as_f64().unwrap();
+    if case["kind"] == "utm" {
+        let zone = case["zone"].as_u64().unwrap() as u8;
+        let south = case["south"].as_bool().unwrap();
+        utm_to_wgs84(x, y, zone, south).expect("inverse UTM")
+    } else {
+        epsg3857_to_wgs84(x, y).expect("inverse 3857")
+    }
+}
+
+/// Forward dan inverse terhadap golden pyproj (toleransi < 0,5 m). Referensi TIDAK diketik manual.
 #[test]
-fn test_projection_rigorous_independent_forward_and_inverse() {
+fn test_projection_against_pyproj_golden_forward_and_inverse() {
     use aerial_analytics_platform_lib::modules::module_03::geometry::haversine::calculate_distance;
 
-    println!("\n================================================================================");
-    println!("VERIFIKASI PROYEKSI TERHADAP REFERENSI INDEPENDEN pyproj 3.8.0 / PROJ 9.8.1");
-    println!("================================================================================");
-
-    // Kasus 1: Paris UTM 31N
-    let (lat1, lon1) = (48.858370, 2.294480);
-    let (ref_e1, ref_n1) = (448250.50, 5411951.59);
-    let (fwd_e1, fwd_n1) = wgs84_to_utm(lat1, lon1, 31, false).expect("Forward Paris");
-    let diff_e1 = (fwd_e1 - ref_e1).abs();
-    let diff_n1 = (fwd_n1 - ref_n1).abs();
+    let golden = load_projection_golden();
     println!(
-        "1. Paris UTM 31N: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_e1, fwd_n1, ref_e1, ref_n1, diff_e1, diff_n1
+        "Golden: pyproj {} / PROJ {}",
+        golden["pyproj_version"], golden["proj_version"]
     );
-    assert!(
-        diff_e1 < 0.5,
-        "Paris Easting selisih > 0.5m: {:.4}",
-        diff_e1
-    );
-    assert!(
-        diff_n1 < 0.5,
-        "Paris Northing selisih > 0.5m: {:.4}",
-        diff_n1
-    );
-    let (inv_lat1, inv_lon1) = utm_to_wgs84(ref_e1, ref_n1, 31, false).expect("Inverse Paris");
-    let dist1 = calculate_distance([lon1, lat1], [inv_lon1, inv_lat1]);
-    println!("   Inverse Paris ground error: {:.4} m", dist1);
-    assert!(
-        dist1 < 0.5,
-        "Paris Inverse ground error > 0.5m: {:.4}",
-        dist1
-    );
+    let cases = golden["cases"].as_array().expect("cases");
+    assert!(cases.len() >= 9, "minimal 9 kasus");
 
-    // Kasus 2: Balikpapan UTM 50S
-    let (lat2, lon2) = (-1.260000, 116.830000);
-    let (ref_e2, ref_n2) = (481087.77, 9860731.30);
-    let (fwd_e2, fwd_n2) = wgs84_to_utm(lat2, lon2, 50, true).expect("Forward Balikpapan");
-    let diff_e2 = (fwd_e2 - ref_e2).abs();
-    let diff_n2 = (fwd_n2 - ref_n2).abs();
-    println!(
-        "2. Balikpapan UTM 50S: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_e2, fwd_n2, ref_e2, ref_n2, diff_e2, diff_n2
-    );
-    assert!(
-        diff_e2 < 0.5,
-        "Balikpapan Easting selisih > 0.5m: {:.4}",
-        diff_e2
-    );
-    assert!(
-        diff_n2 < 0.5,
-        "Balikpapan Northing selisih > 0.5m: {:.4}",
-        diff_n2
-    );
-    let (inv_lat2, inv_lon2) = utm_to_wgs84(ref_e2, ref_n2, 50, true).expect("Inverse Balikpapan");
-    let dist2 = calculate_distance([lon2, lat2], [inv_lon2, inv_lat2]);
-    println!("   Inverse Balikpapan ground error: {:.4} m", dist2);
-    assert!(
-        dist2 < 0.5,
-        "Balikpapan Inverse ground error > 0.5m: {:.4}",
-        dist2
-    );
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let (fx, fy) = forward_case(case);
+        let (gx, gy) = (case["x"].as_f64().unwrap(), case["y"].as_f64().unwrap());
+        println!(
+            "{name}: fwd=({fx:.4}, {fy:.4}) golden=({gx:.4}, {gy:.4}) diff=({:.4}, {:.4})",
+            (fx - gx).abs(),
+            (fy - gy).abs()
+        );
+        assert!(
+            within_tolerance(fx, gx, 0.5),
+            "{name}: forward X/E selisih >= 0.5 m"
+        );
+        assert!(
+            within_tolerance(fy, gy, 0.5),
+            "{name}: forward Y/N selisih >= 0.5 m"
+        );
 
-    // Kasus 3: Jakarta UTM 48S (Nilai Koreksi Independen)
-    let (lat3, lon3) = (-6.200000, 106.820000);
-    let (ref_e3, ref_n3) = (701377.05, 9314341.41);
-    let (fwd_e3, fwd_n3) = wgs84_to_utm(lat3, lon3, 48, true).expect("Forward Jakarta");
-    let diff_e3 = (fwd_e3 - ref_e3).abs();
-    let diff_n3 = (fwd_n3 - ref_n3).abs();
-    println!(
-        "3. Jakarta UTM 48S: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_e3, fwd_n3, ref_e3, ref_n3, diff_e3, diff_n3
-    );
-    assert!(
-        diff_e3 < 0.5,
-        "Jakarta Easting selisih > 0.5m: {:.4}",
-        diff_e3
-    );
-    assert!(
-        diff_n3 < 0.5,
-        "Jakarta Northing selisih > 0.5m: {:.4}",
-        diff_n3
-    );
-    let (inv_lat3, inv_lon3) = utm_to_wgs84(ref_e3, ref_n3, 48, true).expect("Inverse Jakarta");
-    let dist3 = calculate_distance([lon3, lat3], [inv_lon3, inv_lat3]);
-    println!("   Inverse Jakarta ground error: {:.4} m", dist3);
-    assert!(
-        dist3 < 0.5,
-        "Jakarta Inverse ground error > 0.5m: {:.4}",
-        dist3
-    );
+        let (ilat, ilon) = inverse_case(case);
+        let lat = case["lat"].as_f64().unwrap();
+        let lon = case["lon"].as_f64().unwrap();
+        let ground = calculate_distance([lon, lat], [ilon, ilat]);
+        println!("{name}: inverse ground error = {ground:.4} m");
+        assert!(ground < 0.5, "{name}: inverse ground error >= 0.5 m");
+    }
+}
 
-    // Kasus 4: New York UTM 18N
-    let (lat4, lon4) = (40.689247, -74.044502);
-    let (ref_e4, ref_n4) = (580735.64, 4504700.38);
-    let (fwd_e4, fwd_n4) = wgs84_to_utm(lat4, lon4, 18, false).expect("Forward New York");
-    let diff_e4 = (fwd_e4 - ref_e4).abs();
-    let diff_n4 = (fwd_n4 - ref_n4).abs();
-    println!(
-        "4. New York UTM 18N: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_e4, fwd_n4, ref_e4, ref_n4, diff_e4, diff_n4
-    );
-    assert!(
-        diff_e4 < 0.5,
-        "New York Easting selisih > 0.5m: {:.4}",
-        diff_e4
-    );
-    assert!(
-        diff_n4 < 0.5,
-        "New York Northing selisih > 0.5m: {:.4}",
-        diff_n4
-    );
-    let (inv_lat4, inv_lon4) = utm_to_wgs84(ref_e4, ref_n4, 18, false).expect("Inverse New York");
-    let dist4 = calculate_distance([lon4, lat4], [inv_lon4, inv_lat4]);
-    println!("   Inverse New York ground error: {:.4} m", dist4);
-    assert!(
-        dist4 < 0.5,
-        "New York Inverse ground error > 0.5m: {:.4}",
-        dist4
-    );
-
-    // Kasus 5: Zona 48S Dekat Batas (lon=107.95)
-    let (lat5, lon5) = (-6.200000, 107.950000);
-    let (ref_e5, ref_n5) = (826495.74, 9313778.56);
-    let (fwd_e5, fwd_n5) = wgs84_to_utm(lat5, lon5, 48, true).expect("Forward Near Edge");
-    let diff_e5 = (fwd_e5 - ref_e5).abs();
-    let diff_n5 = (fwd_n5 - ref_n5).abs();
-    println!(
-        "5. Zona 48S Dekat Batas: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_e5, fwd_n5, ref_e5, ref_n5, diff_e5, diff_n5
-    );
-    assert!(
-        diff_e5 < 0.5,
-        "Near Edge Easting selisih > 0.5m: {:.4}",
-        diff_e5
-    );
-    assert!(
-        diff_n5 < 0.5,
-        "Near Edge Northing selisih > 0.5m: {:.4}",
-        diff_n5
-    );
-    let (inv_lat5, inv_lon5) = utm_to_wgs84(ref_e5, ref_n5, 48, true).expect("Inverse Near Edge");
-    let dist5 = calculate_distance([lon5, lat5], [inv_lon5, inv_lat5]);
-    println!("   Inverse Near Edge ground error: {:.4} m", dist5);
-    assert!(
-        dist5 < 0.5,
-        "Near Edge Inverse ground error > 0.5m: {:.4}",
-        dist5
-    );
-
-    // Kasus 6: Null Island EPSG:3857
-    let (lat6, lon6) = (0.0, 0.0);
-    let (ref_x6, ref_y6) = (0.00, 0.00);
-    let (fwd_x6, fwd_y6) = wgs84_to_epsg3857(lat6, lon6).expect("Forward Null Island");
-    println!(
-        "6. Null Island EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2})",
-        fwd_x6, fwd_y6, ref_x6, ref_y6
-    );
-    assert!((fwd_x6 - ref_x6).abs() < 0.5);
-    assert!((fwd_y6 - ref_y6).abs() < 0.5);
-    let (inv_lat6, inv_lon6) = epsg3857_to_wgs84(ref_x6, ref_y6).expect("Inverse Null Island");
-    let dist6 = calculate_distance([lon6, lat6], [inv_lon6, inv_lat6]);
-    assert!(dist6 < 0.5);
-
-    // Kasus 7: Monas Jakarta EPSG:3857
-    let (lat7, lon7) = (-6.1753924, 106.8271528);
-    let (ref_x7, ref_y7) = (11891944.25, -688776.39);
-    let (fwd_x7, fwd_y7) = wgs84_to_epsg3857(lat7, lon7).expect("Forward Monas EPSG:3857");
-    let diff_x7 = (fwd_x7 - ref_x7).abs();
-    let diff_y7 = (fwd_y7 - ref_y7).abs();
-    println!(
-        "7. Monas EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_x7, fwd_y7, ref_x7, ref_y7, diff_x7, diff_y7
-    );
-    assert!(diff_x7 < 0.5);
-    assert!(diff_y7 < 0.5);
-    let (inv_lat7, inv_lon7) = epsg3857_to_wgs84(ref_x7, ref_y7).expect("Inverse Monas EPSG:3857");
-    let dist7 = calculate_distance([lon7, lat7], [inv_lon7, inv_lat7]);
-    println!("   Inverse Monas ground error: {:.4} m", dist7);
-    assert!(dist7 < 0.5);
-
-    // Kasus 8: Paris Eiffel EPSG:3857
-    let (lat8, lon8) = (48.858370, 2.294480);
-    let (ref_x8, ref_y8) = (255420.35, 6250863.83);
-    let (fwd_x8, fwd_y8) = wgs84_to_epsg3857(lat8, lon8).expect("Forward Paris EPSG:3857");
-    let diff_x8 = (fwd_x8 - ref_x8).abs();
-    let diff_y8 = (fwd_y8 - ref_y8).abs();
-    println!(
-        "8. Paris EPSG:3857: fwd=({:.2}, {:.2}), ref=({:.2}, {:.2}), diff=({:.4} m, {:.4} m)",
-        fwd_x8, fwd_y8, ref_x8, ref_y8, diff_x8, diff_y8
-    );
-    assert!(diff_x8 < 0.5);
-    assert!(diff_y8 < 0.5);
-    let (inv_lat8, inv_lon8) = epsg3857_to_wgs84(ref_x8, ref_y8).expect("Inverse Paris EPSG:3857");
-    let dist8 = calculate_distance([lon8, lat8], [inv_lon8, inv_lat8]);
-    println!("   Inverse Paris ground error: {:.4} m", dist8);
-    assert!(dist8 < 0.5);
+/// Membuktikan toleransi benar-benar bekerja: golden digeser +1 m harus ditolak pembanding.
+#[test]
+fn test_projection_tolerance_rejects_shifted_golden() {
+    let golden = load_projection_golden();
+    for case in golden["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let (fx, fy) = forward_case(case);
+        let (gx, gy) = (case["x"].as_f64().unwrap(), case["y"].as_f64().unwrap());
+        assert!(within_tolerance(fx, gx, 0.5) && within_tolerance(fy, gy, 0.5));
+        assert!(
+            !within_tolerance(fx, gx + 1.0, 0.5),
+            "{name}: geser +1 m X harus false"
+        );
+        assert!(
+            !within_tolerance(fy, gy + 1.0, 0.5),
+            "{name}: geser +1 m Y harus false"
+        );
+    }
 }
 
 #[test]

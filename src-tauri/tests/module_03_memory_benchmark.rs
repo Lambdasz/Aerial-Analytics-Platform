@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::execute_import_option_a;
+use aerial_analytics_platform_lib::modules::module_03::ortho_source::image_pipeline::{
+    execute_import_option_a, execute_import_option_b,
+};
 use aerial_analytics_platform_lib::modules::module_03::ortho_source::instance_lock::set_is_primary_instance;
 use aerial_analytics_platform_lib::modules::module_03::ortho_source::job_manager::try_acquire_job;
 use aerial_analytics_platform_lib::modules::module_03::ortho_source::store::delete_ortho_image_single;
@@ -354,6 +356,85 @@ fn ensure_png_25mp_interlaced(path: &Path) {
     write_png_chunk(&mut writer, b"IEND", &[]);
 }
 
+/// Membuat GeoTIFF RGBA (strip, Deflate) lewat `write_data` (satu-satunya jalur yang mengaktifkan
+/// kompresor di tiff 0.9.1; `write_strip` saja menulis tag Deflate tetapi data mentah).
+/// Alpha: elips (di luar elips alpha = 0). Dibuat di PROSES INDUK, bukan di proses terukur.
+fn ensure_geotiff_rgba(path: &Path, width: u32, height: u32, rows_per_strip: u32, bits16: bool) {
+    if path.is_file() && fs::metadata(path).map(|m| m.len()).unwrap_or(0) > 100_000 {
+        return;
+    }
+    use tiff::encoder::compression::{Deflate, DeflateLevel};
+    use tiff::encoder::{colortype, TiffEncoder};
+    use tiff::tags::Tag;
+    println!(
+        "Membuat GeoTIFF RGBA{} {}x{} (Deflate, strip {} baris)...",
+        if bits16 { "16" } else { "8" },
+        width,
+        height,
+        rows_per_strip
+    );
+    let file = File::create(path).expect("create geotiff");
+    let mut enc = TiffEncoder::new(BufWriter::new(file)).expect("tiff encoder");
+
+    macro_rules! build {
+        ($ct:ty, $conv:expr) => {{
+            let mut img = enc
+                .new_image_with_compression::<$ct, _>(
+                    width,
+                    height,
+                    Deflate::with_level(DeflateLevel::Balanced),
+                )
+                .expect("new image");
+            img.rows_per_strip(rows_per_strip).expect("rows per strip");
+            let tiepoints = [0.0f64, 0.0, 0.0, 500000.0, 9866000.0, 0.0];
+            img.encoder()
+                .write_tag(Tag::ModelTiepointTag, &tiepoints[..])
+                .unwrap();
+            let scales = [1.0f64, 1.0, 0.0];
+            img.encoder()
+                .write_tag(Tag::ModelPixelScaleTag, &scales[..])
+                .unwrap();
+            let geokeys = [
+                1u16, 1, 0, 3, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, 32750,
+            ];
+            img.encoder()
+                .write_tag(Tag::GeoKeyDirectoryTag, &geokeys[..])
+                .unwrap();
+            img.encoder()
+                .write_tag(Tag::ExtraSamples, &[2u16][..])
+                .unwrap();
+            let (cx, cy) = (width as f64 / 2.0, height as f64 / 2.0);
+            let (rx, ry) = (width as f64 * 0.45, height as f64 * 0.40);
+            let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+            for y in 0..height {
+                let gy = ((y as u64 * 255) / height as u64) as u8;
+                for x in 0..width {
+                    let gx = ((x as u64 * 255) / width as u64) as u8;
+                    let n = ((x ^ y) & 0x1F) as u8;
+                    let dx = x as f64 - cx;
+                    let dy = y as f64 - cy;
+                    let inside = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0;
+                    let px = [
+                        gx.wrapping_add(n),
+                        gy.wrapping_sub(n),
+                        (gx ^ gy).wrapping_add(n),
+                        if inside { 255u8 } else { 0u8 },
+                    ];
+                    for v in px {
+                        data.push($conv(v));
+                    }
+                }
+            }
+            img.write_data(&data).expect("write_data");
+        }};
+    }
+    if bits16 {
+        build!(colortype::RGBA16, |v: u8| (v as u16) * 257);
+    } else {
+        build!(colortype::RGBA8, |v: u8| v);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PROSES ANAK TERISOLASI UNTUK PENGUKURAN PEAK WORKING SET & PEAK PAGEFILE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,27 +457,36 @@ fn execute_isolated_memory_benchmarks() {
         let job_id = format!("bench_{}_{}", bench_mode, std::process::id());
         let token = try_acquire_job(&job_id).expect("try_acquire_job");
 
+        let is_b = bench_mode.starts_with("geotiff") || bench_mode.starts_with("worst");
         let payload = ImportDualModePayload {
-            mode: "A".to_string(),
+            mode: if is_b { "B" } else { "A" }.to_string(),
             file_path: file_path.to_string_lossy().to_string(),
             custom_filename: None,
-            manual_bounds: Some(ImportBoundsPayload {
-                west: 116.85,
-                south: -1.25,
-                east: 116.86,
-                north: -1.24,
-            }),
-            save_original: true, // End-to-end: streaming copy file asli ke images/{id}/original.*
+            manual_bounds: if is_b {
+                None
+            } else {
+                Some(ImportBoundsPayload {
+                    west: 116.85,
+                    south: -1.25,
+                    east: 116.86,
+                    north: -1.24,
+                })
+            },
+            save_original: !is_b, // Opsi A: streaming copy file asli; Opsi B: tanpa salinan asli
         };
 
         let start_time = Instant::now();
-        let result = execute_import_option_a(&job_id, payload, token);
+        let result = if is_b {
+            execute_import_option_b(&job_id, payload, token)
+        } else {
+            execute_import_option_a(&job_id, payload, token)
+        };
         let elapsed = start_time.elapsed();
 
         #[cfg(windows)]
         let snap_after = get_memory_snapshot();
 
-        let imported_meta = result.expect("execute_import_option_a must succeed");
+        let imported_meta = result.expect("impor (opsi A/B) harus berhasil");
 
         #[cfg(windows)]
         {
@@ -458,8 +548,55 @@ fn execute_isolated_memory_benchmarks() {
                 "  * Sisa Sebenarnya (Runtime Tauri, Heap Overhead, File Buffers): {:.2} MiB",
                 actual_remaining_mib
             );
+            println!(
+                "BENCH_RESULT|{}|{:.2}|{:.2}|{:.2}|{:.2}|{:.2}|{:?}|{}|{}",
+                bench_mode,
+                baseline_ws_mib,
+                peak_ws_mib,
+                peak_pagefile_mib,
+                delta_ws_mib,
+                duration_secs,
+                imported_meta.dimensions,
+                imported_meta.display_size_bytes.unwrap_or(0),
+                if cfg!(debug_assertions) {
+                    "test/dev (crate uji opt-level 0; png/tiff/jpeg/image opt-level 3)"
+                } else {
+                    "release"
+                }
+            );
             println!("- Target Sasaran Desain: <= 400.00 MiB");
             println!("================================================================================\n");
+
+            // Pemeriksaan isi display nyata (setelah snapshot memori): dimensi, % piksel tidak transparan, rata-rata RGB
+            {
+                use aerial_analytics_platform_lib::modules::module_03::storage_utils::get_storage_root;
+                let disp = get_storage_root()
+                    .join("images")
+                    .join(&imported_meta.id)
+                    .join(format!("display.{}", imported_meta.extension));
+                let rgba = image::open(&disp)
+                    .expect("display harus bisa didekode")
+                    .to_rgba8();
+                let n = (rgba.width() as u64) * (rgba.height() as u64);
+                let opaque = rgba.pixels().filter(|p| p[3] > 0).count() as u64;
+                let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
+                for p in rgba.pixels().filter(|p| p[3] > 0) {
+                    sr += p[0] as u64;
+                    sg += p[1] as u64;
+                    sb += p[2] as u64;
+                }
+                let d = opaque.max(1) as f64;
+                println!(
+                    "DISPLAY_CHECK|{}|{}x{}|opaque {:.1}%|mean RGB {:.1}/{:.1}/{:.1}",
+                    bench_mode,
+                    rgba.width(),
+                    rgba.height(),
+                    opaque as f64 * 100.0 / n as f64,
+                    sr as f64 / d,
+                    sg as f64 / d,
+                    sb as f64 / d
+                );
+            }
 
             // Bersihkan hasil import benchmark dari storage agar tidak membebani disk
             let _ = delete_ortho_image_single(&imported_meta.id);
@@ -473,100 +610,70 @@ fn execute_isolated_memory_benchmarks() {
         return;
     }
 
-    // MODE ORCHESTRATOR:
+    // MODE ORCHESTRATOR: fixture dibuat di proses induk; setiap skenario di SUBPROSES terpisah.
     let cache_dir = get_cache_dir();
     let current_exe = std::env::current_exe().expect("current_exe");
 
-    // 1. JPEG Baseline 100 MP
     let p_base = cache_dir.join("test_baseline_100mp.jpg");
     ensure_baseline_jpeg_100mp(&p_base);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: JPEG Baseline 100 MP...");
-    let out1 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "baseline_100mp")
-        .env("AAP_BENCH_FILE", &p_base)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 1");
-    println!("{}", String::from_utf8_lossy(&out1.stdout));
-    assert!(out1.status.success(), "Subprocess 1 harus sukses");
-
-    // 2. JPEG Baseline 144 MP (Batas Desain)
     let p_base_144 = cache_dir.join("test_baseline_144mp.jpg");
     ensure_baseline_jpeg_144mp(&p_base_144);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: JPEG Baseline 144 MP...");
-    let out2 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "baseline_144mp")
-        .env("AAP_BENCH_FILE", &p_base_144)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 2");
-    println!("{}", String::from_utf8_lossy(&out2.stdout));
-    assert!(out2.status.success(), "Subprocess 2 harus sukses");
-
-    // 3. JPEG Baseline 40 MP 4:2:0 Nyata (Chroma Subsampling F_2_2)
     let p_base_420 = cache_dir.join("test_baseline_40mp_420.jpg");
     ensure_baseline_jpeg_40mp_420(&p_base_420);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: JPEG Baseline 40 MP 4:2:0 Nyata...");
-    let out3 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "baseline_40mp_420")
-        .env("AAP_BENCH_FILE", &p_base_420)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 3");
-    println!("{}", String::from_utf8_lossy(&out3.stdout));
-    assert!(out3.status.success(), "Subprocess 3 harus sukses");
-
-    // 4. JPEG Progressive 40 MP
     let p_prog = cache_dir.join("test_progressive_40mp.jpg");
     ensure_progressive_jpeg_40mp(&p_prog);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: JPEG Progressive 40 MP...");
-    let out4 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "progressive_40mp")
-        .env("AAP_BENCH_FILE", &p_prog)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 4");
-    println!("{}", String::from_utf8_lossy(&out4.stdout));
-    assert!(out4.status.success(), "Subprocess 4 harus sukses");
-
-    // 5. PNG 100 MP RGBA Non-interlaced (Streaming row-by-row)
     let p_png = cache_dir.join("test_png_100mp.png");
     ensure_png_100mp(&p_png);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: PNG 100 MP RGBA Non-interlaced...");
-    let out5 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "png_100mp")
-        .env("AAP_BENCH_FILE", &p_png)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 5");
-    println!("{}", String::from_utf8_lossy(&out5.stdout));
-    if !out5.status.success() {
-        eprintln!("STDERR:\n{}", String::from_utf8_lossy(&out5.stderr));
-    }
-    assert!(out5.status.success(), "Subprocess 5 harus sukses");
-
-    // 6. PNG 25 MP RGBA Interlaced (Adam7)
     let p_png_adam7 = cache_dir.join("test_png_25mp_interlaced.png");
     ensure_png_25mp_interlaced(&p_png_adam7);
-    println!("\n--> Menjalankan worker end-to-end terisolasi: PNG 25 MP Interlaced (Adam7)...");
-    let out6 = Command::new(&current_exe)
-        .env("AAP_RUN_ISOLATED_BENCH", "png_25mp_interlaced")
-        .env("AAP_BENCH_FILE", &p_png_adam7)
-        .arg("--exact")
-        .arg("execute_isolated_memory_benchmarks")
-        .arg("--nocapture")
-        .output()
-        .expect("execute subprocess 6");
-    println!("{}", String::from_utf8_lossy(&out6.stdout));
-    assert!(out6.status.success(), "Subprocess 6 harus sukses");
+    let p_gt8 = cache_dir.join("test_geotiff_rgba8_8000x6000.tif");
+    ensure_geotiff_rgba(&p_gt8, 8_000, 6_000, 64, false);
+    let p_gt16 = cache_dir.join("test_geotiff_rgba16_6000x4500.tif");
+    ensure_geotiff_rgba(&p_gt16, 6_000, 4_500, 64, true);
+    let p_w22 = cache_dir.join("test_worst_22000x4000_rgba16.tif");
+    ensure_geotiff_rgba(&p_w22, 22_000, 4_000, 64, true);
+
+    let scenarios: Vec<(&str, &PathBuf)> = vec![
+        ("baseline_100mp", &p_base),
+        ("baseline_144mp", &p_base_144),
+        ("baseline_40mp_420", &p_base_420),
+        ("progressive_40mp", &p_prog),
+        ("png_100mp", &p_png),
+        ("png_25mp_interlaced", &p_png_adam7),
+        ("geotiff_rgba8", &p_gt8),
+        ("geotiff_rgba16", &p_gt16),
+        ("worst_22k_rgba16", &p_w22),
+    ];
+
+    let mut table: Vec<String> = Vec::new();
+    for (mode, path) in scenarios {
+        println!("\n--> Subproses terisolasi: {} ({:?})", mode, path);
+        let out = Command::new(&current_exe)
+            .env("AAP_RUN_ISOLATED_BENCH", mode)
+            .env("AAP_BENCH_FILE", path)
+            .arg("--exact")
+            .arg("execute_isolated_memory_benchmarks")
+            .arg("--nocapture")
+            .output()
+            .expect("execute subprocess");
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        println!("{}", stdout);
+        if !out.status.success() {
+            eprintln!("STDERR {}:\n{}", mode, String::from_utf8_lossy(&out.stderr));
+        }
+        assert!(out.status.success(), "Subproses {} harus sukses", mode);
+        for line in stdout.lines() {
+            if let Some(rest) = line.strip_prefix("BENCH_RESULT|") {
+                table.push(rest.to_string());
+            }
+            if let Some(rest) = line.strip_prefix("DISPLAY_CHECK|") {
+                table.push(format!("DISPLAY_CHECK|{}", rest));
+            }
+        }
+    }
+
+    println!("\nRINGKASAN (MiB; skenario|baseline WS|peak WS|peak pagefile|delta WS|detik|dimensi display|bytes display|mode build)");
+    for row in &table {
+        println!("RINGKASAN|{}", row);
+    }
 }

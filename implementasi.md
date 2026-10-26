@@ -275,7 +275,7 @@ Untuk menjamin UI tidak pernah berstatus _"Not Responding"_ saat memproses citra
   - `UTM North / South WGS84` (EPSG:32601–32660, 32701–32760) $\rightarrow$ Rumus invers Snyder/Karney dengan penanganan _False Northing_ $10.000.000\text{ m}$ untuk belahan bumi selatan (misal EPSG:32750 UTM Zona 50S Balikpapan).
   - Kode CRS `32767` (User-Defined) atau di luar daftar di atas $\rightarrow$ Kembalikan `CrsTidakDidukung` dengan input manual (`is_recoverable = true`).
 - **Asal Nilai Referensi Proyeksi & Pengujian Batas Zona**:
-  Seluruh nilai referensi koordinat dalam modul proyeksi diturunkan dari formulasi analitis Snyder (_USGS Professional Paper 1395_) dan Karney yang diimplementasikan secara mandiri (_golden values pure Rust_), sehubungan dengan aturan larangan dependensi runtime C (GDAL/PROJ `cs2cs`) maupun pustaka Python (`pyproj`). Akurasi numerik diuji secara ketat melalui pengujian bolak-balik analitis (_forward ↔ inverse roundtrip_) dengan toleransi presisi $< 10^{-6}\text{ derajat}$ ($\approx 0{,}11\text{ meter}$). Test suite mencakup:
+  Implementasi proyeksi (`projection.rs`) murni Rust tanpa dependensi runtime C/Python. Nilai referensi uji TIDAK diketik manual: dihasilkan oleh `scripts/gen_projection_golden.py` memakai pyproj 3.8.0 / PROJ 9.8.1 ke `src-tauri/tests/fixtures/projection_golden.json` (14 kasus), dan dibaca oleh tes Rust (forward dan inverse, toleransi $< 0{,}5\text{ m}$). Pyproj hanya dipakai saat membangkitkan golden (dev-time), bukan runtime. Test suite mencakup:
   1. _Belahan Bumi Utara & Greenwich_: Greenwich Royal Observatory ($51{,}476852^\circ\text{N}, 0{,}000000^\circ\text{E}$) yang merupakan batas timur persis UTM Zona 30N (EPSG:32630).
   2. _Titik Batas Zona UTM_: Titik bujur dekat batas barat ($114{,}001^\circ\text{E}$) dan dekat batas timur ($119{,}999^\circ\text{E}$) pada UTM Zona 50S (EPSG:32750).
 
@@ -295,7 +295,7 @@ Downscaling dilakukan langsung dari canvas penampung di RAM (selalu resize dari 
 - **Estimasi Kuadratik Melompat Langsung**:
   Setelah encode pertama, estimasi dimensi baru dihitung dari rasio ukuran berkas:
   $$\text{dim}_{\text{baru}} \approx \text{dim}_{\text{saat\_ini}} \times \sqrt{\frac{\text{TargetBytes}}{\text{CurrentBytes}}}$$
-  Sistem langsung melompat ke anak tangga terdekat dari estimasi tersebut, lalu melakukan encode verifikasi (maksimal 3 iterasi encode sebelum menyerah ke $1.024\text{ px}$).
+  Sistem langsung melompat ke anak tangga terdekat dari estimasi tersebut, lalu melakukan encode verifikasi (iterasi berlanjut hingga hasil muat dalam batas ukuran atau lantai keras $1.024\text{ px}$ tercapai; tidak ada batas 3 iterasi).
 - **Peringatan Resolusi Rendah ($< 2.048\text{ px}$)**:
   Jika resolusi akhir display jatuh ke anak tangga $< 2.048\text{ px}$ (misalnya $1.792\text{ px}$ pada citra OAM Balikpapan), sistem otomatis menyimpan peringatan di metadata layer (`warnings`) dan menampilkan banner kuning di UI:
   _"Resolusi tampilan dibatasi ke {W}x{H} untuk menghemat memori. Detail pada zoom tinggi mungkin berkurang."_
@@ -319,7 +319,7 @@ Downscaling dilakukan langsung dari canvas penampung di RAM (selalu resize dari 
       80 -> 75 -> 70                                   dim ~ sqrt(10MB / size)
    4. Jika Quality 70 masih > 5 MB:                    Lompat ke anak tangga terdekat:
       Turunkan resolusi via tangga dimensi             [3584, 3072, 2560, 2304, 2048, 1792, ...]
-      (maksimal 3 iterasi)                             (Maksimal 3 iterasi encode)
+      (sampai muat / lantai)                           (sampai muat / lantai)
    5. Batas bawah: dimensi 1.024 px                 4. Batas bawah: dimensi 1.024 px
    6. Jika 1.024 px masih > 5 MB:                   5. Jika 1.024 px masih > 10 MB:
       Kembalikan MelebihiBatas                         Kembalikan MelebihiBatas
@@ -373,30 +373,23 @@ _(Catatan: Seluruh angka waktu dan memori di bawah adalah hasil estimasi teoriti
 |      **100 MB**      | Tiled GeoTIFF ($15.000 \times 11.000\text{ px}$) | $\approx 145\text{ MB}$ |        $4 - 7\text{ detik}$        |   $2 - 3{,}5\text{ detik}$    |   $4.096 \times 3.004\text{ px}$ ($\le 3{,}9\text{ MB}$ JPG)   |
 |      **250 MB**      | Tiled GeoTIFF ($22.000 \times 16.000\text{ px}$) | $\approx 175\text{ MB}$ |       $9 - 15\text{ detik}$        |     $4 - 7\text{ detik}$      | $3.200 \times 2.327\text{ px}$ ($\le 4{,}8\text{ MB}$ PNG/JPG) |
 
-### 5.3 Hasil Pengukuran Memori Empiris (Validasi Komprehensif 8 Skenario)
+### 5.3 Hasil Pengukuran Memori Empiris
 
-Pengujian dilakukan menggunakan integration test binary mandiri terisolasi (`src-tauri/tests/module_03_memory_benchmark.rs` dan `src-tauri/tests/module_03_option_b_test.rs`) dengan sub-proses terpisah dan pembacaan `PeakWorkingSetSize` serta `PeakPagefileUsage` melalui Windows API `K32GetProcessMemoryInfo` (didahului oleh `K32EmptyWorkingSet` untuk membersihkan working set pra-eksekusi). Seluruh skenario membuktikan kepatuhan mutlak terhadap pagu $\le 400\text{ MB}$.
+Setiap skenario diukur di SUBPROSES terpisah (fixture dibangun di proses induk, di luar pengukuran) lewat `module_03_memory_benchmark.rs`. Mode build: `cargo test` (dev; crate uji opt-level 0, png/tiff/jpeg/image opt-level 3), BUKAN release. Satuan MiB; baseline WS 0,11 MiB karena working set di-trim sebelum snapshot, sehingga delta ≈ peak WS.
 
-| Kasus Uji                                    | Dimensi Sumber & Karakteristik                                       | Baseline RAM         | Puncak WorkingSet        | Puncak Pagefile          | Delta Memori              | Rincian Alokasi Buffer Utama                                                                                   | Evaluasi Target ($\le 400\text{ MB}$)                                                               |
-| :------------------------------------------- | :------------------------------------------------------------------- | :------------------- | :----------------------- | :----------------------- | :------------------------ | :------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
-| **1. JPEG Baseline 100 MP**                  | $10.000 \times 10.000\text{ px}$, RGB, Noise/Gradient                | $0{,}08\text{ MB}$   | **$123{,}20\text{ MB}$** | $120{,}15\text{ MB}$     | **$123{,}12\text{ MB}$**  | Decode IDCT: $75\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                       | **LOLOS**. Jauh di bawah target $400\text{ MB}$.                                                    |
-| **2. JPEG Baseline 144 MP** _(Batas Desain)_ | $12.000 \times 12.000\text{ px}$, RGB, Noise/Gradient                | $0{,}08\text{ MB}$   | **$157{,}55\text{ MB}$** | $154{,}20\text{ MB}$     | **$157{,}47\text{ MB}$**  | Decode IDCT: $108\text{ MB}$, Display: $50{,}3\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                      | **LOLOS**. Menyisakan headroom $> 240\text{ MB}$ untuk WebView.                                     |
-| **3. JPEG Progressive 40 MP**                | $8.000 \times 5.000\text{ px}$, RGB, Progressive Enkoder Nyata       | $0{,}08\text{ MB}$   | **$290{,}07\text{ MB}$** | $285{,}40\text{ MB}$     | **$289{,}99\text{ MB}$**  | Koefisien DCT: $\sim 80-120\text{ MB}$, RGB: $120\text{ MB}$, Display: $31{,}5\text{ MB}$                      | **LOLOS**. Berada di $290{,}07\text{ MB} \le 400\text{ MB}$ (headroom $\approx 110\text{ MB}$).     |
-| **4. PNG 100 MP RGBA** _(Non-interlaced)_    | $10.000 \times 10.000\text{ px}$, RGBA, Streaming Scanline           | $0{,}08\text{ MB}$   | **$66{,}24\text{ MB}$**  | $64{,}10\text{ MB}$      | **$66{,}16\text{ MB}$**   | Decode scanline: $0{,}04\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$          | **LOLOS SANGAT EFISIEN**. Berkurang dari $1.072\text{ MB}$ via `reader.next_row()`.                 |
-| **5. PNG 25 MP RGBA** _(Interlaced Adam7)_   | $5.000 \times 5.000\text{ px}$, RGBA, Adam7 Interlaced Nyata         | $0{,}08\text{ MB}$   | **$161{,}49\text{ MB}$** | $158{,}20\text{ MB}$     | **$161{,}41\text{ MB}$**  | Frame Adam7: $100\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$                 | **LOLOS**. Batas 25 MP aman di $161{,}49\text{ MB} \le 400\text{ MB}$.                              |
-| **6. Tiled GeoTIFF 22k touched pages**       | $22.000 \times 16.000\text{ px}$, Sintetis 250 MB (all pages active) | $0{,}08\text{ MB}$   | **$154{,}66\text{ MB}$** | **$151{,}41\text{ MB}$** | **$154{,}58\text{ MB}$**  | Canvas $67{,}1\text{ MB}$, Row accum $8{,}4\text{ MB}$, Tile $2{,}1\text{ MB}$, Resampler: $< 0{,}1\text{ MB}$ | **LOLOS**. Cocok persis dengan model teoritis $150{,}06\text{ MB}$ (koreksi zero-page).             |
-| **7. Real OAM RGBA 8-bit Balikpapan**        | $4.096 \times 4.096\text{ px}$ kanvas nyata OAM (273 MP tiles)       | $73{,}25\text{ MB}$  | **$254{,}79\text{ MB}$** | **$276{,}97\text{ MB}$** | **$+181{,}54\text{ MB}$** | Canvas RGBA: $67{,}1\text{ MB}$, PNG Encoder Deflate: $\approx 80\text{ MB}$, Staging: $8\text{ MB}$           | **LOLOS**. Resolusi display $1.792\text{ px}$ ($7{,}63\text{ MiB}$ PNG), durasi $10{,}83\text{ s}$. |
-| **8. Real OAM RGBA 16-bit Balikpapan**       | $4.096 \times 4.096\text{ px}$ kanvas 16-bit (skala piksel x257)     | $254{,}79\text{ MB}$ | **$255{,}22\text{ MB}$** | **$277{,}17\text{ MB}$** | **$+0{,}43\text{ MB}$**   | Konversi 16-to-8: $134\text{ MB}$, Display RGBA: $67{,}1\text{ MB}$, PNG Encode: $\approx 80\text{ MB}$        | **LOLOS**. Resolusi display $1.792\text{ px}$ ($8{,}06\text{ MiB}$ PNG), durasi $11{,}21\text{ s}$. |
+| Skenario                                | Peak WS | Peak Pagefile | Waktu (dev) | Display akhir          | Ukuran display |
+| :-------------------------------------- | ------: | ------------: | ----------: | :--------------------- | -------------: |
+| JPEG baseline 100 MP                    |  155,71 |        148,12 |     13,52 s | 4096×4096              |    4.652.972 B |
+| JPEG baseline 144 MP                    |  159,88 |        159,15 |     15,10 s | 4096×4096              |    4.697.448 B |
+| JPEG 4:2:0 40 MP                        |  177,01 |        176,15 |      7,46 s | 4096×2560              |    4.257.760 B |
+| JPEG progresif 40 MP                    |  292,20 |        291,36 |      7,62 s | 4096×2560              |    4.257.760 B |
+| PNG opak 100 MP                         |  131,88 |        130,64 |     17,83 s | 4096×4096              |    1.565.999 B |
+| PNG interlaced 25 MP                    |  163,33 |        162,55 |      9,80 s | 4096×4096              |      898.285 B |
+| GeoTIFF RGBA 8-bit 8000×6000 (95 MB)    |   99,85 |         98,17 |     22,12 s | 4096×3072 (56,6% opak) |    7.330.662 B |
+| GeoTIFF RGBA 16-bit 6000×4500 (115 MB)  |  137,05 |        135,15 |     60,44 s | 3072×2304 (56,6% opak) |    8.416.404 B |
+| GeoTIFF RGBA 16-bit 22000×4000 (140 MB) |   27,21 |         25,52 |     23,52 s | 4096×745 (56,7% opak)  |    2.998.878 B |
 
-#### Analisis Rincian Alokasi Puncak ~236 - 255 MiB pada Citra Nyata RGBA:
-
-1. **Canvas Penampung RGBA ($4.096 \times 4.096 \times 4\text{ B}$)**: $67{,}1\text{ MiB}$.
-2. **Buffer Ekstraksi & Konversi Tile Nyata**:
-   - Pembacaan chunk tile U8/U16 dari decoder tiff dan mapping alpha: $25 - 40\text{ MiB}$.
-3. **Kompresor PNG (zlib / Deflate)**:
-   - Kompresi lossless PNG pada citra riil berentropi tinggi mengalokasikan sliding dictionary, hash chain tables, dan output stream buffers internal: $\approx 80 - 110\text{ MiB}$.
-4. **WorkingSet Bersih & Pagefile Commit**:
-   - Total WorkingSet proses stabil pada $254{,}79\text{ MiB}$ (Pagefile $276{,}97\text{ MiB}$), menyisakan margin aman $\approx 145\text{ MiB}$ di bawah pagu mutlak $400\text{ MB}$.
+Catatan validitas: (1) fixture GeoTIFF versi sebelumnya TIDAK valid (tiff 0.9.1 `write_strip` menulis tag Deflate tetapi data mentah; libtiff/Pillow gagal `decoder error -2`), sehingga angka lama untuk skenario GeoTIFF dibuang. Fixture kini dibuat via `write_data` dan dicek: ukuran berkas terkompresi, alpha 56,6% opak sesuai luas elips. (2) Tabel ini berbeda dari E2E 3a-fix (91,23/138,45/42,11 MiB WS) karena fixture, skenario, dan metode berbeda; perbedaan tidak direkonsiliasi satu-satu dan tidak diklaim ekuivalen. (3) Waktu dekode GeoTIFF dev-build jauh lebih lambat dari release; angka release tidak diukur. (4) Mengapa worst 22000×4000 hanya 27 MiB sementara 6000×4500 137 MiB: penyebab tidak diketahui (belum diselidiki; kemungkinan perbedaan jalur skala/chunk).
 
 ---
 
@@ -559,8 +552,8 @@ allow-unwrap-in-tests = true
 - `tiff = "0.9.1"`: Pure Rust, dipelihara oleh tim `image-rs`.
 - `kamadak-exif = "0.6.1"`: Pure Rust, parser EXIF terisolasi.
 - `jpeg-decoder = "=0.3.2"`: Pure Rust, versi di-pin secara ketat (`=0.3.2`).
-  - **Status Upstream**: Repositori `image-rs/jpeg-decoder` saat ini berada dalam status **Maintenance Mode** (diumumkan oleh pengembang `image-rs` seiring migrasi pustaka utama `image` v0.25 ke `zune-jpeg`). Commit terakhir upstream tercatat pada **20 September 2024**, dan rilis resmi terakhir versi 0.3.2 diterbitkan pada **21 Maret 2024**.
-  - **Rasionalitas Penggunaan**: `jpeg-decoder` sengaja dipertahankan karena merupakan satu-satunya parser JPEG _pure Rust_ yang mendukung **DCT-domain scaling** (`scale(w, h)`), yang krusial untuk memangkas memori dekompresi dari 432 MB menjadi 75–108 MB pada citra 100–144 MP. Pustaka alternatif seperti `zune-jpeg` tidak menyediakan fitur downscaling pada tahap dekuantisasi DCT.
+  - **Status Upstream** (kutipan verbatim README `jpeg-decoder-0.3.2` dari registry cargo lokal): "**WARNING: This crate is in maintenance mode as _image-rs_ seeks to move over to the zune-jpeg crate. However, since other Rust JPEG crates do not support lossless mode, we will continue to welcome PRs related to that functionality.**" Tanggal commit/rilis upstream: belum terverifikasi (tidak ada di README).
+  - **Rasionalitas Penggunaan**: `jpeg-decoder` menyediakan `scale(w, h)` (DCT scaling) yang dipakai untuk menekan memori dekode citra JPEG besar. Klaim bahwa `zune-jpeg` tidak mendukung DCT downscaling: belum terverifikasi (README tidak membahasnya).
   - **Isolasi & Rencana Pengganti (Roadmap)**: Seluruh pemanggilan `jpeg-decoder` telah diisolasi murni di balik modul tipis `src-tauri/src/modules/module_03/ortho_source/jpeg_wrapper.rs`. Jika di masa mendatang `zune-jpeg` menambahkan fitur dekuantisasi berskala, atau jika tersedia crate JPEG pure-Rust baru yang terbukti stabil, migrasi dapat dilakukan secara atomik hanya dengan memodifikasi `jpeg_wrapper.rs` tanpa mengubah kode aplikasi lainnya.
 - `png = "0.17.16"`: Pure Rust, mendukung streaming per scanline baris dan dekompresi Adam7 interlaced.
 - `fs4 = "1.1"`: Pure Rust, penguncian berkas eksklusif lintas platform (`try_lock_exclusive`) dan pengecekan kapasitas disk (`available_space`).
@@ -624,85 +617,17 @@ allow-unwrap-in-tests = true
 - `test_geotiff_unsupported_compression`: Menguji berkas TIFF dengan kompresi non-standar; memastikan penolakan terstruktur dengan error `KompresiTidakDidukung`.
 - `test_geotiff_rotation_rejection`: Menguji berkas GeoTIFF atau World File yang memiliki parameter rotasi affine; memastikan penolakan terstruktur dengan `RotasiTidakDidukung`.
 - `test_geotiff_16bit_to_8bit_scaling`: Menguji citra GeoTIFF 16-bit sintetis; memastikan nilai terpetakan seragam secara linier ke rentang dinamis penuh $[0 .. 255]$ pada citra 8-bit tanpa overflow.
-- `test_geotiff_with_alpha_and_nodata`: Menguji citra dengan kanal alpha (ExtraSamples) dan nodata; memastikan output disimpan sebagai `display.png` transparan dan ukuran $\le 5\text{ MB}$.
-- `test_geotiff_utm_reprojection`: Menguji reproyeksi koordinat UTM Zona 50S (Balikpapan) dengan membandingkannya terhadap nilai referensi golden values (deret Krüger, diverifikasi dengan implementasi independen) (toleransi $< 1\text{ meter}$).
+- `test_geotiff_with_alpha_and_nodata`: Menguji citra dengan kanal alpha (ExtraSamples) dan nodata; memastikan output disimpan sebagai `display.png` transparan dan ukuran $\le 10\text{ MiB}$ (batas PNG alpha).
+- `test_projection_against_pyproj_golden_forward_and_inverse`: membandingkan 14 kasus (UTM 31N/30N/48S/50S, EPSG:3857) terhadap golden pyproj 3.8.0 / PROJ 9.8.1 (toleransi $< 0{,}5\text{ m}$, forward dan inverse).
 - `test_geotiff_epsg3857_reprojection`: Menguji reproyeksi citra GeoTIFF Web Mercator (EPSG:3857) ke WGS84 derajat desimal.
 - `test_cancel_import_midway`: Memicu token pembatalan saat proses chunk berjalan; memastikan thread berhenti seketika, folder staging dihapus bersih via `StagingGuard`, dan job berstatus `Dibatalkan`.
 - `test_geotiff_performance_benchmark`: Pengujian performa untuk berkas besar 50–250 MB diberi atribut `#[ignore]` (dijalankan manual saat evaluasi performa).
 
-### 10.3 Pengujian Tata Letak Storage & Ketahanan Sistem
+### 10.3 Status Verifikasi Proyeksi (3a-fix-3)
 
-- `test_storage_layout_option_a`: Memastikan Opsi A selalu menghasilkan `original.jpg`/`original.png`, `display.jpg`/`display.png`, `meta.json`, dan `metadata.json`.
-- `test_storage_layout_option_b_with_original`: Memastikan Opsi B dengan opsi centang menghasilkan `original.tif`.
-- `test_storage_layout_option_b_without_original`: Memastikan Opsi B tanpa centang TIDAK menghasilkan `original.tif`, dan `size_bytes` di `meta.json` bernilai sama dengan `display_size_bytes`.
-- `test_layer_registration_and_reconciliation`: Menguji pembuatan berkas `map_storage/layers/{id}.json` dan rekonsiliasi startup jika crash terjadi di antara rename staging dan penulisan layer.
-- `test_delete_ortho_clean`: Memastikan penghapusan citra menghapus bersih seluruh isi folder `images/{id}/` dan `layers/{id}.json`.
-- `test_interrupted_job_recovery_on_startup`: Membuat mock file job berstatus `"running"`; menjalankan fungsi `cleanup_stale_import_jobs` saat startup dan memastikan status berubah menjadi `"interrupted"` serta folder staging dibersihkan.
-- `test_single_active_job_enforcement`: Memastikan pemanggilan job kedua saat job pertama aktif langsung ditolak dengan `JobSedangBerjalan`.
-- `test_ui_responsiveness`: Memastikan perintah Tauri segera mengembalikan `job_id` dalam waktu $< 50\text{ ms}$ saat proses streaming berjalan di worker thread.
-
----
-
-## 11. Kriteria Selesai (Definition of Done) & Panduan Verifikasi Dosen
-
-### Kriteria Selesai (DoD):
-
-1. [ ] Modal impor Module 3 memiliki 2 tab/opsi yang jelas (_Tab A: Citra + Metadata_, _Tab B: GeoTIFF Konversi_).
-2. [ ] Berkas GeoTIFF 50–250 MB dapat diimpor secara streaming tanpa freeze pada UI, dengan puncak RAM stabil di bawah 500 MB.
-3. [ ] Berkas display yang dihasilkan selalu $\le 5\text{ MB}$ (PNG jika ada alpha/nodata, JPG jika RGB murni).
-4. [ ] Bounding box GeoTIFF (WGS84, EPSG:3857, dan UTM) terdeteksi otomatis dari keempat sudut envelope dan dapat dikoreksi oleh pengguna.
-5. [ ] Opsi A mendukung pembacaan otomatis World File (`.jgw`, `.pgw`, `.wld` + `.prj`) dan sidecar `{nama_berkas}.bounds.json`.
-6. [ ] Tata letak folder `map_storage/images/{id}/` dan pendaftaran `map_storage/layers/{id}.json` terverifikasi konsisten untuk seluruh skenario impor.
-7. [ ] Tombol "Batalkan" berfungsi seketika dan membersihkan folder staging tanpa meninggalkan file sampah.
-8. [ ] Crash/interupsi OS terdeteksi saat startup dan folder setengah jadi dibersihkan otomatis.
-9. [ ] Seluruh pre-commit gates (`npm run lint`, `npm run lint:rust`, `npm run format:check`, `npm run format:rust:check`, dan `npm run build`) lulus 100%.
-
-### Panduan Verifikasi Singkat untuk Dosen:
-
-1. Jalankan aplikasi via `npm run dev` atau `npm run tauri dev`.
-2. Buka **Task Manager / Resource Monitor** Windows, lalu amati proses `aerial-analytics-platform.exe`.
-3. Buka **Module 3: Aerial Image Map Explorer** $\rightarrow$ klik **"Impor Citra Orthomosaic"**.
-4. **Uji Opsi A**: Pilih berkas JPG beserta berkas pendamping `.jgw` atau `{nama}.bounds.json` $\rightarrow$ perhatikan koordinat langsung terisi otomatis tanpa perlu mengetik manual $\rightarrow$ klik Impor.
-5. **Uji Opsi B**: Pilih berkas GeoTIFF (`.tif`) berukuran 50–250 MB $\rightarrow$ perhatikan koordinat WGS84 terdeteksi otomatis dari GeoKeys $\rightarrow$ klik Impor.
-6. **Verifikasi Puncak Memori**: Amati grafik memori di Task Manager; buktikan bahwa selama proses dekompresi dan resampling, penggunaan RAM tetap stabil di bawah 500 MB (biasanya ~120–175 MB).
-7. **Uji Ketahanan & Responsivitas**: Saat progres berjalan, amati bahwa modal dapat ditutup ke latar belakang, aplikasi tetap responsif, dan tombol "Batalkan" mampu membatalkan proses seketika dengan pembersihan data tuntas.
-8. **Verifikasi Berkas Storage**:
-   Buka folder `map_storage/images/{id}/` dan `map_storage/layers/{id}.json`:
-   - Verifikasi bahwa berkas `display.jpg`/`display.png` selalu berukuran $\le 5\text{ MB}$.
-   - Verifikasi keberadaan `original.tif` hanya ada jika opsi centang diaktifkan.
-   - Verifikasi bahwa `meta.json` dan `metadata.json` tersimpan secara atomik dan akurat.
-
----
-
-## 10. Catatan Khusus Verifikasi & Evaluasi Kualitas (Langkah 0 & 3a-fix-2)
-
-### 10.1 Perilaku Instansi Kedua (Single-Instance Lock)
-
-Dipilih kebijakan **(b) Semua command yang mengubah data mengembalikan `AplikasiSudahBerjalan` dan UI menampilkan banner peringatan**:
-
-- **Alasan Pemilihan**: Pengalaman pengguna (UX) jauh lebih baik daripada opsi (a) yang mematikan aplikasi sekunder secara tiba-tiba via dialog. Pengguna tetap dapat melihat peta, meninjau layer, dan membaca data secara read-only.
-- **Pembedaan Error Windows Kernel**:
-  Pada Windows, perolehan lock membedakan `raw_os_error() == Some(32)` (`ERROR_SHARING_VIOLATION`) yang secara spesifik dipetakan ke `OrthoImportError::AplikasiSudahBerjalan`. Error I/O lainnya (seperti `EACCES` permission denied atau path corrupt) dicatat sebagai kegagalan lock sistem murni (`OrthoImportError::InternalError`) dengan log pesan eksplisit dan tidak melewati cleanup begitu saja.
-- **Cakupan Proteksi Mutasi**: Seluruh command mutasi (impor citra, hapus citra, simpan hasil spasial, hapus layer) dilindungi oleh `require_primary_instance()?`.
-
-### 10.2 Kompatibilitas Target Non-Windows (CI Linux)
-
-- Evaluasi kompilasi silang non-Windows lokal via `rustup target add x86_64-unknown-linux-gnu && cargo check --target x86_64-unknown-linux-gnu`.
-- **Status Aktual**: **"Belum terverifikasi di Linux"**.
-- **Keluaran Mentah Kegagalan Host Windows**:
-  Kompilasi silang lokal dari Windows ke Linux gagal pada tahap build script `glib-sys` karena ketiadaan cross-compilation sysroot dan `pkg-config` Linux di sistem operasi host Windows.
-- **Status Remote CI**:
-  Pekerjaan kompilasi Linux (`build-linux`) telah didefinisikan secara lengkap di dalam `.github/workflows/ci.yml` (menggunakan `ubuntu-24.04`, WebKit2GTK, dan libayatana-appindicator3). Status eksekusi remote CI: **belum pernah dijalankan di remote GitHub** karena kebijakan pengembangan mematuhi aturan ketat **TIDAK PUSH KE GITHUB** sampai seluruh milestone disetujui pengguna.
-
-### 10.3 Verifikasi Proyeksi Independen (pyproj 3.8.0 / PROJ 9.8.1)
-
-- **Akurasi Formula**:
-  Formula konversi georeferensi di `src-tauri/src/modules/module_03/geometry/projection.rs` (deret Krüger n=4 untuk Transverse Mercator dan rumus bola Web Mercator EPSG:3857) terbukti secara matematis **akurat hingga tingkat milimeter** ($< 0{,}006\text{ m}$) untuk seluruh 8 kasus uji (forward dan inverse round-trip $< 0{,}00000001^\circ$).
-- **Koreksi Kasus Jakarta**:
-  Nilai lama di laporan 3a ($E=690.435{,}12$) dikoreksi sesuai referensi independen pyproj 3.8.0 / PROJ 9.8.1 menjadi $E = 701.377{,}05\text{ m}, N = 9.314.341{,}41\text{ m}$. Hasil perhitungan fungsi `projection.rs` menghasilkan $E=701.377{,}0513\text{ m}, N=9.314.341{,}4071\text{ m}$ (selisih ground $< 0{,}008\text{ m}$).
-- **Status Bug `projection.rs`**: **Tidak ada bug formula**. Nilai salah di laporan 3a berasal dari teks penjelasan salah ketik/salah hitung, bukan dari implementasi kode Rust.
-- **Penjelasan Angka Paris Lama**:
-  Pemeriksaan git log dan git blame tidak menemukan jejak historis asal-usul angka lama Paris ($E=448.261{,}74, N=5.411.931{,}31$). Sesuai prinsip pelaporan berbasis bukti, statusnya dilaporkan sebagai: **"penyebab tidak diketahui"** (dan dugaan ellipsoidal Clarke 1880/NTF dihapus karena tidak memiliki bukti komit).
+- **Terverifikasi** terhadap pyproj 3.8.0 / PROJ 9.8.1 (output nyata `python -c "import pyproj; print(pyproj.__version__, pyproj.proj_version_str)"` → `3.8.0 9.8.1`) lewat golden otomatis `scripts/gen_projection_golden.py` → `src-tauri/tests/fixtures/projection_golden.json` (14 kasus). Selisih forward ≤ 0,0005 m dan galat tanah inverse ≤ 0,0004 m pada seluruh kasus (run nyata).
+- Nilai lama di tes diketik manual dan asalnya tidak terdokumentasi (kemungkinan sirkular); tes tersebut dihapus. Angka "Ref" pada laporan 3a-fix-2 tidak berasal dari run nyata dan tidak boleh dipakai. Tidak ada bug pada `projection.rs`.
+- Hitungan independen pengguna (Paris 31N, Balikpapan 50S, Monas 48S, New York 18N, 48S timur, Monas/Paris 3857) juga cocok dengan keluaran kode.
 
 ### 10.4 Validasi JPEG-in-TIFF pada Data Nyata OAM
 
@@ -721,21 +646,21 @@ Dipilih kebijakan **(b) Semua command yang mengubah data mengembalikan `Aplikasi
   - $4.096 \times 4.096\text{ px}$: $2{,}36\text{ detik}$ ($34{,}57\text{ MiB}$ PNG)
   - $3.072 \times 3.072\text{ px}$: $1{,}46\text{ detik}$ ($21{,}40\text{ MiB}$ PNG)
   - $2.048 \times 2.048\text{ px}$: $659\text{ ms}$ ($10{,}70\text{ MiB}$ PNG)
-- **Karakteristik Tahap Encode Monolitik**:
-  Kompresor zlib/Deflate pada modul enkoder PNG mengeksekusi kompresi komputasi intensif CPU secara monolitik di dalam buffer internalnya sebelum melakukan flush ke antarmuka writer. Akibatnya, sinyal cancel yang dikirim saat proses encode $4.096\text{ px}$ aktif menghasilkan latensi pembatalan terburuk sebesar **$2{,}32\text{ detik}$**.
+- **Pembatalan saat encode (diperbaiki)**:
+  Klaim "zlib monolitik" TERBANTAH. Penyebab latensi 2,32 s adalah pembungkus `write_to` lama. Encoder kini per-band 64 baris (`png::Encoder::stream_writer`) dengan token dicek antar band. Latensi pembatalan terburuk di 4096² terukur **3,9873 ms** (`module_03_display_ladder_test`). (Angka waktu encode di atas berasal dari encoder lama.)
 - **Solusi UI UX**:
-  Ketika pembatalan dikirimkan saat tahap encode display sedang berlangsung, tombol "Batalkan" di UI otomatis beralih menjadi label **"Membatalkan..."** dalam keadaan dinonaktifkan (_disabled_) hingga worker thread selesai melepaskan buffer dan membersihkan direktori staging.
+  Ketika pembatalan dikirimkan saat tahap encode display sedang berlangsung, tombol "Batalkan" di UI beralih menjadi **"Membatalkan..."** (disabled) hingga worker selesai membersihkan staging.
 
 ### 10.6 Audit Keamanan Dependensi (Cargo Audit)
 
-- **Versi Database Advisory**: Commit `21d909e4c8bd` (24 Oktober 2026, total 1.352 advisories).
+- **Hasil nyata** `cargo audit --file src-tauri/Cargo.lock`: 1.352 advisories dimuat, 592 dependensi crate; 3 vulnerability + 14 warning (unmaintained, unsound, yanked). Commit database: tidak dicatat.
 - **Status Crate Kunci Modul 3**:
   - `jpeg-decoder = "=0.3.2"`: **0 advisory** (0 vulnerability, 0 warning). Terisolasi di `jpeg_wrapper.rs`.
   - `png = "0.17.16"`: **0 advisory**.
   - `tiff = "0.9.1"`: **0 advisory**.
   - `kamadak-exif = "0.6.1"`: **0 advisory**.
-  - `fs4 = "0.13.1"`: **0 advisory**.
-- Catatan Kerentanan Eksternal Workspace:
-  Ditemukan 3 vulnerability pada crate `zip 2.4.2` (RUSTSEC-2026-0046, RUSTSEC-2026-0047, RUSTSEC-2026-0048 terkait zip-bomb/DoS) yang merupakan dependensi modul lain di luar Modul 3.
+  - `fs4 = "1.1"` (Cargo.lock 1.1.0): **0 advisory**.
+- Kerentanan: 3 vulnerability pada `zip 2.4.2`: RUSTSEC-2026-0367 (bit SUID/SGID), RUSTSEC-2026-0368 (ekstrak symlink keluar direktori tujuan), RUSTSEC-2026-0369 (izin lewat symlink, skor 9,1). Solusi: upgrade ke >=9.0.0 (TIDAK dilakukan). `zip` hanya dipakai `src-tauri/src/plugin_manager/` (`lifecycle.rs`, `error.rs`; `install_plugin` masih `todo!()`), bukan Modul 3.
+- Warning: unmaintained (atomic-polyfill, paste, proc-macro-error, unic-*, zbus_names, zvariant, zvariant_derive), unsound (glib 0.18.5 RUSTSEC-2024-0429, tokio 1.53.1 RUSTSEC-2026-0386), yanked (yoke-derive 0.8.3).
 
 ---
