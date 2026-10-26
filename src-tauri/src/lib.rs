@@ -244,11 +244,13 @@
 //!   would smooth away the edges the Laplacian measures and score a small
 //!   source as falsely blurry, so a source already below the cap (a DNG's
 //!   embedded preview, or a small JPEG) is left unscored instead. JPEG
-//!   decoded directly, DNG from its stored preview. Classified relative to
-//!   the flight session an image belongs to (mean/stddev z-score of the
-//!   session's other scores, plus an absolute hard floor as a safety net),
-//!   frozen at the moment of import. Runs during `import_io::run_import`,
-//!   before each candidate/pair is recorded.
+//!   decoded directly, DNG from its stored preview. `blur_score` is computed
+//!   per image during `import_io::run_import`; `is_blurry` is then
+//!   re-derived for every scored image in the session in one pass
+//!   (`flight_session::reclassify_session_blur`, called once per import run)
+//!   from the session's mean/stddev z-score plus an absolute hard floor —
+//!   not frozen per image at insert time, so the flag depends only on the
+//!   session's current score set, not on import order or batch boundaries.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.

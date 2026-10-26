@@ -18,9 +18,7 @@
 //! sharpness. A DNG's embedded preview ([`super::dng_preview`]) is often
 //! smaller than the scoring cap, and small JPEGs hit this too. A source
 //! already below the cap is therefore left unscored (`None`) rather than
-//! upscaled into a misleading number — and because [`classify_blur`] is
-//! frozen at import, a wrong score would otherwise become a permanent wrong
-//! flag.
+//! upscaled into a misleading number.
 //!
 //! # Why session-relative, not a single global threshold
 //!
@@ -30,11 +28,24 @@
 //! altitude, so comparing a score against the mean/stddev of its own
 //! session's other scores ([`classify_blur`]) is a self-calibrating
 //! baseline. [`HARD_FLOOR_BLUR_SCORE`] remains underneath as an absolute
-//! safety net for a session where every image is bad. See
-//! [`super::import_io::ImportScope::single`] and
-//! [`super::import_io::ImportScope::pair`] for where this runs, at import
-//! time, and why classification is frozen at import rather than
-//! recomputed for the whole session each time new images land.
+//! safety net for a session where every image is bad.
+//!
+//! # Why classification is a whole-session pass, not per-image at insert time
+//!
+//! `blur_score` is still computed once per image, at import
+//! ([`blur_score_for_copy`], called from
+//! [`super::import_io::ImportScope::single`]/
+//! [`super::import_io::ImportScope::pair`]). But `is_blurry` is *not* set
+//! from whatever scores happened to exist in the database at that moment —
+//! that would make the flag depend on import order and on how many separate
+//! import runs it took to fill the session: the same file could land as
+//! blurry or not depending on whether it happened to be the 1st or the 11th
+//! image scored. Instead, [`super::flight_session::reclassify_session_blur`]
+//! re-derives `is_blurry` for every scored image in the session in one pass
+//! ([`classify_against_session`] is the classifier it's given), run once at
+//! the end of each import ([`super::import_io::import_planned`]). The result
+//! depends only on the session's current score set, not on how it was
+//! assembled.
 
 use std::path::Path;
 
@@ -224,6 +235,24 @@ pub(crate) fn classify_blur(
         return false;
     }
     (raw_score - stats.mean) / stats.stddev < z_threshold
+}
+
+/// Classifies `score` against `others` (the rest of its session) with the
+/// module's thresholds. Thin wrapper around [`classify_blur`] for callers
+/// (the session-wide reclassification pass in
+/// [`super::flight_session::reclassify_session_blur`]) that only have a raw
+/// score and a baseline, not a pre-built [`SessionBlurStats`].
+///
+/// # Purity
+///
+/// Pure, total.
+pub(crate) fn classify_against_session(score: f64, others: &[f64]) -> bool {
+    classify_blur(
+        score,
+        &compute_session_blur_stats(others),
+        HARD_FLOOR_BLUR_SCORE,
+        BLUR_Z_THRESHOLD,
+    )
 }
 
 #[cfg(test)]

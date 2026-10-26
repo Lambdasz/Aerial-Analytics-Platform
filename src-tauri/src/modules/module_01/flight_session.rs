@@ -1127,6 +1127,61 @@ pub fn get_images_by_session(
     Ok(images)
 }
 
+/// Re-derives `is_blurry` for every scored image in a session from the
+/// session's current score distribution, in one transaction.
+///
+/// `classify` receives one image's `blur_score` and the scores of every
+/// *other* scored image in the session (a leave-one-out baseline), and
+/// decides whether that image is blurry. Running this once over the whole
+/// session, rather than classifying each image incrementally as it is
+/// inserted, makes the result depend only on the session's final score set
+/// — not on import order or how many separate import runs it took to
+/// assemble it. A DNG with a same-stem JPEG is excluded from the baseline
+/// and from direct classification (it is the same capture as its JPEG, so
+/// scoring it as an independent sample would double-count that capture);
+/// it mirrors its JPEG's flag instead.
+///
+/// # Purity
+///
+/// Impure — reads and updates the `image` table.
+pub(crate) fn reclassify_session_blur(
+    conn: &Connection,
+    session_id: Uuid,
+    classify: impl Fn(f64, &[f64]) -> bool,
+) -> Result<(), SessionError> {
+    with_immediate_transaction(conn, |conn| {
+        let scored: Vec<(String, f64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, blur_score FROM image
+                 WHERE session_id = ?1 AND blur_score IS NOT NULL
+                   AND NOT (format = 'dng' AND raw_sibling_id IS NOT NULL)",
+            )?;
+            let rows = stmt.query_map(params![session_id.to_string()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut update = conn.prepare("UPDATE image SET is_blurry = ?1 WHERE id = ?2")?;
+        for (i, (id, score)) in scored.iter().enumerate() {
+            let others: Vec<f64> = scored
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, (_, s))| *s)
+                .collect();
+            update.execute(params![i64::from(classify(*score, &others)), id])?;
+        }
+        // A paired DNG is the same capture as its JPEG: mirror its flag.
+        conn.execute(
+            "UPDATE image SET is_blurry =
+                 (SELECT j.is_blurry FROM image j WHERE j.id = image.raw_sibling_id)
+             WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL",
+            params![session_id.to_string()],
+        )?;
+        Ok(())
+    })
+}
+
 /// Lists the content hashes of every image already stored in a project.
 ///
 /// This is the duplicate scope for an import: an image is a duplicate when
@@ -1513,6 +1568,133 @@ mod tests {
         assert_eq!(get_image(&conn, image.id).expect("get"), image);
         let listed = get_images_by_session(&conn, session.id).expect("list");
         assert_eq!(listed, vec![image]);
+    }
+
+    /// Builds a session holding one mild outlier (above the hard floor, but
+    /// a clear relative outlier against a tight sharp cluster) plus five
+    /// sharp images, inserted in the given order, then reclassifies it.
+    /// Returns the outlier's `is_blurry` after reclassification.
+    fn reclassified_outlier_flag(
+        conn: &Connection,
+        project_id: Uuid,
+        outlier_first: bool,
+    ) -> Option<bool> {
+        let session = create_session(conn, project_id, None).expect("session");
+        let suffix = if outlier_first { "a" } else { "b" };
+        let mut outlier = image_row(
+            session.id,
+            &format!("/photos/{suffix}/outlier.jpg"),
+            Some(&format!("outlier-{suffix}")),
+        );
+        outlier.blur_score = Some(30.0);
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        let sharp: Vec<Image> = sharp_scores
+            .iter()
+            .enumerate()
+            .map(|(n, score)| {
+                let mut image = image_row(
+                    session.id,
+                    &format!("/photos/{suffix}/sharp{n}.jpg"),
+                    Some(&format!("sharp-{suffix}-{n}")),
+                );
+                image.blur_score = Some(*score);
+                image
+            })
+            .collect();
+
+        if outlier_first {
+            insert_image(conn, &outlier).expect("insert outlier");
+            for image in &sharp {
+                insert_image(conn, image).expect("insert sharp");
+            }
+        } else {
+            for image in &sharp {
+                insert_image(conn, image).expect("insert sharp");
+            }
+            insert_image(conn, &outlier).expect("insert outlier");
+        }
+
+        reclassify_session_blur(
+            conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_against_session,
+        )
+        .expect("reclassify");
+        get_image(conn, outlier.id).expect("get outlier").is_blurry
+    }
+
+    #[test]
+    fn reclassify_session_blur_does_not_depend_on_insert_order() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+
+        let outlier_imported_first = reclassified_outlier_flag(&conn, project.id, true);
+        let outlier_imported_last = reclassified_outlier_flag(&conn, project.id, false);
+
+        assert_eq!(
+            outlier_imported_first, outlier_imported_last,
+            "the same final score set must classify the same way regardless \
+             of the order rows were inserted in"
+        );
+        assert_eq!(
+            outlier_imported_first,
+            Some(true),
+            "a clear relative outlier against a tight sharp cluster should be flagged blurry"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_mirrors_a_dng_from_its_jpeg() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg", Some("pair-jpg"));
+        jpeg.blur_score = Some(30.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+
+        let mut dng = image_row(session.id, "/photos/pair.dng", Some("pair-dng"));
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        // A DNG's preview can score differently from its JPEG sibling — the
+        // reclassification pass must still mirror the JPEG's flag rather
+        // than treating this as an independent sample.
+        dng.blur_score = Some(999.0);
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        for (n, score) in sharp_scores.iter().enumerate() {
+            let mut image = image_row(
+                session.id,
+                &format!("/photos/sharp{n}.jpg"),
+                Some(&format!("sharp{n}")),
+            );
+            image.blur_score = Some(*score);
+            insert_image(&conn, &image).expect("insert sharp");
+        }
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+        insert_image(&conn, &dng).expect("insert dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_against_session,
+        )
+        .expect("reclassify");
+
+        let jpeg_flag = get_image(&conn, jpeg_id).expect("get jpeg").is_blurry;
+        let dng_flag = get_image(&conn, dng_id).expect("get dng").is_blurry;
+        assert_eq!(
+            jpeg_flag,
+            Some(true),
+            "the jpeg is a clear relative outlier"
+        );
+        assert_eq!(
+            dng_flag, jpeg_flag,
+            "the paired dng must mirror its jpeg's flag, not its own score"
+        );
     }
 
     #[test]

@@ -81,8 +81,8 @@ use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 use super::blur_detection;
 use super::error::SessionError;
 use super::flight_session::{
-    get_image, get_images_by_session, get_session, image_from_metadata,
-    insert_images_and_recalculate, known_hashes_for_project, ExistingContent,
+    get_image, get_session, image_from_metadata, insert_images_and_recalculate,
+    known_hashes_for_project, reclassify_session_blur, ExistingContent,
 };
 use super::image_importer::{
     classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
@@ -339,6 +339,22 @@ fn import_planned(
         done += duplicates_added;
     }
 
+    // Re-derive every `is_blurry` flag in the session from the final score
+    // set, so the result does not depend on import order or on how many
+    // separate import runs it took to assemble the session. A failure here
+    // is logged, not propagated: the import itself already succeeded, and
+    // every row still has its `blur_score` even if this pass could not run.
+    match lock_db(db) {
+        Ok(conn) => {
+            if let Err(err) =
+                reclassify_session_blur(&conn, session_id, blur_detection::classify_against_session)
+            {
+                eprintln!("warning: could not reclassify session blur flags: {err}");
+            }
+        }
+        Err(_) => eprintln!("warning: could not reclassify session blur flags: db lock"),
+    }
+
     let RunState {
         image_ids,
         rejected,
@@ -416,53 +432,6 @@ impl ImportScope<'_> {
         self.state.duplicates.len()
     }
 
-    /// This session's persisted blur scores so far.
-    ///
-    /// Read once per candidate/pair (before either half of a stem pair is
-    /// scored), so both halves are classified against the same baseline
-    /// rather than each other. A lookup failure (poisoned lock, database
-    /// error) falls back to an empty baseline rather than failing the
-    /// import — the affected image(s) just fall back to hard-floor-only
-    /// classification, same as a session still below
-    /// [`blur_detection::MIN_SESSION_SAMPLE_FOR_RELATIVE`].
-    fn existing_session_blur_scores(&self) -> Vec<f64> {
-        let Ok(conn) = lock_db(self.db) else {
-            return Vec::new();
-        };
-        get_images_by_session(&conn, self.session_id)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|img| img.blur_score)
-            .collect()
-    }
-
-    /// Scores one copy and classifies it relative to `existing`, the
-    /// session's blur scores read before this candidate/pair started. A
-    /// scoring failure (corrupt/undecodable file) yields `(None, None)`
-    /// rather than aborting the import.
-    fn score_and_classify(
-        path: &Path,
-        format: ImageFormat,
-        existing: &[f64],
-    ) -> (Option<f64>, Option<bool>) {
-        let Some(score) = blur_detection::blur_score_for_copy(path, format) else {
-            return (None, None);
-        };
-        let combined: Vec<f64> = existing
-            .iter()
-            .copied()
-            .chain(std::iter::once(score))
-            .collect();
-        let stats = blur_detection::compute_session_blur_stats(&combined);
-        let blurry = blur_detection::classify_blur(
-            score,
-            &stats,
-            blur_detection::HARD_FLOOR_BLUR_SCORE,
-            blur_detection::BLUR_Z_THRESHOLD,
-        );
-        (Some(score), Some(blurry))
-    }
-
     /// Copies and records one standalone image.
     fn single(&mut self, candidate: &ImportCandidate) -> Result<ImportedFile, ()> {
         let base = match base_name_for(candidate) {
@@ -489,9 +458,10 @@ impl ImportScope<'_> {
         let metadata = metadata_from_copy(&copy.dest, format);
         let image_id = Uuid::new_v4();
         let ready = format == ImageFormat::Jpeg;
-        let existing_scores = self.existing_session_blur_scores();
-        let (blur_score, is_blurry) =
-            Self::score_and_classify(&copy.dest, format, &existing_scores);
+        // `is_blurry` is left `None` here: the session-wide reclassification
+        // pass in `import_planned` derives it from the final score set, not
+        // incrementally per candidate — see `blur_detection`'s module docs.
+        let blur_score = blur_detection::blur_score_for_copy(&copy.dest, format);
         let image = build_image(
             image_id,
             self.session_id,
@@ -501,7 +471,7 @@ impl ImportScope<'_> {
             None,
             ready,
             blur_score,
-            is_blurry,
+            None,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -611,15 +581,13 @@ impl ImportScope<'_> {
         let dng_metadata = metadata_from_copy(&dng_copy.dest, ImageFormat::Dng);
         fill_missing(&mut jpeg_metadata, &dng_metadata);
 
-        // Both halves are classified against the same pre-pair baseline
-        // (read once), not against each other — they are the same capture,
-        // so letting one influence the other's classification would be
-        // circular.
-        let existing_scores = self.existing_session_blur_scores();
-        let (jpeg_blur_score, jpeg_is_blurry) =
-            Self::score_and_classify(&jpeg_copy.dest, ImageFormat::Jpeg, &existing_scores);
-        let (dng_blur_score, dng_is_blurry) =
-            Self::score_and_classify(&dng_copy.dest, ImageFormat::Dng, &existing_scores);
+        // Raw scores only; `is_blurry` for both halves is derived later by
+        // the session-wide reclassification pass (which also mirrors the
+        // DNG's flag from its JPEG, rather than scoring the DNG as an
+        // independent sample of the same capture).
+        let jpeg_blur_score =
+            blur_detection::blur_score_for_copy(&jpeg_copy.dest, ImageFormat::Jpeg);
+        let dng_blur_score = blur_detection::blur_score_for_copy(&dng_copy.dest, ImageFormat::Dng);
 
         let jpeg_id = Uuid::new_v4();
         let dng_id = Uuid::new_v4();
@@ -633,7 +601,7 @@ impl ImportScope<'_> {
                 Some(dng_id),
                 true,
                 jpeg_blur_score,
-                jpeg_is_blurry,
+                None,
             ),
             build_image(
                 dng_id,
@@ -644,7 +612,7 @@ impl ImportScope<'_> {
                 Some(jpeg_id),
                 true,
                 dng_blur_score,
-                dng_is_blurry,
+                None,
             ),
         ];
         match record_images(self.db, self.session_id, &images) {
@@ -705,9 +673,7 @@ impl ImportScope<'_> {
     ) -> Result<ImportedFile, ()> {
         let metadata = metadata_from_copy(&copy.dest, ImageFormat::Jpeg);
         let image_id = Uuid::new_v4();
-        let existing_scores = self.existing_session_blur_scores();
-        let (blur_score, is_blurry) =
-            Self::score_and_classify(&copy.dest, ImageFormat::Jpeg, &existing_scores);
+        let blur_score = blur_detection::blur_score_for_copy(&copy.dest, ImageFormat::Jpeg);
         let image = build_image(
             image_id,
             self.session_id,
@@ -717,7 +683,7 @@ impl ImportScope<'_> {
             None,
             true,
             blur_score,
-            is_blurry,
+            None,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
