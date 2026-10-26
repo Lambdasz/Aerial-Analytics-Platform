@@ -182,13 +182,6 @@ export function deleteAnnotation(annotationId: string): Promise<boolean> {
 }
 
 /**
- * Backward compatibility alias reading from real storage.
- */
-export function getSampleAnnotations(): Promise<AnnotationFeature[]> {
-  return getSavedAnnotations();
-}
-
-/**
  * Mengambil marker foto drone dari storage (delegasi ke get_photos).
  */
 export function getProjectImageMarkers(): Promise<DroneImageMetadata[]> {

@@ -116,7 +116,7 @@ function handleBrowserFallback<T>(cmd: string, args?: Record<string, unknown>): 
     } as unknown as T;
   }
 
-  if (cmd === "get_saved_annotations" || cmd === "get_sample_annotations") {
+  if (cmd === "get_saved_annotations") {
     return [] as unknown as T;
   }
 
