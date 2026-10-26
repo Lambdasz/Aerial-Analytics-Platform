@@ -14,7 +14,6 @@ function generateAoiId(): string {
 export interface AoiToolbarProps {
   map: L.Map | null;
 }
-export type AoiDemoToolbarProps = AoiToolbarProps;
 
 export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
   const {

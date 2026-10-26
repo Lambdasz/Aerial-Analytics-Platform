@@ -33,4 +33,5 @@
 
 ## FASE 3: Log Eksekusi Pembersihan
 
-_(Akan diperbarui per langkah pembersihan atomic)_
+- **Langkah 1 [K-01]**: Pembersihan data sisa test `ortho_8881_148640_1792951376935076.json` ("Trash Restore Test") di `map_storage/layers/`. File telah dipastikan dibersihkan dari direktori storage.
+- **Langkah 2 [K-02]**: Penghapusan unused type alias `AoiDemoToolbarProps` di `src/modules/module-03/organisms/AoiToolbar.tsx`. Verifikasi linting dan build passed.
