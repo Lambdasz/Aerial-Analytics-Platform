@@ -203,6 +203,8 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       └── ci.yml                # CI pipeline: lint + format + cross-platform build
 ├── docs/                         # Project documentation
 │   ├── examples/                 # Canonical JSON/GeoJSON fixtures for cross-module contracts
+│   ├── modules/                  # Comprehensive module architectural documentation
+│   │   └── module_3/             # Module 3 (Map Explorer) dual-language docs (EN & ID)
 │   ├── Proyek.md                 # Full project brief (11 modules)
 │   ├── README_modul3.md          # Module 3 (Map Explorer) design doc
 │   └── README_UMUM.md            # General README (alternate version)
