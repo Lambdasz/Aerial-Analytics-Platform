@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Returns the default schema version (1) for drone photo records.
 fn default_schema_version() -> u32 {
     1
 }

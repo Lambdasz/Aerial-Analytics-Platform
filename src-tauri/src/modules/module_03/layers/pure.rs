@@ -61,6 +61,7 @@ pub fn filter_layers_by_category(layers: &[LayerState], category: &str) -> Vec<L
 mod tests {
     use super::*;
 
+    /// Helper function constructing a test layer state.
     fn create_test_layer(
         id: &str,
         name: &str,

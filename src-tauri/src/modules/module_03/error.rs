@@ -6,8 +6,7 @@ use thiserror::Error;
 
 /// Domain error for map controller operations.
 ///
-/// Maps to [`CommandError`](crate::plugin_manager::error::CommandError) for
-/// transmission to the frontend via Tauri IPC.
+/// Maps to `CommandError` for transmission to the frontend via Tauri IPC.
 #[derive(Error, Debug)]
 pub enum MapControllerError {
     /// The provided geometry failed validation (e.g. self-intersecting ring,
@@ -51,6 +50,7 @@ impl MapControllerError {
 }
 
 impl From<MapControllerError> for crate::plugin_manager::error::CommandError {
+    /// Converts a [`MapControllerError`] into a Tauri `CommandError`.
     fn from(err: MapControllerError) -> Self {
         crate::plugin_manager::error::CommandError {
             code: err.code().to_string(),
@@ -197,6 +197,7 @@ impl OrthoImportError {
 }
 
 impl From<OrthoImportError> for crate::plugin_manager::error::CommandError {
+    /// Converts an [`OrthoImportError`] into a user-friendly Tauri `CommandError`.
     fn from(err: OrthoImportError) -> Self {
         crate::plugin_manager::error::CommandError {
             code: err.code().to_string(),
@@ -206,6 +207,7 @@ impl From<OrthoImportError> for crate::plugin_manager::error::CommandError {
 }
 
 impl From<tiff::TiffError> for OrthoImportError {
+    /// Converts a [`tiff::TiffError`] into an [`OrthoImportError`].
     fn from(err: tiff::TiffError) -> Self {
         match err {
             tiff::TiffError::FormatError(e) => {

@@ -255,6 +255,7 @@ pub fn read_world_file_envelope(
     })
 }
 
+/// Attempts fallback CRS detection by inspecting coordinate bounds magnitude (detects EPSG:4326 if in -180..180 / -90..90).
 fn fallback_crs_detection(
     x_min: f64,
     x_max: f64,

@@ -477,6 +477,7 @@ fn parse_geokeys(keys: &[u16]) -> Result<(u16, u32), OrthoImportError> {
     Ok((raster_type, crs_code))
 }
 
+/// Formats a numeric EPSG code into a descriptive human-readable CRS string.
 fn format_crs_name(code: u32) -> String {
     match code {
         4326 => "EPSG:4326 (WGS84 Geodetic)".to_string(),
@@ -491,6 +492,7 @@ fn format_crs_name(code: u32) -> String {
 // 3. EKSTRAKSI DETAIL TEKNIS & TAG KHUSUS
 // ============================================================================
 
+/// Detects whether an image contains an alpha transparency channel by inspecting ExtraSamples tags or RGBA color type.
 fn detect_alpha_from_tags<R: Read + Seek>(
     decoder: &mut Decoder<R>,
     samples_per_pixel: u32,
@@ -536,6 +538,7 @@ fn detect_alpha_from_tags<R: Read + Seek>(
     false
 }
 
+/// Detects the numeric nodata value specified in TIFF tag 42113 (GDAL_NODATA), if present.
 fn detect_nodata_from_tags<R: Read + Seek>(decoder: &mut Decoder<R>) -> Option<f64> {
     // Tag 42113: GDAL_NODATA
     if let Ok(ascii_str) = decoder.get_tag_ascii_string(Tag::GdalNodata) {
@@ -547,6 +550,7 @@ fn detect_nodata_from_tags<R: Read + Seek>(decoder: &mut Decoder<R>) -> Option<f
     None
 }
 
+/// Translates the numeric TIFF compression tag into a human-readable algorithm name.
 fn detect_compression_name<R: Read + Seek>(decoder: &mut Decoder<R>) -> String {
     if let Ok(comp_val) = decoder.get_tag_u32(Tag::Compression) {
         match comp_val {
@@ -1276,6 +1280,7 @@ pub fn stream_geotiff_to_resampler<R: Read + Seek>(
     Ok(())
 }
 
+/// Blits and normalizes an 8-bit source pixel into the destination buffer with nodata handling.
 fn blit_pixel_u8(
     src: &[u8],
     dst: &mut [u8],
@@ -1345,6 +1350,7 @@ fn blit_pixel_u8(
     }
 }
 
+/// Blits and normalizes a 16-bit source pixel into the destination buffer with nodata handling.
 fn blit_pixel_u16(
     src: &[u16],
     dst: &mut [u16],

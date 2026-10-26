@@ -122,6 +122,7 @@ impl AppInstanceLock {
         }
     }
 
+    /// Returns the filesystem path to the instance lock file.
     pub fn lock_path(&self) -> &Path {
         &self.lock_path
     }
@@ -151,6 +152,7 @@ pub fn require_primary_instance() -> Result<(), OrthoImportError> {
     Ok(())
 }
 
+/// Returns the global static mutex holding the application instance lock.
 fn get_lock_holder() -> &'static Mutex<Option<AppInstanceLock>> {
     GLOBAL_APP_LOCK.get_or_init(|| Mutex::new(None))
 }

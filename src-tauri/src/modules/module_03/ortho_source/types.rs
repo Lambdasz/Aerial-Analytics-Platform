@@ -216,6 +216,7 @@ pub struct DeleteOrthoSummary {
     pub annotations_deleted_count: usize,
 }
 
+/// Returns the default schema version (1) for stored orthomosaic metadata.
 fn default_schema_version() -> u32 {
     1
 }

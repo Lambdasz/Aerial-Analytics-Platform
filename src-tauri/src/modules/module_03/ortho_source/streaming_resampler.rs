@@ -22,10 +22,12 @@ pub enum ChannelCount {
 }
 
 impl ChannelCount {
+    /// Returns the integer number of channels.
     pub fn channels(self) -> usize {
         self as usize
     }
 
+    /// Converts an integer channel count (1, 3, or 4) into a `ChannelCount` enum variant.
     pub fn from_usize(n: usize) -> Result<Self, OrthoImportError> {
         match n {
             1 => Ok(ChannelCount::Gray),
@@ -63,6 +65,7 @@ struct ActiveRowAccumulator {
 }
 
 impl ActiveRowAccumulator {
+    /// Constructs a new row accumulator for output row `y_out`.
     fn new(y_out: u32, dst_width: usize, channels: usize) -> Self {
         Self {
             y_out,
@@ -180,14 +183,17 @@ impl StreamingResampler {
         }
     }
 
+    /// Returns the target resampled image width in pixels.
     pub fn dst_width(&self) -> u32 {
         self.dst_width
     }
 
+    /// Returns the target resampled image height in pixels.
     pub fn dst_height(&self) -> u32 {
         self.dst_height
     }
 
+    /// Returns the number of channels per pixel.
     pub fn channels(&self) -> usize {
         self.channel_type.channels()
     }
@@ -262,6 +268,7 @@ impl StreamingResampler {
         })
     }
 
+    /// Generically processes an input row of type `T` using the conversion function `to_f64`.
     fn process_row_generic<T, F>(
         &mut self,
         y_in: u32,
@@ -343,6 +350,7 @@ impl StreamingResampler {
         Ok(())
     }
 
+    /// Writes an accumulator's normalized pixel values into the finished destination buffer.
     fn write_finished_row(&mut self, acc: &ActiveRowAccumulator) {
         let channels = self.channel_type.channels();
         let dst_w = self.dst_width as usize;

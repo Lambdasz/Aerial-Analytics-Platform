@@ -18,26 +18,31 @@ pub struct CancellationToken {
 }
 
 impl Default for CancellationToken {
+    /// Constructs a default uncancelled cancellation token.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl CancellationToken {
+    /// Creates a new cancellation token initialized to the uncancelled state.
     pub fn new() -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
+    /// Sets the cancellation flag to true.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// Checks whether the token has been marked as cancelled.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
     }
 
+    /// Returns `Err(OrthoImportError::Dibatalkan)` if the token is cancelled, or `Ok(())` otherwise.
     pub fn check_cancelled(&self) -> Result<(), OrthoImportError> {
         if self.is_cancelled() {
             Err(OrthoImportError::Dibatalkan)
@@ -56,6 +61,7 @@ pub struct StagingGuard {
 }
 
 impl StagingGuard {
+    /// Creates a new `StagingGuard` for the specified staging directory.
     pub fn new(staging_dir: PathBuf) -> Self {
         Self {
             staging_dir,
@@ -82,6 +88,7 @@ impl StagingGuard {
         })
     }
 
+    /// Returns a reference to the monitored staging directory path.
     pub fn staging_dir(&self) -> &Path {
         &self.staging_dir
     }
@@ -93,6 +100,7 @@ impl StagingGuard {
 }
 
 impl Drop for StagingGuard {
+    /// Automatically purges staging directory upon drop if guard has not been disarmed.
     fn drop(&mut self) {
         if !self.disarmed && self.staging_dir.exists() {
             // Batasan keamanan: hanya hapus jika berada tepat di bawah images_dir dan diawali .staging_
@@ -125,6 +133,7 @@ pub struct JobRegistrationGuard {
 }
 
 impl JobRegistrationGuard {
+    /// Constructs a new `JobRegistrationGuard` for the specified job ID.
     pub fn new(job_id: String) -> Self {
         Self {
             job_id,
@@ -132,16 +141,19 @@ impl JobRegistrationGuard {
         }
     }
 
+    /// Returns the job ID governed by this registration guard.
     pub fn job_id(&self) -> &str {
         &self.job_id
     }
 
+    /// Disarms the guard, preventing automatic job release upon drop.
     pub fn disarm(&mut self) {
         self.disarmed = true;
     }
 }
 
 impl Drop for JobRegistrationGuard {
+    /// Releases the active job registration in global registry upon drop unless disarmed.
     fn drop(&mut self) {
         if !self.disarmed {
             release_job(&self.job_id);
@@ -158,6 +170,7 @@ struct ActiveJobEntry {
 /// Registri global untuk membatasi eksekusi hanya 1 job aktif pada satu waktu.
 static ACTIVE_JOB_REGISTRY: OnceLock<Mutex<Option<ActiveJobEntry>>> = OnceLock::new();
 
+/// Returns the global static mutex guarding active job registry slots.
 fn get_registry() -> &'static Mutex<Option<ActiveJobEntry>> {
     ACTIVE_JOB_REGISTRY.get_or_init(|| Mutex::new(None))
 }

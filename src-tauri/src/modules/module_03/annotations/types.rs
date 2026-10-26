@@ -3,6 +3,7 @@
 use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
 use serde::{Deserialize, Serialize};
 
+/// Returns the default schema version (1) for serialized annotations.
 fn default_schema_version() -> u32 {
     1
 }

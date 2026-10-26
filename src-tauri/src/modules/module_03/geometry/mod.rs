@@ -25,6 +25,7 @@ mod tests {
     use super::*;
     use crate::modules::module_03::types::SpatialGeometry;
 
+    /// Helper function generating a sample square polygon for unit tests.
     fn sample_square() -> Polygon {
         vec![vec![
             [116.833, -1.270],

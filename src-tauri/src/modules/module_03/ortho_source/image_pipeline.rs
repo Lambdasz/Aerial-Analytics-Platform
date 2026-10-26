@@ -303,6 +303,7 @@ pub fn check_disk_space_preflight(
         let mut total_number_of_bytes: u64 = 0;
         let mut total_number_of_free_bytes: u64 = 0;
         extern "system" {
+            /// Windows API call to retrieve free disk space on a volume.
             fn GetDiskFreeSpaceExW(
                 lpDirectoryName: *const u16,
                 lpFreeBytesAvailableToCaller: *mut u64,
@@ -817,12 +818,14 @@ pub struct CancellableWriter<'a, W: Write> {
 }
 
 impl<'a, W: Write> CancellableWriter<'a, W> {
+    /// Creates a new `CancellableWriter` wrapping an inner writer with an optional cancellation token.
     pub fn new(inner: W, token: Option<&'a CancellationToken>) -> Self {
         Self { inner, token }
     }
 }
 
 impl<'a, W: Write> Write for CancellableWriter<'a, W> {
+    /// Writes buffer to inner writer, returning error if cancelled.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if let Some(t) = self.token {
             if t.is_cancelled() {
@@ -834,6 +837,7 @@ impl<'a, W: Write> Write for CancellableWriter<'a, W> {
         self.inner.write(buf)
     }
 
+    /// Flushes inner writer, returning error if cancelled.
     fn flush(&mut self) -> std::io::Result<()> {
         if let Some(t) = self.token {
             if t.is_cancelled() {
@@ -847,6 +851,7 @@ impl<'a, W: Write> Write for CancellableWriter<'a, W> {
 }
 
 impl<'a, W: Write + Seek> Seek for CancellableWriter<'a, W> {
+    /// Seeks inner writer, returning error if cancelled.
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         if let Some(t) = self.token {
             if t.is_cancelled() {
@@ -910,6 +915,7 @@ pub struct PngEncodeSettings {
 }
 
 impl Default for PngEncodeSettings {
+    /// Returns default PNG encoding settings (Default compression, Sub filter, Adaptive).
     fn default() -> Self {
         Self {
             compression: png::Compression::Default,

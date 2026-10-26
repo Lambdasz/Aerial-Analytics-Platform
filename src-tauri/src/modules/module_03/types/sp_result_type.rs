@@ -12,14 +12,17 @@ pub struct MapLayerCommand {
     pub payload: LayerPayload,
 }
 
+/// Returns the default layer opacity (0.6).
 fn default_opacity() -> f64 {
     0.6
 }
 
+/// Returns the default vector line weight (3.0).
 fn default_line_weight() -> f64 {
     3.0
 }
 
+/// Returns the default field visibility flag (true).
 fn default_field_visible() -> bool {
     true
 }

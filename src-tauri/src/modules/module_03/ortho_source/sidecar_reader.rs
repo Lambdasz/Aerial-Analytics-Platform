@@ -96,6 +96,7 @@ pub fn read_sidecar_envelope(sidecar_path: &Path) -> Result<[[f64; 2]; 2], Ortho
     ))
 }
 
+/// Validates that bounding box coordinates are within WGS84 ranges and form a non-degenerate envelope.
 fn validate_envelope(s: f64, w: f64, n: f64, e: f64) -> Result<[[f64; 2]; 2], OrthoImportError> {
     if s.is_nan() || w.is_nan() || n.is_nan() || e.is_nan() {
         return Err(OrthoImportError::KoordinatTidakValid(

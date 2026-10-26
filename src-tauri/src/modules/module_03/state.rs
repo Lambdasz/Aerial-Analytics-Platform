@@ -38,6 +38,7 @@ pub struct Module03State {
 }
 
 impl Default for Module03State {
+    /// Initializes the default `Module03State` using the canonical storage root path.
     fn default() -> Self {
         Self::new(get_storage_root())
     }
@@ -268,6 +269,7 @@ impl Module03State {
 
     // ── AOI CRUD (Write-Through Policy) ──────────────────────────────────
 
+    /// Persists an AOI feature to disk and updates in-memory cache.
     pub fn save_aoi(&self, aoi: AoiFeature) -> Result<AoiFeature, MapControllerError> {
         crate::modules::module_03::geometry::validate_polygon(&aoi.geometry.coordinates)?;
 
@@ -290,6 +292,7 @@ impl Module03State {
         Ok(aoi)
     }
 
+    /// Retrieves all saved AOI features sorted by creation timestamp descending.
     pub fn get_saved_aois(&self) -> Vec<AoiFeature> {
         let map = self.aois.read().unwrap();
         let mut list: Vec<AoiFeature> = map.values().cloned().collect();
@@ -297,6 +300,7 @@ impl Module03State {
         list
     }
 
+    /// Deletes an AOI feature by ID from disk and in-memory cache.
     pub fn delete_saved_aoi(&self, aoi_id: &str) -> Result<bool, MapControllerError> {
         let dir = self.storage_dir.join("aois");
         let safe_id = sanitize_filename(aoi_id);
@@ -317,6 +321,7 @@ impl Module03State {
 
     // ── Image / Ortho Source Management (Write-Through Policy) ───────────
 
+    /// Imports an orthomosaic image and refreshes in-memory cache from disk.
     pub fn import_ortho_image(
         &self,
         payload: crate::modules::module_03::ortho_source::types::ImportImagePayload,
@@ -329,6 +334,7 @@ impl Module03State {
         Ok(meta)
     }
 
+    /// Saves an image from a local filesystem path (legacy fallback).
     pub fn save_image_from_path(
         &self,
         source_path: &str,
@@ -342,6 +348,7 @@ impl Module03State {
         Ok(meta)
     }
 
+    /// Retrieves all saved images from cache after disk refresh.
     pub fn get_saved_images(
         &self,
     ) -> Vec<crate::modules::module_03::ortho_source::types::StoredImageMetadata> {
@@ -350,6 +357,7 @@ impl Module03State {
         map.values().cloned().collect()
     }
 
+    /// Deletes a saved image by category and filename from disk and refreshes cache.
     pub fn delete_saved_image(
         &self,
         category: &str,
@@ -361,6 +369,7 @@ impl Module03State {
         Ok(deleted)
     }
 
+    /// Lists all orthomosaics directly from disk after refreshing cache.
     pub fn list_ortho_images(
         &self,
     ) -> Result<
@@ -371,6 +380,7 @@ impl Module03State {
         crate::modules::module_03::ortho_source::store::list_ortho_images()
     }
 
+    /// Retrieves metadata for a specific orthomosaic image by ID.
     pub fn get_ortho_image(
         &self,
         id: &str,
@@ -381,6 +391,7 @@ impl Module03State {
         crate::modules::module_03::ortho_source::store::get_ortho_image(id)
     }
 
+    /// Updates metadata (name or bounds) of an orthomosaic and refreshes cache.
     pub fn update_ortho_image(
         &self,
         payload: crate::modules::module_03::ortho_source::types::UpdateOrthoImagePayload,
@@ -393,6 +404,7 @@ impl Module03State {
         Ok(meta)
     }
 
+    /// Calculates cascade dependencies (dependent layers/annotations) before image deletion.
     pub fn get_ortho_cascade_summary(
         &self,
         id: &str,
@@ -403,6 +415,7 @@ impl Module03State {
         crate::modules::module_03::ortho_source::store::get_ortho_cascade_summary(id)
     }
 
+    /// Deletes an orthomosaic and all attached layers/annotations, then refreshes cache.
     pub fn delete_ortho_image(
         &self,
         id: &str,
@@ -418,6 +431,7 @@ impl Module03State {
 
     // ── Spatial Results Management (Write-Through Policy) ────────────────
 
+    /// Persists a spatial result layer to disk and refreshes in-memory cache.
     pub fn save_spatial_result(
         &self,
         payload: LayerPayload,
@@ -430,11 +444,13 @@ impl Module03State {
         Ok(saved)
     }
 
+    /// Retrieves all saved spatial result layers from in-memory cache.
     pub fn get_saved_spatial_results(&self) -> Vec<LayerPayload> {
         let map = self.spatial_results.read().unwrap();
         map.values().cloned().collect()
     }
 
+    /// Scans disk and returns lightweight summary headers for all spatial results.
     pub fn get_saved_spatial_results_summary(
         &self,
     ) -> Result<
@@ -446,6 +462,7 @@ impl Module03State {
         )
     }
 
+    /// Loads a single spatial result layer by ID from disk.
     pub fn get_saved_spatial_result(
         &self,
         layer_id: &str,
@@ -456,6 +473,7 @@ impl Module03State {
         )
     }
 
+    /// Updates properties or display preferences of a spatial result on disk and refreshes cache.
     pub fn update_spatial_result(
         &self,
         payload: crate::modules::module_03::sp_result::types::UpdateSpatialResultPayload,
@@ -468,6 +486,7 @@ impl Module03State {
         Ok(updated)
     }
 
+    /// Counts dependent layers and features for a given spatial result before deletion.
     pub fn count_spatial_result_dependents(
         &self,
         layer_id: &str,
@@ -481,6 +500,7 @@ impl Module03State {
         )
     }
 
+    /// Deletes a spatial result from disk and refreshes in-memory cache.
     pub fn delete_saved_spatial_result(&self, layer_id: &str) -> Result<bool, MapControllerError> {
         let deleted =
             crate::modules::module_03::sp_result::store::delete_saved_spatial_result_in_dir(
@@ -491,6 +511,7 @@ impl Module03State {
         Ok(deleted)
     }
 
+    /// Inspects whether any features in a spatial result have manual user edits.
     pub fn check_spatial_result_manual_edits(
         &self,
         layer_id: &str,
