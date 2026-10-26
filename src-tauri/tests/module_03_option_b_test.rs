@@ -1974,3 +1974,30 @@ fn test_real_oam_cancellation_mid_process() {
     println!("- Titik Ukur Mid-Process ({:.2} ms): diukur dari pemanggilan token.cancel() di tengah streaming resampler sampai worker thread berhenti sepenuhnya.", cancel_latency.as_secs_f64() * 1000.0);
     println!("- Tahap yang tidak dapat diinterupsi: Encode display JPEG/PNG per iterasi adaptif (berlangsung monolitik di encoder C/Rust, durasi ~30-70 ms).");
 }
+
+#[test]
+fn test_inspect_geotiff_header_command() {
+    let test_dir = setup_test_env("inspect_header");
+    let tiff_path = test_dir.join("test_inspect.tif");
+    create_synthetic_geotiff(&tiff_path, 512, 512, 32750, false, false, None);
+
+    let inspect_res = aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::inspect_geotiff_header(
+        tiff_path.to_str().unwrap().to_string(),
+    )
+    .expect("inspect_geotiff_header harus sukses pada GeoTIFF valid");
+
+    assert_eq!(inspect_res.width, 512);
+    assert_eq!(inspect_res.height, 512);
+    assert_eq!(inspect_res.bit_depth, 8);
+    assert!(inspect_res.has_georeference);
+    assert!(inspect_res.is_crs_supported);
+    assert!(inspect_res.detected_bounds.is_some());
+    assert_eq!(inspect_res.crs_code, Some(32750));
+
+    // Uji file tidak ditemukan
+    let missing_res = aerial_analytics_platform_lib::modules::module_03::ortho_source::commands::inspect_geotiff_header(
+        test_dir.join("non_existent.tif").to_str().unwrap().to_string(),
+    );
+    assert!(missing_res.is_err());
+    assert_eq!(missing_res.unwrap_err().code, "NOT_FOUND");
+}

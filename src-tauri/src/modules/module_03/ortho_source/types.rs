@@ -180,6 +180,10 @@ pub struct StoredImageMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_size_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_dimensions: Option<[u32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,

@@ -27,6 +27,8 @@ export interface StoredImageMetadata {
   bounds?: [[number, number], [number, number]];
   aspect_ratio?: number;
   display_size_bytes?: number;
+  display_dimensions?: [number, number];
+  warnings?: string[];
   created_at?: string;
   imported_at?: string;
   updated_at?: string;
@@ -72,4 +74,27 @@ export interface JobRecord {
   updated_at: string;
   error?: string;
   result_image_id?: string;
+}
+
+export interface GeotiffInspectionResult {
+  file_path: string;
+  filename: string;
+  file_size_bytes: number;
+  width: number;
+  height: number;
+  bit_depth: number;
+  has_alpha: boolean;
+  compression: string;
+  has_georeference: boolean;
+  crs_code?: number;
+  crs_name?: string;
+  is_crs_supported: boolean;
+  detected_bounds?: {
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+  };
+  error_code?: string;
+  error_message?: string;
 }

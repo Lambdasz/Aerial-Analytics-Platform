@@ -227,11 +227,13 @@ pub fn process_image_import(
     let original_file = target_dir.join(format!("original.{}", ext));
     fs::copy(source_path, &original_file)?;
 
-    let display_size_bytes =
+    let (display_path, display_size_bytes) =
         match generate_display_preview(&original_file, &target_dir, width, height) {
-            Ok((_, size)) => Some(size),
-            Err(_) => None,
+            Ok((p, size)) => (Some(p), Some(size)),
+            Err(_) => (None, None),
         };
+    let display_dimensions =
+        display_path.and_then(|p| image::image_dimensions(p).ok().map(|(w, h)| [w, h]));
 
     let raw_name = source_path
         .file_name()
@@ -258,6 +260,8 @@ pub fn process_image_import(
         bounds: Some(bounds),
         aspect_ratio: Some(aspect_ratio),
         display_size_bytes,
+        display_dimensions,
+        warnings: None,
         imported_at: Some(imported_at),
         updated_at: None,
         is_corrupted: Some(false),
@@ -1468,6 +1472,8 @@ pub fn execute_import_option_a(
         bounds: Some(bounds),
         aspect_ratio: Some(orig_width as f64 / orig_height as f64),
         display_size_bytes: Some(encode_res.display_size_bytes),
+        display_dimensions: Some(encode_res.final_dimensions),
+        warnings: Some(encode_res.warnings.clone()),
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),
@@ -1887,6 +1893,8 @@ pub fn execute_import_option_b(
         bounds: Some(bounds),
         aspect_ratio: Some(orig_width as f64 / orig_height as f64),
         display_size_bytes: Some(encode_res.display_size_bytes),
+        display_dimensions: Some(encode_res.final_dimensions),
+        warnings: Some(tech_meta.warnings.clone()),
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),

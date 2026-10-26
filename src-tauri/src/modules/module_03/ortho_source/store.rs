@@ -42,15 +42,17 @@ pub fn save_image_from_path(source_path: &str) -> Result<StoredImageMetadata, Ma
     let original_file = target_dir.join(format!("original.{}", ext));
     fs::copy(src, &original_file)?;
 
-    let display_size_bytes = match super::image_pipeline::generate_display_preview(
+    let (display_path, display_size_bytes) = match super::image_pipeline::generate_display_preview(
         &original_file,
         &target_dir,
         width,
         height,
     ) {
-        Ok((_, size)) => Some(size),
-        Err(_) => None,
+        Ok((p, size)) => (Some(p), Some(size)),
+        Err(_) => (None, None),
     };
+    let display_dimensions =
+        display_path.and_then(|p| image::image_dimensions(p).ok().map(|(w, h)| [w, h]));
 
     let raw_name = src
         .file_name()
@@ -74,6 +76,8 @@ pub fn save_image_from_path(source_path: &str) -> Result<StoredImageMetadata, Ma
         bounds: None,
         aspect_ratio: Some(width as f64 / height as f64),
         display_size_bytes,
+        display_dimensions,
+        warnings: None,
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),
@@ -202,6 +206,8 @@ pub fn list_ortho_images() -> Result<Vec<StoredImageMetadata>, MapControllerErro
                     bounds: None,
                     aspect_ratio: None,
                     display_size_bytes: None,
+                    display_dimensions: None,
+                    warnings: None,
                     imported_at: Some(fallback_created),
                     updated_at: None,
                     is_corrupted: Some(true),
@@ -267,6 +273,8 @@ pub fn list_ortho_images() -> Result<Vec<StoredImageMetadata>, MapControllerErro
                         bounds: None, // Foto hasil analisis tidak memiliki koordinat bounds peta (non-georeferenced)
                         aspect_ratio: None,
                         display_size_bytes: Some(size_bytes),
+                        display_dimensions: None,
+                        warnings: None,
                         imported_at: Some(mtime_str),
                         updated_at: None,
                         is_corrupted: Some(false),
@@ -344,6 +352,8 @@ pub fn get_ortho_image(id: &str) -> Result<StoredImageMetadata, MapControllerErr
         bounds: None,
         aspect_ratio: None,
         display_size_bytes: None,
+        display_dimensions: None,
+        warnings: None,
         imported_at: Some(fallback_created),
         updated_at: None,
         is_corrupted: Some(true),

@@ -518,6 +518,18 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
         </tbody>
       </table>
 
+      ${
+        img.display_dimensions &&
+        Math.max(img.display_dimensions[0], img.display_dimensions[1]) < 2048
+          ? `
+        <div style="margin-top: 10px; font-size: 11px; color: #b45309; background: #fef3c7; border: 1px solid #fde68a; padding: 6px 10px; border-radius: 6px; line-height: 1.4;">
+          ⚠️ <strong>Resolusi Display Dibatasi (&lt; 2.048 px):</strong><br/>
+          Ukuran display dioptimalkan ke ${img.display_dimensions[0]}×${img.display_dimensions[1]} px untuk menghemat memori. Detail pada zoom tinggi mungkin berkurang.
+        </div>
+      `
+          : ""
+      }
+
       <!-- KONTROL TOGGLE ON/OFF -->
       <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-hairline-silver, #e2e8f0); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
         <div style="display: flex; flex-direction: column;">

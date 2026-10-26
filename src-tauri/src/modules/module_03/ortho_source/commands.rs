@@ -196,3 +196,113 @@ pub fn get_import_job_status(job_id: String) -> Result<super::types::JobRecord, 
         }),
     }
 }
+
+/// Hasil inspeksi awal berkas GeoTIFF untuk tampilan UI Tab B sebelum impor dimulai.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GeotiffInspectionResult {
+    pub file_path: String,
+    pub filename: String,
+    pub file_size_bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub bit_depth: u32,
+    pub has_alpha: bool,
+    pub compression: String,
+    pub has_georeference: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crs_code: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crs_name: Option<String>,
+    pub is_crs_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_bounds: Option<super::types::ImportBoundsPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+/// Melakukan validasi header GeoTIFF dan mengekstrak proyeksi/bounding box sebelum job dimulai.
+#[tauri::command]
+pub fn inspect_geotiff_header(file_path: String) -> Result<GeotiffInspectionResult, CommandError> {
+    let path = std::path::PathBuf::from(&file_path);
+    if !path.is_file() {
+        return Err(CommandError {
+            code: "NOT_FOUND".to_string(),
+            message: format!("Berkas GeoTIFF tidak ditemukan di disk: {}", file_path),
+        });
+    }
+
+    let summary = super::geotiff_reader::validate_geotiff_header_fast(&path)?;
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("geotiff.tif")
+        .to_string();
+
+    let file_size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+    let file = std::fs::File::open(&path).map_err(|e| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("Gagal membuka berkas GeoTIFF: {}", e),
+    })?;
+    let mut decoder =
+        tiff::decoder::Decoder::new(std::io::BufReader::new(file)).map_err(|e| CommandError {
+            code: "TIFF_DECODE_ERROR".to_string(),
+            message: format!("Gagal membaca struktur berkas GeoTIFF: {}", e),
+        })?;
+
+    let georef_res = super::geotiff_reader::extract_geotiff_georeference(
+        &mut decoder,
+        summary.width,
+        summary.height,
+    );
+
+    match georef_res {
+        Ok(georef) => Ok(GeotiffInspectionResult {
+            file_path,
+            filename,
+            file_size_bytes,
+            width: summary.width,
+            height: summary.height,
+            bit_depth: summary.bit_depth,
+            has_alpha: summary.has_alpha,
+            compression: summary.compression_name,
+            has_georeference: true,
+            crs_code: Some(georef.crs_code),
+            crs_name: Some(georef.crs_string),
+            is_crs_supported: true,
+            detected_bounds: Some(super::types::ImportBoundsPayload {
+                south: georef.bounds[0][0],
+                west: georef.bounds[0][1],
+                north: georef.bounds[1][0],
+                east: georef.bounds[1][1],
+            }),
+            error_code: None,
+            error_message: None,
+        }),
+        Err(e) => {
+            let is_crs_error = matches!(
+                e,
+                crate::modules::module_03::error::OrthoImportError::CrsTidakDidukung(_)
+            );
+            Ok(GeotiffInspectionResult {
+                file_path,
+                filename,
+                file_size_bytes,
+                width: summary.width,
+                height: summary.height,
+                bit_depth: summary.bit_depth,
+                has_alpha: summary.has_alpha,
+                compression: summary.compression_name,
+                has_georeference: !is_crs_error,
+                crs_code: None,
+                crs_name: None,
+                is_crs_supported: false,
+                detected_bounds: None,
+                error_code: Some(e.code().to_string()),
+                error_message: Some(e.user_friendly_message()),
+            })
+        }
+    }
+}

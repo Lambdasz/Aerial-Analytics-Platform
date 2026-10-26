@@ -505,6 +505,8 @@ fn test_reconcile_kasus_a_auto_heal() {
         bounds: Some([[-1.25, 116.85], [-1.24, 116.86]]),
         aspect_ratio: Some(1.0),
         display_size_bytes: Some(2048),
+        display_dimensions: Some([1000, 1000]),
+        warnings: None,
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),
@@ -869,6 +871,7 @@ fn test_static_source_code_audit_all_mutating_commands_guarded() {
                             || fn_name.starts_with("count_")
                             || fn_name.starts_with("check_")
                             || fn_name.starts_with("measure_")
+                            || fn_name.starts_with("inspect_")
                             || fn_name == "create_aoi_cmd" // pure in-memory builder (GeoJSON), tidak menulis disk
                             || fn_name == "cancel_import_job"; // cancel hanya mensinyalkan atomic token
 

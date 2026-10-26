@@ -27,6 +27,7 @@ import { MapTypeThumbnail } from "./atoms/MapTypeThumbnail";
 import type { BasemapKey } from "./config/mapConfig";
 import type { LayerPayload } from "./types/map";
 import type { LayerState, AnnotationFeature } from "./types/layer";
+import type { StoredImageMetadata } from "./types/storage";
 import { getStorageRootPath, getInstanceStatus } from "./services/api";
 import { setCachedStorageRoot } from "./lib/fieldResolution";
 import { isTauri } from "@tauri-apps/api/core";
@@ -80,6 +81,27 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isReadOnly, setIsReadOnly] = useState<boolean>(false);
+  const [resolutionWarning, setResolutionWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleImageSaved = (e: Event) => {
+      const customEvent = e as CustomEvent<StoredImageMetadata>;
+      const meta = customEvent.detail;
+      if (meta?.display_dimensions) {
+        const [w, h] = meta.display_dimensions;
+        if (Math.max(w, h) < 2048) {
+          setResolutionWarning(
+            `Resolusi tampilan citra "${meta.filename}" dibatasi ke ${w}×${h} px (< 2.048 px) untuk mematuhi batas ukuran memori. Detail pada zoom tinggi mungkin berkurang.`,
+          );
+        }
+      }
+    };
+
+    window.addEventListener("ortho_image:saved", handleImageSaved);
+    return () => {
+      window.removeEventListener("ortho_image:saved", handleImageSaved);
+    };
+  }, []);
 
   useEffect(() => {
     if (isTauri()) {
@@ -157,6 +179,49 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
             ⚠️ <strong>Mode Hanya-Baca:</strong> Aplikasi dibuka sebagai instansi sekunder.
             Modifikasi data storage dinonaktifkan demi perlindungan file.
           </span>
+        </div>
+      )}
+      {resolutionWarning && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            top: isReadOnly ? 56 : 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 3000,
+            backgroundColor: "#fffbe6",
+            color: "#d48806",
+            border: "1px solid #ffe58f",
+            borderRadius: 6,
+            padding: "8px 16px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            fontSize: 13,
+            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            pointerEvents: "auto",
+            maxWidth: "85%",
+          }}
+        >
+          <span>⚠️ {resolutionWarning}</span>
+          <button
+            type="button"
+            onClick={() => setResolutionWarning(null)}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 16,
+              color: "#8c8c8c",
+              padding: 0,
+              lineHeight: 1,
+            }}
+            title="Tutup peringatan"
+          >
+            ×
+          </button>
         </div>
       )}
       <MapExplorerLayout

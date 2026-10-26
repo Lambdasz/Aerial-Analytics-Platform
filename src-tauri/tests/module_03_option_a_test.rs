@@ -526,6 +526,8 @@ fn test_reconcile_heals_when_crash_between_rename_and_layer_write() {
         bounds: Some([[-1.30, 116.80], [-1.25, 116.85]]),
         aspect_ratio: Some(1.0),
         display_size_bytes: Some(1024),
+        display_dimensions: Some([500, 500]),
+        warnings: None,
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),

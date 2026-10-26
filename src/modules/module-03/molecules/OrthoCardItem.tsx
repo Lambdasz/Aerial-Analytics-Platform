@@ -160,9 +160,34 @@ export const OrthoCardItem: React.FC<OrthoCardItemProps> = ({
                 fontWeight: 600,
               }}
             >
-              ⚠️ Display &gt; 5 MB (Pratinjau nonaktif)
+              ⚠️ Display &gt; 10 MB (Pratinjau nonaktif)
             </div>
           )}
+
+          {img.display_dimensions &&
+            Math.max(img.display_dimensions[0], img.display_dimensions[1]) < 2048 && (
+              <div
+                style={{
+                  color: "#b45309",
+                  backgroundColor: "rgba(245, 158, 11, 0.12)",
+                  border: "1px solid rgba(245, 158, 11, 0.35)",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  marginTop: "4px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+                title={`Resolusi display dibatasi ke ${img.display_dimensions[0]}×${img.display_dimensions[1]} px (< 2.048 px) untuk mematuhi batas ukuran memori (≤ 10 MiB). Detail pada level zoom tinggi mungkin berkurang.`}
+              >
+                <Icon icon="warning-sign" size={11} intent="warning" />
+                <span>
+                  Display &lt; 2.048 px ({img.display_dimensions[0]}×{img.display_dimensions[1]} px)
+                </span>
+              </div>
+            )}
         </div>
       </button>
 

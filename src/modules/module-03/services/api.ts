@@ -15,6 +15,7 @@ import type { DroneImageMetadata } from "../types/marker";
 import type { LayerPayload } from "../types/map";
 import type {
   DeleteOrthoSummary,
+  GeotiffInspectionResult,
   ImportDualModeParams,
   ImportImageParams,
   JobRecord,
@@ -312,6 +313,16 @@ export function cancelImportJob(jobId: string): Promise<void> {
  */
 export function getImportJobStatus(jobId: string): Promise<JobRecord> {
   return invokeMap<JobRecord>("get_import_job_status", { jobId });
+}
+
+/**
+ * Melakukan validasi awal header GeoTIFF dan mengekstrak proyeksi/bounding box sebelum impor dimulai.
+ */
+export function inspectGeotiffHeader(filePath: string): Promise<GeotiffInspectionResult> {
+  return invokeMap<GeotiffInspectionResult>("inspect_geotiff_header", {
+    filePath,
+    file_path: filePath,
+  });
 }
 
 // ── Spatial Results (Hasil Analisis) ────────────────────────────────────────

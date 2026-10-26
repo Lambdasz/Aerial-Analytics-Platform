@@ -23,10 +23,14 @@ export const MAX_IMAGE_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 export const MAX_IMAGE_DIMENSION_PX = 16384;
 
 /**
- * Batas maksimal ukuran berkas pratinjau display citra orthomosaic: 5 MB (5.242.880 bytes).
- * Citra yang melebihi batas ini tidak akan dimuat ke DOM Leaflet demi performa dan stabilitas memori.
+ * Batas maksimal ukuran berkas pratinjau display citra orthomosaic:
+ * - JPEG: maksimal 5 MB (5.242.880 bytes)
+ * - PNG dengan Alpha / NoData: maksimal 10 MB (10.485.760 bytes)
+ * Batas menyeluruh untuk filter display adalah 10 MB agar citra PNG alpha hingga 10 MB tetap dimuat.
  */
-export const MAX_DISPLAY_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+export const MAX_DISPLAY_FILE_SIZE_JPEG_BYTES = 5 * 1024 * 1024;
+export const MAX_DISPLAY_FILE_SIZE_PNG_ALPHA_BYTES = 10 * 1024 * 1024;
+export const MAX_DISPLAY_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 /**
  * Level zoom minimum untuk me-render citra orthomosaic drone di atas peta (zoom >= 16).
