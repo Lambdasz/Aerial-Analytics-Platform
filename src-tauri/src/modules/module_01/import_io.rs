@@ -78,10 +78,11 @@ use crate::models::Image;
 use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
+use super::blur_detection;
 use super::error::SessionError;
 use super::flight_session::{
     get_image, get_session, image_from_metadata, insert_images_and_recalculate,
-    known_hashes_for_project, ExistingContent,
+    known_hashes_for_project, reclassify_session_blur, ExistingContent,
 };
 use super::image_importer::{
     classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
@@ -488,6 +489,22 @@ fn import_planned(
         done += duplicates_added;
     }
 
+    // Re-derive every `is_blurry` flag in the session from the final score
+    // set, so the result does not depend on import order or on how many
+    // separate import runs it took to assemble the session. A failure here
+    // is logged, not propagated: the import itself already succeeded, and
+    // every row still has its `blur_score` even if this pass could not run.
+    match lock_db(db) {
+        Ok(conn) => {
+            if let Err(err) =
+                reclassify_session_blur(&conn, session_id, blur_detection::classify_against_session)
+            {
+                eprintln!("warning: could not reclassify session blur flags: {err}");
+            }
+        }
+        Err(_) => eprintln!("warning: could not reclassify session blur flags: db lock"),
+    }
+
     let RunState {
         image_ids,
         rejected,
@@ -613,11 +630,14 @@ impl ImportScope<'_> {
         let image = build_image(
             image_id,
             self.session_id,
-            &copy,
-            candidate,
+            StagedFile {
+                copy: &copy,
+                candidate,
+            },
             &metadata,
             None,
             ready,
+            format,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -733,20 +753,26 @@ impl ImportScope<'_> {
             build_image(
                 jpeg_id,
                 self.session_id,
-                &jpeg_copy,
-                jpeg,
+                StagedFile {
+                    copy: &jpeg_copy,
+                    candidate: jpeg,
+                },
                 &jpeg_metadata,
                 Some(dng_id),
                 true,
+                ImageFormat::Jpeg,
             ),
             build_image(
                 dng_id,
                 self.session_id,
-                &dng_copy,
-                dng,
+                StagedFile {
+                    copy: &dng_copy,
+                    candidate: dng,
+                },
                 &dng_metadata,
                 Some(jpeg_id),
                 true,
+                ImageFormat::Dng,
             ),
         ];
         match record_images(self.db, self.session_id, &images) {
@@ -810,11 +836,11 @@ impl ImportScope<'_> {
         let image = build_image(
             image_id,
             self.session_id,
-            copy,
-            candidate,
+            StagedFile { copy, candidate },
             &metadata,
             None,
             true,
+            ImageFormat::Jpeg,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -1232,27 +1258,45 @@ fn fill_missing(dst: &mut ImageMetadata, src: &ImageMetadata) {
     fill(&mut dst.flight_z_speed, &src.flight_z_speed);
 }
 
-/// Builds the persisted record for one copied file.
+/// The copy and its originating candidate, bundled since [`build_image`]
+/// always needs both together — folding them into one parameter keeps that
+/// function's arg count under clippy's `too_many_arguments` threshold
+/// without an `#[allow]`.
+struct StagedFile<'a> {
+    copy: &'a CopiedFile,
+    candidate: &'a ImportCandidate,
+}
+
+/// Builds the persisted record for one copied file, including its blur
+/// score.
+///
+/// Scoring happens here, not at each call site: `is_blurry` is never set by
+/// this function (it starts `None`, same as [`image_from_metadata`] leaves
+/// it, and is filled in later by the session-wide
+/// [`super::flight_session::reclassify_session_blur`] pass) — so there is
+/// only ever one blur-related field for a caller to populate, not two that
+/// could drift out of sync.
 fn build_image(
     image_id: Uuid,
     session_id: Uuid,
-    copy: &CopiedFile,
-    candidate: &ImportCandidate,
+    staged: StagedFile<'_>,
     metadata: &ImageMetadata,
     raw_sibling_id: Option<Uuid>,
     analysis_ready: bool,
+    format: ImageFormat,
 ) -> Image {
     let mut image = image_from_metadata(
         image_id,
         session_id,
-        copy.dest.display().to_string(),
+        staged.copy.dest.display().to_string(),
         metadata,
     );
-    image.source_path = Some(candidate.source_path.clone());
-    image.content_hash = Some(copy.content_hash.clone());
-    image.file_size = Some(copy.file_size);
+    image.source_path = Some(staged.candidate.source_path.clone());
+    image.content_hash = Some(staged.copy.content_hash.clone());
+    image.file_size = Some(staged.copy.file_size);
     image.raw_sibling_id = raw_sibling_id;
     image.analysis_ready = Some(analysis_ready);
+    image.blur_score = blur_detection::blur_score_for_copy(&staged.copy.dest, format);
     image
 }
 
@@ -2100,6 +2144,19 @@ mod tests {
         path
     }
 
+    /// A synthetic JPEG whose long edge is `size` pixels, for tests that
+    /// need to clear (or deliberately stay under) the blur-scoring cap.
+    fn write_jpeg_sized(dir: &Path, name: &str, size: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(size, size, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 64])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
     fn write_jpeg_seeded(dir: &Path, name: &str, seed: u8) -> PathBuf {
         let path = dir.join(name);
         let image = image::RgbImage::from_fn(8, 8, |x, y| {
@@ -2130,6 +2187,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
@@ -2208,6 +2267,69 @@ mod tests {
         // The whole point: the original can disappear.
         fs::remove_dir_all(source_dir.path()).expect("remove source");
         assert!(extract_metadata(std::path::Path::new(&stored.file_path)).is_ok());
+    }
+
+    #[test]
+    fn import_persists_a_blur_score() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // At the scoring cap's long edge, so it clears meets_scoring_size
+        // and is actually scored (not left unscored for being too small).
+        let source = write_jpeg_sized(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].blur_score.is_some(),
+            "a decodable JPEG at or above the scoring cap should get a blur score"
+        );
+    }
+
+    #[test]
+    fn small_source_image_is_not_scored_to_avoid_upscaling() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // write_jpeg's 8x8 source is far below the scoring cap.
+        let source = write_jpeg(source_dir.path(), "DJI_0002.JPG");
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].blur_score.is_none(),
+            "upscaling a tiny source would score it falsely blurry"
+        );
     }
 
     #[test]
@@ -2413,6 +2535,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         };
         {
             let conn = db.lock().expect("db lock");
@@ -3598,6 +3722,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: None,
+            blur_score: None,
+            is_blurry: None,
         };
         insert_image(&conn, &legacy).expect("legacy row");
         assert!(matches!(

@@ -238,6 +238,19 @@
 //!   them orphaned.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
+//! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
+//!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
+//!   1280px long edge when the source is larger — never upscaled, since that
+//!   would smooth away the edges the Laplacian measures and score a small
+//!   source as falsely blurry, so a source already below the cap (a DNG's
+//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
+//!   decoded directly, DNG from its stored preview. `blur_score` is computed
+//!   per image during `import_io::run_import`; `is_blurry` is then
+//!   re-derived for every scored image in the session in one pass
+//!   (`flight_session::reclassify_session_blur`, called once per import run)
+//!   from the session's mean/stddev z-score plus an absolute hard floor —
+//!   not frozen per image at insert time, so the flag depends only on the
+//!   session's current score set, not on import order or batch boundaries.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.
@@ -277,6 +290,14 @@
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
 //! The `preview_image` command serves those previews over IPC.
+//! Blur detection (M1-29) is also implemented: every imported image gets a
+//! `blur_score`/`is_blurry` pair persisted alongside it, computed and
+//! classified at import time (no new command — it is not yet exposed over
+//! IPC beyond the `Image` record's own fields). Known, deliberate
+//! limitations: DNGs are scored from their camera-processed preview, not
+//! raw sensor data; no sensor-noise pre-filtering is applied; scoring is
+//! sequential, not parallelised. Surfacing quality flags in the UI (M1-32)
+//! is a separate, not-yet-implemented task.
 //!
 //! ---
 //!

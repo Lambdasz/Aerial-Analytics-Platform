@@ -164,4 +164,19 @@ pub struct Image {
     /// migrated from before copy-on-import, where readiness is decided from
     /// `format` instead.
     pub analysis_ready: Option<bool>,
+    /// Laplacian-variance sharpness score of the stored copy (downscaled to
+    /// a fixed long edge first when larger, so the value is comparable
+    /// across source resolutions). Higher is sharper. `None` when scoring
+    /// failed (corrupt or undecodable file), the source was too small to
+    /// downscale without upscaling, or for rows imported before this field
+    /// existed.
+    pub blur_score: Option<f64>,
+    /// Whether this image is classified as blurry relative to its flight
+    /// session's other scored images (plus an absolute hard-floor safety
+    /// net). Re-derived for the whole session after every import
+    /// ([`crate::modules::module_01::flight_session::reclassify_session_blur`]),
+    /// so this value is **not** frozen at import: it reflects the session's
+    /// current score set, not the state at the moment this particular row
+    /// was inserted. `None` when `blur_score` is `None`.
+    pub is_blurry: Option<bool>,
 }
