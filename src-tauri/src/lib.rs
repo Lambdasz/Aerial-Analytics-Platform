@@ -263,6 +263,7 @@
 //! | `delete_image` | Delete one image and move its library copy to the trash (requires `confirm`) |
 //! | `move_image_to_session` | Move one image (row and file) into another session of the same project |
 //! | `copy_image_to_session` | Copy one image (row and file) into another session of the same project |
+//! | `get_image_metadata` | Read EXIF and XMP from a stored image's file (exposure and DJI tags the row does not keep) |
 //!
 //! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
 //! import planning, copy-on-import I/O and the schema migration are
@@ -786,6 +787,7 @@ pub fn run() {
             commands::session::update_session_name,
             commands::session::update_session_status,
             commands::session::get_images_by_session,
+            commands::session::get_image_metadata,
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,

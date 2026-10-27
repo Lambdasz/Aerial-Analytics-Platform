@@ -26,8 +26,15 @@ use crate::AppState;
 
 use super::import::{get_analysis_input_impl, import_images_impl};
 use super::session::{
-    copy_image_impl, delete_image_impl, delete_session_impl, move_image_impl, DeleteOutcome,
+    copy_image_impl, delete_image_impl, delete_session_impl, get_image_metadata_impl,
+    move_image_impl, DeleteOutcome,
 };
+
+/// Resolves a path when the OS will, so assertions survive a library root that
+/// is only a symlink (macOS temp folders).
+fn resolved(path: &std::path::Path) -> std::path::PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 /// Full app state over real tempdirs: on-disk SQLite, real library root.
 struct TestEnv {
@@ -542,9 +549,7 @@ fn e2e_move_image_between_sessions_relocates_row_and_file() {
         let moved = flight_session::get_image(&conn, image.id).expect("row survives the move");
         assert_eq!(moved.session_id, target_id);
         assert!(
-            moved
-                .file_path
-                .starts_with(target_dir.to_string_lossy().as_ref()),
+            resolved(std::path::Path::new(&moved.file_path)).starts_with(resolved(&target_dir)),
             "row points at the target folder: {}",
             moved.file_path
         );
@@ -590,11 +595,13 @@ fn e2e_copy_image_between_sessions_duplicates_row_and_file() {
         assert_ne!(copy.id, original.id, "the copy is its own image");
         assert_eq!(copy.raw_sibling_id, None, "a copy starts unpaired");
         assert_eq!(copy.analysis_ready, Some(true), "a lone jpeg is analysable");
+        let expected = original
+            .file_path
+            .replace(&source_id.to_string(), &target_id.to_string());
         assert_eq!(
-            copy.file_path,
-            original
-                .file_path
-                .replace(&source_id.to_string(), &target_id.to_string())
+            resolved(std::path::Path::new(&copy.file_path)),
+            resolved(std::path::Path::new(&expected)),
+            "the copy lands beside the original, symlink prefix or not"
         );
     }
     assert_eq!(files_under(&source_dir).len(), 1, "the original copy stays");
@@ -711,4 +718,28 @@ fn e2e_move_refuses_a_row_pointing_at_the_users_original() {
     let conn = env.state.db.lock().expect("db lock");
     let row = flight_session::get_image(&conn, image_id).expect("row stays");
     assert_eq!(row.session_id, source_id, "the row did not move");
+}
+
+#[test]
+fn e2e_get_image_metadata_reads_the_file_not_just_the_row() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0017.JPG", 17);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, session_id);
+
+    let metadata = get_image_metadata_impl(&env.state, image.id).expect("metadata");
+    assert_eq!(metadata.width, Some(8), "the extractor read the file");
+    assert_eq!(metadata.height, Some(8));
+
+    let json = serde_json::to_value(&metadata).expect("json");
+    assert!(json.get("gpsLatitude").is_some(), "camelCase for the panel");
+    assert!(json.get("gps_latitude").is_none());
 }

@@ -71,6 +71,38 @@ pub fn update_session_status(
     )?)
 }
 
+/// Reads EXIF and XMP from the file a stored image points at.
+///
+/// The image row only keeps a subset (location, time, size, camera). Exposure
+/// and DJI flight tags stay in the file, so the metadata panel asks for them
+/// here instead of pretending the missing columns were read and found empty.
+/// Read-only: the row and the file are left as they are.
+///
+/// # Errors
+///
+/// `IMAGE_NOT_FOUND` for an unknown id, and the extractor's codes
+/// (`IO_ERROR`, `UNSUPPORTED_FORMAT`, `MAGIC_MISMATCH`) when the file cannot
+/// be read.
+#[tauri::command]
+pub fn get_image_metadata(
+    state: tauri::State<AppState>,
+    image_id: Uuid,
+) -> Result<crate::models::ImageMetadata, CommandError> {
+    get_image_metadata_impl(&state, image_id)
+}
+
+/// Testable core of [`get_image_metadata`].
+pub(crate) fn get_image_metadata_impl(
+    state: &AppState,
+    image_id: Uuid,
+) -> Result<crate::models::ImageMetadata, CommandError> {
+    let path = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        flight_session::get_image(&conn, image_id)?.file_path
+    };
+    Ok(crate::modules::module_01::metadata_extractor::extract_metadata(Path::new(&path))?)
+}
+
 /// Lists the images stored in a session, including the metadata import recorded.
 #[tauri::command]
 pub fn get_images_by_session(

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { ImageMetadata } from "./imageMetadata";
 
 export type SessionStatus = "active" | "archived";
 
@@ -76,6 +77,11 @@ export interface StoredImage {
 
 export function getImagesBySession(sessionId: string) {
   return invoke<StoredImage[]>("get_images_by_session", { sessionId });
+}
+
+/** EXIF and XMP read from the stored file, not just the columns on the row. */
+export function getImageMetadata(imageId: string) {
+  return invoke<ImageMetadata>("get_image_metadata", { imageId });
 }
 
 export function recalculateSessionDateRange(sessionId: string) {
