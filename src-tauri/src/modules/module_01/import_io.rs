@@ -458,20 +458,17 @@ impl ImportScope<'_> {
         let metadata = metadata_from_copy(&copy.dest, format);
         let image_id = Uuid::new_v4();
         let ready = format == ImageFormat::Jpeg;
-        // `is_blurry` is left `None` here: the session-wide reclassification
-        // pass in `import_planned` derives it from the final score set, not
-        // incrementally per candidate — see `blur_detection`'s module docs.
-        let blur_score = blur_detection::blur_score_for_copy(&copy.dest, format);
         let image = build_image(
             image_id,
             self.session_id,
-            &copy,
-            candidate,
+            StagedFile {
+                copy: &copy,
+                candidate,
+            },
             &metadata,
             None,
             ready,
-            blur_score,
-            None,
+            format,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -581,38 +578,32 @@ impl ImportScope<'_> {
         let dng_metadata = metadata_from_copy(&dng_copy.dest, ImageFormat::Dng);
         fill_missing(&mut jpeg_metadata, &dng_metadata);
 
-        // Raw scores only; `is_blurry` for both halves is derived later by
-        // the session-wide reclassification pass (which also mirrors the
-        // DNG's flag from its JPEG, rather than scoring the DNG as an
-        // independent sample of the same capture).
-        let jpeg_blur_score =
-            blur_detection::blur_score_for_copy(&jpeg_copy.dest, ImageFormat::Jpeg);
-        let dng_blur_score = blur_detection::blur_score_for_copy(&dng_copy.dest, ImageFormat::Dng);
-
         let jpeg_id = Uuid::new_v4();
         let dng_id = Uuid::new_v4();
         let images = [
             build_image(
                 jpeg_id,
                 self.session_id,
-                &jpeg_copy,
-                jpeg,
+                StagedFile {
+                    copy: &jpeg_copy,
+                    candidate: jpeg,
+                },
                 &jpeg_metadata,
                 Some(dng_id),
                 true,
-                jpeg_blur_score,
-                None,
+                ImageFormat::Jpeg,
             ),
             build_image(
                 dng_id,
                 self.session_id,
-                &dng_copy,
-                dng,
+                StagedFile {
+                    copy: &dng_copy,
+                    candidate: dng,
+                },
                 &dng_metadata,
                 Some(jpeg_id),
                 true,
-                dng_blur_score,
-                None,
+                ImageFormat::Dng,
             ),
         ];
         match record_images(self.db, self.session_id, &images) {
@@ -673,17 +664,14 @@ impl ImportScope<'_> {
     ) -> Result<ImportedFile, ()> {
         let metadata = metadata_from_copy(&copy.dest, ImageFormat::Jpeg);
         let image_id = Uuid::new_v4();
-        let blur_score = blur_detection::blur_score_for_copy(&copy.dest, ImageFormat::Jpeg);
         let image = build_image(
             image_id,
             self.session_id,
-            copy,
-            candidate,
+            StagedFile { copy, candidate },
             &metadata,
             None,
             true,
-            blur_score,
-            None,
+            ImageFormat::Jpeg,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -1101,32 +1089,45 @@ fn fill_missing(dst: &mut ImageMetadata, src: &ImageMetadata) {
     fill(&mut dst.flight_z_speed, &src.flight_z_speed);
 }
 
-/// Builds the persisted record for one copied file.
-#[allow(clippy::too_many_arguments)]
+/// The copy and its originating candidate, bundled since [`build_image`]
+/// always needs both together — folding them into one parameter keeps that
+/// function's arg count under clippy's `too_many_arguments` threshold
+/// without an `#[allow]`.
+struct StagedFile<'a> {
+    copy: &'a CopiedFile,
+    candidate: &'a ImportCandidate,
+}
+
+/// Builds the persisted record for one copied file, including its blur
+/// score.
+///
+/// Scoring happens here, not at each call site: `is_blurry` is never set by
+/// this function (it starts `None`, same as [`image_from_metadata`] leaves
+/// it, and is filled in later by the session-wide
+/// [`super::flight_session::reclassify_session_blur`] pass) — so there is
+/// only ever one blur-related field for a caller to populate, not two that
+/// could drift out of sync.
 fn build_image(
     image_id: Uuid,
     session_id: Uuid,
-    copy: &CopiedFile,
-    candidate: &ImportCandidate,
+    staged: StagedFile<'_>,
     metadata: &ImageMetadata,
     raw_sibling_id: Option<Uuid>,
     analysis_ready: bool,
-    blur_score: Option<f64>,
-    is_blurry: Option<bool>,
+    format: ImageFormat,
 ) -> Image {
     let mut image = image_from_metadata(
         image_id,
         session_id,
-        copy.dest.display().to_string(),
+        staged.copy.dest.display().to_string(),
         metadata,
     );
-    image.source_path = Some(candidate.source_path.clone());
-    image.content_hash = Some(copy.content_hash.clone());
-    image.file_size = Some(copy.file_size);
+    image.source_path = Some(staged.candidate.source_path.clone());
+    image.content_hash = Some(staged.copy.content_hash.clone());
+    image.file_size = Some(staged.copy.file_size);
     image.raw_sibling_id = raw_sibling_id;
     image.analysis_ready = Some(analysis_ready);
-    image.blur_score = blur_score;
-    image.is_blurry = is_blurry;
+    image.blur_score = blur_detection::blur_score_for_copy(&staged.copy.dest, format);
     image
 }
 
