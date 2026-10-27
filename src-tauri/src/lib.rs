@@ -248,8 +248,10 @@
 //!   per image during `import_io::run_import`; `is_blurry` is then
 //!   re-derived for every scored image in the session in one pass
 //!   (`flight_session::reclassify_session_blur`, called once per import run)
-//!   from the session's mean/stddev z-score plus an absolute hard floor —
-//!   not frozen per image at insert time, so the flag depends only on the
+//!   from the session's mean/stddev z-score, falling back to an absolute
+//!   hard floor only while the session has too few scored images for a
+//!   baseline — not frozen per image at insert time, so the flag depends
+//!   only on the
 //!   session's current score set, not on import order or batch boundaries.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
