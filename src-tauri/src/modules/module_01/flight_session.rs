@@ -1789,6 +1789,8 @@ mod tests {
         assert_eq!(old.file_size, None);
         assert_eq!(old.raw_sibling_id, None);
         assert_eq!(old.analysis_ready, None);
+        assert_eq!(old.blur_score, None);
+        assert_eq!(old.is_blurry, None);
 
         // Previously impossible on the old schema: persisting an image
         // without GPS or capture time.
@@ -1809,6 +1811,95 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn migrate_adds_blur_columns_to_an_existing_table_preserving_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute(
+            "CREATE TABLE session (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                date_start  TEXT,
+                date_end    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("session table");
+        // The full pre-blur-detection (M1-24) image schema: every other
+        // canonical column is present, only blur_score/is_blurry are
+        // missing — the actual upgrade this PR's users hit, as opposed to
+        // the much older pre-M1-24 schema `migrate_upgrades_pre_m24_table_
+        // preserving_rows` covers.
+        conn.execute(
+            "CREATE TABLE image (
+                id            TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL REFERENCES session(id),
+                file_path     TEXT NOT NULL UNIQUE,
+                location_lat  REAL,
+                location_lon  REAL,
+                captured_at   TEXT,
+                gps_altitude_m REAL,
+                width         INTEGER,
+                height        INTEGER,
+                format        TEXT,
+                make          TEXT,
+                camera_model  TEXT,
+                source_path   TEXT,
+                content_hash  TEXT,
+                file_size     INTEGER,
+                raw_sibling_id TEXT,
+                analysis_ready INTEGER
+            )",
+            [],
+        )
+        .expect("pre-blur image table");
+        let session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO session (id, project_id, name, date_start, date_end, status, created_at, updated_at)
+             VALUES (?1, ?2, 'S', '2026-09-18 07:12:00', '2026-09-18 07:12:00', 'active', '2026-09-18T07:12:00+00:00', '2026-09-18T07:12:00+00:00')",
+            params![session_id, Uuid::new_v4().to_string()],
+        )
+        .expect("session row");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at,
+                gps_altitude_m, width, height, format, make, camera_model, source_path,
+                content_hash, file_size, raw_sibling_id, analysis_ready)
+             VALUES (?1, ?2, '/library/old.jpg', -7.5, 110.0, '2026-09-18 07:12:00', 50.0, 4000,
+                3000, 'jpeg', 'DJI', 'Mavic 3', '/originals/old.jpg', 'deadbeef', 1234, NULL, 1)",
+            params![Uuid::new_v4().to_string(), session_id],
+        )
+        .expect("pre-blur image row");
+
+        init_schema(&conn).expect("migrate");
+
+        let names: Vec<String> = table_info(&conn, "image")
+            .expect("table info")
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(names.contains(&"blur_score".to_string()));
+        assert!(names.contains(&"is_blurry".to_string()));
+
+        let row: Image = conn
+            .query_row(
+                &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/library/old.jpg'"),
+                [],
+                row_to_image,
+            )
+            .expect("row readable after migration");
+        // Every pre-existing column survives the rebuild untouched...
+        assert_eq!(row.content_hash.as_deref(), Some("deadbeef"));
+        assert_eq!(row.width, Some(4000));
+        assert_eq!(row.analysis_ready, Some(true));
+        // ...and the two new columns are NULL, not an error or a default
+        // that would misrepresent an unscored row as deliberately sharp.
+        assert_eq!(row.blur_score, None);
+        assert_eq!(row.is_blurry, None);
     }
 
     /// Creates the `session` table plus one row, so `image` rows have a
