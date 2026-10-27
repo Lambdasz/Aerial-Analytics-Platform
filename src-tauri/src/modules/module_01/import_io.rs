@@ -347,7 +347,7 @@ fn import_planned(
     match lock_db(db) {
         Ok(conn) => {
             if let Err(err) =
-                reclassify_session_blur(&conn, session_id, blur_detection::classify_against_session)
+                reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {
                 eprintln!("warning: could not reclassify session blur flags: {err}");
             }

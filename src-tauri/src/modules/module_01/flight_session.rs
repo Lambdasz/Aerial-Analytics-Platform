@@ -25,6 +25,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
+use super::blur_detection::SessionBlurStats;
 use super::error::SessionError;
 use crate::models::image::ImageMetadata;
 use crate::models::{Image, Project, Session, SessionStatus};
@@ -1130,16 +1131,23 @@ pub fn get_images_by_session(
 /// Re-derives `is_blurry` for every scored image in a session from the
 /// session's current score distribution, in one transaction.
 ///
-/// `classify` receives one image's `blur_score` and the scores of every
-/// *other* scored image in the session (a leave-one-out baseline), and
-/// decides whether that image is blurry. Running this once over the whole
-/// session, rather than classifying each image incrementally as it is
-/// inserted, makes the result depend only on the session's final score set
-/// — not on import order or how many separate import runs it took to
-/// assemble it. A DNG with a same-stem JPEG is excluded from the baseline
-/// and from direct classification (it is the same capture as its JPEG, so
-/// scoring it as an independent sample would double-count that capture);
-/// it mirrors its JPEG's flag instead.
+/// `classify` receives one image's `blur_score` and the leave-one-out
+/// baseline stats (mean/stddev/count) of every *other* scored image in the
+/// session, and decides whether that image is blurry. Running this once
+/// over the whole session, rather than classifying each image incrementally
+/// as it is inserted, makes the result depend only on the session's final
+/// score set — not on import order or how many separate import runs it took
+/// to assemble it. A DNG with a same-stem JPEG is excluded from the
+/// baseline and from direct classification (it is the same capture as its
+/// JPEG, so scoring it as an independent sample would double-count that
+/// capture); it mirrors its JPEG's flag instead.
+///
+/// Each row's leave-one-out baseline comes from
+/// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
+/// a fresh "every other score" collection per row (which is the O(n²)
+/// approach this used to take, held under this function's write lock on
+/// every import). See that function's docs for the numerical-stability
+/// trade-off its sum-of-squares formula makes.
 ///
 /// # Purity
 ///
@@ -1147,7 +1155,7 @@ pub fn get_images_by_session(
 pub(crate) fn reclassify_session_blur(
     conn: &Connection,
     session_id: Uuid,
-    classify: impl Fn(f64, &[f64]) -> bool,
+    classify: impl Fn(f64, &SessionBlurStats) -> bool,
 ) -> Result<(), SessionError> {
     with_immediate_transaction(conn, |conn| {
         let scored: Vec<(String, f64)> = {
@@ -1161,15 +1169,11 @@ pub(crate) fn reclassify_session_blur(
             })?;
             rows.collect::<Result<_, _>>()?
         };
+        let scores: Vec<f64> = scored.iter().map(|(_, score)| *score).collect();
+        let stats = super::blur_detection::leave_one_out_stats(&scores);
         let mut update = conn.prepare("UPDATE image SET is_blurry = ?1 WHERE id = ?2")?;
-        for (i, (id, score)) in scored.iter().enumerate() {
-            let others: Vec<f64> = scored
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, (_, s))| *s)
-                .collect();
-            update.execute(params![i64::from(classify(*score, &others)), id])?;
+        for ((id, score), stats) in scored.iter().zip(stats.iter()) {
+            update.execute(params![i64::from(classify(*score, stats)), id])?;
         }
         // A paired DNG is the same capture as its JPEG: mirror its flag.
         conn.execute(
@@ -1617,7 +1621,7 @@ mod tests {
         reclassify_session_blur(
             conn,
             session.id,
-            crate::modules::module_01::blur_detection::classify_against_session,
+            crate::modules::module_01::blur_detection::classify_with_stats,
         )
         .expect("reclassify");
         get_image(conn, outlier.id).expect("get outlier").is_blurry
@@ -1680,7 +1684,7 @@ mod tests {
         reclassify_session_blur(
             &conn,
             session.id,
-            crate::modules::module_01::blur_detection::classify_against_session,
+            crate::modules::module_01::blur_detection::classify_with_stats,
         )
         .expect("reclassify");
 
