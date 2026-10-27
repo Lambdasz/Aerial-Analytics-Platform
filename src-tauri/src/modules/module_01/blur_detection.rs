@@ -51,6 +51,7 @@ use std::path::Path;
 
 use image::GrayImage;
 
+use super::error::MetadataError;
 use crate::models::image::ImageFormat;
 
 /// Long edge (px) images are downscaled to before scoring, so raw variance
@@ -140,21 +141,26 @@ fn variance(values: &[f64]) -> f64 {
 ///
 /// Impure — reads a file from disk.
 pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f64> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
     let bytes = match format {
-        ImageFormat::Jpeg => std::fs::read(path).ok(),
-        ImageFormat::Dng => super::dng_preview::read_dng_preview(path).ok(),
+        ImageFormat::Jpeg => std::fs::read(path).map_err(|err| err.to_string()),
+        ImageFormat::Dng => {
+            super::dng_preview::read_dng_preview(path).map_err(|err| describe_dng_read_error(&err))
+        }
     };
     let bytes = match bytes {
-        Some(bytes) => bytes,
-        None => {
-            eprintln!("warning: could not read image bytes for blur scoring");
+        Ok(bytes) => bytes,
+        Err(reason) => {
+            eprintln!("warning: could not read '{name}' for blur scoring: {reason}");
             return None;
         }
     };
     let decoded = match image::load_from_memory(&bytes) {
         Ok(decoded) => decoded,
-        Err(_) => {
-            eprintln!("warning: could not decode image for blur scoring");
+        Err(err) => {
+            // `load_from_memory` was never given a path, so `err` cannot
+            // carry one — safe to log as-is, unlike the DNG branch above.
+            eprintln!("warning: could not decode '{name}' for blur scoring: {err}");
             return None;
         }
     };
@@ -167,6 +173,23 @@ pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f6
         image::imageops::FilterType::Triangle,
     );
     Some(compute_blur_score(&resized.to_luma8()))
+}
+
+/// A path-safe description of a DNG preview-read failure.
+///
+/// [`MetadataError`]'s `Display` embeds the full file path for several
+/// variants (`UnsupportedFormat`, `MagicMismatch`, `PreviewUnavailable`,
+/// `NotImplemented`), and that path is inside the app-owned library
+/// (`<library_root>/projects/<project_id>/sessions/<session_id>/images/`) —
+/// logging it would leak project/session ids into stderr, the same concern
+/// [`super::import_io::remove_copy`] documents. The I/O variant never
+/// carries a path, so its reason is safe to show directly; everything else
+/// falls back to the error's stable short code.
+fn describe_dng_read_error(err: &MetadataError) -> String {
+    match err {
+        MetadataError::Io(io_err) => io_err.to_string(),
+        other => other.code().to_string(),
+    }
 }
 
 /// Whether a decoded image's long edge is already at or above
