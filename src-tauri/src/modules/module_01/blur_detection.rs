@@ -88,31 +88,105 @@ pub(crate) const MIN_SESSION_SAMPLE_FOR_RELATIVE: usize = 5;
 /// # Purity
 ///
 /// Pure, total (never fails).
+///
+/// Accumulates mean/variance in one pass with [`Welford`] rather than
+/// materialising a `width * height`-element `Vec<f64>` of responses and
+/// sweeping it twice (once for the mean, once for the sum of squares) — for
+/// a 1280x960 buffer that Vec alone is ~10MB, paid per scored image.
+/// Interior pixels (whose 3x3 window is always in bounds) are read by
+/// direct, unclamped indexing into the raw buffer; only the border actually
+/// needs the clamped lookup, since its window can run off the edge.
 pub(crate) fn compute_blur_score(gray: &GrayImage) -> f64 {
     let (width, height) = gray.dimensions();
     if width == 0 || height == 0 {
         return 0.0;
     }
+    let buf = gray.as_raw();
+    let w = width as usize;
+    let h = height as usize;
+
+    // Clamped lookup for the border, where a neighbour can run off the edge.
     let pixel = |x: i64, y: i64| -> f64 {
-        let x = x.clamp(0, width as i64 - 1) as u32;
-        let y = y.clamp(0, height as i64 - 1) as u32;
-        f64::from(gray.get_pixel(x, y).0[0])
+        let x = x.clamp(0, width as i64 - 1) as usize;
+        let y = y.clamp(0, height as i64 - 1) as usize;
+        f64::from(buf[y * w + x])
+    };
+    // Standard 3x3 Laplacian kernel: [[0,1,0],[1,-4,1],[0,1,0]].
+    let laplacian_at = |x: i64, y: i64| -> f64 {
+        pixel(x, y - 1) + pixel(x, y + 1) + pixel(x - 1, y) + pixel(x + 1, y) - 4.0 * pixel(x, y)
     };
 
-    let mut responses = Vec::with_capacity((width as usize) * (height as usize));
-    for y in 0..height as i64 {
-        for x in 0..width as i64 {
-            // Standard 3x3 Laplacian kernel: [[0,1,0],[1,-4,1],[0,1,0]].
-            let response = pixel(x, y - 1) + pixel(x, y + 1) + pixel(x - 1, y) + pixel(x + 1, y)
-                - 4.0 * pixel(x, y);
-            responses.push(response);
+    let mut stats = Welford::default();
+
+    // Interior: every neighbour is in bounds, so index the raw buffer
+    // directly instead of going through the clamped closure above.
+    if w >= 3 && h >= 3 {
+        for y in 1..h - 1 {
+            let row = y * w;
+            for x in 1..w - 1 {
+                let response = f64::from(buf[row - w + x])
+                    + f64::from(buf[row + w + x])
+                    + f64::from(buf[row + x - 1])
+                    + f64::from(buf[row + x + 1])
+                    - 4.0 * f64::from(buf[row + x]);
+                stats.push(response);
+            }
         }
     }
-    variance(&responses)
+
+    // Border: top and bottom rows in full, then the left/right columns of
+    // whatever rows weren't already covered by those two.
+    for x in 0..width as i64 {
+        stats.push(laplacian_at(x, 0));
+        if height > 1 {
+            stats.push(laplacian_at(x, height as i64 - 1));
+        }
+    }
+    if height > 2 {
+        for y in 1..height as i64 - 1 {
+            stats.push(laplacian_at(0, y));
+            if width > 1 {
+                stats.push(laplacian_at(width as i64 - 1, y));
+            }
+        }
+    }
+
+    stats.population_variance()
+}
+
+/// One-pass mean/variance accumulator (Welford's algorithm), so scoring an
+/// image never materialises a per-pixel buffer of intermediate values.
+#[derive(Default)]
+struct Welford {
+    count: u64,
+    mean: f64,
+    m2: f64,
+}
+
+impl Welford {
+    fn push(&mut self, value: f64) {
+        self.count += 1;
+        let delta = value - self.mean;
+        self.mean += delta / self.count as f64;
+        let delta2 = value - self.mean;
+        self.m2 += delta * delta2;
+    }
+
+    /// Population variance (divide by `n`, matching the old two-pass
+    /// `variance` helper this replaces). `0.0` for fewer than 2 samples.
+    fn population_variance(&self) -> f64 {
+        if self.count < 2 {
+            0.0
+        } else {
+            self.m2 / self.count as f64
+        }
+    }
 }
 
 /// Population variance of `values`. `0.0` for an empty or single-element
-/// slice.
+/// slice. Used for session-level score sets ([`compute_session_blur_stats`]),
+/// which are small (one entry per image, not per pixel) — unlike
+/// [`compute_blur_score`], there's no allocation worth avoiding here.
 ///
 /// # Purity
 ///
@@ -312,6 +386,52 @@ mod tests {
             "sharp={sharp} should exceed blurred={blurred}"
         );
         assert_eq!(blurred, 0.0, "a flat image has zero Laplacian response");
+    }
+
+    /// Reference (intentionally naive) re-implementation of the original
+    /// two-pass, per-pixel-`Vec` algorithm, to pin the refactored one-pass
+    /// [`Welford`] version to the same numbers.
+    fn brute_force_blur_score(gray: &GrayImage) -> f64 {
+        let (width, height) = gray.dimensions();
+        if width == 0 || height == 0 {
+            return 0.0;
+        }
+        let pixel = |x: i64, y: i64| -> f64 {
+            let x = x.clamp(0, width as i64 - 1) as u32;
+            let y = y.clamp(0, height as i64 - 1) as u32;
+            f64::from(gray.get_pixel(x, y).0[0])
+        };
+        let mut responses = Vec::new();
+        for y in 0..height as i64 {
+            for x in 0..width as i64 {
+                responses.push(
+                    pixel(x, y - 1) + pixel(x, y + 1) + pixel(x - 1, y) + pixel(x + 1, y)
+                        - 4.0 * pixel(x, y),
+                );
+            }
+        }
+        if responses.len() < 2 {
+            return 0.0;
+        }
+        let mean = responses.iter().sum::<f64>() / responses.len() as f64;
+        responses.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / responses.len() as f64
+    }
+
+    #[test]
+    fn compute_blur_score_matches_brute_force_across_shapes() {
+        // Non-uniform, non-symmetric gradients of various shapes, to
+        // exercise every interior/border path in both implementations:
+        // too-small-for-an-interior (1x1, 2x2, 1x5, 5x1), a shape with an
+        // interior, and one right at a kernel-sized edge.
+        for (w, h) in [(1, 1), (2, 2), (1, 5), (5, 1), (3, 3), (7, 5), (12, 9)] {
+            let image = GrayImage::from_fn(w, h, |x, y| image::Luma([(x * 17 + y * 31) as u8]));
+            let expected = brute_force_blur_score(&image);
+            let actual = compute_blur_score(&image);
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{w}x{h}: actual={actual} expected={expected}"
+            );
+        }
     }
 
     #[test]
