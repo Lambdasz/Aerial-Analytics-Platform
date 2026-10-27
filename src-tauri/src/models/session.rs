@@ -173,10 +173,13 @@ pub struct Image {
     pub blur_score: Option<f64>,
     /// Whether this image is classified as blurry relative to its flight
     /// session's other scored images (plus an absolute hard-floor safety
-    /// net). Re-derived for the whole session after every import
-    /// ([`crate::modules::module_01::flight_session::reclassify_session_blur`]),
-    /// so this value is **not** frozen at import: it reflects the session's
-    /// current score set, not the state at the moment this particular row
-    /// was inserted. `None` when `blur_score` is `None`.
+    /// net). Re-derived for the whole session by
+    /// [`crate::modules::module_01::flight_session::reclassify_session_blur`],
+    /// so this value is **not** frozen at import: it is meant to reflect the
+    /// session's current score set, not the state at the moment this
+    /// particular row was inserted — but that only holds if every path that
+    /// changes a session's image set calls that function. Today only import
+    /// does; see its docs for what that means for a future delete/move path.
+    /// `None` when `blur_score` is `None`.
     pub is_blurry: Option<bool>,
 }

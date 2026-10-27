@@ -1149,6 +1149,14 @@ pub fn get_images_by_session(
 /// every import). See that function's docs for the numerical-stability
 /// trade-off its sum-of-squares formula makes.
 ///
+/// Call this after *any* change to a session's set of scored images, not
+/// only an import: `is_blurry` is documented as reflecting the session's
+/// current score set, and that invariant only holds as long as every
+/// mutation re-derives it. Today [`super::import_io::run_import`] is the
+/// only caller — a later path that deletes images or moves/copies them
+/// between sessions must call this for every session it touches, or those
+/// sessions' flags go stale.
+///
 /// # Purity
 ///
 /// Impure — reads and updates the `image` table.
