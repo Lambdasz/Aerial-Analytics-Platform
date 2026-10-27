@@ -113,9 +113,10 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     let unlistenCompleted: (() => void) | undefined;
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let isFinished = false;
+    let isDisposed = false;
 
     const finishJob = async (jobId: string, resultPayload?: StandardJobResult) => {
-      if (isFinished) return;
+      if (isFinished || isDisposed) return;
       isFinished = true;
       if (pollInterval) clearInterval(pollInterval);
 
@@ -127,9 +128,12 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
           finalResult = await getJobResult(jobId);
         }
 
+        if (isDisposed) return;
+
         if (finalResult.status === "failure") {
           if (isMountedRef.current) {
             setExecutionError(finalResult.error ?? "Plugin execution failed.");
+            setProgress(null);
             setActiveJobId(null);
           }
         } else {
@@ -137,77 +141,100 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
           onClose();
         }
       } catch (err) {
-        if (isMountedRef.current) {
+        if (isMountedRef.current && !isDisposed) {
           setExecutionError(formatErrorMessage(err));
+          setProgress(null);
           setActiveJobId(null);
         }
       }
     };
 
     const setupListeners = async () => {
-      unlistenProgress = await listen<JobProgress>("plugin://progress", (event) => {
-        if (event.payload.job_id === activeJobIdRef.current && isMountedRef.current) {
-          setProgress({ percent: event.payload.percent, stage: event.payload.stage });
-        }
-      });
-
-      unlistenCompleted = await listen<
-        StandardJobResult | { job_id: string; status: string; error?: string }
-      >("plugin://completed", (event) => {
-        if (event.payload.job_id === activeJobIdRef.current) {
-          if (event.payload.status === "failure") {
-            if (isFinished) return;
-            isFinished = true;
-            if (pollInterval) clearInterval(pollInterval);
-            if (isMountedRef.current) {
-              setExecutionError(event.payload.error ?? "Plugin execution failed.");
-              setActiveJobId(null);
-            }
-          } else {
-            void finishJob(event.payload.job_id, event.payload as StandardJobResult);
+      try {
+        const up = await listen<JobProgress>("plugin://progress", (event) => {
+          if (event.payload.job_id === activeJobIdRef.current && isMountedRef.current) {
+            setProgress({ percent: event.payload.percent, stage: event.payload.stage });
           }
+        });
+        if (isDisposed) {
+          up();
+          return;
         }
-      });
+        unlistenProgress = up;
 
-      // Polling fallback every 1000ms in case completion event is missed or for short jobs
-      pollInterval = setInterval(async () => {
-        const curId = activeJobIdRef.current;
-        if (!curId || isFinished) return;
-
-        try {
-          const statusDto = await getJobStatus(curId);
-          if (statusDto.state === "Completed") {
-            void finishJob(curId);
-          } else if (statusDto.state === "Failed") {
-            if (isFinished) return;
-            isFinished = true;
-            if (pollInterval) clearInterval(pollInterval);
-            if (isMountedRef.current) {
-              const errMsg =
-                statusDto.data && typeof statusDto.data.error === "string"
-                  ? statusDto.data.error
-                  : "Plugin execution failed.";
-              setExecutionError(errMsg);
-              setActiveJobId(null);
-            }
-          } else if (statusDto.state === "Aborted") {
-            if (isFinished) return;
-            isFinished = true;
-            if (pollInterval) clearInterval(pollInterval);
-            if (isMountedRef.current) {
-              setExecutionError("Analysis was aborted.");
-              setActiveJobId(null);
+        const uc = await listen<
+          StandardJobResult | { job_id: string; status: string; error?: string }
+        >("plugin://completed", (event) => {
+          if (event.payload.job_id === activeJobIdRef.current) {
+            if (event.payload.status === "failure") {
+              if (isFinished) return;
+              isFinished = true;
+              if (pollInterval) clearInterval(pollInterval);
+              if (isMountedRef.current) {
+                setExecutionError(event.payload.error ?? "Plugin execution failed.");
+                setProgress(null);
+                setActiveJobId(null);
+              }
+            } else {
+              void finishJob(event.payload.job_id, event.payload as StandardJobResult);
             }
           }
-        } catch {
-          // Ignore polling errors
+        });
+        if (isDisposed) {
+          uc();
+          return;
         }
-      }, 1000);
+        unlistenCompleted = uc;
+
+        // Polling fallback every 1000ms in case completion event is missed or for short jobs
+        if (!isDisposed && !isFinished) {
+          pollInterval = setInterval(async () => {
+            const curId = activeJobIdRef.current;
+            if (!curId || isFinished || isDisposed) return;
+
+            try {
+              const statusDto = await getJobStatus(curId);
+              if (statusDto.state === "Completed") {
+                void finishJob(curId);
+              } else if (statusDto.state === "Failed") {
+                if (isFinished) return;
+                isFinished = true;
+                if (pollInterval) clearInterval(pollInterval);
+                if (isMountedRef.current && !isDisposed) {
+                  const errMsg =
+                    statusDto.data && typeof statusDto.data.error === "string"
+                      ? statusDto.data.error
+                      : "Plugin execution failed.";
+                  setExecutionError(errMsg);
+                  setProgress(null);
+                  setActiveJobId(null);
+                }
+              } else if (statusDto.state === "Aborted") {
+                if (isFinished) return;
+                isFinished = true;
+                if (pollInterval) clearInterval(pollInterval);
+                if (isMountedRef.current && !isDisposed) {
+                  setExecutionError("Analysis was aborted.");
+                  setProgress(null);
+                  setActiveJobId(null);
+                }
+              }
+            } catch {
+              // Ignore polling errors
+            }
+          }, 1000);
+        }
+      } catch (err) {
+        if (isMountedRef.current && !isDisposed) {
+          setExecutionError(formatErrorMessage(err));
+        }
+      }
     };
 
     void setupListeners();
 
     return () => {
+      isDisposed = true;
       if (unlistenProgress) unlistenProgress();
       if (unlistenCompleted) unlistenCompleted();
       if (pollInterval) clearInterval(pollInterval);
@@ -266,7 +293,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
 
   const handleClose = () => {
     if (activeJobId) {
-      void handleAbort();
+      void abortPluginJob(activeJobId).catch(() => {});
     }
     onClose();
   };

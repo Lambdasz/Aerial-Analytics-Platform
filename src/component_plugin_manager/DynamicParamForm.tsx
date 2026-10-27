@@ -56,7 +56,18 @@ export const RenderDynamicInput: React.FC<RenderDynamicInputProps> = ({
           stepSize={param.step ?? 0.05}
           intent={intent}
           onValueChange={(val, valStr) => {
-            if (valStr.trim() === "" || Number.isNaN(val)) {
+            const trimmed = valStr.trim();
+            if (
+              trimmed === "" ||
+              trimmed === "-" ||
+              trimmed === "+" ||
+              trimmed === "." ||
+              trimmed === "-." ||
+              trimmed === "+." ||
+              trimmed.endsWith(".") ||
+              (trimmed.includes(".") && trimmed.endsWith("0")) ||
+              Number.isNaN(val)
+            ) {
               onChange(valStr);
             } else {
               onChange(val);
