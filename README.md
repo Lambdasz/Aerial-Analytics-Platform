@@ -202,14 +202,24 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── config.yml
 │   │   └── feature_request.yml
 │   ├── pull_request_template.md
-│       └── workflows/
-│           └── ci.yml                # CI pipeline: lint + format + cross-platform build
+│   └── workflows/
+│       └── ci.yml                # CI pipeline: lint + format + cross-platform build
+├── CONTRIBUTING.md               # Contribution guidelines
+├── eslint.config.js              # JavaScript/TypeScript linting rules
+├── index.html                    # HTML entry point for the web app
+├── LICENSE.md                    # MIT License
+├── package.json                  # Node.js dependencies and scripts
+├── package-lock.json             # Locked versions of npm dependencies
 ├── plugins/                      # Analytical plugins (Module 2: Extension System)
 │   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
 │   ├── mock_rust/                # Native Rust mock plugin (tree-canopy-density)
 │   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Python)
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
 │   └── template/                 # Canonical starter template for new plugins
+├── public/                       # Static assets served directly
+│   ├── tauri.svg
+│   └── vite.svg
+├── README.md                     # Project documentation
 ├── schemas/                      # JSON Schema definitions for plugin contracts
 │   ├── plugin.schema.json        # Plugin manifest schema
 │   ├── execution_payload.schema.json
@@ -217,6 +227,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── inputs.schema.json
 │   ├── outputs.schema.json
 │   └── parameters.schema.json
+├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── main.tsx                  # Application entry point
 │   ├── App.tsx                   # Root React component → AppShell
