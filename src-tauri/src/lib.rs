@@ -317,16 +317,22 @@
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
+//! | `install_plugin` | Safe extraction and installation of plugin from `.zip` archive |
+//! | `remove_plugin` | Permanent uninstallation of user-installed plugin and state cleanup |
+//! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
+//! | `update_plugin_config` | Update and persist user custom parameters overrides |
+//! | `get_installed_plugins` | Return summary list of all registered plugins |
+//! | `get_plugin_details` | Retrieve full contract schemas for a specific plugin |
+//! | `query_compatible_plugins` | Filter enabled plugins compatible with target imagery or AOI |
+//! | `check_plugin_health` | Execute fast pre-flight dependency healthcheck |
 //! | `start_plugin_job` | Launch an async plugin subprocess |
 //! | `abort_plugin_job` | Kill a running plugin subprocess |
 //! | `get_job_status` | Poll the lifecycle state of a job |
 //! | `get_job_result` | Retrieve the full result of a completed job |
 //!
-//! **Status**: Models, error types, payload assembly, and result handling are
-//! implemented. Registry discovery, lifecycle management, and async execution
-//! are designed but contain `todo!()` stubs.
+//! **Status**: Core plugin manager domains fully implemented: registry discovery,
+//! safe zip installation with Zip-Slip protection, lifecycle state persistence,
+//! health checks, and async isolated subprocess execution.
 //!
 //! ---
 //!
@@ -533,12 +539,13 @@ mod commands;
 pub mod map_controller;
 mod modules;
 mod plot;
-mod plugin_manager;
+pub mod plugin_manager;
 
 use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
+use plugin_manager::registry::PluginRegistry;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -547,8 +554,12 @@ use tokio::sync::RwLock;
 /// Shared application state injected into every Tauri command via `.manage()`.
 #[derive(Clone)]
 pub struct AppState {
+    /// Discovered and installed analytical plugins (Role 2 — registry.rs).
+    pub plugins: Arc<RwLock<PluginRegistry>>,
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
+    /// Optional path to plugin_state.json for state persistence.
+    pub state_path: Option<std::path::PathBuf>,
     /// SQLite connection shared across commands that need persistence
     /// (currently: Flight Session Management, Module 1.4).
     ///
@@ -584,8 +595,41 @@ async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
 }
 
 pub mod models;
-
 pub mod plot_api;
+
+/// Discovers and registers plugins from a specified directory, restoring persisted state if present.
+pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
+    let mut registry = PluginRegistry::new();
+    if let Ok(bundles) = plugin_manager::registry::discover_plugins(dir) {
+        for bundle in bundles {
+            registry.register(bundle);
+        }
+    }
+
+    let state_file = dir.join("plugin_state.json");
+    if let Ok(store) = plugin_manager::lifecycle::load_plugin_state(&state_file) {
+        plugin_manager::lifecycle::apply_state_to_registry(&mut registry, &store);
+    }
+
+    registry
+}
+
+/// Bootstraps discovery across candidate directory locations at application startup.
+pub fn init_plugin_registry() -> PluginRegistry {
+    let candidate_dirs = [
+        std::path::PathBuf::from("plugins"),
+        std::path::PathBuf::from("../plugins"),
+        std::path::PathBuf::from("../../plugins"),
+    ];
+
+    for dir in &candidate_dirs {
+        if dir.is_dir() {
+            return init_plugin_registry_from_dir(dir);
+        }
+    }
+
+    PluginRegistry::new()
+}
 
 /// Makes `path` absolute without requiring it to exist yet.
 fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
@@ -770,8 +814,14 @@ pub fn run() {
             let library_root = Arc::new(library_root);
             let sweep_db = Arc::clone(&db);
             let sweep_root = Arc::clone(&library_root);
+
+            let state_path = plugin_manager::lifecycle::default_state_path();
+            let registry = init_plugin_registry();
+
             app.manage(AppState {
+                plugins: Arc::new(RwLock::new(registry)),
                 jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+                state_path: Some(state_path),
                 db,
                 library_root,
             });
@@ -795,14 +845,20 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-            // Role 3 — Data Bridge
-            plugin_manager::commands::validate_and_create_payload,
-            plugin_manager::commands::process_execution_result,
             // Role 1 — Subprocess Supervisor & Isolation Engineer
             plugin_manager::executor::start_plugin_job,
             plugin_manager::executor::abort_plugin_job,
             plugin_manager::executor::get_job_status,
             plugin_manager::executor::get_job_result,
+            // Role 2 — Plugin Lifecycle & Package Manager (Discovery & Registry)
+            plugin_manager::registry::get_installed_plugins,
+            plugin_manager::registry::get_plugin_details,
+            plugin_manager::registry::query_compatible_plugins,
+            plugin_manager::registry::check_plugin_health,
+            plugin_manager::lifecycle::set_plugin_status,
+            plugin_manager::lifecycle::install_plugin,
+            plugin_manager::lifecycle::remove_plugin,
+            plugin_manager::lifecycle::update_plugin_config,
             // Plot import
             import_plots,
             get_dummy_spatial_layers,
@@ -842,7 +898,117 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use super::{adopt_legacy_db, plan_db_location, DbLocation};
+
+    #[test]
+    fn test_init_plugin_registry_from_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        assert_eq!(registry.get_summaries().len(), 1);
+        assert_eq!(registry.get_summaries()[0].id, "my-test-plugin");
+    }
+
+    #[test]
+    fn test_init_plugin_registry_discovers_builtin_plugins() {
+        let registry = init_plugin_registry();
+        // Repository has plugins/ directory with real plugins
+        assert!(
+            registry.plugins.contains_key("rgb-vegetation-detection"),
+            "Built-in plugins should be discovered on startup"
+        );
+    }
+
+    #[test]
+    fn test_init_plugin_registry_from_dir_restores_persisted_enabled_and_health_state() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(
+            plugin_dir.join("parameters.json"),
+            r#"{"parameters": [{"name": "p1", "label": "P1", "type": "number", "default": 1}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        // Write persisted plugin state where my-test-plugin is disabled and unhealthy
+        let state_json = r#"{
+            "schema_version": 1,
+            "updated_at": "2026-10-20T10:00:00Z",
+            "plugins": {
+                "my-test-plugin": {
+                    "version": "1.0.0",
+                    "source": "builtin",
+                    "enabled": false,
+                    "installed_at": "2026-10-20T09:00:00Z",
+                    "last_healthcheck": {
+                        "status": "unhealthy",
+                        "checked_at": "2026-10-20T09:30:00Z",
+                        "message": "Missing dependencies"
+                    },
+                    "custom_parameters": {},
+                    "stats": {
+                        "execution_count": 0,
+                        "last_executed_at": null
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(temp_dir.path().join("plugin_state.json"), state_json).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        let details = registry
+            .get_details("my-test-plugin")
+            .expect("plugin should be registered");
+        assert!(
+            !details.enabled,
+            "Persisted enabled: false must be restored on startup"
+        );
+
+        let summaries = registry.get_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert!(!summaries[0].enabled);
+        assert_eq!(summaries[0].health_status, "unhealthy");
+    }
 
     /// The team decision review called for a test-backed copy policy: an
     /// existing `./aerial.db` must survive the move to the app-data
