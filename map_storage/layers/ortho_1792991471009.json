@@ -1,0 +1,10 @@
+{
+  "layer_id": "ortho_1792991471009",
+  "layer_name": "Balikpapan 1c",
+  "category": "raster",
+  "is_visible": true,
+  "opacity": 1.0,
+  "z_index": 10,
+  "source_type": "raster",
+  "source_id": "ortho_1792991471009"
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792991471009",
+  "filename": "Balikpapan 1c",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792991471009/original.tif",
+  "size_bytes": 82995847,
+  "dimensions": [
+    23248,
+    14127
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792991471009/display.png",
+  "bounds": [
+    [
+      -1.2023942475850744,
+      116.94495673821604
+    ],
+    [
+      -1.1952927035740744,
+      116.95656767284004
+    ]
+  ],
+  "aspect_ratio": 1.6456430947830396,
+  "display_size_bytes": 8126065,
+  "display_dimensions": [
+    2560,
+    1556
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 2560x1556 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 3 (5812x3532) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:11:11.017860+00:00",
+  "updated_at": "2026-10-26T05:12:37.347962100+00:00",
+  "is_corrupted": false
+}

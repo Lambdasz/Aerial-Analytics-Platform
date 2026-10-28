@@ -1,0 +1,60 @@
+{
+  "layer_id": "template_landcover_polygon",
+  "layer_name": "Template - Tutupan Lahan (Polygon)",
+  "display_preference": {
+    "type": "polygon",
+    "color": "#E67E22",
+    "icon": "",
+    "fields": [
+      { "key": "land_cover_class", "label": "Kelas Tutupan Lahan", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "confidence", "label": "Keyakinan", "unit": null, "visible": true, "custom": false, "kind": "number" },
+      { "key": "area_sqm", "label": "Luas", "unit": "m²", "visible": true, "custom": false, "kind": "number" },
+      { "key": "catatan", "label": "Catatan Lapangan", "unit": null, "visible": true, "custom": true, "kind": "text" }
+    ]
+  },
+  "spatial_results": [
+    {
+      "source": "landcover_classification_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.859, -1.2252],
+            [116.86, -1.225],
+            [116.8606, -1.2257],
+            [116.8603, -1.2265],
+            [116.8594, -1.2264],
+            [116.859, -1.2252]
+          ]
+        ]
+      },
+      "properties": {
+        "land_cover_class": "bare_soil",
+        "confidence": 0.87,
+        "area_sqm": 910.0,
+        "catatan": "Perlu verifikasi lapangan"
+      }
+    },
+    {
+      "source": "landcover_classification_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.861, -1.2255],
+            [116.8619, -1.2253],
+            [116.8623, -1.226],
+            [116.8617, -1.2267],
+            [116.8611, -1.2262],
+            [116.861, -1.2255]
+          ]
+        ]
+      },
+      "properties": {
+        "land_cover_class": "vegetation",
+        "confidence": 0.92,
+        "area_sqm": 1130.5
+      }
+    }
+  ]
+}

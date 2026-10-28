@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792991777684",
+  "filename": "Balikpapan k5",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792991777684/original.tif",
+  "size_bytes": 40025770,
+  "dimensions": [
+    16352,
+    12767
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792991777684/display.png",
+  "bounds": [
+    [
+      -1.2243110280554836,
+      116.855973140003
+    ],
+    [
+      -1.2186297002884836,
+      116.863202751651
+    ]
+  ],
+  "aspect_ratio": 1.2808020678311272,
+  "display_size_bytes": 8895308,
+  "display_dimensions": [
+    2560,
+    1999
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 2560x1999 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 2 (8176x6384) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:16:17.692236300+00:00",
+  "updated_at": "2026-10-26T05:17:47.299070400+00:00",
+  "is_corrupted": false
+}

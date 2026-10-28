@@ -1,0 +1,53 @@
+.map-view-control-bar {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000; /* Above Leaflet map */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.control-capsule {
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-subtle);
+  background: var(--color-gallery-white);
+  border-radius: 12px;
+  overflow: hidden;
+  align-items: center;
+}
+
+.control-capsule .bp5-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 0 !important;
+  color: var(--color-ink) !important;
+  transition: background-color 0.2s ease;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.control-capsule .bp5-button:hover {
+  background: var(--color-studio-mist) !important;
+}
+
+.control-divider {
+  width: 100%;
+  height: 1px;
+  background-color: var(--color-hairline-silver);
+}
+
+.zoom-indicator {
+  font-family: var(--font-sf-pro-text);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink);
+  width: 40px;
+  height: 28px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--color-gallery-white);
+}

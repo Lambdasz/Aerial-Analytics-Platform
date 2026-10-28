@@ -10,15 +10,21 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "aerial-analytics-platform",
-        "width": 800,
-        "height": 600
+        "width": 1200,
+        "height": 800,
+        "devtools": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost https://ipc.localhost; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data: http://localhost:* https://*.tile.openstreetmap.org https://*.tile.openstreetmap.fr https://*; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**/map_storage/**"]
+      }
     }
   },
   "bundle": {
