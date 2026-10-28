@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-alpha] — 2026-10-28
+
+Third functional milestone. Ships the Module 3 Aerial Image Map Explorer, previously a placeholder backed by dummy markers.
+
+### Added
+
+**Module 3 — Aerial Image Map Explorer (full implementation)**
+
+- Interactive Leaflet map with base-map switching, view controls, and drone image markers rotated by camera heading
+- Orthomosaic import: GeoTIFF files are parsed, resampled to web-friendly tiles, and tracked by a background job queue with live progress; interrupted jobs are cleaned up on next launch
+- Area of Interest (AOI): draw polygon boundaries on the map, save/rename/delete them, and reuse them as plugin analysis inputs
+- Annotations: create, edit, and delete text/marker/shape notes pinned to the map
+- Layer manager: toggle visibility, opacity, stacking order, and category filters for imagery, boundaries, and analysis results
+- Spatial result viewer: renders Module 4/7/8 analysis outputs (land-cover, tree detection, vegetation) with popups, legends, and edit/delete flows
+- Distance, area, and perimeter measurement tools
+- Geotagged photo markers with import and gallery
+- Map search bar and image gallery sidebar with two-way selection sync
+- Sample map data (`map_storage/`, preview images) so the explorer has something to show out of the box
+- `AAP_STORAGE_DIR` environment variable to relocate where map data is stored
+- Dual-language (English & Indonesian) Module 3 architecture documentation under `docs/modules/module_3/`, plus a docs-completeness checker script
+
+### Changed
+
+- Module 3 source moved from `src/map/` and `src-tauri/src/map_controller/` to `src/modules/module-03/` and `src-tauri/src/modules/module_03/`; `map_controller` remains as a compatibility facade. Contributors importing from the old paths must update them.
+- The Vite dev server now serves `/map_storage` so map tiles and imported imagery load during development
+
+### Security
+
+- The dev-server `/map_storage` route rejects path-traversal requests outside the storage root
+- App instances take an exclusive lock (`map_storage/.app.lock`); a second instance runs read-only instead of racing the first for storage writes
+
 ## [0.4.0-alpha] — 2026-10-28
 
 Second functional milestone. Adds the plugin system, temporal change analysis, and a substantially more complete Module 1 (import, project management, DNG support, blur detection).
@@ -53,5 +84,6 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[0.5.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.3.0-alpha...v0.4.0-alpha
 [0.3.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/releases/tag/v0.3.0-alpha
