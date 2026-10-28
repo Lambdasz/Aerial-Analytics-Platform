@@ -13,10 +13,10 @@ import { Button, Callout, Intent, NonIdealState } from "@blueprintjs/core";
 import {
   type Session,
   type SessionStatus,
-  assignImageToSession,
   commandErrorMessage,
   createSession,
   deleteSession,
+  getImagesBySession,
   getSessionsByProject,
   isCommandError,
   updateSessionName,
@@ -47,6 +47,29 @@ type StatusFilter = "all" | "active" | "archived";
 const DEFAULT_STATUS_FILTER: StatusFilter = "active";
 type SortOrder = "newest" | "oldest" | "name";
 type View = { kind: "list" } | { kind: "detail"; sessionId: string };
+
+/**
+ * Counts the stored images of every session, in parallel.
+ *
+ * This is the honest "how many berkas" source for the session cards: the
+ * session type carries no count, and inferring one from the date range misses
+ * images that have no capture time. A session whose rows cannot be read stays
+ * absent from the map, and its card shows the unknown state.
+ */
+async function countImagesPerSession(
+  sessions: Session[],
+): Promise<Record<string, number | undefined>> {
+  const counts = await Promise.all(
+    sessions.map(async (session) => {
+      try {
+        return (await getImagesBySession(session.id)).length;
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  return Object.fromEntries(sessions.map((session, index) => [session.id, counts[index]]));
+}
 
 function Module01PageInner() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(() => {
@@ -80,6 +103,7 @@ function Module01PageInner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalImages, setTotalImages] = useState<number | undefined>(undefined);
+  const [imageCounts, setImageCounts] = useState<Record<string, number | undefined>>({});
 
   // Search, filter, and sorting
   const [searchQuery, setSearchQuery] = useState("");
@@ -200,13 +224,14 @@ function Module01PageInner() {
         const result = await getSessionsByProject(pid.trim());
         if (projectIdRef.current !== pid) return;
         setSessions(result);
-        // Also fetch image count
-        try {
-          const count = await countImagesByProject(pid.trim());
-          if (projectIdRef.current === pid) setTotalImages(count);
-        } catch {
-          if (projectIdRef.current === pid) setTotalImages(undefined);
-        }
+        // Per-session counts for the cards, plus the project total.
+        const [counts, total] = await Promise.all([
+          countImagesPerSession(result),
+          countImagesByProject(pid.trim()).catch(() => undefined),
+        ]);
+        if (projectIdRef.current !== pid) return;
+        setImageCounts(counts);
+        setTotalImages(total);
       } catch (err) {
         if (projectIdRef.current === pid) setError(formatError(err));
       } finally {
@@ -227,6 +252,10 @@ function Module01PageInner() {
             setSessions(result);
             setLoading(false);
           }
+          return countImagesPerSession(result);
+        })
+        .then((counts) => {
+          if (isMounted) setImageCounts(counts);
         })
         .catch((err: unknown) => {
           if (isMounted) {
@@ -247,6 +276,7 @@ function Module01PageInner() {
       queueMicrotask(() => {
         setSessions([]);
         setTotalImages(undefined);
+        setImageCounts({});
         setLoading(false);
       });
     }
@@ -286,6 +316,7 @@ function Module01PageInner() {
       }
       setSessions([]);
       setTotalImages(undefined);
+      setImageCounts({});
       setLoading(false);
       setSearchQuery("");
       setStatusFilter(DEFAULT_STATUS_FILTER);
@@ -348,20 +379,13 @@ function Module01PageInner() {
     }
   };
 
-  // Assign image
-  const handleAssignImage = async (sessionId: string, imageId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await assignImageToSession(sessionId, imageId);
-      showToast("Gambar ditambahkan");
-      setAssignTarget(null);
-      await fetchSessions(projectId, false);
-    } catch (err) {
-      setError(formatError(err));
-    } finally {
-      setBusy(false);
-    }
+  const [imageRevision, setImageRevision] = useState(0);
+
+  const handleImagesImported = async (message: string) => {
+    showToast(message);
+    setAssignTarget(null);
+    setImageRevision((revision) => revision + 1);
+    if (projectId) await fetchSessions(projectId, false);
   };
 
   // Delete session
@@ -370,8 +394,12 @@ function Module01PageInner() {
     setBusy(true);
     setError(null);
     try {
-      await deleteSession(deleteTarget.id);
-      showToast("Sesi dihapus");
+      const outcome = await deleteSession(deleteTarget.id);
+      showToast(
+        outcome.filesLeft
+          ? "Sesi dihapus, tapi beberapa salinan tersisa di disk dan tidak bisa dibersihkan"
+          : "Sesi dihapus",
+      );
       setDeleteTarget(null);
       await fetchSessions(projectId, false);
     } catch (err) {
@@ -409,8 +437,8 @@ function Module01PageInner() {
 
   // Calculate statistics across ALL sessions
   const stats = useMemo(
-    () => ({ ...calculateSessionStats(sessions), totalImages }),
-    [sessions, totalImages],
+    () => ({ ...calculateSessionStats(sessions, imageCounts), totalImages }),
+    [sessions, imageCounts, totalImages],
   );
 
   // Filter sessions
@@ -509,10 +537,11 @@ function Module01PageInner() {
 
       {detailSession ? (
         <SessionDetail
-          key={detailSession.id}
+          key={`${detailSession.id}-${imageRevision}`}
           session={detailSession}
           projectName={selectedProject?.name ?? ""}
           busy={busy}
+          otherSessions={sessions.filter((s) => s.id !== detailSession.id)}
           onBack={() => setView({ kind: "list" })}
           onToggleStatus={(s) => {
             void handleToggleStatus(s);
@@ -521,6 +550,7 @@ function Module01PageInner() {
           onCopyId={(id) => {
             void handleCopyId(id);
           }}
+          onImagesChanged={handleImagesImported}
         />
       ) : (
         <>
@@ -921,6 +951,7 @@ function Module01PageInner() {
                     <SessionCard
                       key={session.id}
                       session={session}
+                      imageCount={imageCounts[session.id]}
                       onRename={(s) => setRenameTarget(s)}
                       onToggleStatus={(s) => {
                         void handleToggleStatus(s);
@@ -1036,7 +1067,7 @@ function Module01PageInner() {
         session={assignTarget}
         isOpen={assignTarget !== null}
         onClose={() => setAssignTarget(null)}
-        onSubmit={handleAssignImage}
+        onImported={handleImagesImported}
         busy={busy}
       />
 

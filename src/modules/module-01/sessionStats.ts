@@ -149,8 +149,17 @@ function describeRange(minEpoch: number, maxEpoch: number) {
 /**
  * Pure calculation of statistics across all sessions.
  * Highly optimized, runs in O(N).
+ *
+ * `imageCounts` is the per-session count of stored rows, when the caller has
+ * it. A session is "with citra" when its count is above zero; without counts
+ * (or for a session the count map lacks) the date-range guess is the
+ * fallback. The shooting range itself still needs real capture times, so
+ * sessions whose images carry no time do not distort it.
  */
-export function calculateSessionStats(sessions: Session[]): SessionStats {
+export function calculateSessionStats(
+  sessions: Session[],
+  imageCounts?: Record<string, number | undefined>,
+): SessionStats {
   if (sessions.length === 0) {
     return {
       totalSessions: 0,
@@ -174,6 +183,7 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
   let latestSession: Session | null = null;
   let latestEndEpoch = Number.NEGATIVE_INFINITY;
   let hasImageData = false;
+  let hasAnyImages = false;
 
   for (const session of sessions) {
     if (session.status === "active") {
@@ -184,7 +194,12 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
 
     const activityEpoch = parseTimestamp(session.updatedAt).getTime();
 
-    // The shooting range only reflects sessions with connected images.
+    const count = imageCounts?.[session.id];
+    if (count === undefined ? hasImageRange(session) : count > 0) {
+      hasAnyImages = true;
+    }
+
+    // The shooting range only reflects sessions with dated images.
     if (hasImageRange(session)) {
       hasImageData = true;
       overallMinEpoch = Math.min(overallMinEpoch, parseCameraDate(session.dateStart).getTime());
@@ -199,7 +214,9 @@ export function calculateSessionStats(sessions: Session[]): SessionStats {
 
   const { periodLabel, durationLabel } = hasImageData
     ? describeRange(overallMinEpoch, overallMaxEpoch)
-    : { periodLabel: "Belum ada citra", durationLabel: "—" };
+    : hasAnyImages
+      ? { periodLabel: "Waktu citra tidak ada", durationLabel: "—" }
+      : { periodLabel: "Belum ada citra", durationLabel: "—" };
 
   const latestActivityDateLabel = latestSession ? formatTimestamp(latestSession.updatedAt) : "—";
   const latestActivityTimeLabel = latestSession ? formatSingleTime(latestSession.updatedAt) : "";
@@ -254,9 +271,12 @@ export function calculateTimelinePosition(
 }
 
 /**
- * True when the session has connected images. The Session type has no image count, so this infers
- * it from the backend invariant: an empty session has `dateStart = dateEnd = createdAt` (naive UTC).
- * Any other range, including a single image or images sharing one timestamp, means images exist.
+ * True when the session's date range reflects real capture times. The
+ * `Session` type has no image count, so this is the fallback for callers
+ * without one: an empty session has `dateStart = dateEnd = createdAt` (naive
+ * UTC), and any other range — including a single image or images sharing one
+ * timestamp — means dated images exist. It cannot see images without a
+ * capture time; callers that know the count must prefer it.
  */
 export function hasImageRange(session: Session): boolean {
   const start = parseCameraDate(session.dateStart);
@@ -278,9 +298,12 @@ export function hasImageRange(session: Session): boolean {
 /**
  * Lifecycle step shown in the session card stepper:
  * 1 = Sesi dibuat, 2 = Citra ditambahkan, 3 = Selesai & diarsipkan (archived).
+ *
+ * `hasImages` is the caller's real count check; only callers that have no
+ * count should derive it from {@link hasImageRange}.
  */
-export function getSessionStage(session: Session): SessionStage {
+export function getSessionStage(session: Session, hasImages: boolean): SessionStage {
   if (session.status === "archived") return 3;
   // An active session is past "Sesi dibuat" by definition: it waits on images (2) or on archiving (3).
-  return hasImageRange(session) ? 3 : 2;
+  return hasImages ? 3 : 2;
 }

@@ -91,6 +91,7 @@ use super::image_importer::{
     NameFolding,
 };
 use super::metadata_extractor::{extract_metadata, read_dng, to_plugin_metadata};
+use super::thumbnail;
 
 /// Read/write chunk size for hashing and copying.
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -156,6 +157,143 @@ pub(crate) fn session_images_dir(
         .join("images")
 }
 
+/// True when `path` is a file the app itself placed under
+/// `<library_root>/projects`.
+///
+/// Both sides are resolved before comparing: a library root that reaches the
+/// file through a symlink (macOS temp folders do) must not make an
+/// app-owned copy look like the user's original file.
+///
+/// # Purity
+///
+/// Impure — canonicalizing touches the file system.
+pub(crate) fn is_library_copy(library_root: &Path, path: &Path) -> bool {
+    let projects = library_root.join("projects");
+    let resolved_projects = projects.canonicalize().unwrap_or_else(|_| projects.clone());
+    if let Ok(resolved) = path.canonicalize() {
+        return resolved.starts_with(&resolved_projects);
+    }
+    // The file may already be gone: fall back to text, accepting both the
+    // resolved and the unresolved form of the library.
+    path.starts_with(&projects) || path.starts_with(&resolved_projects)
+}
+
+/// Returns the file name of a stored image, for suffix-named relocations.
+fn stored_file_name(path: &Path) -> Result<String, SessionError> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| SessionError::Storage(format!("'{}' has no file name", path.display())))
+}
+
+/// Moves one stored image file into `dest_dir`, under the first free
+/// `<name> (n)` suffix.
+///
+/// Used when an image moves to another session: the row may only be updated
+/// to the returned path, otherwise deleting the old session could remove a
+/// file the new session points at. Rescues nothing — a failed move is
+/// reported, never half-done ([`move_no_clobber`] undoes partial moves).
+///
+/// # Purity
+///
+/// Impure — moves a file.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when the destination folder cannot be created or
+/// no suffix could be claimed.
+pub(crate) fn relocate_image_file(from: &Path, dest_dir: &Path) -> Result<PathBuf, SessionError> {
+    let name = stored_file_name(from)?;
+    fs::create_dir_all(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create '{}': {err}", dest_dir.display()))
+    })?;
+    for suffix in 1..=MAX_SUFFIX {
+        let dest = dest_dir.join(suffixed_name(&name, suffix));
+        match move_no_clobber(from, &dest) {
+            Ok(()) => return Ok(dest),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(SessionError::Storage(format!(
+                    "could not move '{name}': {err}"
+                )))
+            }
+        }
+    }
+    Err(SessionError::Storage(format!(
+        "every name was taken for '{name}'"
+    )))
+}
+
+/// Copies one stored image file into `dest_dir`, under the first free
+/// `<name> (n)` suffix.
+///
+/// Byte-for-byte: hashes are not recomputed, because the source is already
+/// verified library content. A failed copy leaves nothing behind — the
+/// staging file is unpublished.
+///
+/// # Purity
+///
+/// Impure — copies a file.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when the destination folder cannot be created,
+/// the source cannot be read, or no suffix could be claimed.
+pub(crate) fn copy_image_file(from: &Path, dest_dir: &Path) -> Result<PathBuf, SessionError> {
+    let name = stored_file_name(from)?;
+    fs::create_dir_all(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create '{}': {err}", dest_dir.display()))
+    })?;
+    let mut temp = NamedTempFile::new_in(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create a temporary file: {err}"))
+    })?;
+    let mut source = fs::File::open(from)
+        .map_err(|err| SessionError::Storage(format!("could not open '{name}': {err}")))?;
+    io::copy(&mut source, &mut temp)
+        .map_err(|err| SessionError::Storage(format!("could not copy '{name}': {err}")))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|err| SessionError::Storage(format!("could not sync '{name}': {err}")))?;
+    let mut staged = temp.into_temp_path();
+    for suffix in 1..=MAX_SUFFIX {
+        let dest = dest_dir.join(suffixed_name(&name, suffix));
+        match staged.persist_noclobber(&dest) {
+            Ok(_) => return Ok(dest),
+            Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                staged = err.path;
+            }
+            Err(err) => {
+                return Err(SessionError::Storage(format!(
+                    "could not publish '{name}': {}",
+                    err.error
+                )))
+            }
+        }
+    }
+    Err(SessionError::Storage(format!(
+        "every name was taken for '{name}'"
+    )))
+}
+
+/// Deletes one stored image file from the library.
+///
+/// A failed direct removal rescues the file into a fresh `.trash` batch
+/// instead (the user can still undo); `Err(())` only when even that fails,
+/// which the caller reports as copies left on disk.
+///
+/// # Purity
+///
+/// Impure — removes or moves a file.
+pub(crate) fn discard_image_file(library_root: &Path, path: &Path) -> Result<(), ()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => {
+            let batch = new_trash_batch(library_root);
+            trash_orphan(path, library_root, &batch).map_err(|_| ())
+        }
+    }
+}
+
 /// Runs one copy-on-import over picked files or a picked folder.
 ///
 /// # Arguments
@@ -164,12 +302,14 @@ pub(crate) fn session_images_dir(
 ///   query and for the insert transaction; staging and recording run with the
 ///   lock released.
 /// * `library_root` — app-owned image library. The session folder below it is
-///   created on demand.
+///   created on demand, and each copy's list thumbnail is warmed on a
+///   background thread into its `.thumbs` cache.
 /// * `session_id` — destination session; must exist.
 /// * `sources` — absolute paths of picked files, or folders when
 ///   `from_folder` is `true`.
-/// * `from_folder` — scan each source folder (non-recursive) for
-///   `.jpg`/`.jpeg`/`.dng` instead of treating sources as files.
+/// * `from_folder` — scan each source folder (recursively, into
+///   subdirectories) for `.jpg`/`.jpeg`/`.dng` instead of treating sources as
+///   files.
 /// * `on_progress` — called after each copied file with
 ///   `(done, total, destination_path)`.
 ///
@@ -233,8 +373,13 @@ pub(crate) fn run_import(
     all_rejected.append(&mut report.rejected);
     report.rejected = all_rejected;
 
+    // Thumbnails for the copies land in the same cache the list view reads,
+    // so the first render of the session is a few-kilobyte read per file.
+    let thumbs_dir = library_root.join(".thumbs");
+
     import_planned(
         db,
+        &thumbs_dir,
         &dest_dir,
         session_id,
         &request,
@@ -248,9 +393,12 @@ pub(crate) fn run_import(
 /// Splits the result back into [`ImportReport`] fields: image ids become the
 /// persisted ids (not candidate ids), persist and record failures become
 /// `rejected`, a race-detected duplicate becomes a `duplicates` entry, and
-/// unpaired DNGs are collected in `not_analysis_ready`.
+/// unpaired DNGs are collected in `not_analysis_ready`. After a successful
+/// batch, the copies' list thumbnails are warmed into `thumbs_dir` on a
+/// detached thread, so decoding them never holds the import open.
 fn import_planned(
     db: &Mutex<Connection>,
+    thumbs_dir: &Path,
     dest_dir: &Path,
     session_id: Uuid,
     request: &ImportRequest,
@@ -298,6 +446,7 @@ fn import_planned(
     let mut done = 0usize;
     let mut imported_ids = Vec::new();
     let mut not_analysis_ready = Vec::new();
+    let mut dest_paths: Vec<PathBuf> = Vec::new();
     let mut state = RunState {
         image_ids: std::collections::HashMap::new(),
         rejected: std::mem::take(&mut report.rejected),
@@ -335,6 +484,7 @@ fn import_planned(
                 if imported.not_analysis_ready {
                     not_analysis_ready.push(imported.image_id.clone());
                 }
+                dest_paths.push(PathBuf::from(&imported.dest));
             }
         }
         done += rejected_added;
@@ -368,7 +518,26 @@ fn import_planned(
     report.rejected = rejected;
     report.duplicates = duplicates;
     remap_duplicate_ids(&mut report.duplicates, &image_ids);
+
+    // Warm the list thumbnails off the import path: the copies exist, and the
+    // first render of the session should be a cache read, but decoding them
+    // must not hold the import open (a full-frame decode on the last file
+    // otherwise stalls the final progress step). Detached and best-effort —
+    // a failure here only means the list builds the thumbnail lazily.
+    let thumbs_dir = thumbs_dir.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || warm_imported_thumbnails(dest_paths, thumbs_dir));
     Ok(report)
+}
+
+/// Warms every destination's thumbnail into `thumbs_dir`, best-effort.
+///
+/// Runs on the detached thread [`import_planned`] starts after a successful
+/// batch. Kept as its own function so the worker can be tested without the
+/// scheduling race of an actual thread.
+fn warm_imported_thumbnails(dest_paths: Vec<PathBuf>, thumbs_dir: PathBuf) {
+    for dest in &dest_paths {
+        thumbnail::warm_thumbnail(dest, &thumbs_dir);
+    }
 }
 
 /// One copied, recorded file.
@@ -1677,13 +1846,11 @@ fn scan_sources(
     let mut files: Vec<PathBuf> = Vec::new();
     if from_folder {
         for source in sources {
-            match fs::read_dir(source) {
-                Ok(dir) => {
-                    let mut here: Vec<PathBuf> = dir
-                        .filter_map(Result::ok)
-                        .map(|entry| entry.path())
-                        .filter(|path| path.is_file() && is_import_extension(path))
-                        .collect();
+            let mut here: Vec<PathBuf> = Vec::new();
+            match collect_image_files(Path::new(source), 1, &mut here) {
+                Ok(()) => {
+                    // One stable order across every level, so the same folder
+                    // imports in the same sequence every time.
                     here.sort();
                     files.extend(here);
                 }
@@ -1725,10 +1892,90 @@ fn scan_sources(
         }
     }
 
-    for path in files {
-        entries.push(hash_file(&path));
-    }
+    entries.extend(hash_all(files));
     entries
+}
+
+/// How many files are hashed at once during a scan.
+///
+/// Hashing is pure (no database, no writes), so it parallelizes safely; the
+/// bound keeps a slow SD-card reader from thrashing on too many interleaved
+/// reads, and four open files is far below the 256-descriptor concern.
+const SCAN_WORKERS: usize = 4;
+
+/// Hashes every file, up to [`SCAN_WORKERS`] at a time, in input order.
+///
+/// Order is part of the contract: the planner and every test expect results
+/// in the same order as `files`.
+fn hash_all(files: Vec<PathBuf>) -> Vec<Result<ImportCandidate, RejectedFile>> {
+    if files.len() < 2 {
+        return files.into_iter().map(|path| hash_file(&path)).collect();
+    }
+    let workers = SCAN_WORKERS.min(files.len());
+    let slots: Mutex<Vec<Option<Result<ImportCandidate, RejectedFile>>>> =
+        Mutex::new((0..files.len()).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for worker in 0..workers {
+            let files = &files;
+            let slots = &slots;
+            scope.spawn(move || {
+                let mut index = worker;
+                while index < files.len() {
+                    let outcome = hash_file(&files[index]);
+                    slots.lock().expect("scan slots are never poisoned")[index] = Some(outcome);
+                    index += workers;
+                }
+            });
+        }
+    });
+    slots
+        .into_inner()
+        .expect("scan slots are never poisoned")
+        .into_iter()
+        .map(|slot| slot.expect("every scanned file has a result"))
+        .collect()
+}
+
+/// The deepest subfolder level a folder import walks.
+///
+/// Camera cards nest a couple of levels at most (`DCIM/100MEDIA`); the cap
+/// keeps picking a huge parent from walking the whole disk, and bounds any
+/// symlink cycle.
+const MAX_FOLDER_DEPTH: usize = 6;
+
+/// Collects importable image files under `dir`, recursively walking subfolders up to 6 levels.
+///
+/// Hidden entries (names starting with `.`, which covers `.trash`) and symlinked
+/// directories are not traversed (preventing loops and runaway traversal). Symlinked
+/// image files pointing to regular files are accepted. Unreadable subfolders are skipped
+/// without aborting.
+fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if depth > MAX_FOLDER_DEPTH {
+        return Ok(());
+    }
+    let entries = fs::read_dir(dir)?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            let _ = collect_image_files(&path, depth + 1, files);
+        } else if ft.is_symlink() {
+            // Include symlinked image files without following symlinked directories
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_file() && is_import_extension(&path) {
+                    files.push(path);
+                }
+            }
+        } else if ft.is_file() && is_import_extension(&path) {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// A path's file name, or an empty string when it has none.
@@ -3027,11 +3274,12 @@ mod tests {
             &project_id.to_string(),
             &session_id.to_string(),
         );
-        let leftover: Vec<String> = fs::read_dir(&dest_dir)
+        let mut leftover: Vec<String> = fs::read_dir(&dest_dir)
             .expect("session folder")
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
+        leftover.sort();
         assert_eq!(
             leftover,
             vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],
@@ -3167,6 +3415,173 @@ mod tests {
         let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn folder_scan_walks_subfolders() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        write_jpeg(source_dir.path(), "top.JPG");
+        let nested = source_dir.path().join("DCIM").join("100MEDIA");
+        fs::create_dir_all(&nested).expect("nested");
+        write_jpeg(&nested, "DJI_0001.JPG");
+        write_dng(&nested, "DJI_0001.DNG", 10, 10);
+        fs::write(nested.join("notes.txt"), b"ignore me").expect("txt");
+        // Camera-style cards drop a `.trash` or other hidden dir; skip it.
+        let hidden = source_dir.path().join(".trash");
+        fs::create_dir_all(&hidden).expect("hidden");
+        write_jpeg(&hidden, "old.JPG");
+
+        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        assert_eq!(
+            entries.len(),
+            3,
+            "the top-level image and the nested pair all import"
+        );
+        assert!(entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn nested_folder_with_duplicate_file_names_imports_with_suffixes() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let sub1 = source_dir.path().join("sub1");
+        let sub2 = source_dir.path().join("sub2");
+        fs::create_dir_all(&sub1).expect("sub1");
+        fs::create_dir_all(&sub2).expect("sub2");
+
+        // Same file name in different subfolders, but distinct content seeds so
+        // they are not rejected as content duplicates.
+        write_jpeg_seeded(&sub1, "DJI_0001.JPG", 1);
+        write_jpeg_seeded(&sub2, "DJI_0001.JPG", 2);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        assert_eq!(report.imported_image_ids.len(), 2, "both files import");
+        assert!(
+            report.duplicates.is_empty(),
+            "distinct bytes are not duplicates"
+        );
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        let mut on_disk: Vec<String> = fs::read_dir(&dest_dir)
+            .expect("session folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        assert_eq!(
+            on_disk,
+            vec!["DJI_0001 (2).JPG".to_string(), "DJI_0001.JPG".to_string()],
+            "the second same-named file gets a suffix: {on_disk:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_scan_includes_symlinked_image_files_and_skips_symlinked_directories() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let outside_dir = tempfile::tempdir().expect("outside dir");
+
+        // A real file outside, symlinked into source_dir
+        let real_file = write_jpeg(outside_dir.path(), "real.JPG");
+        let symlinked_file = source_dir.path().join("symlinked.JPG");
+        std::os::unix::fs::symlink(&real_file, &symlinked_file).expect("symlink file");
+
+        // A directory outside, symlinked into source_dir (must not be traversed)
+        let outside_sub = outside_dir.path().join("sub");
+        fs::create_dir_all(&outside_sub).expect("outside sub");
+        write_jpeg(&outside_sub, "should_be_skipped.JPG");
+        let symlinked_dir = source_dir.path().join("symdir");
+        std::os::unix::fs::symlink(&outside_sub, &symlinked_dir).expect("symlink dir");
+
+        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        assert_eq!(
+            entries.len(),
+            1,
+            "symlinked file is included, but symlinked directory is skipped"
+        );
+        assert!(entries[0]
+            .as_ref()
+            .unwrap()
+            .source_path
+            .ends_with("symlinked.JPG"));
+    }
+
+    #[test]
+    fn import_warms_the_list_thumbnail_cache_in_the_background() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // Distinct content (the plain helper writes identical bytes for every
+        // name, which the planner would correctly dedupe as a duplicate).
+        write_jpeg_seeded(source_dir.path(), "DJI_0001.JPG", 1);
+        write_jpeg_seeded(source_dir.path(), "DJI_0002.JPG", 2);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 2);
+
+        // The warm-up runs on a detached thread, so the cache is awaited
+        // rather than assumed present the moment the import returns.
+        let thumbs = library.path().join(".thumbs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let count = fs::read_dir(&thumbs).map(Iterator::count).unwrap_or(0);
+            if count == 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the background warm-up wrote {count} of 2 thumbnails"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn warm_imported_thumbnails_caches_every_destination() {
+        let cache = tempfile::tempdir().expect("cache");
+        let first = tempfile::tempdir().expect("first");
+        let second = tempfile::tempdir().expect("second");
+        let a = write_jpeg_seeded(first.path(), "a.JPG", 1);
+        let b = write_jpeg_seeded(second.path(), "b.JPG", 2);
+
+        warm_imported_thumbnails(vec![a, b], cache.path().to_path_buf());
+
+        assert_eq!(
+            fs::read_dir(cache.path()).expect("cache dir").count(),
+            2,
+            "one cached thumbnail per warmed destination"
+        );
     }
 
     #[test]

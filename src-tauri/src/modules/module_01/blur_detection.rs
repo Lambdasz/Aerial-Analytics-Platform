@@ -289,30 +289,40 @@ pub(crate) struct SessionBlurStats {
 /// [`classify_blur`] for why the candidate must be excluded from its own
 /// baseline.
 ///
-/// One running sum and sum-of-squares over `scores` gives every element's
-/// leave-one-out mean/variance algebraically in O(1) each, so the whole
-/// function is O(n) — unlike recomputing a fresh mean/variance over a
-/// freshly collected "every other element" slice per index, which is
-/// O(n²). That used to cost ~368ms for a 3000-score session in a debug
-/// build of [`super::flight_session::reclassify_session_blur`], run under
-/// its write lock on every import.
+/// One running sum and sum-of-squares over *shifted* scores (each score
+/// minus the overall mean) gives every element's leave-one-out mean/variance
+/// algebraically in O(1) each, so the whole function is O(n) — unlike
+/// recomputing a fresh mean/variance over a freshly collected "every other
+/// element" slice per index, which is O(n²). That used to cost ~368ms for a
+/// 3000-score session in a debug build of
+/// [`super::flight_session::reclassify_session_blur`], run under its write
+/// lock on every import.
 ///
-/// The sum-of-squares variance formula here is less numerically stable
-/// than a two-pass or Welford computation for very large or
-/// tightly-clustered score sets (hence the `.max(0.0)` floor against
-/// catastrophic-cancellation noise below); session sizes in practice are
-/// small enough that this hasn't been a problem — switch to Welford if it
-/// ever is.
+/// Shifting keeps the summed values near zero instead of near the scores'
+/// own (potentially large) magnitude, which avoids the catastrophic
+/// cancellation an unshifted `sum_sq/n - mean²` suffers when scores are
+/// large and mutually close (e.g. a session whose scores cluster around
+/// 50,000): subtracting two large, nearly-equal numbers there left behind
+/// rounding noise instead of the true (near-zero) spread, and
+/// [`classify_blur`] dividing by that noise could turn a harmless
+/// difference into a spurious z-score. The `.max(0.0)` below is a residual
+/// safety net against whatever floating-point noise still slips through.
 ///
 /// # Purity
 ///
 /// Pure, total (never fails).
 pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
-    let (count, sum, sum_sq) = scores
-        .iter()
-        .fold((0f64, 0f64, 0f64), |(n, sum, sum_sq), score| {
-            (n + 1.0, sum + score, sum_sq + score * score)
-        });
+    if scores.is_empty() {
+        return Vec::new();
+    }
+    let shift = scores.iter().sum::<f64>() / scores.len() as f64;
+    let (count, sum_shifted, sum_sq_shifted) =
+        scores
+            .iter()
+            .fold((0f64, 0f64, 0f64), |(n, sum, sum_sq), score| {
+                let delta = score - shift;
+                (n + 1.0, sum + delta, sum_sq + delta * delta)
+            });
     scores
         .iter()
         .map(|score| {
@@ -325,10 +335,13 @@ pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
                     sample_count: 0,
                 }
             } else {
-                let mean = (sum - score) / others_count;
-                let variance = ((sum_sq - score * score) / others_count - mean * mean).max(0.0);
+                let delta = score - shift;
+                let mean_shifted = (sum_shifted - delta) / others_count;
+                let variance = ((sum_sq_shifted - delta * delta) / others_count
+                    - mean_shifted * mean_shifted)
+                    .max(0.0);
                 SessionBlurStats {
-                    mean,
+                    mean: mean_shifted + shift,
                     stddev: variance.sqrt(),
                     sample_count: others_count as usize,
                 }
@@ -358,12 +371,12 @@ pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
 /// to compare against.
 ///
 /// The stddev check is relative (`<= mean.abs() * 1e-9`), not an exact
-/// `== 0.0`: `stats`'s leave-one-out variance is computed from a running
-/// sum of squares (`sum_sq/n - mean²`), which subtracts two large,
-/// nearly-equal numbers when every score in a session is almost identical.
-/// The leftover can be tiny rounding noise rather than a real spread, and
-/// dividing by that noise turns a harmless difference into a huge z-score
-/// — exactly the outlier this fallback exists to avoid flagging.
+/// `== 0.0`: `leave_one_out_stats`'s shifted-data technique drastically
+/// reduces catastrophic-cancellation noise, but floating-point rounding can
+/// still leave a tiny nonzero stddev behind for a baseline of near-identical
+/// scores. Dividing by that leftover noise would turn a harmless difference
+/// into a huge, spurious z-score — exactly the outlier this fallback exists
+/// to avoid flagging.
 ///
 /// # Purity
 ///
@@ -735,5 +748,23 @@ mod tests {
         let large = textured_jpeg(dir.path(), "large.jpg", 2560, 1920);
         assert!(blur_score_for_copy(&exact, ImageFormat::Jpeg).is_some());
         assert!(blur_score_for_copy(&large, ImageFormat::Jpeg).is_some());
+    }
+
+    #[test]
+    fn leave_one_out_stats_is_stable_for_large_similar_scores() {
+        let scores = [50_000.0, 50_000.1, 49_999.9, 50_000.2, 49_999.8, 50_000.0];
+        let stats = leave_one_out_stats(&scores);
+        for s in stats {
+            assert!(
+                s.stddev > 0.0 && s.stddev < 1.0,
+                "stddev should be non-zero and small (~0.14), got {}",
+                s.stddev
+            );
+            assert!(
+                (s.mean - 50_000.0).abs() < 1.0,
+                "mean should be near 50,000, got {}",
+                s.mean
+            );
+        }
     }
 }
