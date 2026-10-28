@@ -19,15 +19,16 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      <Navbar className="app-shell__navbar">
-        <Navbar.Group>
-          <Navbar.Heading>Aerial Analytics Platform</Navbar.Heading>
-        </Navbar.Group>
+      <Navbar className="app-shell_navbar">
+        <div className="app-shell_navbar-brand">
+          <span className="app-shell_navbar-bold">Aerial</span>
+          <span>Analytics Platform</span>
+        </div>
       </Navbar>
 
-      <div className="app-shell__body">
+      <div className="app-shell_body">
         <Sidebar activeModuleId={activeModuleId} onSelectModule={setActiveModuleId} />
-        <main className="app-shell__content">
+        <main className="app-shell_content">
           <ActivePage />
         </main>
       </div>
