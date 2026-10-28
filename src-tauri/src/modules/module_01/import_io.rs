@@ -78,16 +78,18 @@ use crate::models::Image;
 use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
+use super::blur_detection;
 use super::error::SessionError;
 use super::flight_session::{
     get_image, get_session, image_from_metadata, insert_images_and_recalculate,
-    known_hashes_for_project, ExistingContent,
+    known_hashes_for_project, reclassify_session_blur, ExistingContent,
 };
 use super::image_importer::{
     classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
     NameFolding,
 };
 use super::metadata_extractor::{extract_metadata, read_dng, to_plugin_metadata};
+use super::thumbnail;
 
 /// Read/write chunk size for hashing and copying.
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -153,6 +155,143 @@ pub(crate) fn session_images_dir(
         .join("images")
 }
 
+/// True when `path` is a file the app itself placed under
+/// `<library_root>/projects`.
+///
+/// Both sides are resolved before comparing: a library root that reaches the
+/// file through a symlink (macOS temp folders do) must not make an
+/// app-owned copy look like the user's original file.
+///
+/// # Purity
+///
+/// Impure — canonicalizing touches the file system.
+pub(crate) fn is_library_copy(library_root: &Path, path: &Path) -> bool {
+    let projects = library_root.join("projects");
+    let resolved_projects = projects.canonicalize().unwrap_or_else(|_| projects.clone());
+    if let Ok(resolved) = path.canonicalize() {
+        return resolved.starts_with(&resolved_projects);
+    }
+    // The file may already be gone: fall back to text, accepting both the
+    // resolved and the unresolved form of the library.
+    path.starts_with(&projects) || path.starts_with(&resolved_projects)
+}
+
+/// Returns the file name of a stored image, for suffix-named relocations.
+fn stored_file_name(path: &Path) -> Result<String, SessionError> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| SessionError::Storage(format!("'{}' has no file name", path.display())))
+}
+
+/// Moves one stored image file into `dest_dir`, under the first free
+/// `<name> (n)` suffix.
+///
+/// Used when an image moves to another session: the row may only be updated
+/// to the returned path, otherwise deleting the old session could remove a
+/// file the new session points at. Rescues nothing — a failed move is
+/// reported, never half-done ([`move_no_clobber`] undoes partial moves).
+///
+/// # Purity
+///
+/// Impure — moves a file.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when the destination folder cannot be created or
+/// no suffix could be claimed.
+pub(crate) fn relocate_image_file(from: &Path, dest_dir: &Path) -> Result<PathBuf, SessionError> {
+    let name = stored_file_name(from)?;
+    fs::create_dir_all(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create '{}': {err}", dest_dir.display()))
+    })?;
+    for suffix in 1..=MAX_SUFFIX {
+        let dest = dest_dir.join(suffixed_name(&name, suffix));
+        match move_no_clobber(from, &dest) {
+            Ok(()) => return Ok(dest),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(SessionError::Storage(format!(
+                    "could not move '{name}': {err}"
+                )))
+            }
+        }
+    }
+    Err(SessionError::Storage(format!(
+        "every name was taken for '{name}'"
+    )))
+}
+
+/// Copies one stored image file into `dest_dir`, under the first free
+/// `<name> (n)` suffix.
+///
+/// Byte-for-byte: hashes are not recomputed, because the source is already
+/// verified library content. A failed copy leaves nothing behind — the
+/// staging file is unpublished.
+///
+/// # Purity
+///
+/// Impure — copies a file.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when the destination folder cannot be created,
+/// the source cannot be read, or no suffix could be claimed.
+pub(crate) fn copy_image_file(from: &Path, dest_dir: &Path) -> Result<PathBuf, SessionError> {
+    let name = stored_file_name(from)?;
+    fs::create_dir_all(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create '{}': {err}", dest_dir.display()))
+    })?;
+    let mut temp = NamedTempFile::new_in(dest_dir).map_err(|err| {
+        SessionError::Storage(format!("could not create a temporary file: {err}"))
+    })?;
+    let mut source = fs::File::open(from)
+        .map_err(|err| SessionError::Storage(format!("could not open '{name}': {err}")))?;
+    io::copy(&mut source, &mut temp)
+        .map_err(|err| SessionError::Storage(format!("could not copy '{name}': {err}")))?;
+    temp.as_file()
+        .sync_all()
+        .map_err(|err| SessionError::Storage(format!("could not sync '{name}': {err}")))?;
+    let mut staged = temp.into_temp_path();
+    for suffix in 1..=MAX_SUFFIX {
+        let dest = dest_dir.join(suffixed_name(&name, suffix));
+        match staged.persist_noclobber(&dest) {
+            Ok(_) => return Ok(dest),
+            Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                staged = err.path;
+            }
+            Err(err) => {
+                return Err(SessionError::Storage(format!(
+                    "could not publish '{name}': {}",
+                    err.error
+                )))
+            }
+        }
+    }
+    Err(SessionError::Storage(format!(
+        "every name was taken for '{name}'"
+    )))
+}
+
+/// Deletes one stored image file from the library.
+///
+/// A failed direct removal rescues the file into a fresh `.trash` batch
+/// instead (the user can still undo); `Err(())` only when even that fails,
+/// which the caller reports as copies left on disk.
+///
+/// # Purity
+///
+/// Impure — removes or moves a file.
+pub(crate) fn discard_image_file(library_root: &Path, path: &Path) -> Result<(), ()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => {
+            let batch = new_trash_batch(library_root);
+            trash_orphan(path, library_root, &batch).map_err(|_| ())
+        }
+    }
+}
+
 /// Runs one copy-on-import over picked files or a picked folder.
 ///
 /// # Arguments
@@ -161,12 +300,14 @@ pub(crate) fn session_images_dir(
 ///   query and for the insert transaction; staging and recording run with the
 ///   lock released.
 /// * `library_root` — app-owned image library. The session folder below it is
-///   created on demand.
+///   created on demand, and each copy's list thumbnail is warmed on a
+///   background thread into its `.thumbs` cache.
 /// * `session_id` — destination session; must exist.
 /// * `sources` — absolute paths of picked files, or folders when
 ///   `from_folder` is `true`.
-/// * `from_folder` — scan each source folder (non-recursive) for
-///   `.jpg`/`.jpeg`/`.dng` instead of treating sources as files.
+/// * `from_folder` — scan each source folder (recursively, into
+///   subdirectories) for `.jpg`/`.jpeg`/`.dng` instead of treating sources as
+///   files.
 /// * `on_progress` — called after each copied file with
 ///   `(done, total, destination_path)`.
 ///
@@ -230,8 +371,13 @@ pub(crate) fn run_import(
     all_rejected.append(&mut report.rejected);
     report.rejected = all_rejected;
 
+    // Thumbnails for the copies land in the same cache the list view reads,
+    // so the first render of the session is a few-kilobyte read per file.
+    let thumbs_dir = library_root.join(".thumbs");
+
     import_planned(
         db,
+        &thumbs_dir,
         &dest_dir,
         session_id,
         &request,
@@ -245,9 +391,12 @@ pub(crate) fn run_import(
 /// Splits the result back into [`ImportReport`] fields: image ids become the
 /// persisted ids (not candidate ids), persist and record failures become
 /// `rejected`, a race-detected duplicate becomes a `duplicates` entry, and
-/// unpaired DNGs are collected in `not_analysis_ready`.
+/// unpaired DNGs are collected in `not_analysis_ready`. After a successful
+/// batch, the copies' list thumbnails are warmed into `thumbs_dir` on a
+/// detached thread, so decoding them never holds the import open.
 fn import_planned(
     db: &Mutex<Connection>,
+    thumbs_dir: &Path,
     dest_dir: &Path,
     session_id: Uuid,
     request: &ImportRequest,
@@ -295,6 +444,7 @@ fn import_planned(
     let mut done = 0usize;
     let mut imported_ids = Vec::new();
     let mut not_analysis_ready = Vec::new();
+    let mut dest_paths: Vec<PathBuf> = Vec::new();
     let mut state = RunState {
         image_ids: std::collections::HashMap::new(),
         rejected: std::mem::take(&mut report.rejected),
@@ -332,10 +482,27 @@ fn import_planned(
                 if imported.not_analysis_ready {
                     not_analysis_ready.push(imported.image_id.clone());
                 }
+                dest_paths.push(PathBuf::from(&imported.dest));
             }
         }
         done += rejected_added;
         done += duplicates_added;
+    }
+
+    // Re-derive every `is_blurry` flag in the session from the final score
+    // set, so the result does not depend on import order or on how many
+    // separate import runs it took to assemble the session. A failure here
+    // is logged, not propagated: the import itself already succeeded, and
+    // every row still has its `blur_score` even if this pass could not run.
+    match lock_db(db) {
+        Ok(conn) => {
+            if let Err(err) =
+                reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
+            {
+                eprintln!("warning: could not reclassify session blur flags: {err}");
+            }
+        }
+        Err(_) => eprintln!("warning: could not reclassify session blur flags: db lock"),
     }
 
     let RunState {
@@ -349,7 +516,26 @@ fn import_planned(
     report.rejected = rejected;
     report.duplicates = duplicates;
     remap_duplicate_ids(&mut report.duplicates, &image_ids);
+
+    // Warm the list thumbnails off the import path: the copies exist, and the
+    // first render of the session should be a cache read, but decoding them
+    // must not hold the import open (a full-frame decode on the last file
+    // otherwise stalls the final progress step). Detached and best-effort —
+    // a failure here only means the list builds the thumbnail lazily.
+    let thumbs_dir = thumbs_dir.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || warm_imported_thumbnails(dest_paths, thumbs_dir));
     Ok(report)
+}
+
+/// Warms every destination's thumbnail into `thumbs_dir`, best-effort.
+///
+/// Runs on the detached thread [`import_planned`] starts after a successful
+/// batch. Kept as its own function so the worker can be tested without the
+/// scheduling race of an actual thread.
+fn warm_imported_thumbnails(dest_paths: Vec<PathBuf>, thumbs_dir: PathBuf) {
+    for dest in &dest_paths {
+        thumbnail::warm_thumbnail(dest, &thumbs_dir);
+    }
 }
 
 /// One copied, recorded file.
@@ -444,11 +630,14 @@ impl ImportScope<'_> {
         let image = build_image(
             image_id,
             self.session_id,
-            &copy,
-            candidate,
+            StagedFile {
+                copy: &copy,
+                candidate,
+            },
             &metadata,
             None,
             ready,
+            format,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -564,20 +753,26 @@ impl ImportScope<'_> {
             build_image(
                 jpeg_id,
                 self.session_id,
-                &jpeg_copy,
-                jpeg,
+                StagedFile {
+                    copy: &jpeg_copy,
+                    candidate: jpeg,
+                },
                 &jpeg_metadata,
                 Some(dng_id),
                 true,
+                ImageFormat::Jpeg,
             ),
             build_image(
                 dng_id,
                 self.session_id,
-                &dng_copy,
-                dng,
+                StagedFile {
+                    copy: &dng_copy,
+                    candidate: dng,
+                },
                 &dng_metadata,
                 Some(jpeg_id),
                 true,
+                ImageFormat::Dng,
             ),
         ];
         match record_images(self.db, self.session_id, &images) {
@@ -641,11 +836,11 @@ impl ImportScope<'_> {
         let image = build_image(
             image_id,
             self.session_id,
-            copy,
-            candidate,
+            StagedFile { copy, candidate },
             &metadata,
             None,
             true,
+            ImageFormat::Jpeg,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -1063,27 +1258,45 @@ fn fill_missing(dst: &mut ImageMetadata, src: &ImageMetadata) {
     fill(&mut dst.flight_z_speed, &src.flight_z_speed);
 }
 
-/// Builds the persisted record for one copied file.
+/// The copy and its originating candidate, bundled since [`build_image`]
+/// always needs both together — folding them into one parameter keeps that
+/// function's arg count under clippy's `too_many_arguments` threshold
+/// without an `#[allow]`.
+struct StagedFile<'a> {
+    copy: &'a CopiedFile,
+    candidate: &'a ImportCandidate,
+}
+
+/// Builds the persisted record for one copied file, including its blur
+/// score.
+///
+/// Scoring happens here, not at each call site: `is_blurry` is never set by
+/// this function (it starts `None`, same as [`image_from_metadata`] leaves
+/// it, and is filled in later by the session-wide
+/// [`super::flight_session::reclassify_session_blur`] pass) — so there is
+/// only ever one blur-related field for a caller to populate, not two that
+/// could drift out of sync.
 fn build_image(
     image_id: Uuid,
     session_id: Uuid,
-    copy: &CopiedFile,
-    candidate: &ImportCandidate,
+    staged: StagedFile<'_>,
     metadata: &ImageMetadata,
     raw_sibling_id: Option<Uuid>,
     analysis_ready: bool,
+    format: ImageFormat,
 ) -> Image {
     let mut image = image_from_metadata(
         image_id,
         session_id,
-        copy.dest.display().to_string(),
+        staged.copy.dest.display().to_string(),
         metadata,
     );
-    image.source_path = Some(candidate.source_path.clone());
-    image.content_hash = Some(copy.content_hash.clone());
-    image.file_size = Some(copy.file_size);
+    image.source_path = Some(staged.candidate.source_path.clone());
+    image.content_hash = Some(staged.copy.content_hash.clone());
+    image.file_size = Some(staged.copy.file_size);
     image.raw_sibling_id = raw_sibling_id;
     image.analysis_ready = Some(analysis_ready);
+    image.blur_score = blur_detection::blur_score_for_copy(&staged.copy.dest, format);
     image
 }
 
@@ -1618,13 +1831,11 @@ fn scan_sources(
     let mut files: Vec<PathBuf> = Vec::new();
     if from_folder {
         for source in sources {
-            match fs::read_dir(source) {
-                Ok(dir) => {
-                    let mut here: Vec<PathBuf> = dir
-                        .filter_map(Result::ok)
-                        .map(|entry| entry.path())
-                        .filter(|path| path.is_file() && is_import_extension(path))
-                        .collect();
+            let mut here: Vec<PathBuf> = Vec::new();
+            match collect_image_files(Path::new(source), 1, &mut here) {
+                Ok(()) => {
+                    // One stable order across every level, so the same folder
+                    // imports in the same sequence every time.
                     here.sort();
                     files.extend(here);
                 }
@@ -1666,10 +1877,90 @@ fn scan_sources(
         }
     }
 
-    for path in files {
-        entries.push(hash_file(&path));
-    }
+    entries.extend(hash_all(files));
     entries
+}
+
+/// How many files are hashed at once during a scan.
+///
+/// Hashing is pure (no database, no writes), so it parallelizes safely; the
+/// bound keeps a slow SD-card reader from thrashing on too many interleaved
+/// reads, and four open files is far below the 256-descriptor concern.
+const SCAN_WORKERS: usize = 4;
+
+/// Hashes every file, up to [`SCAN_WORKERS`] at a time, in input order.
+///
+/// Order is part of the contract: the planner and every test expect results
+/// in the same order as `files`.
+fn hash_all(files: Vec<PathBuf>) -> Vec<Result<ImportCandidate, RejectedFile>> {
+    if files.len() < 2 {
+        return files.into_iter().map(|path| hash_file(&path)).collect();
+    }
+    let workers = SCAN_WORKERS.min(files.len());
+    let slots: Mutex<Vec<Option<Result<ImportCandidate, RejectedFile>>>> =
+        Mutex::new((0..files.len()).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for worker in 0..workers {
+            let files = &files;
+            let slots = &slots;
+            scope.spawn(move || {
+                let mut index = worker;
+                while index < files.len() {
+                    let outcome = hash_file(&files[index]);
+                    slots.lock().expect("scan slots are never poisoned")[index] = Some(outcome);
+                    index += workers;
+                }
+            });
+        }
+    });
+    slots
+        .into_inner()
+        .expect("scan slots are never poisoned")
+        .into_iter()
+        .map(|slot| slot.expect("every scanned file has a result"))
+        .collect()
+}
+
+/// The deepest subfolder level a folder import walks.
+///
+/// Camera cards nest a couple of levels at most (`DCIM/100MEDIA`); the cap
+/// keeps picking a huge parent from walking the whole disk, and bounds any
+/// symlink cycle.
+const MAX_FOLDER_DEPTH: usize = 6;
+
+/// Collects importable image files under `dir`, recursively walking subfolders up to 6 levels.
+///
+/// Hidden entries (names starting with `.`, which covers `.trash`) and symlinked
+/// directories are not traversed (preventing loops and runaway traversal). Symlinked
+/// image files pointing to regular files are accepted. Unreadable subfolders are skipped
+/// without aborting.
+fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if depth > MAX_FOLDER_DEPTH {
+        return Ok(());
+    }
+    let entries = fs::read_dir(dir)?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            let _ = collect_image_files(&path, depth + 1, files);
+        } else if ft.is_symlink() {
+            // Include symlinked image files without following symlinked directories
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_file() && is_import_extension(&path) {
+                    files.push(path);
+                }
+            }
+        } else if ft.is_file() && is_import_extension(&path) {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// A path's file name, or an empty string when it has none.
@@ -1862,6 +2153,19 @@ mod tests {
         path
     }
 
+    /// A synthetic JPEG whose long edge is `size` pixels, for tests that
+    /// need to clear (or deliberately stay under) the blur-scoring cap.
+    fn write_jpeg_sized(dir: &Path, name: &str, size: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(size, size, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 64])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
     fn write_jpeg_seeded(dir: &Path, name: &str, seed: u8) -> PathBuf {
         let path = dir.join(name);
         let image = image::RgbImage::from_fn(8, 8, |x, y| {
@@ -1892,12 +2196,98 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
     fn write_dng(dir: &Path, name: &str, width: u32, height: u32) -> PathBuf {
         let path = dir.join(name);
         fs::write(&path, tiff_with_dimensions(width, height)).expect("write synthetic dng");
+        path
+    }
+
+    /// A high-frequency checkerboard JPEG, `size` pixels square — scores as
+    /// sharp. `phase` shifts the tile pattern, so otherwise-identical
+    /// checkerboards get distinct file bytes (and therefore distinct
+    /// content hashes) instead of colliding as duplicates on re-import.
+    fn write_checkerboard_jpeg_phased(dir: &Path, name: &str, size: u32, phase: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(size, size, |x, y| {
+            let v = if ((x + phase) / 4 + y / 4).is_multiple_of(2) {
+                0u8
+            } else {
+                255u8
+            };
+            image::Rgb([v, v, v])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
+    /// [`write_checkerboard_jpeg_phased`] with no phase shift.
+    fn write_checkerboard_jpeg(dir: &Path, name: &str, size: u32) -> PathBuf {
+        write_checkerboard_jpeg_phased(dir, name, size, 0)
+    }
+
+    /// A flat, single-colour JPEG, `size` pixels square — zero Laplacian
+    /// response everywhere, so it scores as blurry relative to any textured
+    /// sibling.
+    fn write_flat_jpeg(dir: &Path, name: &str, size: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_pixel(size, size, image::Rgb([128, 128, 128]));
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
+    /// Encodes `image` as JPEG bytes in memory (no file), for embedding as a
+    /// DNG's preview.
+    fn encode_jpeg_bytes(image: &image::RgbImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90);
+        encoder.encode_image(image).expect("encode preview jpeg");
+        bytes
+    }
+
+    /// A minimal single-IFD TIFF/DNG whose `PreviewImageStart`/
+    /// `PreviewImageLength` tags (50981/50982) point at a real, decodable
+    /// embedded JPEG — unlike [`tiff_with_dimensions`]/[`write_dng`] above,
+    /// which carry no preview at all, this is enough for
+    /// `dng_preview::read_dng_preview` to locate the bytes *and* for
+    /// `image::load_from_memory` to decode them, so `blur_score_for_copy`
+    /// can score it.
+    fn write_dng_with_jpeg_preview(dir: &Path, name: &str, jpeg: &[u8]) -> PathBuf {
+        const PREVIEW_IMAGE_START: u16 = 50981;
+        const PREVIEW_IMAGE_LENGTH: u16 = 50982;
+        let path = dir.join(name);
+
+        let header_len = 8u32;
+        let entry_count = 2u16;
+        let ifd_len = 2 + u32::from(entry_count) * 12 + 4;
+        let jpeg_offset = header_len + ifd_len;
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00]); // "II", TIFF magic 42
+        bytes.extend_from_slice(&header_len.to_le_bytes()); // IFD0 offset
+        bytes.extend_from_slice(&entry_count.to_le_bytes());
+        // PreviewImageStart: LONG, count 1, value = jpeg_offset
+        bytes.extend_from_slice(&PREVIEW_IMAGE_START.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&jpeg_offset.to_le_bytes());
+        // PreviewImageLength: LONG, count 1, value = jpeg.len()
+        bytes.extend_from_slice(&PREVIEW_IMAGE_LENGTH.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(jpeg.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // next IFD offset: none
+        bytes.extend_from_slice(jpeg);
+
+        fs::write(&path, &bytes).expect("write dng with preview");
         path
     }
 
@@ -1970,6 +2360,189 @@ mod tests {
         // The whole point: the original can disappear.
         fs::remove_dir_all(source_dir.path()).expect("remove source");
         assert!(extract_metadata(std::path::Path::new(&stored.file_path)).is_ok());
+    }
+
+    #[test]
+    fn import_persists_a_blur_score() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // At the scoring cap's long edge, so it clears meets_scoring_size
+        // and is actually scored (not left unscored for being too small).
+        let source = write_jpeg_sized(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].blur_score.is_some(),
+            "a decodable JPEG at or above the scoring cap should get a blur score"
+        );
+    }
+
+    #[test]
+    fn small_source_image_is_not_scored_to_avoid_upscaling() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // write_jpeg's 8x8 source is far below the scoring cap.
+        let source = write_jpeg(source_dir.path(), "DJI_0002.JPG");
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].blur_score.is_none(),
+            "upscaling a tiny source would score it falsely blurry"
+        );
+    }
+
+    #[test]
+    fn session_import_flags_one_clear_outlier_among_sharp_images() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let mut source_paths: Vec<PathBuf> = (0..5)
+            .map(|n| {
+                write_checkerboard_jpeg_phased(
+                    source_dir.path(),
+                    &format!("sharp{n}.jpg"),
+                    blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                    n,
+                )
+            })
+            .collect();
+        source_paths.push(write_flat_jpeg(
+            source_dir.path(),
+            "blurry.jpg",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        ));
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&source_paths),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 6);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 6);
+
+        let blurry = images
+            .iter()
+            .find(|img| img.file_path.ends_with("blurry.jpg"))
+            .expect("blurry row");
+        assert_eq!(
+            blurry.is_blurry,
+            Some(true),
+            "a flat image among sharp checkerboards is a clear relative outlier: {blurry:?}"
+        );
+        for sharp in images
+            .iter()
+            .filter(|img| !img.file_path.ends_with("blurry.jpg"))
+        {
+            assert_eq!(
+                sharp.is_blurry,
+                Some(false),
+                "a sharp checkerboard among its own kind should not be flagged: {sharp:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_import_scores_both_the_jpeg_and_the_dng_preview() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_checkerboard_jpeg(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+        let preview = encode_jpeg_bytes(&image::RgbImage::from_fn(
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            |x, y| {
+                let v = if (x / 4 + y / 4).is_multiple_of(2) {
+                    0u8
+                } else {
+                    255u8
+                };
+                image::Rgb([v, v, v])
+            },
+        ));
+        write_dng_with_jpeg_preview(source_dir.path(), "DJI_0001.DNG", &preview);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("pair import");
+        assert_eq!(report.imported_image_ids.len(), 2, "{report:?}");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        let jpeg_row = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".JPG"))
+            .expect("jpeg row");
+        let dng_row = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".DNG"))
+            .expect("dng row");
+        assert!(
+            jpeg_row.blur_score.is_some(),
+            "the jpeg half should be scored: {jpeg_row:?}"
+        );
+        assert!(
+            dng_row.blur_score.is_some(),
+            "the dng's embedded preview should be decodable and scored: {dng_row:?}"
+        );
+        assert_eq!(
+            dng_row.is_blurry, jpeg_row.is_blurry,
+            "a paired dng mirrors its jpeg's flag rather than being classified on its own score"
+        );
     }
 
     #[test]
@@ -2175,6 +2748,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         };
         {
             let conn = db.lock().expect("db lock");
@@ -2684,11 +3259,12 @@ mod tests {
             &project_id.to_string(),
             &session_id.to_string(),
         );
-        let leftover: Vec<String> = fs::read_dir(&dest_dir)
+        let mut leftover: Vec<String> = fs::read_dir(&dest_dir)
             .expect("session folder")
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
+        leftover.sort();
         assert_eq!(
             leftover,
             vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],
@@ -2824,6 +3400,173 @@ mod tests {
         let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn folder_scan_walks_subfolders() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        write_jpeg(source_dir.path(), "top.JPG");
+        let nested = source_dir.path().join("DCIM").join("100MEDIA");
+        fs::create_dir_all(&nested).expect("nested");
+        write_jpeg(&nested, "DJI_0001.JPG");
+        write_dng(&nested, "DJI_0001.DNG", 10, 10);
+        fs::write(nested.join("notes.txt"), b"ignore me").expect("txt");
+        // Camera-style cards drop a `.trash` or other hidden dir; skip it.
+        let hidden = source_dir.path().join(".trash");
+        fs::create_dir_all(&hidden).expect("hidden");
+        write_jpeg(&hidden, "old.JPG");
+
+        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        assert_eq!(
+            entries.len(),
+            3,
+            "the top-level image and the nested pair all import"
+        );
+        assert!(entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn nested_folder_with_duplicate_file_names_imports_with_suffixes() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let sub1 = source_dir.path().join("sub1");
+        let sub2 = source_dir.path().join("sub2");
+        fs::create_dir_all(&sub1).expect("sub1");
+        fs::create_dir_all(&sub2).expect("sub2");
+
+        // Same file name in different subfolders, but distinct content seeds so
+        // they are not rejected as content duplicates.
+        write_jpeg_seeded(&sub1, "DJI_0001.JPG", 1);
+        write_jpeg_seeded(&sub2, "DJI_0001.JPG", 2);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        assert_eq!(report.imported_image_ids.len(), 2, "both files import");
+        assert!(
+            report.duplicates.is_empty(),
+            "distinct bytes are not duplicates"
+        );
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        let mut on_disk: Vec<String> = fs::read_dir(&dest_dir)
+            .expect("session folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        assert_eq!(
+            on_disk,
+            vec!["DJI_0001 (2).JPG".to_string(), "DJI_0001.JPG".to_string()],
+            "the second same-named file gets a suffix: {on_disk:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_scan_includes_symlinked_image_files_and_skips_symlinked_directories() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let outside_dir = tempfile::tempdir().expect("outside dir");
+
+        // A real file outside, symlinked into source_dir
+        let real_file = write_jpeg(outside_dir.path(), "real.JPG");
+        let symlinked_file = source_dir.path().join("symlinked.JPG");
+        std::os::unix::fs::symlink(&real_file, &symlinked_file).expect("symlink file");
+
+        // A directory outside, symlinked into source_dir (must not be traversed)
+        let outside_sub = outside_dir.path().join("sub");
+        fs::create_dir_all(&outside_sub).expect("outside sub");
+        write_jpeg(&outside_sub, "should_be_skipped.JPG");
+        let symlinked_dir = source_dir.path().join("symdir");
+        std::os::unix::fs::symlink(&outside_sub, &symlinked_dir).expect("symlink dir");
+
+        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        assert_eq!(
+            entries.len(),
+            1,
+            "symlinked file is included, but symlinked directory is skipped"
+        );
+        assert!(entries[0]
+            .as_ref()
+            .unwrap()
+            .source_path
+            .ends_with("symlinked.JPG"));
+    }
+
+    #[test]
+    fn import_warms_the_list_thumbnail_cache_in_the_background() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // Distinct content (the plain helper writes identical bytes for every
+        // name, which the planner would correctly dedupe as a duplicate).
+        write_jpeg_seeded(source_dir.path(), "DJI_0001.JPG", 1);
+        write_jpeg_seeded(source_dir.path(), "DJI_0002.JPG", 2);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 2);
+
+        // The warm-up runs on a detached thread, so the cache is awaited
+        // rather than assumed present the moment the import returns.
+        let thumbs = library.path().join(".thumbs");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let count = fs::read_dir(&thumbs).map(Iterator::count).unwrap_or(0);
+            if count == 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the background warm-up wrote {count} of 2 thumbnails"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn warm_imported_thumbnails_caches_every_destination() {
+        let cache = tempfile::tempdir().expect("cache");
+        let first = tempfile::tempdir().expect("first");
+        let second = tempfile::tempdir().expect("second");
+        let a = write_jpeg_seeded(first.path(), "a.JPG", 1);
+        let b = write_jpeg_seeded(second.path(), "b.JPG", 2);
+
+        warm_imported_thumbnails(vec![a, b], cache.path().to_path_buf());
+
+        assert_eq!(
+            fs::read_dir(cache.path()).expect("cache dir").count(),
+            2,
+            "one cached thumbnail per warmed destination"
+        );
     }
 
     #[test]
@@ -3281,6 +4024,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: None,
+            blur_score: None,
+            is_blurry: None,
         };
         insert_image(&conn, &legacy).expect("legacy row");
         assert!(matches!(

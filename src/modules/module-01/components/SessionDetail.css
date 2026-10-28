@@ -474,6 +474,150 @@
   }
 }
 
+.m1-sd-sort {
+  display: flex;
+  gap: 12px;
+}
+
+.m1-meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m1-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--m1-border);
+  border-radius: var(--m1-radius-tile);
+  background: var(--m1-card-bg);
+}
+
+.m1-meta__thumb {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--m1-surface-muted);
+}
+
+.m1-meta__thumb--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--m1-text-muted);
+}
+
+.m1-meta__body {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Hand-rolled row menu: Blueprint's Popover does not anchor in the Tauri
+   webview, so the dropdown is positioned against this anchor instead
+   (same approach as the project picker's popover). */
+.m1-meta__menu-anchor {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.m1-meta__more {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--m1-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.m1-meta__more:hover,
+.m1-meta__more[aria-expanded="true"] {
+  border-color: var(--m1-border);
+  background: var(--m1-surface-muted);
+  color: var(--m1-text-main);
+}
+
+.m1-meta__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--m1-border);
+  border-radius: 12px;
+  background: var(--m1-card-bg);
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.16);
+}
+
+.m1-meta__menu-item {
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--m1-text-main);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.m1-meta__menu-item:hover:not(:disabled) {
+  background: var(--m1-surface-muted);
+}
+
+.m1-meta__menu-item:disabled {
+  color: var(--m1-text-muted);
+  cursor: default;
+}
+
+.m1-meta__name {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--m1-blue-primary);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m1-meta__name:hover {
+  color: var(--m1-blue-hover);
+  text-decoration: underline;
+}
+
+.m1-meta__line {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--m1-text-muted);
+}
+
 .m1-sd-note {
   margin: 0;
   padding: 10px 14px;
