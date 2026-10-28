@@ -497,7 +497,7 @@ fn import_planned(
     match lock_db(db) {
         Ok(conn) => {
             if let Err(err) =
-                reclassify_session_blur(&conn, session_id, blur_detection::classify_against_session)
+                reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {
                 eprintln!("warning: could not reclassify session blur flags: {err}");
             }
@@ -2198,6 +2198,90 @@ mod tests {
         path
     }
 
+    /// A high-frequency checkerboard JPEG, `size` pixels square — scores as
+    /// sharp. `phase` shifts the tile pattern, so otherwise-identical
+    /// checkerboards get distinct file bytes (and therefore distinct
+    /// content hashes) instead of colliding as duplicates on re-import.
+    fn write_checkerboard_jpeg_phased(dir: &Path, name: &str, size: u32, phase: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_fn(size, size, |x, y| {
+            let v = if ((x + phase) / 4 + y / 4).is_multiple_of(2) {
+                0u8
+            } else {
+                255u8
+            };
+            image::Rgb([v, v, v])
+        });
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
+    /// [`write_checkerboard_jpeg_phased`] with no phase shift.
+    fn write_checkerboard_jpeg(dir: &Path, name: &str, size: u32) -> PathBuf {
+        write_checkerboard_jpeg_phased(dir, name, size, 0)
+    }
+
+    /// A flat, single-colour JPEG, `size` pixels square — zero Laplacian
+    /// response everywhere, so it scores as blurry relative to any textured
+    /// sibling.
+    fn write_flat_jpeg(dir: &Path, name: &str, size: u32) -> PathBuf {
+        let path = dir.join(name);
+        let image = image::RgbImage::from_pixel(size, size, image::Rgb([128, 128, 128]));
+        let file = std::fs::File::create(&path).expect("create jpeg");
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder.encode_image(&image).expect("encode synthetic jpeg");
+        path
+    }
+
+    /// Encodes `image` as JPEG bytes in memory (no file), for embedding as a
+    /// DNG's preview.
+    fn encode_jpeg_bytes(image: &image::RgbImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90);
+        encoder.encode_image(image).expect("encode preview jpeg");
+        bytes
+    }
+
+    /// A minimal single-IFD TIFF/DNG whose `PreviewImageStart`/
+    /// `PreviewImageLength` tags (50981/50982) point at a real, decodable
+    /// embedded JPEG — unlike [`tiff_with_dimensions`]/[`write_dng`] above,
+    /// which carry no preview at all, this is enough for
+    /// `dng_preview::read_dng_preview` to locate the bytes *and* for
+    /// `image::load_from_memory` to decode them, so `blur_score_for_copy`
+    /// can score it.
+    fn write_dng_with_jpeg_preview(dir: &Path, name: &str, jpeg: &[u8]) -> PathBuf {
+        const PREVIEW_IMAGE_START: u16 = 50981;
+        const PREVIEW_IMAGE_LENGTH: u16 = 50982;
+        let path = dir.join(name);
+
+        let header_len = 8u32;
+        let entry_count = 2u16;
+        let ifd_len = 2 + u32::from(entry_count) * 12 + 4;
+        let jpeg_offset = header_len + ifd_len;
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0x49, 0x49, 0x2A, 0x00]); // "II", TIFF magic 42
+        bytes.extend_from_slice(&header_len.to_le_bytes()); // IFD0 offset
+        bytes.extend_from_slice(&entry_count.to_le_bytes());
+        // PreviewImageStart: LONG, count 1, value = jpeg_offset
+        bytes.extend_from_slice(&PREVIEW_IMAGE_START.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&jpeg_offset.to_le_bytes());
+        // PreviewImageLength: LONG, count 1, value = jpeg.len()
+        bytes.extend_from_slice(&PREVIEW_IMAGE_LENGTH.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(jpeg.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // next IFD offset: none
+        bytes.extend_from_slice(jpeg);
+
+        fs::write(&path, &bytes).expect("write dng with preview");
+        path
+    }
+
     fn test_db() -> Mutex<Connection> {
         let conn = Connection::open_in_memory().expect("in-memory db");
         init_schema(&conn).expect("schema");
@@ -2329,6 +2413,126 @@ mod tests {
         assert!(
             images[0].blur_score.is_none(),
             "upscaling a tiny source would score it falsely blurry"
+        );
+    }
+
+    #[test]
+    fn session_import_flags_one_clear_outlier_among_sharp_images() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let mut source_paths: Vec<PathBuf> = (0..5)
+            .map(|n| {
+                write_checkerboard_jpeg_phased(
+                    source_dir.path(),
+                    &format!("sharp{n}.jpg"),
+                    blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                    n,
+                )
+            })
+            .collect();
+        source_paths.push(write_flat_jpeg(
+            source_dir.path(),
+            "blurry.jpg",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        ));
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&source_paths),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 6);
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 6);
+
+        let blurry = images
+            .iter()
+            .find(|img| img.file_path.ends_with("blurry.jpg"))
+            .expect("blurry row");
+        assert_eq!(
+            blurry.is_blurry,
+            Some(true),
+            "a flat image among sharp checkerboards is a clear relative outlier: {blurry:?}"
+        );
+        for sharp in images
+            .iter()
+            .filter(|img| !img.file_path.ends_with("blurry.jpg"))
+        {
+            assert_eq!(
+                sharp.is_blurry,
+                Some(false),
+                "a sharp checkerboard among its own kind should not be flagged: {sharp:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pair_import_scores_both_the_jpeg_and_the_dng_preview() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_checkerboard_jpeg(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+        let preview = encode_jpeg_bytes(&image::RgbImage::from_fn(
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            |x, y| {
+                let v = if (x / 4 + y / 4).is_multiple_of(2) {
+                    0u8
+                } else {
+                    255u8
+                };
+                image::Rgb([v, v, v])
+            },
+        ));
+        write_dng_with_jpeg_preview(source_dir.path(), "DJI_0001.DNG", &preview);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("pair import");
+        assert_eq!(report.imported_image_ids.len(), 2, "{report:?}");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        let jpeg_row = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".JPG"))
+            .expect("jpeg row");
+        let dng_row = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".DNG"))
+            .expect("dng row");
+        assert!(
+            jpeg_row.blur_score.is_some(),
+            "the jpeg half should be scored: {jpeg_row:?}"
+        );
+        assert!(
+            dng_row.blur_score.is_some(),
+            "the dng's embedded preview should be decodable and scored: {dng_row:?}"
+        );
+        assert_eq!(
+            dng_row.is_blurry, jpeg_row.is_blurry,
+            "a paired dng mirrors its jpeg's flag rather than being classified on its own score"
         );
     }
 

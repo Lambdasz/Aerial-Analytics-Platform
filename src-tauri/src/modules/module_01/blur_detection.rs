@@ -27,8 +27,12 @@
 //! edges. But images from the same flight session share similar terrain and
 //! altitude, so comparing a score against the mean/stddev of its own
 //! session's other scores ([`classify_blur`]) is a self-calibrating
-//! baseline. [`HARD_FLOOR_BLUR_SCORE`] remains underneath as an absolute
-//! safety net for a session where every image is bad.
+//! baseline. [`HARD_FLOOR_BLUR_SCORE`] only steps in before that baseline
+//! exists (a session's first few images) — once there's enough of a
+//! baseline to compare against, the floor is not consulted, specifically so
+//! it cannot override the relative check for a low-texture-but-sharp
+//! session. See [`HARD_FLOOR_BLUR_SCORE`]'s own docs for the trade-off that
+//! accepts.
 //!
 //! # Why classification is a whole-session pass, not per-image at insert time
 //!
@@ -42,7 +46,7 @@
 //! blurry or not depending on whether it happened to be the 1st or the 11th
 //! image scored. Instead, [`super::flight_session::reclassify_session_blur`]
 //! re-derives `is_blurry` for every scored image in the session in one pass
-//! ([`classify_against_session`] is the classifier it's given), run once at
+//! ([`classify_with_stats`] is the classifier it's given), run once at
 //! the end of each import ([`super::import_io::import_planned`]). The result
 //! depends only on the session's current score set, not on how it was
 //! assembled.
@@ -59,12 +63,22 @@ use crate::models::image::ImageFormat;
 /// not scored at all: upscaling smooths away the edges the score measures.
 pub(crate) const BLUR_SCORE_LONG_EDGE_PX: u32 = 1280;
 
-/// Absolute safety net: a score below this is always classified as blurry,
-/// regardless of how it compares to its session. Catches a session where
-/// every image is bad (nothing to be relatively sharper than). Tuned
-/// against real sample flight sessions, not a generic value — aerial
-/// low-texture scenes score lower than textured ones at the same actual
-/// sharpness, so this floor must stay well below a typical sharp score.
+/// Fallback floor used only when a session has no meaningful baseline yet
+/// (fewer than [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other scored images, or a
+/// degenerate zero-stddev baseline) — see [`classify_blur`]. Once a baseline
+/// exists, this is *not* consulted: a low-texture session (farmland, open
+/// water) can have every genuine score sit below this value while being
+/// mutually consistent (no real outlier), and applying an absolute floor on
+/// top of the relative check would flag every image in exactly the session
+/// the relative design exists to get right. The trade-off this accepts: a
+/// whole session that is uniformly, catastrophically blurry (e.g. a fogged
+/// lens for an entire flight) has no internal outlier to compare against and
+/// will not be flagged once it clears the minimum sample size — a session
+/// cannot tell "uniformly blurry" from "uniformly sharp but low-texture"
+/// from score statistics alone. Not independently calibrated per format:
+/// the same floor applies to JPEG and DNG-preview scores alike. Tune against
+/// real sample flight sessions, not a generic value — this is the value
+/// below which even a few early images of any session should be flagged.
 pub(crate) const HARD_FLOOR_BLUR_SCORE: f64 = 20.0;
 
 /// How many standard deviations below its session's mean a score must fall
@@ -183,22 +197,6 @@ impl Welford {
     }
 }
 
-/// Population variance of `values`. `0.0` for an empty or single-element
-/// slice. Used for session-level score sets ([`compute_session_blur_stats`]),
-/// which are small (one entry per image, not per pixel) — unlike
-/// [`compute_blur_score`], there's no allocation worth avoiding here.
-///
-/// # Purity
-///
-/// Pure, total.
-fn variance(values: &[f64]) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
-    }
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64
-}
-
 /// Reads, decodes, and scores one imported copy, downscaling first when the
 /// source is larger than [`BLUR_SCORE_LONG_EDGE_PX`].
 ///
@@ -278,50 +276,85 @@ fn meets_scoring_size(width: u32, height: u32) -> bool {
 
 /// Mean/stddev/count of a set of blur scores, used as a session's relative
 /// baseline.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SessionBlurStats {
     pub mean: f64,
     pub stddev: f64,
     pub sample_count: usize,
 }
 
-/// Mean and population standard deviation over whatever scores are handed
-/// in.
+/// Leave-one-out baseline stats for every element of `scores`: for index
+/// `i` of the returned `Vec`, the mean/population-stddev/count of every
+/// *other* element of `scores` (`scores[i]` itself excluded) — see
+/// [`classify_blur`] for why the candidate must be excluded from its own
+/// baseline.
+///
+/// One running sum and sum-of-squares over `scores` gives every element's
+/// leave-one-out mean/variance algebraically in O(1) each, so the whole
+/// function is O(n) — unlike recomputing a fresh mean/variance over a
+/// freshly collected "every other element" slice per index, which is
+/// O(n²). That used to cost ~368ms for a 3000-score session in a debug
+/// build of [`super::flight_session::reclassify_session_blur`], run under
+/// its write lock on every import.
+///
+/// The sum-of-squares variance formula here is less numerically stable
+/// than a two-pass or Welford computation for very large or
+/// tightly-clustered score sets (hence the `.max(0.0)` floor against
+/// catastrophic-cancellation noise below); session sizes in practice are
+/// small enough that this hasn't been a problem — switch to Welford if it
+/// ever is.
 ///
 /// # Purity
 ///
 /// Pure, total (never fails).
-pub(crate) fn compute_session_blur_stats(scores: &[f64]) -> SessionBlurStats {
-    let sample_count = scores.len();
-    if sample_count == 0 {
-        return SessionBlurStats {
-            mean: 0.0,
-            stddev: 0.0,
-            sample_count,
-        };
-    }
-    let mean = scores.iter().sum::<f64>() / sample_count as f64;
-    SessionBlurStats {
-        mean,
-        stddev: variance(scores).sqrt(),
-        sample_count,
-    }
+pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
+    let (count, sum, sum_sq) = scores
+        .iter()
+        .fold((0f64, 0f64, 0f64), |(n, sum, sum_sq), score| {
+            (n + 1.0, sum + score, sum_sq + score * score)
+        });
+    scores
+        .iter()
+        .map(|score| {
+            let others_count = count - 1.0;
+            if others_count < 1.0 {
+                // No other scored image to compare against.
+                SessionBlurStats {
+                    mean: 0.0,
+                    stddev: 0.0,
+                    sample_count: 0,
+                }
+            } else {
+                let mean = (sum - score) / others_count;
+                let variance = ((sum_sq - score * score) / others_count - mean * mean).max(0.0);
+                SessionBlurStats {
+                    mean,
+                    stddev: variance.sqrt(),
+                    sample_count: others_count as usize,
+                }
+            }
+        })
+        .collect()
 }
 
 /// Classifies one raw score as blurry, given its session's baseline stats.
 ///
 /// `stats` must be built from the *other* scored images in the session,
-/// excluding `raw_score` itself — see [`classify_against_session`]. Folding
-/// the candidate into its own mean/stddev caps how far its z-score can ever
+/// excluding `raw_score` itself — see
+/// [`super::flight_session::reclassify_session_blur`], which computes this
+/// leave-one-out baseline for every row. Folding the candidate into its own
+/// mean/stddev caps how far its z-score can ever
 /// read (a population stddev including the point bounds `|z|` at
 /// `(n-1)/sqrt(n)`), which quietly under-flags real outliers in small
 /// sessions.
 ///
-/// A score below `hard_floor` is always blurry. Otherwise, with fewer than
-/// [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a zero stddev, there
-/// is no meaningful baseline yet, so nothing beyond the hard floor is
-/// flagged. Past that minimum, a z-score below `z_threshold` standard
-/// deviations under the session mean is also classified as blurry.
+/// With fewer than [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a
+/// zero stddev, there is no meaningful baseline yet, so classification falls
+/// back to `hard_floor` alone. Once a baseline exists, `hard_floor` is
+/// *not* consulted — only a z-score below `z_threshold` standard deviations
+/// under the session mean counts as blurry. See [`HARD_FLOOR_BLUR_SCORE`]
+/// for why the floor must not override the relative check once there is a
+/// baseline to compare against.
 ///
 /// # Purity
 ///
@@ -332,31 +365,28 @@ pub(crate) fn classify_blur(
     hard_floor: f64,
     z_threshold: f64,
 ) -> bool {
-    if raw_score < hard_floor {
-        return true;
-    }
     if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE || stats.stddev == 0.0 {
-        return false;
+        // No meaningful baseline yet: the absolute floor is the only signal
+        // available.
+        return raw_score < hard_floor;
     }
     (raw_score - stats.mean) / stats.stddev < z_threshold
 }
 
-/// Classifies `score` against `others` (the rest of its session) with the
+/// Classifies `score` against already-computed baseline stats with the
 /// module's thresholds. Thin wrapper around [`classify_blur`] for callers
-/// (the session-wide reclassification pass in
-/// [`super::flight_session::reclassify_session_blur`]) that only have a raw
-/// score and a baseline, not a pre-built [`SessionBlurStats`].
+/// that already have a [`SessionBlurStats`] on hand — the session-wide
+/// reclassification pass in
+/// [`super::flight_session::reclassify_session_blur`] derives its
+/// leave-one-out stats algebraically from a running sum/sum-of-squares
+/// rather than collecting a baseline `Vec` per row, so it has no slice to
+/// hand [`compute_session_blur_stats`].
 ///
 /// # Purity
 ///
 /// Pure, total.
-pub(crate) fn classify_against_session(score: f64, others: &[f64]) -> bool {
-    classify_blur(
-        score,
-        &compute_session_blur_stats(others),
-        HARD_FLOOR_BLUR_SCORE,
-        BLUR_Z_THRESHOLD,
-    )
+pub(crate) fn classify_with_stats(score: f64, stats: &SessionBlurStats) -> bool {
+    classify_blur(score, stats, HARD_FLOOR_BLUR_SCORE, BLUR_Z_THRESHOLD)
 }
 
 #[cfg(test)]
@@ -441,37 +471,133 @@ mod tests {
     }
 
     #[test]
-    fn compute_session_blur_stats_empty_is_zeroed() {
-        let stats = compute_session_blur_stats(&[]);
-        assert_eq!(stats.sample_count, 0);
-        assert_eq!(stats.mean, 0.0);
-        assert_eq!(stats.stddev, 0.0);
+    fn leave_one_out_stats_empty_is_empty() {
+        assert_eq!(leave_one_out_stats(&[]), vec![]);
     }
 
     #[test]
-    fn compute_session_blur_stats_single_value_has_zero_stddev() {
-        let stats = compute_session_blur_stats(&[42.0]);
-        assert_eq!(stats.sample_count, 1);
-        assert_eq!(stats.mean, 42.0);
-        assert_eq!(stats.stddev, 0.0);
+    fn leave_one_out_stats_single_value_has_no_baseline() {
+        // Nothing else to compare it against.
+        assert_eq!(
+            leave_one_out_stats(&[42.0]),
+            vec![SessionBlurStats {
+                mean: 0.0,
+                stddev: 0.0,
+                sample_count: 0,
+            }]
+        );
     }
 
     #[test]
-    fn compute_session_blur_stats_known_values() {
-        let stats = compute_session_blur_stats(&[10.0, 20.0, 30.0]);
-        assert_eq!(stats.sample_count, 3);
-        assert_eq!(stats.mean, 20.0);
-        assert!((stats.stddev - 8.164_965_8).abs() < 1e-6);
+    fn leave_one_out_stats_known_values() {
+        let stats = leave_one_out_stats(&[10.0, 20.0, 30.0]);
+        assert_eq!(stats.len(), 3);
+        // Index 0 (score 10.0) is judged against [20.0, 30.0].
+        assert_eq!(stats[0].sample_count, 2);
+        assert_eq!(stats[0].mean, 25.0);
+        assert!((stats[0].stddev - 5.0).abs() < 1e-9);
+        // Index 1 (score 20.0) is judged against [10.0, 30.0].
+        assert_eq!(stats[1].mean, 20.0);
+        assert!((stats[1].stddev - 10.0).abs() < 1e-9);
+        // Index 2 (score 30.0) is judged against [10.0, 20.0].
+        assert_eq!(stats[2].mean, 15.0);
+        assert!((stats[2].stddev - 5.0).abs() < 1e-9);
+    }
+
+    /// Reference (intentionally naive) O(n²) re-implementation: for each
+    /// index, collects every *other* score into a fresh slice and computes
+    /// mean/stddev over it directly. Pins [`leave_one_out_stats`]'s O(n)
+    /// algebraic version to the same numbers.
+    fn brute_force_leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
+        scores
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let others: Vec<f64> = scores
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, s)| *s)
+                    .collect();
+                let sample_count = others.len();
+                if sample_count == 0 {
+                    return SessionBlurStats {
+                        mean: 0.0,
+                        stddev: 0.0,
+                        sample_count: 0,
+                    };
+                }
+                let mean = others.iter().sum::<f64>() / sample_count as f64;
+                let variance =
+                    others.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / sample_count as f64;
+                SessionBlurStats {
+                    mean,
+                    stddev: variance.sqrt(),
+                    sample_count,
+                }
+            })
+            .collect()
     }
 
     #[test]
-    fn classify_blur_hard_floor_short_circuits_regardless_of_stats() {
+    fn leave_one_out_stats_matches_brute_force() {
+        let cases: &[&[f64]] = &[
+            &[],
+            &[42.0],
+            &[10.0, 20.0],
+            &[10.0, 20.0, 30.0],
+            &[100.0, 120.0, 80.0, 110.0, 90.0, 76.0],
+            &[5.0, 5.0, 5.0, 5.0, 5.0],
+        ];
+        for scores in cases {
+            let expected = brute_force_leave_one_out_stats(scores);
+            let actual = leave_one_out_stats(scores);
+            assert_eq!(actual.len(), expected.len(), "{scores:?}");
+            for (a, e) in actual.iter().zip(expected.iter()) {
+                assert!(
+                    (a.mean - e.mean).abs() < 1e-9,
+                    "{scores:?}: mean actual={a:?} expected={e:?}"
+                );
+                assert!(
+                    (a.stddev - e.stddev).abs() < 1e-9,
+                    "{scores:?}: stddev actual={a:?} expected={e:?}"
+                );
+                assert_eq!(a.sample_count, e.sample_count, "{scores:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn classify_blur_extreme_outlier_is_blurry_via_z_score_not_the_floor() {
+        // Far enough below the mean to be blurry on the z-score alone —
+        // this is not testing the floor (see
+        // `classify_blur_does_not_floor_a_consistent_low_texture_session`
+        // for why the floor is not consulted once a baseline exists).
         let stats = SessionBlurStats {
             mean: 500.0,
             stddev: 50.0,
             sample_count: 50,
         };
         assert!(classify_blur(5.0, &stats, 20.0, -1.5));
+    }
+
+    #[test]
+    fn classify_blur_does_not_floor_a_consistent_low_texture_session() {
+        // A sharp but low-texture session (e.g. farmland, open water) where
+        // every genuine score sits below the absolute hard floor, but
+        // they're all mutually consistent — no real outlier. Once a
+        // baseline exists, the floor must not override the relative check,
+        // or every image in a session like this would be wrongly flagged.
+        let stats = SessionBlurStats {
+            mean: 15.0,
+            stddev: 1.0,
+            sample_count: 10,
+        };
+        assert!(!classify_blur(15.0, &stats, 20.0, -1.5));
+        // Even a couple of standard deviations below this low-texture
+        // session's own mean (so a genuine relative outlier) is still
+        // flagged entirely via the z-score, with the floor playing no part.
+        assert!(classify_blur(12.0, &stats, 20.0, -1.5));
     }
 
     #[test]
@@ -508,13 +634,15 @@ mod tests {
     }
 
     #[test]
-    fn classify_against_session_excludes_the_candidate_from_its_own_baseline() {
+    fn classify_with_stats_excludes_the_candidate_from_its_own_baseline() {
         // Including the candidate in its own mean/stddev caps |z| at
         // (n-1)/sqrt(n) — here that would read z ≈ -1.27 (not blurry),
         // under-flagging a real outlier. Excluding it (the correct
-        // behaviour) reads z ≈ -1.70, past the -1.5 threshold.
-        let others = [100.0, 120.0, 80.0, 110.0, 90.0];
-        assert!(classify_against_session(76.0, &others));
+        // behaviour, via `leave_one_out_stats`) reads z ≈ -1.70, past the
+        // -1.5 threshold.
+        let scores = [76.0, 100.0, 120.0, 80.0, 110.0, 90.0];
+        let candidate_stats = &leave_one_out_stats(&scores)[0];
+        assert!(classify_with_stats(76.0, candidate_stats));
     }
 
     #[test]

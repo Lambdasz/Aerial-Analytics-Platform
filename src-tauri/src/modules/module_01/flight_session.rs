@@ -25,6 +25,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
+use super::blur_detection::SessionBlurStats;
 use super::error::SessionError;
 use crate::models::image::ImageMetadata;
 use crate::models::{Image, Project, Session, SessionStatus};
@@ -1216,16 +1217,31 @@ pub fn move_image_row(
 /// Re-derives `is_blurry` for every scored image in a session from the
 /// session's current score distribution, in one transaction.
 ///
-/// `classify` receives one image's `blur_score` and the scores of every
-/// *other* scored image in the session (a leave-one-out baseline), and
-/// decides whether that image is blurry. Running this once over the whole
-/// session, rather than classifying each image incrementally as it is
-/// inserted, makes the result depend only on the session's final score set
-/// — not on import order or how many separate import runs it took to
-/// assemble it. A DNG with a same-stem JPEG is excluded from the baseline
-/// and from direct classification (it is the same capture as its JPEG, so
-/// scoring it as an independent sample would double-count that capture);
-/// it mirrors its JPEG's flag instead.
+/// `classify` receives one image's `blur_score` and the leave-one-out
+/// baseline stats (mean/stddev/count) of every *other* scored image in the
+/// session, and decides whether that image is blurry. Running this once
+/// over the whole session, rather than classifying each image incrementally
+/// as it is inserted, makes the result depend only on the session's final
+/// score set — not on import order or how many separate import runs it took
+/// to assemble it. A DNG with a same-stem JPEG is excluded from the
+/// baseline and from direct classification (it is the same capture as its
+/// JPEG, so scoring it as an independent sample would double-count that
+/// capture); it mirrors its JPEG's flag instead.
+///
+/// Each row's leave-one-out baseline comes from
+/// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
+/// a fresh "every other score" collection per row (which is the O(n²)
+/// approach this used to take, held under this function's write lock on
+/// every import). See that function's docs for the numerical-stability
+/// trade-off its sum-of-squares formula makes.
+///
+/// Call this after *any* change to a session's set of scored images, not
+/// only an import: `is_blurry` is documented as reflecting the session's
+/// current score set, and that invariant only holds as long as every
+/// mutation re-derives it. Today [`super::import_io::run_import`] is the
+/// only caller — a later path that deletes images or moves/copies them
+/// between sessions must call this for every session it touches, or those
+/// sessions' flags go stale.
 ///
 /// # Purity
 ///
@@ -1233,7 +1249,7 @@ pub fn move_image_row(
 pub(crate) fn reclassify_session_blur(
     conn: &Connection,
     session_id: Uuid,
-    classify: impl Fn(f64, &[f64]) -> bool,
+    classify: impl Fn(f64, &SessionBlurStats) -> bool,
 ) -> Result<(), SessionError> {
     with_immediate_transaction(conn, |conn| {
         let scored: Vec<(String, f64)> = {
@@ -1247,15 +1263,11 @@ pub(crate) fn reclassify_session_blur(
             })?;
             rows.collect::<Result<_, _>>()?
         };
+        let scores: Vec<f64> = scored.iter().map(|(_, score)| *score).collect();
+        let stats = super::blur_detection::leave_one_out_stats(&scores);
         let mut update = conn.prepare("UPDATE image SET is_blurry = ?1 WHERE id = ?2")?;
-        for (i, (id, score)) in scored.iter().enumerate() {
-            let others: Vec<f64> = scored
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .map(|(_, (_, s))| *s)
-                .collect();
-            update.execute(params![i64::from(classify(*score, &others)), id])?;
+        for ((id, score), stats) in scored.iter().zip(stats.iter()) {
+            update.execute(params![i64::from(classify(*score, stats)), id])?;
         }
         // A paired DNG is the same capture as its JPEG: mirror its flag.
         conn.execute(
@@ -1703,7 +1715,7 @@ mod tests {
         reclassify_session_blur(
             conn,
             session.id,
-            crate::modules::module_01::blur_detection::classify_against_session,
+            crate::modules::module_01::blur_detection::classify_with_stats,
         )
         .expect("reclassify");
         get_image(conn, outlier.id).expect("get outlier").is_blurry
@@ -1766,7 +1778,7 @@ mod tests {
         reclassify_session_blur(
             &conn,
             session.id,
-            crate::modules::module_01::blur_detection::classify_against_session,
+            crate::modules::module_01::blur_detection::classify_with_stats,
         )
         .expect("reclassify");
 
@@ -1875,6 +1887,8 @@ mod tests {
         assert_eq!(old.file_size, None);
         assert_eq!(old.raw_sibling_id, None);
         assert_eq!(old.analysis_ready, None);
+        assert_eq!(old.blur_score, None);
+        assert_eq!(old.is_blurry, None);
 
         // Previously impossible on the old schema: persisting an image
         // without GPS or capture time.
@@ -1895,6 +1909,95 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn migrate_adds_blur_columns_to_an_existing_table_preserving_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute(
+            "CREATE TABLE session (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                date_start  TEXT,
+                date_end    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("session table");
+        // The full pre-blur-detection (M1-24) image schema: every other
+        // canonical column is present, only blur_score/is_blurry are
+        // missing — the actual upgrade this PR's users hit, as opposed to
+        // the much older pre-M1-24 schema `migrate_upgrades_pre_m24_table_
+        // preserving_rows` covers.
+        conn.execute(
+            "CREATE TABLE image (
+                id            TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL REFERENCES session(id),
+                file_path     TEXT NOT NULL UNIQUE,
+                location_lat  REAL,
+                location_lon  REAL,
+                captured_at   TEXT,
+                gps_altitude_m REAL,
+                width         INTEGER,
+                height        INTEGER,
+                format        TEXT,
+                make          TEXT,
+                camera_model  TEXT,
+                source_path   TEXT,
+                content_hash  TEXT,
+                file_size     INTEGER,
+                raw_sibling_id TEXT,
+                analysis_ready INTEGER
+            )",
+            [],
+        )
+        .expect("pre-blur image table");
+        let session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO session (id, project_id, name, date_start, date_end, status, created_at, updated_at)
+             VALUES (?1, ?2, 'S', '2026-09-18 07:12:00', '2026-09-18 07:12:00', 'active', '2026-09-18T07:12:00+00:00', '2026-09-18T07:12:00+00:00')",
+            params![session_id, Uuid::new_v4().to_string()],
+        )
+        .expect("session row");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at,
+                gps_altitude_m, width, height, format, make, camera_model, source_path,
+                content_hash, file_size, raw_sibling_id, analysis_ready)
+             VALUES (?1, ?2, '/library/old.jpg', -7.5, 110.0, '2026-09-18 07:12:00', 50.0, 4000,
+                3000, 'jpeg', 'DJI', 'Mavic 3', '/originals/old.jpg', 'deadbeef', 1234, NULL, 1)",
+            params![Uuid::new_v4().to_string(), session_id],
+        )
+        .expect("pre-blur image row");
+
+        init_schema(&conn).expect("migrate");
+
+        let names: Vec<String> = table_info(&conn, "image")
+            .expect("table info")
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(names.contains(&"blur_score".to_string()));
+        assert!(names.contains(&"is_blurry".to_string()));
+
+        let row: Image = conn
+            .query_row(
+                &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/library/old.jpg'"),
+                [],
+                row_to_image,
+            )
+            .expect("row readable after migration");
+        // Every pre-existing column survives the rebuild untouched...
+        assert_eq!(row.content_hash.as_deref(), Some("deadbeef"));
+        assert_eq!(row.width, Some(4000));
+        assert_eq!(row.analysis_ready, Some(true));
+        // ...and the two new columns are NULL, not an error or a default
+        // that would misrepresent an unscored row as deliberately sharp.
+        assert_eq!(row.blur_score, None);
+        assert_eq!(row.is_blurry, None);
     }
 
     /// Creates the `session` table plus one row, so `image` rows have a
