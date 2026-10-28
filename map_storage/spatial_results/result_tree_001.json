@@ -1,0 +1,108 @@
+{
+  "layer_id": "result_tree_001",
+  "layer_name": "Deteksi Pohon - Sektor A (sawit rame)",
+  "display_preference": {
+    "type": "point",
+    "color": "#2ecc40",
+    "icon": "tree_marker",
+    "fields": [
+      {
+        "key": "tree_id",
+        "label": "ID Pohon",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "confidence",
+        "label": "Keyakinan",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "height_est_m",
+        "label": "Tinggi Estimasi",
+        "unit": "m",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "umur_pohon",
+        "label": "Umur",
+        "unit": "Tahun",
+        "visible": true,
+        "custom": true,
+        "kind": "number"
+      }
+    ],
+    "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg"
+  },
+  "spatial_results": [
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.8595,
+          -1.2215
+        ]
+      },
+      "properties": {
+        "tree_id": "T-001",
+        "confidence": 0.93,
+        "height_est_m": 12.5,
+        "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+        "umur_pohon": 100
+      },
+      "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+      "edited_fields": [
+        "umur_pohon"
+      ]
+    },
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.8596,
+          -1.2216
+        ]
+      },
+      "properties": {
+        "tree_id": "T-002",
+        "confidence": 0.88,
+        "height_est_m": 10.2,
+        "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+        "umur_pohon": 39
+      },
+      "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+      "edited_fields": [
+        "umur_pohon"
+      ]
+    },
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.8597,
+          -1.2214
+        ]
+      },
+      "properties": {
+        "tree_id": "T-003",
+        "confidence": 0.77,
+        "height_est_m": 8.4,
+        "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+        "umur_pohon": 15
+      },
+      "image_url": "/map_storage/images/result_image/result_tree_001_1792992329189.jpg",
+      "edited_fields": [
+        "umur_pohon"
+      ]
+    }
+  ],
+  "updated_at": "2026-10-26T05:25:42.855Z"
+}

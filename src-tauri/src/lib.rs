@@ -341,24 +341,30 @@
 //! Interactive geospatial environment for exploring aerial images, drawing
 //! areas of interest, managing layers, and performing spatial measurements.
 //!
-//! - `map_controller` — backend controller for map operations; see the
-//!   [`map_controller`] module docs for
+//! - `modules::module_03` — full Module 3 backend: AOI, annotations,
+//!   geometry/measurement, layers, ortho source management, photos, and
+//!   spatial results. See the [`modules::module_03`] module docs for
 //!   responsibilities, key functions, data contracts, and the full I/O
 //!   reference.
+//! - `map_controller` — facade re-export of `modules::module_03` for
+//!   backward-compatible call sites.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `get_project_image_markers` | Generate pseudo-random drone image markers for the map explorer |
-//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
-//! | `get_dummy_spatial_layers` | Load dummy spatial layers (dev/testing only) |
+//! | `measure_distance` / `measure_area` / `measure_perimeter` | Geometry & spatial measurement |
+//! | `create_aoi_cmd` / `save_aoi` / `get_saved_aois` / `delete_saved_aoi` | AOI lifecycle |
+//! | `get_saved_layers` | Layer management |
+//! | `create_annotation_cmd` / `get_saved_annotations` / `update_annotation_cmd` / `delete_annotation_cmd` | Annotation CRUD |
+//! | `save_spatial_result` / `get_saved_spatial_results` / `delete_saved_spatial_result` | Spatial result integration |
+//! | `list_ortho_images` / `import_ortho_image` / `start_import_ortho_job` / `delete_ortho_image` | Ortho image management |
+//! | `get_photos` / `import_photo` | Geotagged photo markers |
+//! | `get_storage_root_path` | Storage root resolution |
 //!
-//! **Status**: Implemented. Map core, image markers, geometry/AOI, layer
-//! management, annotation, and spatial result integration are complete. Dummy
-//! spatial layers available for frontend development in parallel with
-//! Modul 4/7/8.
+//! **Status**: Fully implemented. AOI, annotations, geometry, layers, ortho
+//! images, photos, and spatial results are complete with disk-backed
+//! persistence under `map_storage/`.
 //!
 //! ---
 //!
@@ -543,11 +549,9 @@
 
 mod commands;
 pub mod map_controller;
-mod modules;
+pub mod modules;
 mod plot;
 pub mod plugin_manager;
-
-use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
@@ -773,6 +777,25 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            // Penguncian single instance aplikasi pada map_storage/.app.lock
+            match map_controller::ortho_source::instance_lock::acquire_global_instance_lock() {
+                Ok(()) => {
+                    // Hanya instansi primer pemegang kunci yang boleh menjalankan pembersihan startup & rekonsiliasi
+                    if let Err(e) = map_controller::ortho_source::job_manager::cleanup_stale_import_jobs() {
+                        eprintln!("[WARN] cleanup_stale_import_jobs error: {}", e);
+                    }
+                    if let Err(e) = map_controller::ortho_source::store::reconcile_storage_layers() {
+                        eprintln!("[WARN] reconcile_storage_layers error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    // Instansi sekunder: TIDAK BOLEH menjalankan cleanup atau rekonsiliasi agar tidak mengganggu instansi primer
+                    eprintln!(
+                        "[WARN] Instansi aplikasi lain terdeteksi aktif ({:?}). Mode sekunder: melewati cleanup_stale_import_jobs dan reconcile_storage_layers.",
+                        e
+                    );
+                }
+            }
             // Resolved here, not in the command, so every import in this
             // process writes below the same root. There is no silent cwd
             // fallback: an import that later cannot be found again is worse
@@ -867,7 +890,53 @@ pub fn run() {
             plugin_manager::lifecycle::update_plugin_config,
             // Plot import
             import_plots,
-            get_dummy_spatial_layers,
+            // Module 3 — Geometry & Measurement
+            map_controller::geometry::commands::measure_distance,
+            map_controller::geometry::commands::measure_area,
+            map_controller::geometry::commands::measure_perimeter,
+            // Module 3 — AOI
+            map_controller::aoi::commands::create_aoi_cmd,
+            map_controller::aoi::commands::save_new_aoi_cmd,
+            map_controller::aoi::commands::save_aoi,
+            map_controller::aoi::commands::get_saved_aois,
+            map_controller::aoi::commands::delete_saved_aoi,
+            // Module 3 — Layer Management
+            map_controller::layers::commands::get_saved_layers,
+            // Module 3 — Annotation
+            map_controller::annotations::commands::create_annotation_cmd,
+            map_controller::annotations::commands::get_saved_annotations,
+            map_controller::annotations::commands::get_annotation_by_id,
+            map_controller::annotations::commands::update_annotation_cmd,
+            map_controller::annotations::commands::delete_annotation_cmd,
+            // Module 3 — Spatial Results
+            map_controller::sp_result::commands::save_spatial_result,
+            map_controller::sp_result::commands::get_saved_spatial_results,
+            map_controller::sp_result::commands::get_saved_spatial_results_summary,
+            map_controller::sp_result::commands::get_saved_spatial_result,
+            map_controller::sp_result::commands::update_saved_spatial_result,
+            map_controller::sp_result::commands::count_spatial_result_dependents,
+            map_controller::sp_result::commands::delete_saved_spatial_result,
+            map_controller::sp_result::commands::check_spatial_result_manual_edits,
+            // Module 3 — Ortho & Raster Images
+            map_controller::ortho_source::commands::list_ortho_images,
+            map_controller::ortho_source::commands::get_ortho_image,
+            map_controller::ortho_source::commands::update_ortho_image,
+            map_controller::ortho_source::commands::get_ortho_cascade_summary,
+            map_controller::ortho_source::commands::delete_ortho_image,
+            map_controller::ortho_source::commands::save_image_from_path,
+            map_controller::ortho_source::commands::get_saved_images,
+            map_controller::ortho_source::commands::delete_saved_image,
+            map_controller::ortho_source::commands::import_ortho_image,
+            map_controller::ortho_source::commands::start_import_ortho_job,
+            map_controller::ortho_source::commands::cancel_import_job,
+            map_controller::ortho_source::commands::get_import_job_status,
+            map_controller::ortho_source::commands::get_instance_status,
+            map_controller::ortho_source::commands::inspect_geotiff_header,
+            // Module 3 — Photos
+            map_controller::photos::commands::get_photos,
+            map_controller::photos::commands::import_photo,
+            // Module 3 — Storage Root
+            map_controller::storage_commands::get_storage_root_path,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,

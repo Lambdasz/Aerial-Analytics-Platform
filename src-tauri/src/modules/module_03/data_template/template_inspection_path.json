@@ -1,0 +1,53 @@
+{
+  "layer_id": "template_inspection_path",
+  "layer_name": "Template - Jalur Inspeksi (LineString)",
+  "display_preference": {
+    "type": "line",
+    "color": "#E74C3C",
+    "icon": "",
+    "fields": [
+      { "key": "path_id", "label": "ID Jalur", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "path_type", "label": "Jenis Jalan", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "length_m", "label": "Panjang", "unit": "m", "visible": true, "custom": false, "kind": "number" },
+      { "key": "surface_condition", "label": "Kondisi Permukaan", "unit": null, "visible": true, "custom": false, "kind": "text" }
+    ]
+  },
+  "spatial_results": [
+    {
+      "source": "inspection_path",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [116.856, -1.2275],
+          [116.8568, -1.2279],
+          [116.8577, -1.2276],
+          [116.8588, -1.2281],
+          [116.8599, -1.2278]
+        ]
+      },
+      "properties": {
+        "path_id": "P-101",
+        "path_type": "jalan_tanah",
+        "length_m": 380.2,
+        "surface_condition": "baik"
+      }
+    },
+    {
+      "source": "inspection_path",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [116.8599, -1.2278],
+          [116.861, -1.2283],
+          [116.8621, -1.228]
+        ]
+      },
+      "properties": {
+        "path_id": "P-102",
+        "path_type": "jalan_kerikil",
+        "length_m": 255.7,
+        "surface_condition": "rusak_ringan"
+      }
+    }
+  ]
+}

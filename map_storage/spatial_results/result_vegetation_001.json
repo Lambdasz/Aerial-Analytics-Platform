@@ -1,0 +1,86 @@
+{
+  "layer_id": "result_vegetation_001",
+  "layer_name": "Deteksi Vegetasi (ExG) - Sawit raya",
+  "display_preference": {
+    "type": "polygon",
+    "color": "#0074d9",
+    "icon": "",
+    "fields": [
+      {
+        "key": "vegetation_index_type",
+        "label": "Jenis Indeks Vegetasi",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "mean_greenness_score",
+        "label": "Skor Kehijauan Rata-rata",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "area_sqm",
+        "label": "Luas",
+        "unit": "m²",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      }
+    ],
+    "image_url": "/map_storage/images/result_image/result_vegetation_001_1792992738847.jpg"
+  },
+  "spatial_results": [
+    {
+      "source": "vegetation_detection_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              116.8575,
+              -1.221
+            ],
+            [
+              116.8582,
+              -1.2208
+            ],
+            [
+              116.859,
+              -1.2212
+            ],
+            [
+              116.8592,
+              -1.222
+            ],
+            [
+              116.8586,
+              -1.2228
+            ],
+            [
+              116.8578,
+              -1.2225
+            ],
+            [
+              116.857,
+              -1.2218
+            ],
+            [
+              116.8575,
+              -1.221
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "vegetation_index_type": "ExG",
+        "mean_greenness_score": 0.68,
+        "area_sqm": 1420.5,
+        "image_url": "/map_storage/images/result_image/result_vegetation_001_1792992738847.jpg"
+      },
+      "image_url": "/map_storage/images/result_image/result_vegetation_001_1792992738847.jpg"
+    }
+  ],
+  "updated_at": "2026-10-26T05:32:18.847Z"
+}
