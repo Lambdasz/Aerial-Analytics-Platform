@@ -6,6 +6,8 @@
 //! temporary copy is written), renames the accepted ones into the app-owned
 //! library folder, reads metadata from **the copy**, records the row, and
 //! reports per-file failures without aborting the batch.
+
+//!
 //!
 //! ```text
 //! scan_sources                     (hash only; no copy yet)
@@ -580,7 +582,7 @@ impl ImportScope<'_> {
 
         let jpeg_id = Uuid::new_v4();
         let dng_id = Uuid::new_v4();
-        let images = [
+        let mut images = [
             build_image(
                 jpeg_id,
                 self.session_id,
@@ -606,6 +608,9 @@ impl ImportScope<'_> {
                 ImageFormat::Dng,
             ),
         ];
+        // One capture: the DNG shares its JPEG's blur score instead of
+        // being scored on its own (build_image left it `None`).
+        images[1].blur_score = images[0].blur_score;
         match record_images(self.db, self.session_id, &images) {
             Ok(Recorded::Inserted) => {}
             Ok(Recorded::Duplicate(existing)) => {
@@ -1107,6 +1112,11 @@ struct StagedFile<'a> {
 /// [`super::flight_session::reclassify_session_blur`] pass) — so there is
 /// only ever one blur-related field for a caller to populate, not two that
 /// could drift out of sync.
+///
+/// A DNG paired with a JPEG (`raw_sibling_id` set) is left unscored here:
+/// it's the same capture as its JPEG, so scoring the DNG's own preview too
+/// would be a second, wasted decode whose result is never used — `pair`
+/// copies the JPEG's score onto the DNG row after building both.
 fn build_image(
     image_id: Uuid,
     session_id: Uuid,
@@ -1127,7 +1137,12 @@ fn build_image(
     image.file_size = Some(staged.copy.file_size);
     image.raw_sibling_id = raw_sibling_id;
     image.analysis_ready = Some(analysis_ready);
-    image.blur_score = blur_detection::blur_score_for_copy(&staged.copy.dest, format);
+    let paired_dng = format == ImageFormat::Dng && raw_sibling_id.is_some();
+    image.blur_score = if paired_dng {
+        None
+    } else {
+        blur_detection::blur_score_for_copy(&staged.copy.dest, format)
+    };
     image
 }
 
@@ -2288,9 +2303,9 @@ mod tests {
             jpeg_row.blur_score.is_some(),
             "the jpeg half should be scored: {jpeg_row:?}"
         );
-        assert!(
-            dng_row.blur_score.is_some(),
-            "the dng's embedded preview should be decodable and scored: {dng_row:?}"
+        assert_eq!(
+            dng_row.blur_score, jpeg_row.blur_score,
+            "a paired dng shares its jpeg's score — one capture, not a second, wasted decode"
         );
         assert_eq!(
             dng_row.is_blurry, jpeg_row.is_blurry,
