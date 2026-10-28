@@ -37,7 +37,7 @@ map_controller/
 
 Pola ini punya dua fungsi tersendiri, jangan tercampur:
 
-1. **`MapControllerError`** (internal, hanya dipakai di dalam Rust) — merepresentasikan *jenis-jenis* error yang bisa terjadi di logika map_controller (geometri tidak valid, gagal I/O, dst). Dengan `enum`, kompiler memaksa Anda menangani tiap varian secara eksplisit, dan `#[from]` membuat error dari crate lain (`std::io::Error`, `geo`) otomatis bisa dikonversi lewat `?`.
+1. **`MapControllerError`** (internal, hanya dipakai di dalam Rust) — merepresentasikan _jenis-jenis_ error yang bisa terjadi di logika map_controller (geometri tidak valid, gagal I/O, dst). Dengan `enum`, kompiler memaksa Anda menangani tiap varian secara eksplisit, dan `#[from]` membuat error dari crate lain (`std::io::Error`, `geo`) otomatis bisa dikonversi lewat `?`.
 2. **`CommandError`** (boundary, dikirim ke frontend lewat Serde) — bentuk error yang aman ditampilkan ke luar Rust: cuma `code` (string pendek, cocok untuk `switch`/`match` di TS) dan `message` (pesan manusiawi). Ini juga titik tunggal untuk **logging** — jadi Anda tidak perlu memanggil fungsi log manual di tiap command, cukup lempar error dan konversi otomatis akan mencatatnya.
 
 Kenapa dipisah dua lapis? Supaya detail internal Rust (misal stack trace `std::io::Error`) tidak pernah bocor mentah-mentah ke frontend, sambil tetap menjaga error di sisi Rust tetap type-safe dan bisa di-`match`.

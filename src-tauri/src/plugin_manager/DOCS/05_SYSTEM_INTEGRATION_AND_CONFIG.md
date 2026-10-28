@@ -1,4 +1,5 @@
 # System Integration & Configuration
+
 > **Module 2: Plugin Architecture & Extension Manager**  
 > **Parent Guide**: [README.md](README.md)
 
@@ -131,6 +132,7 @@ npm run format:rust:check
 ```
 
 ### Automatic Formatting & Fixes:
+
 ```bash
 npm run lint:fix
 npm run format
@@ -151,8 +153,8 @@ Commit messages are validated against Conventional Commits (`.husky/commit-msg`)
 [optional footer(s)]
 ```
 
-* **Allowed types**: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `style`, `ci`, `build`.
-* **Examples**:
+- **Allowed types**: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `style`, `ci`, `build`.
+- **Examples**:
   - `feat(plugins): implement zip-slip safe archive extraction`
   - `fix(executor): prevent zombie processes by killing child on timeout`
   - `docs(plugins): add dynamic parameter form specification`

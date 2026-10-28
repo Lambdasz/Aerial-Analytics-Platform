@@ -1,0 +1,67 @@
+/* Glassmorphism Popup */
+.glass-popup-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 250px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  font-family: inherit;
+}
+
+.glass-popup-card .bp5-card {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.popup-thumbnail {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.popup-telemetry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+.telemetry-label {
+  color: #5c7080;
+  font-weight: 600;
+}
+
+.telemetry-value {
+  color: #182026;
+  text-align: right;
+  font-family: monospace;
+}
+
+.popup-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  gap: 5px;
+}
+
+/* Adjust leaflet popup container to remove default white background and padding */
+.leaflet-popup-content-wrapper {
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+}
+
+.leaflet-popup-tip-container {
+  display: none !important; /* Hide the default tip triangle */
+}
