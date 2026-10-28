@@ -14,7 +14,7 @@ import type { Session, StoredImage } from "../sessionCommands";
 import { commandErrorMessage } from "../sessionCommands";
 import { shortId } from "../sessionStats";
 import { importErrorCode, importImages, type ImportReport } from "../../../lib/imageImport";
-import { loadImageThumbnail } from "../../../lib/imagePreview";
+import { loadImagePreview } from "../../../lib/imagePreview";
 
 /* ── Create Session Dialog ────────────────────────────────────────────── */
 
@@ -243,7 +243,7 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
         .filter((item) => item.kind === "file")
         .map(async (item) => {
           try {
-            const preview = await loadImageThumbnail(item.path);
+            const preview = await loadImagePreview(item.path);
             pickedRef.current = pickedRef.current.map((row) =>
               row.path === item.path ? { ...row, preview } : row,
             );

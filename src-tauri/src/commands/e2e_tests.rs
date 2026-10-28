@@ -876,3 +876,26 @@ fn e2e_move_image_discards_cached_thumbnail() {
         "thumbnail cache entry was removed after move"
     );
 }
+
+#[test]
+fn e2e_thumbnail_image_refuses_file_outside_library() {
+    let env = test_env();
+    let outside_jpeg = write_jpeg(env.source_dir.path(), "outside.JPG", 20);
+    let cache_dir = env.state.library_root.join(".thumbs");
+
+    let err = crate::commands::image_preview::thumbnail_image_impl(
+        &env.state,
+        outside_jpeg.display().to_string(),
+    )
+    .expect_err("should refuse");
+    assert_eq!(err.code, "NOT_A_LIBRARY_COPY");
+
+    // Assert nothing was written to .thumbs
+    if cache_dir.exists() {
+        assert_eq!(
+            std::fs::read_dir(&cache_dir).expect("read thumbs").count(),
+            0,
+            "no thumbnail written for non-library file"
+        );
+    }
+}

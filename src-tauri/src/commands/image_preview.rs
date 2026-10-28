@@ -133,29 +133,47 @@ fn shrink_jpeg(bytes: &[u8]) -> Result<Vec<u8>, MetadataError> {
 /// and the result is served from `<library_root>/.thumbs` on every later
 /// call.
 ///
+/// Refuses paths outside the app library with `NOT_A_LIBRARY_COPY`.
+///
 /// # Errors
 ///
-/// The same codes as [`preview_image`]: `UNSUPPORTED_FORMAT` for an extension
-/// this command does not handle, `PREVIEW_UNAVAILABLE` for a DNG that stores
-/// no JPEG, and `IO_ERROR` for a file that cannot be read.
+/// `NOT_A_LIBRARY_COPY` if the file does not reside within the application's
+/// image library, plus the same codes as [`preview_image`]:
+/// `UNSUPPORTED_FORMAT` for an extension this command does not handle,
+/// `PREVIEW_UNAVAILABLE` for a DNG that stores no JPEG, and `IO_ERROR` for
+/// a file that cannot be read.
 #[tauri::command]
 pub async fn thumbnail_image(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<ImagePreview, CommandError> {
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || thumbnail_image_impl(&app, path))
+        .await
+        .map_err(|err| CommandError {
+            code: "THUMBNAIL_JOIN_ERROR".to_string(),
+            message: format!("the thumbnail task stopped unexpectedly: {err}"),
+        })?
+}
+
+/// Testable core of [`thumbnail_image`].
+pub(crate) fn thumbnail_image_impl(
+    state: &AppState,
+    path: String,
+) -> Result<ImagePreview, CommandError> {
+    if !crate::modules::module_01::import_io::is_library_copy(&state.library_root, Path::new(&path))
+    {
+        return Err(CommandError {
+            code: "NOT_A_LIBRARY_COPY".to_string(),
+            message: "thumbnails are only served for images in the app library".to_string(),
+        });
+    }
     let cache_dir = state.library_root.join(".thumbs");
-    tauri::async_runtime::spawn_blocking(move || {
-        let bytes = thumbnail::thumbnail_jpeg(Path::new(&path), &cache_dir)?;
-        Ok::<ImagePreview, CommandError>(ImagePreview {
-            mime: PREVIEW_MIME.to_string(),
-            base64: BASE64.encode(bytes),
-        })
+    let bytes = thumbnail::thumbnail_jpeg(Path::new(&path), &cache_dir)?;
+    Ok(ImagePreview {
+        mime: PREVIEW_MIME.to_string(),
+        base64: BASE64.encode(bytes),
     })
-    .await
-    .map_err(|err| CommandError {
-        code: "THUMBNAIL_JOIN_ERROR".to_string(),
-        message: format!("the thumbnail task stopped unexpectedly: {err}"),
-    })?
 }
 
 #[cfg(test)]
