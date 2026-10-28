@@ -926,13 +926,10 @@ mod tests {
     #[test]
     fn test_generate_job_id_format() {
         let id = generate_job_id();
-        assert!(
-            id.starts_with("exec_"),
-            "job_id must start with 'exec_': {id}"
-        );
+        assert!(id.starts_with("exec_"), "job_id must start with 'exec_'");
         let parts: Vec<&str> = id.splitn(3, '_').collect();
-        assert_eq!(parts.len(), 3, "job_id must have 3 segments: {id}");
-        assert_eq!(parts[1].len(), 8, "date segment must be 8 digits: {id}");
+        assert_eq!(parts.len(), 3, "job_id must have 3 segments");
+        assert_eq!(parts[1].len(), 8, "date segment must be 8 digits");
     }
 
     #[test]
