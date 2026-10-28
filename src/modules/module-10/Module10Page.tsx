@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   Callout,
@@ -135,21 +135,29 @@ function describeError(err: unknown): string {
   return message;
 }
 
+/** Result of 10.1 + 10.2 + 10.3, tagged with the session it belongs to. */
+type AnalysisState = {
+  sessionId: string;
+  periods: SessionObservationPeriods | null;
+  report: VegetationChangeReport | null;
+  error: string | null;
+};
+
+/** Sessions are tagged with their project so a stale list is never rendered. */
+type SessionsState = {
+  projectId: string;
+  list: Session[];
+};
+
 export function Module10Page() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionsState, setSessionsState] = useState<SessionsState>({ projectId: "", list: [] });
   const [sessionId, setSessionId] = useState("");
-  const [periods, setPeriods] = useState<SessionObservationPeriods | null>(null);
-  const [report, setReport] = useState<VegetationChangeReport | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisState | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
-  const [loadingSessions, setLoadingSessions] = useState(false);
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
-
-  /** Guards against a slow response overwriting a newer selection. */
-  const requestRef = useRef(0);
 
   // Module 1.4 is the data source: list its projects first.
   useEffect(() => {
@@ -177,33 +185,19 @@ export function Module10Page() {
 
   // Sessions belong to a project; default to the first active one.
   useEffect(() => {
-    if (!projectId) {
-      setSessions([]);
-      setSessionId("");
-      return;
-    }
+    if (!projectId) return;
 
     let alive = true;
-    setLoadingSessions(true);
-    setPageError(null);
-    setSessions([]);
-    setSessionId("");
-    setPeriods(null);
-    setReport(null);
-    setAnalysisError(null);
 
     getSessionsByProject(projectId)
       .then((list) => {
         if (!alive) return;
-        setSessions(list);
+        setSessionsState({ projectId, list });
         const first = list.find((session) => session.status === "active") ?? list[0];
         setSessionId(first?.id ?? "");
       })
       .catch((err: unknown) => {
         if (alive) setPageError(describeError(err));
-      })
-      .finally(() => {
-        if (alive) setLoadingSessions(false);
       });
 
     return () => {
@@ -211,48 +205,64 @@ export function Module10Page() {
     };
   }, [projectId]);
 
+  // Derived from the tagged states: no reset writes inside effects.
+  const sessions = useMemo(
+    () => (sessionsState.projectId === projectId ? sessionsState.list : []),
+    [sessionsState, projectId],
+  );
+  const loadingSessions = projectId !== "" && sessionsState.projectId !== projectId;
+  const selectedSessionId = sessions.some((session) => session.id === sessionId) ? sessionId : "";
+  const loadingAnalysis = selectedSessionId !== "" && analysis?.sessionId !== selectedSessionId;
+  const periods = analysis?.sessionId === selectedSessionId ? analysis.periods : null;
+  const report = analysis?.sessionId === selectedSessionId ? analysis.report : null;
+  const analysisError = analysis?.sessionId === selectedSessionId ? analysis.error : null;
+
   // 10.1 then 10.2 + 10.3 for the selected session.
-  const loadAnalysis = useCallback(async (id: string) => {
-    const requestId = ++requestRef.current;
-
-    if (!id) {
-      setPeriods(null);
-      setReport(null);
-      setAnalysisError(null);
-      setLoadingAnalysis(false);
-      return;
-    }
-
-    setLoadingAnalysis(true);
-    setAnalysisError(null);
-    setReport(null);
-
-    try {
-      const result = await getObservationPeriods(id);
-      if (requestRef.current !== requestId) return;
-      setPeriods(result);
-
-      if (result.periods.length < 2) {
-        return;
-      }
-
-      const change = await getVegetationChange(id);
-      if (requestRef.current !== requestId) return;
-      setReport(change);
-    } catch (err) {
-      if (requestRef.current === requestId) setAnalysisError(describeError(err));
-    } finally {
-      if (requestRef.current === requestId) setLoadingAnalysis(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadAnalysis(sessionId);
-  }, [sessionId, loadAnalysis]);
+    if (!selectedSessionId) return;
+
+    let alive = true;
+
+    getObservationPeriods(selectedSessionId)
+      .then(async (result) => {
+        if (!alive) return;
+        if (result.periods.length < 2) {
+          setAnalysis({
+            sessionId: selectedSessionId,
+            periods: result,
+            report: null,
+            error: null,
+          });
+          return;
+        }
+
+        const change = await getVegetationChange(selectedSessionId);
+        if (!alive) return;
+        setAnalysis({
+          sessionId: selectedSessionId,
+          periods: result,
+          report: change,
+          error: null,
+        });
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setAnalysis({
+          sessionId: selectedSessionId,
+          periods: null,
+          report: null,
+          error: describeError(err),
+        });
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedSessionId, reloadToken]);
 
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === sessionId) ?? null,
-    [sessions, sessionId],
+    () => sessions.find((session) => session.id === selectedSessionId) ?? null,
+    [sessions, selectedSessionId],
   );
 
   const observationCount = useMemo(
@@ -262,6 +272,7 @@ export function Module10Page() {
 
   const handleProjectChange = (nextProjectId: string) => {
     setProjectId(nextProjectId);
+    setPageError(null);
     saveProjectId(nextProjectId);
   };
 
@@ -303,7 +314,7 @@ export function Module10Page() {
             <span className="m10-field__label">Sesi penerbangan</span>
             <HTMLSelect
               fill
-              value={sessionId}
+              value={selectedSessionId}
               onChange={(event) => setSessionId(event.currentTarget.value)}
               disabled={loadingSessions || sessions.length === 0}
             >
@@ -320,8 +331,8 @@ export function Module10Page() {
           <Button
             icon="refresh"
             text="Muat ulang"
-            onClick={() => void loadAnalysis(sessionId)}
-            disabled={!sessionId || loadingAnalysis}
+            onClick={() => setReloadToken((token) => token + 1)}
+            disabled={!selectedSessionId || loadingAnalysis}
           />
         </div>
       </header>
@@ -468,7 +479,7 @@ export function Module10Page() {
                   <Button
                     small
                     text="Coba lagi"
-                    onClick={() => void loadAnalysis(sessionId)}
+                    onClick={() => setReloadToken((token) => token + 1)}
                     disabled={loadingAnalysis}
                   />
                 </div>
