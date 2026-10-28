@@ -540,7 +540,6 @@ pub mod map_controller;
 mod modules;
 mod plot;
 mod plugin_manager;
-mod modules;
 
 use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
 

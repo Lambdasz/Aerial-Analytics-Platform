@@ -143,6 +143,25 @@ mod tests {
     }
 
     #[test]
+    fn test_temporal_change_result_uses_analysis_output() {
+        use crate::modules::module_10::analysis::calculate_vegetation_change;
+
+        let vegetation_change =
+            calculate_vegetation_change(60.0, 72.0).expect("nilai tutupan valid");
+
+        let result = get_temporal_change_result(
+            vegetation_change.to_contract_json(),
+            serde_json::json!({}),
+            0,
+        );
+
+        assert_eq!(
+            result.vegetation_coverage_change["delta"],
+            serde_json::json!(12.0)
+        );
+    }
+
+    #[test]
     fn test_get_temporal_change_result() {
         let vegetation_coverage_change = serde_json::json!({
             "before": 45.0,
