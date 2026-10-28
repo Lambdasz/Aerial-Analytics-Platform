@@ -1256,6 +1256,142 @@
   color: var(--m1-dlg-text) !important;
 }
 
+.m1-dialog-portal .m1-import-dialog {
+  width: min(560px, calc(100vw - 32px)) !important;
+}
+
+.m1-dialog-portal .m1-import-target {
+  margin: 0;
+  font-size: 13px;
+  color: var(--m1-dlg-muted);
+}
+
+.m1-dialog-portal .m1-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 180px;
+  padding: 24px;
+  border: 1.5px dashed var(--m1-dlg-control);
+  border-radius: 16px;
+  background: #f5f7fa;
+  color: var(--m1-dlg-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.m1-dialog-portal .m1-drop--over,
+.m1-dialog-portal .m1-drop:hover {
+  border-color: var(--m1-dlg-primary);
+  background: var(--m1-dlg-tint);
+}
+
+.m1-dialog-portal .m1-drop__arrow {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.m1-dialog-portal .m1-drop__label {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.m1-dialog-portal .m1-drop__hint {
+  max-width: 280px;
+  font-size: 12px;
+  color: var(--m1-dlg-muted);
+  text-align: center;
+}
+
+.m1-dialog-portal .m1-drop-folder {
+  align-self: center;
+  border: none;
+  background: none;
+  color: var(--m1-dlg-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.m1-dialog-portal .m1-import-previews {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.m1-dialog-portal .m1-import-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 84px;
+  flex: 0 0 84px;
+}
+
+.m1-dialog-portal .m1-import-preview__img,
+.m1-dialog-portal .m1-import-preview__fallback {
+  width: 84px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #edf0f5;
+}
+
+.m1-dialog-portal .m1-import-preview__fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--m1-dlg-muted);
+}
+
+.m1-dialog-portal .m1-import-preview__name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m1-dialog-portal .m1-import-preview__remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  cursor: pointer;
+}
+
+.m1-dialog-portal .m1-import-progress {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.m1-dialog-portal .m1-import-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--m1-dlg-muted);
+}
+
+.m1-dialog-portal .m1-import-error {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #9a3412;
+}
+
 .m1-dialog-portal .m1-dialog-content {
   padding: 8px 24px 20px 24px !important;
   display: flex !important;

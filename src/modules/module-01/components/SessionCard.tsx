@@ -13,6 +13,8 @@ const STEP_LABELS = ["Sesi dibuat", "Citra ditambahkan", "Selesai & diarsipkan"]
 
 interface SessionCardProps {
   session: Session;
+  /** Stored image rows in this session, when the page has counted them. */
+  imageCount?: number;
   onRename: (session: Session) => void;
   onToggleStatus: (session: Session) => void;
   onAssignImage: (session: Session) => void;
@@ -24,6 +26,7 @@ interface SessionCardProps {
 
 export const SessionCard: FC<SessionCardProps> = ({
   session,
+  imageCount,
   onRename,
   onToggleStatus,
   onAssignImage,
@@ -50,8 +53,11 @@ export const SessionCard: FC<SessionCardProps> = ({
     };
   }, [isMenuOpen]);
 
-  const stage = getSessionStage(session);
-  const hasImages = hasImageRange(session);
+  // The stored count is the truth; the date-range guess is only the fallback
+  // while the count has not arrived (or failed to).
+  const hasCaptureRange = hasImageRange(session);
+  const hasImages = imageCount === undefined ? hasCaptureRange : imageCount > 0;
+  const stage = getSessionStage(session, hasImages);
   const isActive = session.status === "active";
 
   return (
@@ -266,7 +272,11 @@ export const SessionCard: FC<SessionCardProps> = ({
           <div className="m1-session-card__fact">
             <dt>Tanggal mulai</dt>
             {hasImages ? (
-              <dd>{formatSingleDate(session.dateStart, true)}</dd>
+              hasCaptureRange ? (
+                <dd>{formatSingleDate(session.dateStart, true)}</dd>
+              ) : (
+                <dd className="m1-session-card__fact-empty">waktu tidak ada</dd>
+              )
             ) : (
               <dd className="m1-session-card__fact-empty">Belum ada citra</dd>
             )}
@@ -274,7 +284,11 @@ export const SessionCard: FC<SessionCardProps> = ({
           <div className="m1-session-card__fact">
             <dt>Tanggal selesai</dt>
             {hasImages ? (
-              <dd>{formatSingleDate(session.dateEnd, true)}</dd>
+              hasCaptureRange ? (
+                <dd>{formatSingleDate(session.dateEnd, true)}</dd>
+              ) : (
+                <dd className="m1-session-card__fact-empty">waktu tidak ada</dd>
+              )
             ) : (
               <dd className="m1-session-card__fact-empty">Belum ada citra</dd>
             )}
@@ -302,7 +316,7 @@ export const SessionCard: FC<SessionCardProps> = ({
             <span>Citra</span>
           </span>
           <span className="m1-session-card__images-count m1-tabular">
-            {hasImages ? "Terhubung" : "0 berkas"}
+            {imageCount === undefined ? "…" : `${imageCount} berkas`}
           </span>
         </div>
 
