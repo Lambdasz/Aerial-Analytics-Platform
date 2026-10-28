@@ -1,3 +1,22 @@
+//! GeoJSON plot import and validation (Module 9).
+//!
+//! Parses `Feature` or `FeatureCollection` GeoJSON text into [`Plot`]
+//! structures. Only `Polygon` geometries are accepted; unsupported or
+//! invalid features are reported in [`ImportResult::skipped`] with the
+//! rejection reason.
+//!
+//! ## Validation Rules
+//!
+//! - Each ring must contain at least 4 positions (including the closing point).
+//! - The first and last positions of every ring must be identical (closed ring).
+//! - Coordinates must be in `[longitude, latitude]` order (RFC 7946).
+//! - Longitude must be in `−180..=180`, latitude in `−90..=90`.
+//!
+//! ## Unit Tests
+//!
+//! This module includes tests for valid polygons, default plot names,
+//! unclosed rings, swapped coordinates, and non-polygon geometries.
+
 use geojson::{Feature, GeoJson, GeometryValue, Position};
 use serde::Serialize;
 use uuid::Uuid;
@@ -24,18 +43,17 @@ pub struct ImportResult {
 /// reported in `skipped` with the reason; an error is returned only when the
 /// text is not valid GeoJSON or no valid plot remains.
 pub fn parse_plots(text: &str) -> Result<ImportResult, String> {
-    let features = match text.parse::<GeoJson>() {
-        Ok(GeoJson::FeatureCollection(collection)) => collection.features,
-        Ok(GeoJson::Feature(feature)) => vec![feature],
-        Ok(GeoJson::Geometry(_)) => {
-            return Err(
-                "Berkas berisi geometry tanpa Feature. Bungkus geometry dalam Feature atau \
-                 FeatureCollection agar nama plot dapat dibaca."
+    let features =
+        match text.parse::<GeoJson>() {
+            Ok(GeoJson::FeatureCollection(collection)) => collection.features,
+            Ok(GeoJson::Feature(feature)) => vec![feature],
+            Ok(GeoJson::Geometry(_)) => return Err(
+                "File contains bare geometry without a Feature. Wrap the geometry in a Feature or \
+                 FeatureCollection so the plot name can be read."
                     .to_string(),
-            )
-        }
-        Err(e) => return Err(format!("Berkas bukan GeoJSON yang valid: {e}")),
-    };
+            ),
+            Err(e) => return Err(format!("Not valid GeoJSON: {e}")),
+        };
 
     let (plots, skipped) = features.iter().enumerate().fold(
         (Vec::new(), Vec::new()),
@@ -50,29 +68,29 @@ pub fn parse_plots(text: &str) -> Result<ImportResult, String> {
 
     if plots.is_empty() {
         let detail = if skipped.is_empty() {
-            "berkas tidak berisi fitur apa pun.".to_string()
+            "file contains no features.".to_string()
         } else {
             skipped.join(" ")
         };
-        return Err(format!("Tidak ada plot valid yang dapat diimpor: {detail}"));
+        return Err(format!("No valid plots to import: {detail}"));
     }
 
     Ok(ImportResult { plots, skipped })
 }
 
 fn feature_to_plot(number: usize, feature: &Feature) -> Result<Plot, String> {
-    let label = format!("Fitur #{number} dilewati:");
+    let label = format!("Feature #{number} skipped:");
 
     let geometry = feature
         .geometry
         .as_ref()
-        .ok_or_else(|| format!("{label} tidak memiliki geometry."))?;
+        .ok_or_else(|| format!("{label} has no geometry."))?;
 
     let raw_rings = match &geometry.value {
         GeometryValue::Polygon { coordinates } => coordinates,
         other => {
             return Err(format!(
-                "{label} tipe geometry {} tidak didukung, hanya Polygon.",
+                "{label} geometry type '{}' is not supported, only Polygon is accepted.",
                 other.type_name()
             ))
         }
@@ -101,16 +119,16 @@ fn plot_name(number: usize, feature: &Feature) -> String {
 
 fn validate_rings(rings: &[Vec<Position>]) -> Result<Vec<Vec<[f64; 2]>>, String> {
     if rings.is_empty() {
-        return Err("polygon tidak memiliki ring.".to_string());
+        return Err("Polygon has no rings.".to_string());
     }
     rings
         .iter()
         .enumerate()
         .map(|(index, ring)| {
             let name = if index == 0 {
-                "ring luar".to_string()
+                "outer ring".to_string()
             } else {
-                format!("lubang ke-{index}")
+                format!("hole #{index}")
             };
             validate_ring(&name, ring)
         })
@@ -120,13 +138,13 @@ fn validate_rings(rings: &[Vec<Position>]) -> Result<Vec<Vec<[f64; 2]>>, String>
 fn validate_ring(name: &str, ring: &[Position]) -> Result<Vec<[f64; 2]>, String> {
     if ring.len() < 4 {
         return Err(format!(
-            "{name} hanya memiliki {} titik, minimal 4 titik (termasuk titik penutup).",
+            "{name} has only {} points, minimum 4 required (including closing point).",
             ring.len()
         ));
     }
     if ring.first() != ring.last() {
         return Err(format!(
-            "{name} tidak tertutup: titik pertama harus sama dengan titik terakhir."
+            "{name} is not closed: first point must equal last point."
         ));
     }
     ring.iter()
@@ -140,20 +158,20 @@ fn to_point(ring_name: &str, number: usize, position: &[f64]) -> Result<[f64; 2]
         [lon, lat, ..] => [*lon, *lat],
         _ => {
             return Err(format!(
-                "titik ke-{number} pada {ring_name} harus memiliki koordinat [longitude, latitude]."
+                "Point #{number} on {ring_name} must have [longitude, latitude] coordinates."
             ))
         }
     };
     if !(-180.0..=180.0).contains(&lon) {
         return Err(format!(
-            "titik ke-{number} pada {ring_name} memiliki longitude {lon} di luar rentang -180..180. \
-             Urutan koordinat GeoJSON adalah [longitude, latitude]; kemungkinan keduanya tertukar."
+            "Point #{number} on {ring_name} has longitude {lon} outside range -180..180. \
+             GeoJSON coordinate order is [longitude, latitude]; the two values may be swapped."
         ));
     }
     if !(-90.0..=90.0).contains(&lat) {
         return Err(format!(
-            "titik ke-{number} pada {ring_name} memiliki latitude {lat} di luar rentang -90..90. \
-             Urutan koordinat GeoJSON adalah [longitude, latitude]; kemungkinan keduanya tertukar."
+            "Point #{number} on {ring_name} has latitude {lat} outside range -90..90. \
+             GeoJSON coordinate order is [longitude, latitude]; the two values may be swapped."
         ));
     }
     Ok([lon, lat])
@@ -221,7 +239,7 @@ mod tests {
         let text = feature("{}", "Polygon", &format!("[{open}]"));
         let error = parse_plots(&text).unwrap_err();
 
-        assert!(error.contains("tidak tertutup"), "{error}");
+        assert!(error.contains("not closed"), "{error}");
     }
 
     #[test]
@@ -232,14 +250,14 @@ mod tests {
         let error = parse_plots(&text).unwrap_err();
 
         assert!(error.contains("latitude"), "{error}");
-        assert!(error.contains("tertukar"), "{error}");
+        assert!(error.contains("swapped"), "{error}");
     }
 
     #[test]
     fn rejects_non_json_text() {
-        let error = parse_plots("ini bukan json").unwrap_err();
+        let error = parse_plots("not valid json").unwrap_err();
 
-        assert!(error.contains("bukan GeoJSON"), "{error}");
+        assert!(error.contains("Not valid GeoJSON"), "{error}");
     }
 
     #[test]
@@ -258,6 +276,6 @@ mod tests {
         let point = feature("{}", "Point", "[116.80,-1.20]");
         let error = parse_plots(&collection(&[point])).unwrap_err();
 
-        assert!(error.contains("Tidak ada plot valid"), "{error}");
+        assert!(error.contains("No valid plots"), "{error}");
     }
 }

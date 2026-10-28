@@ -1,0 +1,45 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "vegetation_coverage_pct",
+      "label": "Vegetation Coverage",
+      "type": "float",
+      "unit": "%",
+      "description": "Percentage of analyzed area covered by vegetation."
+    },
+    {
+      "key": "total_pixels_analyzed",
+      "label": "Pixels Analyzed",
+      "type": "integer",
+      "unit": "px"
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "mask_image",
+      "label": "Vegetation Mask",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "Greens"
+      }
+    },
+    {
+      "key": "geojson_boundary",
+      "label": "Vegetation Polygons",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "polygon_boundary",
+        "stroke_color": "#2185d0",
+        "fill_opacity": 0.2
+      }
+    }
+  ]
+}

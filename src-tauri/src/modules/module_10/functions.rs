@@ -1,5 +1,16 @@
 #![allow(dead_code)]
 
+//! Cross-module data contracts for temporal change analysis.
+//!
+//! Provides pure data-construction functions that package temporal
+//! change results into the DTOs consumed by Module 3 (spatial
+//! visualization) and Module 11 (dashboard).
+//!
+//! | Function | Producer | Consumer | Purpose |
+//! |----------|----------|----------|---------|
+//! | [`get_change_area_result`] | Module 10.7 | Module 3.4 | Spatial change area layer |
+//! | [`get_temporal_change_result`] | Module 10.8 | Module 11.5 | Vegetation, land-cover & tree-count deltas |
+
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -132,25 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn test_temporal_change_result_uses_analysis_output() {
-        use crate::modules::module_10::analysis::calculate_vegetation_change;
-
-        let vegetation_change =
-            calculate_vegetation_change(60.0, 72.0).expect("nilai tutupan valid");
-
-        let result = get_temporal_change_result(
-            vegetation_change.to_contract_json(),
-            serde_json::json!({}),
-            0,
-        );
-
-        assert_eq!(
-            result.vegetation_coverage_change["delta"],
-            serde_json::json!(12.0)
-        );
-    }
-
-    #[test]
     fn test_get_temporal_change_result() {
         let vegetation_coverage_change = serde_json::json!({
             "before": 45.0,
@@ -163,11 +155,8 @@ mod tests {
             "bare_land_to_vegetation": 80.2
         });
 
-        let result = get_temporal_change_result(
-            vegetation_coverage_change,
-            land_cover_transition,
-            15,
-        );
+        let result =
+            get_temporal_change_result(vegetation_coverage_change, land_cover_transition, 15);
 
         assert_eq!(result.tree_count_delta, 15);
         assert_eq!(

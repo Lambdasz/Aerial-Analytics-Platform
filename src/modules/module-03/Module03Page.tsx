@@ -1,5 +1,15 @@
-import { ModulePlaceholder } from "../../shell/ModulePlaceholder";
+import { MapCanvas } from "../../map/components/MapCanvas";
+import { ImageGallerySidebar } from "../../map/components/ImageGallerySidebar";
+import { ImageSyncProvider } from "../../map/store/ImageSyncContext";
+import "./Module03Page.css";
 
 export function Module03Page() {
-  return <ModulePlaceholder moduleNumber={3} title="Aerial Image Map Explorer" />;
+  return (
+    <ImageSyncProvider>
+      <div className="app-container bp5-dark">
+        <ImageGallerySidebar />
+        <MapCanvas />
+      </div>
+    </ImageSyncProvider>
+  );
 }
