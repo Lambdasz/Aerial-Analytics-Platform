@@ -255,11 +255,13 @@ pub(crate) fn delete_image_impl(
         let image = flight_session::get_image(&conn, image_id)?;
         flight_session::delete_image_row(&conn, image_id)?;
         flight_session::recalculate_session_date_range(&conn, image.session_id)?;
-        flight_session::reclassify_session_blur(
+        if let Err(err) = flight_session::reclassify_session_blur(
             &conn,
             image.session_id,
             crate::modules::module_01::blur_detection::classify_with_stats,
-        )?;
+        ) {
+            eprintln!("warning: could not reclassify session blur flags: {err}");
+        }
         image.file_path
     };
     // Only files inside the app-owned project layout are removed.
@@ -347,16 +349,20 @@ pub(crate) fn move_image_impl(
     }
     flight_session::recalculate_session_date_range(&conn, source.id)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
-    flight_session::reclassify_session_blur(
+    if let Err(err) = flight_session::reclassify_session_blur(
         &conn,
         source.id,
         crate::modules::module_01::blur_detection::classify_with_stats,
-    )?;
-    flight_session::reclassify_session_blur(
+    ) {
+        eprintln!("warning: could not reclassify session blur flags: {err}");
+    }
+    if let Err(err) = flight_session::reclassify_session_blur(
         &conn,
         target_session_id,
         crate::modules::module_01::blur_detection::classify_with_stats,
-    )?;
+    ) {
+        eprintln!("warning: could not reclassify session blur flags: {err}");
+    }
     Ok(())
 }
 
@@ -430,11 +436,13 @@ pub(crate) fn copy_image_impl(
         return Err(err.into());
     }
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
-    flight_session::reclassify_session_blur(
+    if let Err(err) = flight_session::reclassify_session_blur(
         &conn,
         target_session_id,
         crate::modules::module_01::blur_detection::classify_with_stats,
-    )?;
+    ) {
+        eprintln!("warning: could not reclassify session blur flags: {err}");
+    }
     Ok(())
 }
 
