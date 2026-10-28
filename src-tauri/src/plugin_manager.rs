@@ -21,8 +21,8 @@
 //!              │               │               │
 //!              ▼               ▼               ▼
 //!       ┌────────────┐  ┌────────────┐  ┌────────────┐
-//!       │  models.rs │  │result_hdlr │  │  error.rs  │
-//!       │  (DTOs)    │  │ (history)  │  │  (types)   │
+//!       │  models.rs │  │            │  │  error.rs  │
+//!       │  (DTOs)    │  │            │  │  (types)   │
 //!       └────────────┘  └────────────┘  └────────────┘
 //! ```
 //!
@@ -30,21 +30,18 @@
 //!
 //! | Submodule | Responsibility |
 //! |-----------|----------------|
-//! | [`commands`] | Tauri IPC commands exposed to the frontend |
 //! | [`error`] | Domain error types and [`CommandError`](error::CommandError) DTO |
 //! | [`executor`] | Async subprocess supervision, timeout enforcement, and progress streaming |
 //! | [`lifecycle`] | Plugin installation, removal, enable/disable, and state persistence |
 //! | [`models`] | Data models, DTOs, and schema-conforming types |
-//! | [`payload`] | Execution payload assembly and pre-flight validation |
+//! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata` and execution preflight) |
 //! | [`registry`] | Plugin discovery, indexing, compatibility queries, and health checks |
-//! | [`result_handler`] | Execution result parsing and run history recording |
+//! | [`result_handler`] | Compatibility shim for Module 9 (`ExecutionResult` and run history) |
 //!
 //! ## Fault Isolation
 //!
 //! A failing plugin **must not** crash the core app. All subprocess operations
 //! are async (Tokio) and the Tauri main thread is never blocked.
-
-pub mod commands;
 pub mod error;
 pub mod executor;
 pub mod lifecycle;
