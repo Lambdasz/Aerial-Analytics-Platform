@@ -235,9 +235,26 @@
 //!   `analysis_input`): copies accepted images into `<library_root>`, reads
 //!   metadata from the copy, writes the row(s), links JPG/DNG stem pairs, and
 //!   removes copies when their session is deleted or a startup sweep finds
-//!   them orphaned.
+//!   them orphaned. Folder imports recursively scan nested subdirectories up
+//!   to 6 levels deep (skipping hidden folders and symlinked directories while
+//!   supporting symlinked image files).
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
+//! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
+//!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
+//!   1280px long edge when the source is larger — never upscaled, since that
+//!   would smooth away the edges the Laplacian measures and score a small
+//!   source as falsely blurry, so a source already below the cap (a DNG's
+//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
+//!   decoded directly, DNG from its stored preview. `blur_score` is computed
+//!   per image during `import_io::run_import`; `is_blurry` is then
+//!   re-derived for every scored image in the session in one pass
+//!   (`flight_session::reclassify_session_blur`, called once per import run)
+//!   from the session's mean/stddev z-score, falling back to an absolute
+//!   hard floor only while the session has too few scored images for a
+//!   baseline — not frozen per image at insert time, so the flag depends
+//!   only on the
+//!   session's current score set, not on import order or batch boundaries.
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.
@@ -251,6 +268,7 @@
 //! | `import_images` | Copy picked JPG/DNG files into the app library and record them in a session |
 //! | `get_analysis_input` | Return the image a plugin may analyse (JPEG, or a DNG's same-stem JPEG) |
 //! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
+//! | `thumbnail_image` | Return a small cached thumbnail of an aerial image (its EXIF thumbnail when present, otherwise a 160 px resize) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
 //! | `get_sessions_by_project` | List sessions for a project |
@@ -259,6 +277,10 @@
 //! | `assign_image_to_session` | Associate an image with a session |
 //! | `recalculate_session_date_range` | Recompute a session's date range from its images |
 //! | `delete_session` | Delete a session |
+//! | `delete_image` | Delete one image and move its library copy to the trash (requires `confirm`) |
+//! | `move_image_to_session` | Move one image (row and file) into another session of the same project |
+//! | `copy_image_to_session` | Copy one image (row and file) into another session of the same project |
+//! | `get_image_metadata` | Read EXIF and XMP from a stored image's file (exposure and DJI tags the row does not keep) |
 //!
 //! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
 //! import planning, copy-on-import I/O and the schema migration are
@@ -272,6 +294,14 @@
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
 //! The `preview_image` command serves those previews over IPC.
+//! Blur detection (M1-29) is also implemented: every imported image gets a
+//! `blur_score`/`is_blurry` pair persisted alongside it, computed and
+//! classified at import time (no new command — it is not yet exposed over
+//! IPC beyond the `Image` record's own fields). Known, deliberate
+//! limitations: DNGs are scored from their camera-processed preview, not
+//! raw sensor data; no sensor-noise pre-filtering is applied; scoring is
+//! sequential, not parallelised. Surfacing quality flags in the UI (M1-32)
+//! is a separate, not-yet-implemented task.
 //!
 //! ---
 //!
@@ -515,6 +545,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Shared application state injected into every Tauri command via `.manage()`.
+#[derive(Clone)]
 pub struct AppState {
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
@@ -781,13 +812,19 @@ pub fn run() {
             commands::session::get_sessions_by_project,
             commands::session::update_session_name,
             commands::session::update_session_status,
+            commands::session::get_images_by_session,
+            commands::session::get_image_metadata,
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
+            commands::session::delete_image,
+            commands::session::move_image_to_session,
+            commands::session::copy_image_to_session,
             // Image import & preview
             commands::import::import_images,
             commands::import::get_analysis_input,
             commands::image_preview::preview_image,
+            commands::image_preview::thumbnail_image,
             // Project management
             commands::project::create_project,
             commands::project::get_project,

@@ -18,21 +18,24 @@
 //! reader and the import helpers are implemented (see
 //! [`metadata_extractor`], [`dng_preview`] and [`image_importer`]).
 
+pub mod blur_detection;
 pub mod dng_preview;
 pub mod error;
 pub mod flight_session;
 pub mod image_importer;
 pub mod import_io;
 pub mod metadata_extractor;
+pub mod thumbnail;
 
 pub(crate) use dng_preview::read_dng_preview;
 pub use error::{MetadataError, SessionError};
 pub use flight_session::{
     assign_image_to_session, count_images_by_project, create_project, create_session,
-    delete_project, delete_session, get_image, get_images_by_session, get_project, get_session,
-    get_sessions_by_project, image_from_metadata, init_schema, insert_image,
-    known_hashes_for_project, list_projects, migrate_image_schema, recalculate_session_date_range,
-    update_project, update_session_name, update_session_status,
+    delete_image_row, delete_project, delete_session, get_image, get_images_by_session,
+    get_project, get_session, get_sessions_by_project, image_from_metadata, init_schema,
+    insert_image, known_hashes_for_project, list_projects, migrate_image_schema, move_image_row,
+    recalculate_session_date_range, reclassify_session_blur, update_project, update_session_name,
+    update_session_status,
 };
 pub(crate) use image_importer::{
     find_duplicate, flag_incomplete_metadata, import_images, NameFolding,

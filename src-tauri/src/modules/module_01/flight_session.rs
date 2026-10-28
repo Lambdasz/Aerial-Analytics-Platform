@@ -25,6 +25,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
+use super::blur_detection::SessionBlurStats;
 use super::error::SessionError;
 use crate::models::image::ImageMetadata;
 use crate::models::{Image, Project, Session, SessionStatus};
@@ -48,13 +49,16 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
             content_hash  TEXT,
             file_size     INTEGER,
             raw_sibling_id TEXT,
-            analysis_ready INTEGER";
+            analysis_ready INTEGER,
+            blur_score    REAL,
+            is_blurry     INTEGER";
 
 /// Columns of the `image` table in canonical order, for `SELECT`s and for
 /// the data-preserving copy in [`migrate_image_schema`].
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
     captured_at, gps_altitude_m, width, height, format, make, camera_model, \
-    source_path, content_hash, file_size, raw_sibling_id, analysis_ready";
+    source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
+    blur_score, is_blurry";
 
 /// Canonical `image` columns. A table carrying all of them with nullable
 /// location columns is already current and is never rebuilt, so any columns
@@ -77,6 +81,8 @@ const IMAGE_COLUMN_NAMES: &[&str] = &[
     "file_size",
     "raw_sibling_id",
     "analysis_ready",
+    "blur_score",
+    "is_blurry",
 ];
 
 /// Index used by project-scope duplicate detection, which looks images up by
@@ -1011,7 +1017,9 @@ fn row_to_project(row: &Row) -> rusqlite::Result<Project> {
 /// The copy-on-import provenance columns (`source_path`, `content_hash`,
 /// `file_size`, `raw_sibling_id`, `analysis_ready`) start as `None`: the
 /// import I/O layer fills them in once the copy exists and the stem pair is
-/// known. A record built here is otherwise complete.
+/// known. `blur_score`/`is_blurry` likewise start as `None`: scoring reads
+/// pixels from the copy, so it only happens once the copy exists. A record
+/// built here is otherwise complete.
 pub fn image_from_metadata(
     image_id: Uuid,
     session_id: Uuid,
@@ -1036,6 +1044,8 @@ pub fn image_from_metadata(
         file_size: None,
         raw_sibling_id: None,
         analysis_ready: None,
+        blur_score: None,
+        is_blurry: None,
     }
 }
 
@@ -1052,8 +1062,9 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
     conn.execute(
         "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
             captured_at, gps_altitude_m, width, height, format, make, camera_model, \
-            source_path, content_hash, file_size, raw_sibling_id, analysis_ready)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
+            blur_score, is_blurry)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             image.id.to_string(),
             image.session_id.to_string(),
@@ -1072,6 +1083,8 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
             image.file_size.and_then(|size| i64::try_from(size).ok()),
             image.raw_sibling_id.map(|id| id.to_string()),
             image.analysis_ready.map(i64::from),
+            image.blur_score,
+            image.is_blurry.map(i64::from),
         ],
     )?;
     Ok(())
@@ -1113,6 +1126,162 @@ pub fn get_images_by_session(
         .query_map(params![session_id.to_string()], row_to_image)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(images)
+}
+
+/// Clears `raw_sibling_id` on a JPEG/DNG partner, demotes a DNG that no
+/// longer has a JPEG pair, and clears an unscored DNG's copied `is_blurry` flag.
+///
+/// A lone DNG is not analysis-ready (Module 1 cannot hand raw pixels to a
+/// plugin); a surviving JPEG stays as it was. If the DNG copied its blur flag
+/// from its partner, unlinking it clears that flag so an unscored DNG does not
+/// carry a stale blur warning forever. One statement so all effects share the
+/// caller's transaction.
+fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionError> {
+    conn.execute(
+        "UPDATE image SET raw_sibling_id = NULL, \
+            analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END, \
+            is_blurry = CASE WHEN blur_score IS NULL THEN NULL ELSE is_blurry END \
+         WHERE id = ?1",
+        params![sibling_id.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Deletes one image row, unlinking its raw sibling when it had one.
+///
+/// The caller removes the file itself; this only touches the database. Runs
+/// in one transaction, so a crash cannot leave the sibling pointing at a row
+/// that no longer exists.
+///
+/// # Purity
+///
+/// Impure — deletes a row.
+///
+/// # Errors
+///
+/// [`SessionError::ImageNotFound`] if the id is unknown, [`SessionError::Db`]
+/// on any database error.
+pub fn delete_image_row(conn: &Connection, image_id: Uuid) -> Result<(), SessionError> {
+    let image = get_image(conn, image_id)?;
+    with_immediate_transaction(conn, |conn| {
+        conn.execute(
+            "DELETE FROM image WHERE id = ?1",
+            params![image_id.to_string()],
+        )?;
+        if let Some(sibling_id) = image.raw_sibling_id {
+            unlink_sibling(conn, sibling_id)?;
+        }
+        Ok(())
+    })
+}
+
+/// Moves one image row to another session and points it at its relocated file.
+///
+/// The caller has already verified the sessions share a project and has
+/// already moved the file to `new_file_path`. The moved image loses its pair
+/// link and a DNG partner left behind is demoted; moving one half of a pair
+/// never silently keeps a link across sessions. A moved DNG is demoted too:
+/// it leaves its JPEG behind, so it is exactly as analysable as any other
+/// lone DNG.
+///
+/// # Purity
+///
+/// Impure — updates a row.
+///
+/// # Errors
+///
+/// [`SessionError::ImageNotFound`] if the id is unknown, [`SessionError::Db`]
+/// on any database error.
+pub fn move_image_row(
+    conn: &Connection,
+    image_id: Uuid,
+    target_session_id: Uuid,
+    new_file_path: &str,
+) -> Result<(), SessionError> {
+    let image = get_image(conn, image_id)?;
+    with_immediate_transaction(conn, |conn| {
+        conn.execute(
+            "UPDATE image SET session_id = ?2, file_path = ?3, raw_sibling_id = NULL, \
+                analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END, \
+                is_blurry = CASE WHEN blur_score IS NULL THEN NULL ELSE is_blurry END \
+             WHERE id = ?1",
+            params![
+                image_id.to_string(),
+                target_session_id.to_string(),
+                new_file_path
+            ],
+        )?;
+        if let Some(sibling_id) = image.raw_sibling_id {
+            unlink_sibling(conn, sibling_id)?;
+        }
+        Ok(())
+    })
+}
+
+/// Re-derives `is_blurry` for every scored image in a session from the
+/// session's current score distribution, in one transaction.
+///
+/// `classify` receives one image's `blur_score` and the leave-one-out
+/// baseline stats (mean/stddev/count) of every *other* scored image in the
+/// session, and decides whether that image is blurry. Running this once
+/// over the whole session, rather than classifying each image incrementally
+/// as it is inserted, makes the result depend only on the session's final
+/// score set — not on import order or how many separate import runs it took
+/// to assemble it. A DNG with a same-stem JPEG is excluded from the
+/// baseline and from direct classification (it is the same capture as its
+/// JPEG, so scoring it as an independent sample would double-count that
+/// capture); it mirrors its JPEG's flag instead.
+///
+/// Each row's leave-one-out baseline comes from
+/// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
+/// a fresh "every other score" collection per row (which is the O(n²)
+/// approach this used to take, held under this function's write lock on
+/// every import). See that function's docs for the numerical-stability
+/// trade-off its sum-of-squares formula makes.
+///
+/// Call this after *any* change to a session's set of scored images, not
+/// only an import: `is_blurry` is documented as reflecting the session's
+/// current score set, and that invariant only holds as long as every
+/// mutation re-derives it. Today [`super::import_io::run_import`] is the
+/// only caller — a later path that deletes images or moves/copies them
+/// between sessions must call this for every session it touches, or those
+/// sessions' flags go stale.
+///
+/// # Purity
+///
+/// Impure — reads and updates the `image` table.
+pub fn reclassify_session_blur(
+    conn: &Connection,
+    session_id: Uuid,
+    classify: impl Fn(f64, &SessionBlurStats) -> bool,
+) -> Result<(), SessionError> {
+    with_immediate_transaction(conn, |conn| {
+        let scored: Vec<(String, f64)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, blur_score FROM image
+                 WHERE session_id = ?1 AND blur_score IS NOT NULL
+                   AND NOT (format = 'dng' AND raw_sibling_id IS NOT NULL)",
+            )?;
+            let rows = stmt.query_map(params![session_id.to_string()], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let scores: Vec<f64> = scored.iter().map(|(_, score)| *score).collect();
+        let stats = super::blur_detection::leave_one_out_stats(&scores);
+        let mut update = conn.prepare("UPDATE image SET is_blurry = ?1 WHERE id = ?2")?;
+        for ((id, score), stats) in scored.iter().zip(stats.iter()) {
+            update.execute(params![i64::from(classify(*score, stats)), id])?;
+        }
+        // A paired DNG is the same capture as its JPEG: mirror its flag.
+        conn.execute(
+            "UPDATE image SET is_blurry =
+                 (SELECT j.is_blurry FROM image j WHERE j.id = image.raw_sibling_id)
+             WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL",
+            params![session_id.to_string()],
+        )?;
+        Ok(())
+    })
 }
 
 /// Lists the content hashes of every image already stored in a project.
@@ -1234,6 +1403,8 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let file_size: Option<i64> = row.get(14)?;
     let raw_sibling_id: Option<String> = row.get(15)?;
     let analysis_ready: Option<i64> = row.get(16)?;
+    let blur_score: Option<f64> = row.get(17)?;
+    let is_blurry: Option<i64> = row.get(18)?;
 
     let captured_at = captured_at
         .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
@@ -1272,6 +1443,21 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
             )),
         })
         .transpose()?;
+    // Stored as 0/1; anything else is not a boolean this code wrote.
+    let is_blurry = is_blurry
+        .map(|v| match v {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(conversion_err(
+                18,
+                rusqlite::types::Type::Integer,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("is_blurry must be 0 or 1, found {other}"),
+                ),
+            )),
+        })
+        .transpose()?;
 
     Ok(Image {
         id: uuid_col(row, 0)?,
@@ -1291,6 +1477,8 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         file_size,
         raw_sibling_id,
         analysis_ready,
+        blur_score,
+        is_blurry,
     })
 }
 
@@ -1347,6 +1535,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
@@ -1369,6 +1559,8 @@ mod tests {
             file_size: None,
             raw_sibling_id: None,
             analysis_ready: None,
+            blur_score: None,
+            is_blurry: None,
         }
     }
 
@@ -1480,6 +1672,133 @@ mod tests {
         assert_eq!(listed, vec![image]);
     }
 
+    /// Builds a session holding one mild outlier (above the hard floor, but
+    /// a clear relative outlier against a tight sharp cluster) plus five
+    /// sharp images, inserted in the given order, then reclassifies it.
+    /// Returns the outlier's `is_blurry` after reclassification.
+    fn reclassified_outlier_flag(
+        conn: &Connection,
+        project_id: Uuid,
+        outlier_first: bool,
+    ) -> Option<bool> {
+        let session = create_session(conn, project_id, None).expect("session");
+        let suffix = if outlier_first { "a" } else { "b" };
+        let mut outlier = image_row(
+            session.id,
+            &format!("/photos/{suffix}/outlier.jpg"),
+            Some(&format!("outlier-{suffix}")),
+        );
+        outlier.blur_score = Some(30.0);
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        let sharp: Vec<Image> = sharp_scores
+            .iter()
+            .enumerate()
+            .map(|(n, score)| {
+                let mut image = image_row(
+                    session.id,
+                    &format!("/photos/{suffix}/sharp{n}.jpg"),
+                    Some(&format!("sharp-{suffix}-{n}")),
+                );
+                image.blur_score = Some(*score);
+                image
+            })
+            .collect();
+
+        if outlier_first {
+            insert_image(conn, &outlier).expect("insert outlier");
+            for image in &sharp {
+                insert_image(conn, image).expect("insert sharp");
+            }
+        } else {
+            for image in &sharp {
+                insert_image(conn, image).expect("insert sharp");
+            }
+            insert_image(conn, &outlier).expect("insert outlier");
+        }
+
+        reclassify_session_blur(
+            conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+        get_image(conn, outlier.id).expect("get outlier").is_blurry
+    }
+
+    #[test]
+    fn reclassify_session_blur_does_not_depend_on_insert_order() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+
+        let outlier_imported_first = reclassified_outlier_flag(&conn, project.id, true);
+        let outlier_imported_last = reclassified_outlier_flag(&conn, project.id, false);
+
+        assert_eq!(
+            outlier_imported_first, outlier_imported_last,
+            "the same final score set must classify the same way regardless \
+             of the order rows were inserted in"
+        );
+        assert_eq!(
+            outlier_imported_first,
+            Some(true),
+            "a clear relative outlier against a tight sharp cluster should be flagged blurry"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_mirrors_a_dng_from_its_jpeg() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg", Some("pair-jpg"));
+        jpeg.blur_score = Some(30.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+
+        let mut dng = image_row(session.id, "/photos/pair.dng", Some("pair-dng"));
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        // A DNG's preview can score differently from its JPEG sibling — the
+        // reclassification pass must still mirror the JPEG's flag rather
+        // than treating this as an independent sample.
+        dng.blur_score = Some(999.0);
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        for (n, score) in sharp_scores.iter().enumerate() {
+            let mut image = image_row(
+                session.id,
+                &format!("/photos/sharp{n}.jpg"),
+                Some(&format!("sharp{n}")),
+            );
+            image.blur_score = Some(*score);
+            insert_image(&conn, &image).expect("insert sharp");
+        }
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+        insert_image(&conn, &dng).expect("insert dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        let jpeg_flag = get_image(&conn, jpeg_id).expect("get jpeg").is_blurry;
+        let dng_flag = get_image(&conn, dng_id).expect("get dng").is_blurry;
+        assert_eq!(
+            jpeg_flag,
+            Some(true),
+            "the jpeg is a clear relative outlier"
+        );
+        assert_eq!(
+            dng_flag, jpeg_flag,
+            "the paired dng must mirror its jpeg's flag, not its own score"
+        );
+    }
+
     #[test]
     fn incomplete_image_persists_with_nulls() {
         let conn = memory_db();
@@ -1572,6 +1891,8 @@ mod tests {
         assert_eq!(old.file_size, None);
         assert_eq!(old.raw_sibling_id, None);
         assert_eq!(old.analysis_ready, None);
+        assert_eq!(old.blur_score, None);
+        assert_eq!(old.is_blurry, None);
 
         // Previously impossible on the old schema: persisting an image
         // without GPS or capture time.
@@ -1592,6 +1913,95 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn migrate_adds_blur_columns_to_an_existing_table_preserving_rows() {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute(
+            "CREATE TABLE session (
+                id          TEXT PRIMARY KEY,
+                project_id  TEXT NOT NULL,
+                name        TEXT NOT NULL,
+                date_start  TEXT,
+                date_end    TEXT,
+                status      TEXT NOT NULL DEFAULT 'active',
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("session table");
+        // The full pre-blur-detection (M1-24) image schema: every other
+        // canonical column is present, only blur_score/is_blurry are
+        // missing — the actual upgrade this PR's users hit, as opposed to
+        // the much older pre-M1-24 schema `migrate_upgrades_pre_m24_table_
+        // preserving_rows` covers.
+        conn.execute(
+            "CREATE TABLE image (
+                id            TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL REFERENCES session(id),
+                file_path     TEXT NOT NULL UNIQUE,
+                location_lat  REAL,
+                location_lon  REAL,
+                captured_at   TEXT,
+                gps_altitude_m REAL,
+                width         INTEGER,
+                height        INTEGER,
+                format        TEXT,
+                make          TEXT,
+                camera_model  TEXT,
+                source_path   TEXT,
+                content_hash  TEXT,
+                file_size     INTEGER,
+                raw_sibling_id TEXT,
+                analysis_ready INTEGER
+            )",
+            [],
+        )
+        .expect("pre-blur image table");
+        let session_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO session (id, project_id, name, date_start, date_end, status, created_at, updated_at)
+             VALUES (?1, ?2, 'S', '2026-09-18 07:12:00', '2026-09-18 07:12:00', 'active', '2026-09-18T07:12:00+00:00', '2026-09-18T07:12:00+00:00')",
+            params![session_id, Uuid::new_v4().to_string()],
+        )
+        .expect("session row");
+        conn.execute(
+            "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, captured_at,
+                gps_altitude_m, width, height, format, make, camera_model, source_path,
+                content_hash, file_size, raw_sibling_id, analysis_ready)
+             VALUES (?1, ?2, '/library/old.jpg', -7.5, 110.0, '2026-09-18 07:12:00', 50.0, 4000,
+                3000, 'jpeg', 'DJI', 'Mavic 3', '/originals/old.jpg', 'deadbeef', 1234, NULL, 1)",
+            params![Uuid::new_v4().to_string(), session_id],
+        )
+        .expect("pre-blur image row");
+
+        init_schema(&conn).expect("migrate");
+
+        let names: Vec<String> = table_info(&conn, "image")
+            .expect("table info")
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert!(names.contains(&"blur_score".to_string()));
+        assert!(names.contains(&"is_blurry".to_string()));
+
+        let row: Image = conn
+            .query_row(
+                &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = '/library/old.jpg'"),
+                [],
+                row_to_image,
+            )
+            .expect("row readable after migration");
+        // Every pre-existing column survives the rebuild untouched...
+        assert_eq!(row.content_hash.as_deref(), Some("deadbeef"));
+        assert_eq!(row.width, Some(4000));
+        assert_eq!(row.analysis_ready, Some(true));
+        // ...and the two new columns are NULL, not an error or a default
+        // that would misrepresent an unscored row as deliberately sharp.
+        assert_eq!(row.blur_score, None);
+        assert_eq!(row.is_blurry, None);
     }
 
     /// Creates the `session` table plus one row, so `image` rows have a
@@ -2395,5 +2805,189 @@ mod tests {
 
         assert_eq!(count_images_by_project(&conn, p1.id).expect("count p1"), 3);
         assert_eq!(count_images_by_project(&conn, p2.id).expect("count p2"), 1);
+    }
+
+    #[test]
+    fn moving_a_row_unlinks_the_pair_and_demotes_a_left_behind_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let source = create_session(&conn, project.id, None).expect("source session");
+        let target = create_session(&conn, project.id, None).expect("target session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            source.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            source.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        move_image_row(&conn, jpeg_id, target.id, "/lib/target/a.jpg").expect("move");
+
+        let moved = get_image(&conn, jpeg_id).expect("moved row");
+        assert_eq!(moved.session_id, target.id);
+        assert_eq!(moved.file_path, "/lib/target/a.jpg");
+        assert_eq!(moved.raw_sibling_id, None, "a moved image leaves its pair");
+        let partner = get_image(&conn, dng_id).expect("partner row");
+        assert_eq!(partner.raw_sibling_id, None);
+        assert_eq!(
+            partner.analysis_ready,
+            Some(false),
+            "a dng whose jpeg moved away is not analysable"
+        );
+    }
+
+    #[test]
+    fn moving_a_dng_demotes_it_and_keeps_the_jpeg_analysable() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let source = create_session(&conn, project.id, None).expect("source session");
+        let target = create_session(&conn, project.id, None).expect("target session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            source.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            source.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        move_image_row(&conn, dng_id, target.id, "/lib/target/a.dng").expect("move");
+
+        let moved = get_image(&conn, dng_id).expect("moved row");
+        assert_eq!(moved.session_id, target.id);
+        assert_eq!(moved.raw_sibling_id, None, "a moved image leaves its pair");
+        assert_eq!(
+            moved.analysis_ready,
+            Some(false),
+            "a moved dng is a lone dng and not analysable"
+        );
+        let partner = get_image(&conn, jpeg_id).expect("partner row");
+        assert_eq!(partner.raw_sibling_id, None);
+        assert_eq!(
+            partner.analysis_ready,
+            Some(true),
+            "the jpeg left behind stays analysable"
+        );
+    }
+
+    #[test]
+    fn deleting_a_row_keeps_a_surviving_jpeg_analysable() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            session.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        delete_image_row(&conn, dng_id).expect("delete dng");
+
+        assert!(matches!(
+            get_image(&conn, dng_id),
+            Err(SessionError::ImageNotFound { .. })
+        ));
+        let jpeg = get_image(&conn, jpeg_id).expect("jpeg survives");
+        assert_eq!(jpeg.raw_sibling_id, None);
+        assert_eq!(
+            jpeg.analysis_ready,
+            Some(true),
+            "a lone jpeg stays analysable"
+        );
+    }
+
+    #[test]
+    fn deleting_a_jpeg_clears_is_blurry_on_an_unscored_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            session.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        jpeg.blur_score = Some(15.0);
+        jpeg.is_blurry = Some(true);
+
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        dng.blur_score = None;
+        dng.is_blurry = Some(true);
+
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        delete_image_row(&conn, jpeg_id).expect("delete jpeg");
+
+        let dng = get_image(&conn, dng_id).expect("dng survives");
+        assert_eq!(dng.raw_sibling_id, None);
+        assert_eq!(dng.analysis_ready, Some(false));
+        assert_eq!(
+            dng.is_blurry, None,
+            "an unscored lone dng must have is_blurry cleared"
+        );
     }
 }
