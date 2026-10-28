@@ -3250,11 +3250,12 @@ mod tests {
             &project_id.to_string(),
             &session_id.to_string(),
         );
-        let leftover: Vec<String> = fs::read_dir(&dest_dir)
+        let mut leftover: Vec<String> = fs::read_dir(&dest_dir)
             .expect("session folder")
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
+        leftover.sort();
         assert_eq!(
             leftover,
             vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],

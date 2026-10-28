@@ -673,7 +673,7 @@ fn e2e_delete_image_works_when_the_library_root_is_a_symlink() {
     assert!(
         image
             .file_path
-            .starts_with(&real_library.display().to_string()),
+            .starts_with(&resolved(&real_library).display().to_string()),
         "the import stored the resolved path"
     );
 
@@ -742,4 +742,99 @@ fn e2e_get_image_metadata_reads_the_file_not_just_the_row() {
     let json = serde_json::to_value(&metadata).expect("json");
     assert!(json.get("gpsLatitude").is_some(), "camelCase for the panel");
     assert!(json.get("gps_latitude").is_none());
+}
+
+#[test]
+fn e2e_copy_refuses_a_row_pointing_at_the_users_original() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let original = write_jpeg(env.source_dir.path(), "DJI_0018.JPG", 18);
+
+    let image_id = Uuid::new_v4();
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let metadata = crate::modules::module_01::metadata_extractor::extract_metadata(&original)
+            .expect("metadata");
+        let image = flight_session::image_from_metadata(
+            image_id,
+            source_id,
+            original.display().to_string(),
+            &metadata,
+        );
+        flight_session::insert_image(&conn, &image).expect("row");
+    }
+
+    let refusal = copy_image_impl(&env.state, image_id, target_id).expect_err("refused");
+    assert_eq!(refusal.code, "NOT_A_LIBRARY_COPY");
+}
+
+#[test]
+fn e2e_delete_image_reclassifies_session_blur() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    let mut image_ids = Vec::new();
+    let real_library = env.state.library_root.join("projects");
+    std::fs::create_dir_all(&real_library).expect("projects dir");
+
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        // 1 mild outlier (score 50.0, above hard floor 20.0)
+        let outlier_id = Uuid::new_v4();
+        let outlier_path = real_library.join("outlier.jpg");
+        std::fs::write(&outlier_path, b"test").expect("write file");
+        let mut outlier = flight_session::image_from_metadata(
+            outlier_id,
+            session_id,
+            outlier_path.display().to_string(),
+            &crate::models::ImageMetadata::default(),
+        );
+        outlier.blur_score = Some(50.0);
+        flight_session::insert_image(&conn, &outlier).expect("row");
+        image_ids.push(outlier_id);
+
+        // 5 sharp images with natural variance so stddev > 0
+        let sharp_scores = [100.0, 120.0, 80.0, 110.0, 90.0];
+        for (i, &score) in sharp_scores.iter().enumerate() {
+            let id = Uuid::new_v4();
+            let sharp_path = real_library.join(format!("sharp_{i}.jpg"));
+            std::fs::write(&sharp_path, b"test").expect("write file");
+            let mut sharp = flight_session::image_from_metadata(
+                id,
+                session_id,
+                sharp_path.display().to_string(),
+                &crate::models::ImageMetadata::default(),
+            );
+            sharp.blur_score = Some(score);
+            flight_session::insert_image(&conn, &sharp).expect("row");
+            image_ids.push(id);
+        }
+        flight_session::reclassify_session_blur(
+            &conn,
+            session_id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("initial blur classification");
+
+        let row = flight_session::get_image(&conn, outlier_id).expect("row");
+        assert_eq!(
+            row.is_blurry,
+            Some(true),
+            "outlier is blurry against 5 sharp images"
+        );
+    }
+
+    // Delete the 5 sharp images
+    for &id in &image_ids[1..] {
+        delete_image_impl(&env.state, id, true).expect("delete");
+    }
+
+    // The outlier is now the only image left; without the 5 sharp images, it is not an outlier
+    let conn = env.state.db.lock().expect("db lock");
+    let row = flight_session::get_image(&conn, image_ids[0]).expect("row");
+    assert_eq!(
+        row.is_blurry,
+        Some(false),
+        "after deleting sharp images, it is no longer an outlier"
+    );
 }

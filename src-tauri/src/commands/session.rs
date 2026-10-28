@@ -255,6 +255,11 @@ pub(crate) fn delete_image_impl(
         let image = flight_session::get_image(&conn, image_id)?;
         flight_session::delete_image_row(&conn, image_id)?;
         flight_session::recalculate_session_date_range(&conn, image.session_id)?;
+        flight_session::reclassify_session_blur(
+            &conn,
+            image.session_id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )?;
         image.file_path
     };
     // Only files inside the app-owned project layout are removed.
@@ -331,16 +336,27 @@ pub(crate) fn move_image_impl(
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .to_path_buf();
-        if import_io::relocate_image_file(&new_path, &source_dir).is_err() {
+        if let Err(rollback_err) = import_io::relocate_image_file(&new_path, &source_dir) {
             eprintln!(
                 "warning: a failed move could not be rolled back on disk; \
                  the row and its file disagree until the next move succeeds"
             );
+            return Err(rollback_err.into());
         }
         return Err(err.into());
     }
     flight_session::recalculate_session_date_range(&conn, source.id)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
+    flight_session::reclassify_session_blur(
+        &conn,
+        source.id,
+        crate::modules::module_01::blur_detection::classify_with_stats,
+    )?;
+    flight_session::reclassify_session_blur(
+        &conn,
+        target_session_id,
+        crate::modules::module_01::blur_detection::classify_with_stats,
+    )?;
     Ok(())
 }
 
@@ -372,6 +388,14 @@ pub(crate) fn copy_image_impl(
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
     let (image, _source, target) = load_image_and_target(state, image_id, target_session_id)?;
+    if !import_io::is_library_copy(&state.library_root, Path::new(&image.file_path)) {
+        return Err(CommandError {
+            code: "NOT_A_LIBRARY_COPY".to_string(),
+            message: "this row points outside the app library; only images the app copied \
+                 can be copied between sessions"
+                .to_string(),
+        });
+    }
     let dest_dir = import_io::session_images_dir(
         &state.library_root,
         &target.project_id.to_string(),
@@ -406,6 +430,11 @@ pub(crate) fn copy_image_impl(
         return Err(err.into());
     }
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
+    flight_session::reclassify_session_blur(
+        &conn,
+        target_session_id,
+        crate::modules::module_01::blur_detection::classify_with_stats,
+    )?;
     Ok(())
 }
 

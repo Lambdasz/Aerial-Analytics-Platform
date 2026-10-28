@@ -1246,7 +1246,7 @@ pub fn move_image_row(
 /// # Purity
 ///
 /// Impure — reads and updates the `image` table.
-pub(crate) fn reclassify_session_blur(
+pub fn reclassify_session_blur(
     conn: &Connection,
     session_id: Uuid,
     classify: impl Fn(f64, &SessionBlurStats) -> bool,

@@ -34,7 +34,8 @@ pub use flight_session::{
     delete_image_row, delete_project, delete_session, get_image, get_images_by_session,
     get_project, get_session, get_sessions_by_project, image_from_metadata, init_schema,
     insert_image, known_hashes_for_project, list_projects, migrate_image_schema, move_image_row,
-    recalculate_session_date_range, update_project, update_session_name, update_session_status,
+    recalculate_session_date_range, reclassify_session_blur, update_project, update_session_name,
+    update_session_status,
 };
 pub(crate) use image_importer::{
     find_duplicate, flag_incomplete_metadata, import_images, NameFolding,
