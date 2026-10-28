@@ -1227,10 +1227,17 @@ pub fn move_image_row(
 /// over the whole session, rather than classifying each image incrementally
 /// as it is inserted, makes the result depend only on the session's final
 /// score set — not on import order or how many separate import runs it took
-/// to assemble it. A DNG with a same-stem JPEG is excluded from the
-/// baseline and from direct classification (it is the same capture as its
-/// JPEG, so scoring it as an independent sample would double-count that
-/// capture); it mirrors its JPEG's flag instead.
+/// to assemble it.
+///
+/// Every DNG is left out of the JPEG baseline, scored or not: a DNG's
+/// embedded preview is processed differently by camera firmware than a
+/// final JPEG, so its Laplacian-variance scores sit on a different scale
+/// and would be compared against the wrong yardstick. A DNG with a
+/// same-stem JPEG (the same capture as its JPEG, so scoring it as an
+/// independent sample would also double-count that capture) mirrors its
+/// JPEG's flag instead. A standalone DNG (no same-stem JPEG) has no JPEG
+/// to mirror, so it is simply left unflagged — `blur_score` is still
+/// computed and stored for it, but `is_blurry` stays `None`.
 ///
 /// Each row's leave-one-out baseline comes from
 /// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
@@ -1260,7 +1267,7 @@ pub fn reclassify_session_blur(
             let mut stmt = conn.prepare(
                 "SELECT id, blur_score FROM image
                  WHERE session_id = ?1 AND blur_score IS NOT NULL
-                   AND NOT (format = 'dng' AND raw_sibling_id IS NOT NULL)",
+                   AND (format IS NULL OR format != 'dng')",
             )?;
             let rows = stmt.query_map(params![session_id.to_string()], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -1797,6 +1804,52 @@ mod tests {
             dng_flag, jpeg_flag,
             "the paired dng must mirror its jpeg's flag, not its own score"
         );
+    }
+
+    #[test]
+    fn reclassify_session_blur_leaves_a_standalone_dng_unflagged() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        // No same-stem JPEG: raw_sibling_id is None.
+        let mut dng = image_row(session.id, "/photos/lone.dng", Some("lone-dng"));
+        dng.format = Some("dng".to_string());
+        dng.blur_score = Some(5.0); // would be a clear outlier if mixed into the jpeg baseline
+        let dng_id = dng.id;
+        insert_image(&conn, &dng).expect("insert standalone dng");
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        for (n, score) in sharp_scores.iter().enumerate() {
+            let mut image = image_row(
+                session.id,
+                &format!("/photos/sharp{n}.jpg"),
+                Some(&format!("sharp{n}")),
+            );
+            image.blur_score = Some(*score);
+            insert_image(&conn, &image).expect("insert sharp");
+        }
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        assert_eq!(
+            get_image(&conn, dng_id).expect("get dng").is_blurry,
+            None,
+            "a standalone dng has no jpeg to mirror, so it stays unflagged"
+        );
+        let sharp_images = get_images_by_session(&conn, session.id).expect("list");
+        for sharp in sharp_images.iter().filter(|img| img.id != dng_id) {
+            assert_eq!(
+                sharp.is_blurry,
+                Some(false),
+                "the jpeg baseline must not be skewed by the dng's score: {sharp:?}"
+            );
+        }
     }
 
     #[test]

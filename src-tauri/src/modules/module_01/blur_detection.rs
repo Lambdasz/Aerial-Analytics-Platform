@@ -289,17 +289,24 @@ pub(crate) struct SessionBlurStats {
 /// [`classify_blur`] for why the candidate must be excluded from its own
 /// baseline.
 ///
-/// One running sum and sum-of-squares over shifted scores gives every element's
-/// leave-one-out mean/variance algebraically in O(1) each, so the whole
-/// function is O(n) — unlike recomputing a fresh mean/variance over a
-/// freshly collected "every other element" slice per index, which is
-/// O(n²). That used to cost ~368ms for a 3000-score session in a debug
-/// build of [`super::flight_session::reclassify_session_blur`], run under
-/// its write lock on every import.
+/// One running sum and sum-of-squares over *shifted* scores (each score
+/// minus the overall mean) gives every element's leave-one-out mean/variance
+/// algebraically in O(1) each, so the whole function is O(n) — unlike
+/// recomputing a fresh mean/variance over a freshly collected "every other
+/// element" slice per index, which is O(n²). That used to cost ~368ms for a
+/// 3000-score session in a debug build of
+/// [`super::flight_session::reclassify_session_blur`], run under its write
+/// lock on every import.
 ///
-/// The shifted-data technique (subtracting the overall mean before summing)
-/// keeps intermediate values near zero and eliminates catastrophic cancellation
-/// when scores are large and mutually close.
+/// Shifting keeps the summed values near zero instead of near the scores'
+/// own (potentially large) magnitude, which avoids the catastrophic
+/// cancellation an unshifted `sum_sq/n - mean²` suffers when scores are
+/// large and mutually close (e.g. a session whose scores cluster around
+/// 50,000): subtracting two large, nearly-equal numbers there left behind
+/// rounding noise instead of the true (near-zero) spread, and
+/// [`classify_blur`] dividing by that noise could turn a harmless
+/// difference into a spurious z-score. The `.max(0.0)` below is a residual
+/// safety net against whatever floating-point noise still slips through.
 ///
 /// # Purity
 ///
@@ -355,12 +362,21 @@ pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
 /// sessions.
 ///
 /// With fewer than [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a
-/// zero stddev, there is no meaningful baseline yet, so classification falls
-/// back to `hard_floor` alone. Once a baseline exists, `hard_floor` is
-/// *not* consulted — only a z-score below `z_threshold` standard deviations
-/// under the session mean counts as blurry. See [`HARD_FLOOR_BLUR_SCORE`]
-/// for why the floor must not override the relative check once there is a
-/// baseline to compare against.
+/// stddev that is zero (or negligible relative to the mean — see below),
+/// there is no meaningful baseline yet, so classification falls back to
+/// `hard_floor` alone. Once a baseline exists, `hard_floor` is *not*
+/// consulted — only a z-score below `z_threshold` standard deviations under
+/// the session mean counts as blurry. See [`HARD_FLOOR_BLUR_SCORE`] for why
+/// the floor must not override the relative check once there is a baseline
+/// to compare against.
+///
+/// The stddev check is relative (`<= mean.abs() * 1e-9`), not an exact
+/// `== 0.0`: `leave_one_out_stats`'s shifted-data technique drastically
+/// reduces catastrophic-cancellation noise, but floating-point rounding can
+/// still leave a tiny nonzero stddev behind for a baseline of near-identical
+/// scores. Dividing by that leftover noise would turn a harmless difference
+/// into a huge, spurious z-score — exactly the outlier this fallback exists
+/// to avoid flagging.
 ///
 /// # Purity
 ///
@@ -371,7 +387,9 @@ pub(crate) fn classify_blur(
     hard_floor: f64,
     z_threshold: f64,
 ) -> bool {
-    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE || stats.stddev == 0.0 {
+    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE
+        || stats.stddev <= stats.mean.abs() * 1e-9
+    {
         // No meaningful baseline yet: the absolute floor is the only signal
         // available.
         return raw_score < hard_floor;
@@ -626,6 +644,36 @@ mod tests {
             sample_count: 10,
         };
         assert!(!classify_blur(10.0, &stats, 5.0, -1.5));
+    }
+
+    #[test]
+    fn classify_blur_rounding_noise_stddev_falls_back_to_hard_floor_too() {
+        // A stddev this tiny relative to a mean of 1000.0 is rounding
+        // noise from the sum-of-squares formula, not a real spread — it
+        // must not be divided into a huge, spurious z-score.
+        let stats = SessionBlurStats {
+            mean: 1000.0,
+            stddev: 1e-6,
+            sample_count: 10,
+        };
+        assert!(!classify_blur(999.999_999_9, &stats, 20.0, -1.5));
+    }
+
+    #[test]
+    fn leave_one_out_stats_near_identical_scores_do_not_flag_each_other() {
+        // The repro: six scores, all 1000.0 except one off by one part in
+        // ten billion. Whatever rounding noise leave_one_out_stats'
+        // sum-of-squares formula produces for that stddev, classify_blur's
+        // relative-tolerance fallback must treat it as "no real spread"
+        // and never flag the near-identical outlier via the z-score path.
+        let scores = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 999.999_999_9];
+        let stats = leave_one_out_stats(&scores);
+        for (score, stats) in scores.iter().zip(stats.iter()) {
+            assert!(
+                !classify_blur(*score, stats, 20.0, -1.5),
+                "score={score} stats={stats:?} should not be flagged on rounding noise"
+            );
+        }
     }
 
     #[test]
