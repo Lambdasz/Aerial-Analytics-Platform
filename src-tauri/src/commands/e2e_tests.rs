@@ -25,7 +25,16 @@ use crate::plugin_manager::executor::ActiveJobTracker;
 use crate::AppState;
 
 use super::import::{get_analysis_input_impl, import_images_impl};
-use super::session::{delete_session_impl, DeleteOutcome};
+use super::session::{
+    copy_image_impl, delete_image_impl, delete_session_impl, get_image_metadata_impl,
+    move_image_impl, DeleteOutcome,
+};
+
+/// Resolves a path when the OS will, so assertions survive a library root that
+/// is only a symlink (macOS temp folders).
+fn resolved(path: &std::path::Path) -> std::path::PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 /// Full app state over real tempdirs: on-disk SQLite, real library root.
 struct TestEnv {
@@ -281,7 +290,7 @@ fn e2e_delete_session_requires_confirm_then_removes_rows_and_files() {
             .expect("session still present before confirmation");
     }
     assert!(
-        !files_under(&env.state.library_root).is_empty(),
+        !files_under(&env.state.library_root.join("projects")).is_empty(),
         "copies untouched before confirmation"
     );
 
@@ -299,8 +308,10 @@ fn e2e_delete_session_requires_confirm_then_removes_rows_and_files() {
             "image rows deleted too"
         );
     }
+    // Copies live under `projects/`; `.thumbs` thumbnails are derived cache,
+    // not copies, and are deliberately not part of this assertion.
     assert!(
-        files_under(&env.state.library_root).is_empty(),
+        files_under(&env.state.library_root.join("projects")).is_empty(),
         "library has no stray copies after deletion"
     );
     assert!(
@@ -403,4 +414,492 @@ fn e2e_delete_outcome_serializes_camel_case() {
     let outcome = DeleteOutcome { files_left: true };
     let json = serde_json::to_string(&outcome).expect("serialize");
     assert_eq!(json, r#"{"filesLeft":true}"#);
+}
+
+/// A second session in the same project as `session_id`.
+fn env_sibling_session(env: &TestEnv, session_id: Uuid) -> Uuid {
+    let conn = env.state.db.lock().expect("db lock");
+    let project_id = flight_session::get_session(&conn, session_id)
+        .expect("session")
+        .project_id;
+    flight_session::create_session(&conn, project_id, Some("tujuan".to_string()))
+        .expect("sibling session")
+        .id
+}
+
+/// A session in a brand-new project.
+fn env_other_project_session(env: &TestEnv) -> Uuid {
+    let conn = env.state.db.lock().expect("db lock");
+    let project =
+        crate::modules::module_01::create_project(&conn, "Other Project".to_string(), None)
+            .expect("project");
+    flight_session::create_session(&conn, project.id, Some("lain".to_string()))
+        .expect("session")
+        .id
+}
+
+/// The only image row of a session.
+fn only_image(env: &TestEnv, session_id: Uuid) -> crate::models::Image {
+    let conn = env.state.db.lock().expect("db lock");
+    let mut rows = flight_session::get_images_by_session(&conn, session_id).expect("rows");
+    assert_eq!(rows.len(), 1, "one image expected");
+    rows.remove(0)
+}
+
+#[test]
+fn e2e_delete_image_requires_confirm_then_removes_row_and_copy() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0010.JPG", 10);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, session_id);
+    let project = env_session_project(&env, session_id);
+    let session_dir =
+        session_images_dir(&env.state.library_root, &project, &session_id.to_string());
+
+    let refusal = delete_image_impl(&env.state, image.id, false).expect_err("confirm is required");
+    assert_eq!(refusal.code, "CONFIRMATION_REQUIRED");
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        flight_session::get_image(&conn, image.id).expect("row untouched before confirmation");
+    }
+    assert_eq!(files_under(&session_dir).len(), 1, "copy untouched too");
+
+    let outcome = delete_image_impl(&env.state, image.id, true).expect("delete");
+    assert!(!outcome.files_left, "nothing left behind");
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        assert!(matches!(
+            flight_session::get_image(&conn, image.id),
+            Err(SessionError::ImageNotFound { .. })
+        ));
+        assert!(flight_session::get_images_by_session(&conn, session_id)
+            .expect("rows")
+            .is_empty());
+    }
+    assert!(
+        files_under(&session_dir).is_empty(),
+        "copy removed from disk"
+    );
+}
+
+#[test]
+fn e2e_delete_image_demotes_the_dng_left_behind() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    write_jpeg(env.source_dir.path(), "DJI_0011.JPG", 11);
+    write_dng(env.source_dir.path(), "DJI_0011.DNG", 8, 6);
+    let sources = sources(&[env.source_dir.path().to_path_buf()]);
+    import_images_impl(&env.state, session_id, &sources, true, |_, _, _| {}).expect("pair import");
+
+    let (jpeg, dng_id) = {
+        let conn = env.state.db.lock().expect("db lock");
+        let rows = flight_session::get_images_by_session(&conn, session_id).expect("rows");
+        let jpeg = rows
+            .iter()
+            .find(|row| row.file_path.ends_with(".JPG"))
+            .expect("jpeg row")
+            .clone();
+        let dng_id = rows
+            .iter()
+            .find(|row| row.file_path.ends_with(".DNG"))
+            .expect("dng row")
+            .id;
+        (jpeg, dng_id)
+    };
+
+    delete_image_impl(&env.state, jpeg.id, true).expect("delete jpeg");
+
+    let conn = env.state.db.lock().expect("db lock");
+    let dng = flight_session::get_image(&conn, dng_id).expect("dng survives");
+    assert_eq!(dng.raw_sibling_id, None, "the pair link is cleared");
+    assert_eq!(
+        dng.analysis_ready,
+        Some(false),
+        "a lone dng is not analysable"
+    );
+}
+
+#[test]
+fn e2e_move_image_between_sessions_relocates_row_and_file() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0012.JPG", 12);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, source_id);
+    let project = env_session_project(&env, source_id);
+    let source_dir = session_images_dir(&env.state.library_root, &project, &source_id.to_string());
+    let target_dir = session_images_dir(&env.state.library_root, &project, &target_id.to_string());
+
+    move_image_impl(&env.state, image.id, target_id).expect("move");
+
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let moved = flight_session::get_image(&conn, image.id).expect("row survives the move");
+        assert_eq!(moved.session_id, target_id);
+        assert!(
+            resolved(std::path::Path::new(&moved.file_path)).starts_with(resolved(&target_dir)),
+            "row points at the target folder: {}",
+            moved.file_path
+        );
+        assert!(
+            flight_session::get_images_by_session(&conn, source_id)
+                .expect("rows")
+                .is_empty(),
+            "the image left the source session"
+        );
+    }
+    assert!(files_under(&source_dir).is_empty(), "no file left behind");
+    assert_eq!(files_under(&target_dir).len(), 1, "the file moved");
+}
+
+#[test]
+fn e2e_copy_image_between_sessions_duplicates_row_and_file() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0013.JPG", 13);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, source_id);
+    let project = env_session_project(&env, source_id);
+    let source_dir = session_images_dir(&env.state.library_root, &project, &source_id.to_string());
+    let target_dir = session_images_dir(&env.state.library_root, &project, &target_id.to_string());
+
+    copy_image_impl(&env.state, image.id, target_id).expect("copy");
+
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let original = flight_session::get_image(&conn, image.id).expect("original survives");
+        assert_eq!(original.session_id, source_id);
+        let copied = flight_session::get_images_by_session(&conn, target_id).expect("rows");
+        assert_eq!(copied.len(), 1, "one copied row in the target session");
+        let copy = &copied[0];
+        assert_ne!(copy.id, original.id, "the copy is its own image");
+        assert_eq!(copy.raw_sibling_id, None, "a copy starts unpaired");
+        assert_eq!(copy.analysis_ready, Some(true), "a lone jpeg is analysable");
+        let expected = original
+            .file_path
+            .replace(&source_id.to_string(), &target_id.to_string());
+        assert_eq!(
+            resolved(std::path::Path::new(&copy.file_path)),
+            resolved(std::path::Path::new(&expected)),
+            "the copy lands beside the original, symlink prefix or not"
+        );
+    }
+    assert_eq!(files_under(&source_dir).len(), 1, "the original copy stays");
+    assert_eq!(
+        files_under(&target_dir).len(),
+        1,
+        "the duplicated file landed"
+    );
+}
+
+#[test]
+fn e2e_image_actions_refuse_other_projects() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let other_id = env_other_project_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0014.JPG", 14);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, source_id);
+
+    let moved = move_image_impl(&env.state, image.id, other_id).expect_err("cross-project move");
+    assert_eq!(moved.code, "CROSS_PROJECT_IMAGE");
+    let copied = copy_image_impl(&env.state, image.id, other_id).expect_err("cross-project copy");
+    assert_eq!(copied.code, "CROSS_PROJECT_IMAGE");
+    let same = move_image_impl(&env.state, image.id, source_id).expect_err("same session");
+    assert_eq!(same.code, "SAME_SESSION");
+}
+
+/// The macOS shape: `library_root` reaches the files through a symlink while
+/// the import stores the resolved path, so a text `starts_with` check can
+/// miss the app's own copy and leave it on disk after a delete.
+#[cfg(unix)]
+#[test]
+fn e2e_delete_image_works_when_the_library_root_is_a_symlink() {
+    let root = tempfile::tempdir().expect("test root");
+    let conn = rusqlite::Connection::open(root.path().join("aerial.db")).expect("scratch db");
+    flight_session::init_schema(&conn).expect("scratch schema");
+    let real_library = root.path().join("library-real");
+    std::fs::create_dir_all(&real_library).expect("real library");
+    let link_library = root.path().join("library");
+    std::os::unix::fs::symlink(&real_library, &link_library).expect("symlink library");
+    let env = TestEnv {
+        state: AppState {
+            jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+            db: Arc::new(Mutex::new(conn)),
+            library_root: Arc::new(link_library),
+        },
+        _root: root,
+        source_dir: tempfile::tempdir().expect("source dir"),
+    };
+
+    let session_id = env_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0015.JPG", 15);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, session_id);
+    assert!(
+        image
+            .file_path
+            .starts_with(&resolved(&real_library).display().to_string()),
+        "the import stored the resolved path"
+    );
+
+    let outcome = delete_image_impl(&env.state, image.id, true).expect("delete");
+    assert!(
+        !outcome.files_left,
+        "the copy must be recognized and removed"
+    );
+    let project = env_session_project(&env, session_id);
+    let session_dir =
+        session_images_dir(&env.state.library_root, &project, &session_id.to_string());
+    assert!(
+        files_under(&session_dir).is_empty(),
+        "copy removed from disk through the symlink"
+    );
+}
+
+#[test]
+fn e2e_move_refuses_a_row_pointing_at_the_users_original() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let original = write_jpeg(env.source_dir.path(), "DJI_0016.JPG", 16);
+
+    let image_id = Uuid::new_v4();
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let metadata = crate::modules::module_01::metadata_extractor::extract_metadata(&original)
+            .expect("metadata");
+        let image = flight_session::image_from_metadata(
+            image_id,
+            source_id,
+            original.display().to_string(),
+            &metadata,
+        );
+        flight_session::insert_image(&conn, &image).expect("row");
+    }
+
+    let refusal = move_image_impl(&env.state, image_id, target_id).expect_err("refused");
+    assert_eq!(refusal.code, "NOT_A_LIBRARY_COPY");
+    assert!(original.exists(), "the user's file stays where it is");
+    let conn = env.state.db.lock().expect("db lock");
+    let row = flight_session::get_image(&conn, image_id).expect("row stays");
+    assert_eq!(row.session_id, source_id, "the row did not move");
+}
+
+#[test]
+fn e2e_get_image_metadata_reads_the_file_not_just_the_row() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0017.JPG", 17);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, session_id);
+
+    let metadata = get_image_metadata_impl(&env.state, image.id).expect("metadata");
+    assert_eq!(metadata.width, Some(8), "the extractor read the file");
+    assert_eq!(metadata.height, Some(8));
+
+    let json = serde_json::to_value(&metadata).expect("json");
+    assert!(json.get("gpsLatitude").is_some(), "camelCase for the panel");
+    assert!(json.get("gps_latitude").is_none());
+}
+
+#[test]
+fn e2e_copy_refuses_a_row_pointing_at_the_users_original() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let original = write_jpeg(env.source_dir.path(), "DJI_0018.JPG", 18);
+
+    let image_id = Uuid::new_v4();
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        let metadata = crate::modules::module_01::metadata_extractor::extract_metadata(&original)
+            .expect("metadata");
+        let image = flight_session::image_from_metadata(
+            image_id,
+            source_id,
+            original.display().to_string(),
+            &metadata,
+        );
+        flight_session::insert_image(&conn, &image).expect("row");
+    }
+
+    let refusal = copy_image_impl(&env.state, image_id, target_id).expect_err("refused");
+    assert_eq!(refusal.code, "NOT_A_LIBRARY_COPY");
+}
+
+#[test]
+fn e2e_delete_image_reclassifies_session_blur() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    let mut image_ids = Vec::new();
+    let real_library = env.state.library_root.join("projects");
+    std::fs::create_dir_all(&real_library).expect("projects dir");
+
+    {
+        let conn = env.state.db.lock().expect("db lock");
+        // 1 mild outlier (score 50.0, above hard floor 20.0)
+        let outlier_id = Uuid::new_v4();
+        let outlier_path = real_library.join("outlier.jpg");
+        std::fs::write(&outlier_path, b"test").expect("write file");
+        let mut outlier = flight_session::image_from_metadata(
+            outlier_id,
+            session_id,
+            outlier_path.display().to_string(),
+            &crate::models::ImageMetadata::default(),
+        );
+        outlier.blur_score = Some(50.0);
+        flight_session::insert_image(&conn, &outlier).expect("row");
+        image_ids.push(outlier_id);
+
+        // 5 sharp images with natural variance so stddev > 0
+        let sharp_scores = [100.0, 120.0, 80.0, 110.0, 90.0];
+        for (i, &score) in sharp_scores.iter().enumerate() {
+            let id = Uuid::new_v4();
+            let sharp_path = real_library.join(format!("sharp_{i}.jpg"));
+            std::fs::write(&sharp_path, b"test").expect("write file");
+            let mut sharp = flight_session::image_from_metadata(
+                id,
+                session_id,
+                sharp_path.display().to_string(),
+                &crate::models::ImageMetadata::default(),
+            );
+            sharp.blur_score = Some(score);
+            flight_session::insert_image(&conn, &sharp).expect("row");
+            image_ids.push(id);
+        }
+        flight_session::reclassify_session_blur(
+            &conn,
+            session_id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("initial blur classification");
+
+        let row = flight_session::get_image(&conn, outlier_id).expect("row");
+        assert_eq!(
+            row.is_blurry,
+            Some(true),
+            "outlier is blurry against 5 sharp images"
+        );
+    }
+
+    // Delete the 5 sharp images
+    for &id in &image_ids[1..] {
+        delete_image_impl(&env.state, id, true).expect("delete");
+    }
+
+    // The outlier is now the only image left; without the 5 sharp images, it is not an outlier
+    let conn = env.state.db.lock().expect("db lock");
+    let row = flight_session::get_image(&conn, image_ids[0]).expect("row");
+    assert_eq!(
+        row.is_blurry,
+        Some(false),
+        "after deleting sharp images, it is no longer an outlier"
+    );
+}
+
+#[test]
+fn e2e_move_image_discards_cached_thumbnail() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0019.JPG", 19);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, source_id);
+    let cache_dir = env.state.library_root.join(".thumbs");
+
+    // Generate thumbnail so it is present in the cache
+    let thumb_key = crate::modules::module_01::thumbnail::thumbnail_cache_key(
+        std::path::Path::new(&image.file_path),
+    )
+    .expect("thumb key");
+    crate::modules::module_01::thumbnail::warm_thumbnail(
+        std::path::Path::new(&image.file_path),
+        &cache_dir,
+    );
+    let cache_file = cache_dir.join(format!("{thumb_key}.jpg"));
+    assert!(cache_file.exists(), "thumbnail was created in cache");
+
+    // Move image
+    move_image_impl(&env.state, image.id, target_id).expect("move");
+
+    assert!(
+        !cache_file.exists(),
+        "thumbnail cache entry was removed after move"
+    );
+}
+
+#[test]
+fn e2e_thumbnail_image_refuses_file_outside_library() {
+    let env = test_env();
+    let outside_jpeg = write_jpeg(env.source_dir.path(), "outside.JPG", 20);
+    let cache_dir = env.state.library_root.join(".thumbs");
+
+    let err = crate::commands::image_preview::thumbnail_image_impl(
+        &env.state,
+        outside_jpeg.display().to_string(),
+    )
+    .expect_err("should refuse");
+    assert_eq!(err.code, "NOT_A_LIBRARY_COPY");
+
+    // Assert nothing was written to .thumbs
+    if cache_dir.exists() {
+        assert_eq!(
+            std::fs::read_dir(&cache_dir).expect("read thumbs").count(),
+            0,
+            "no thumbnail written for non-library file"
+        );
+    }
 }

@@ -261,6 +261,7 @@ impl ImageFormat {
 /// All fields are `Option<T>` because not every image contains every tag
 /// (e.g. a non-DJI drone will lack XMP flight data).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageMetadata {
     // --- geolocation ---
     /// GPS latitude in decimal degrees (south is negative).
