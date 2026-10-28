@@ -1266,7 +1266,8 @@ pub fn reclassify_session_blur(
         let scored: Vec<(String, f64)> = {
             let mut stmt = conn.prepare(
                 "SELECT id, blur_score FROM image
-                 WHERE session_id = ?1 AND blur_score IS NOT NULL AND format != 'dng'",
+                 WHERE session_id = ?1 AND blur_score IS NOT NULL
+                   AND (format IS NULL OR format != 'dng')",
             )?;
             let rows = stmt.query_map(params![session_id.to_string()], |row| {
                 Ok((row.get(0)?, row.get(1)?))
