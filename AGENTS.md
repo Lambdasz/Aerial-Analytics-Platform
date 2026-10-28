@@ -38,7 +38,7 @@ cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  
 npm run lint:fix && npm run format && npm run format:rust
 ```
 
-Commit messages are validated by commitlint (Conventional Commits). CI (`.github/workflows/ci.yml`) runs the same checks plus a cross-platform build (macOS, Ubuntu, Windows).
+Commit messages are validated by commitlint (Conventional Commits). CI (`.github/workflows/ci.yml`) runs the same checks, `cargo test` (Ubuntu + macOS), and a cross-platform `tauri build --no-bundle` (macOS, Ubuntu, Windows).
 
 ## Git Conventions
 
@@ -69,12 +69,13 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
 - `src/` — React frontend. Entry: `src/main.tsx`, root: `src/App.tsx` → `src/shell/AppShell.tsx`.
   - `src/shell/` — App shell, sidebar, module routing.
   - `src/map/` — Leaflet map explorer, AOI drawing, layer management.
-  - `src/modules/module-NN/` — module pages (placeholder shells for most).
+  - `src/modules/module-NN/` — module pages (01–03, 10 have real UI; 09/11 are `ModulePlaceholder`, others absent).
   - `src/features/`, `src/component_plugin_manager/` — feature code (mostly scaffolding).
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
 - `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).
   - `plugin_manager.rs` + `plugin_manager/` — plugin discovery, lifecycle, async execution, error isolation. The entry is the file `plugin_manager.rs`; never reintroduce `plugin_manager/mod.rs` alongside it (Rust rejects both existing).
-  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, Module 1 flight sessions). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, `plugin_manager/commands.rs` + `executor.rs`, and `greet`/`import_plots` inline in `lib.rs`.
+  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, `import.rs`, `image_preview.rs`, `project.rs`; `e2e_tests.rs` is `#[cfg(test)]` only). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, plugin commands inline in `plugin_manager/{executor,registry,lifecycle}.rs`, and `greet`/`import_plots`/`get_dummy_spatial_layers` inline in `lib.rs`.
+  - Command e2e pattern: heavy commands expose a `*_impl` fn taking `&AppState`; the `#[tauri::command]` wrapper stays thin, and `commands/e2e_tests.rs` drives the `*_impl` fns against a real tempdir SQLite + library root (no Tauri runtime). Follow this when adding file-touching commands.
   - `models/` — Shared Rust types (must derive `Serialize`/`Deserialize` if crossing IPC boundary).
   - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_10/` (temporal change analysis).
   - `plot.rs` / `plot_api.rs` — Module 9 (GeoJSON plot import, plot API).
