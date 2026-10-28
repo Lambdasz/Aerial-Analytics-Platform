@@ -510,14 +510,20 @@
 //!
 //! | Command | Description |
 //! |---------|-------------|
+//! | `get_observation_periods` | Group a session's images per acquisition date (10.1) |
+//! | `get_vegetation_change` | Compare vegetation coverage of the two latest periods (10.2 + 10.3) |
+//! | `get_land_cover_changes` | Compare per-location land-cover classes (10.4) |
+//! | `get_tree_count_changes` | Compare per-location tree counts (10.5) |
+//! | `get_change_magnitudes` | Per-location change magnitude and level (10.6) |
+//! | `get_significant_change_areas` | Flag locations above the magnitude threshold (10.7) |
 //! | `compare_sessions` | Run a comparison between two sessions' analysis results (vegetation coverage, land-cover, tree count) and produce a temporal result |
 //! | `get_change_summary` | Return the latest computed temporal summary for a project, for Module 11 to consume |
 //!
-//! **Status**: Cross-module contract types (`ChangeArea`, temporal result
-//! structs) and constructors implemented with unit tests. No command exists
-//! yet to actually run a comparison or expose a result — `compare_sessions`
-//! and `get_change_summary` are `todo!()` stubs so Module 10 has a minimal
-//! contract, matching the Module 9 (`plot_api`) pattern.
+//! **Status**: 10.1 - 10.8 implemented. 10.1 - 10.3 read Module 1.4 images and
+//! their pixels; 10.4 - 10.7 are per-location pure functions exposed as
+//! commands, with the location maps produced by Module 3/4/5. `compare_sessions`
+//! and `get_change_summary` remain `todo!()` stubs until those modules publish
+//! their results.
 //!
 //! ---
 //!
@@ -833,6 +839,12 @@ pub fn run() {
             commands::project::delete_project,
             commands::project::count_images_by_project,
             // Temporal change analysis (Module 10)
+            modules::module_10::commands::get_observation_periods,
+            modules::module_10::commands::get_vegetation_change,
+            modules::module_10::commands::get_land_cover_changes,
+            modules::module_10::commands::get_tree_count_changes,
+            modules::module_10::commands::get_change_magnitudes,
+            modules::module_10::commands::get_significant_change_areas,
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,
         ])
