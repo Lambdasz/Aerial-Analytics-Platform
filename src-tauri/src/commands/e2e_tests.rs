@@ -838,3 +838,41 @@ fn e2e_delete_image_reclassifies_session_blur() {
         "after deleting sharp images, it is no longer an outlier"
     );
 }
+
+#[test]
+fn e2e_move_image_discards_cached_thumbnail() {
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    let jpeg = write_jpeg(env.source_dir.path(), "DJI_0019.JPG", 19);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[jpeg]),
+        false,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let image = only_image(&env, source_id);
+    let cache_dir = env.state.library_root.join(".thumbs");
+
+    // Generate thumbnail so it is present in the cache
+    let thumb_key = crate::modules::module_01::thumbnail::thumbnail_cache_key(
+        std::path::Path::new(&image.file_path),
+    )
+    .expect("thumb key");
+    crate::modules::module_01::thumbnail::warm_thumbnail(
+        std::path::Path::new(&image.file_path),
+        &cache_dir,
+    );
+    let cache_file = cache_dir.join(format!("{thumb_key}.jpg"));
+    assert!(cache_file.exists(), "thumbnail was created in cache");
+
+    // Move image
+    move_image_impl(&env.state, image.id, target_id).expect("move");
+
+    assert!(
+        !cache_file.exists(),
+        "thumbnail cache entry was removed after move"
+    );
+}

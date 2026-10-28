@@ -64,7 +64,7 @@ pub(crate) fn warm_thumbnail(path: &Path, cache_dir: &Path) {
 ///
 /// The file's content is never hashed: mtime and size already make a replaced
 /// file miss the cache, and hashing megabytes would defeat its purpose.
-fn thumbnail_cache_key(path: &Path) -> Result<String, MetadataError> {
+pub(crate) fn thumbnail_cache_key(path: &Path) -> Result<String, MetadataError> {
     let metadata = std::fs::metadata(path)?;
     let modified_ns = metadata
         .modified()
@@ -98,14 +98,19 @@ fn publish_thumbnail(cache_file: &Path, bytes: &[u8]) {
     }
 }
 
+/// Removes the cached thumbnail with `key` from `cache_dir`, if present.
+pub(crate) fn discard_by_key(key: &str, cache_dir: &Path) {
+    let cache_file = cache_dir.join(format!("{key}.jpg"));
+    let _ = std::fs::remove_file(cache_file);
+}
+
 /// Removes the cached thumbnail for `path` from `cache_dir`, if present.
 ///
-/// Called when an image is deleted or moved, preventing stale cache files
+/// Called when an image is deleted, preventing stale cache files
 /// from accumulating indefinitely in `<library_root>/.thumbs`.
 pub(crate) fn discard_thumbnail(path: &Path, cache_dir: &Path) {
     if let Ok(key) = thumbnail_cache_key(path) {
-        let cache_file = cache_dir.join(format!("{key}.jpg"));
-        let _ = std::fs::remove_file(cache_file);
+        discard_by_key(&key, cache_dir);
     }
 }
 

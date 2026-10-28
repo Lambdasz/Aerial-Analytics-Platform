@@ -235,7 +235,9 @@
 //!   `analysis_input`): copies accepted images into `<library_root>`, reads
 //!   metadata from the copy, writes the row(s), links JPG/DNG stem pairs, and
 //!   removes copies when their session is deleted or a startup sweep finds
-//!   them orphaned.
+//!   them orphaned. Folder imports recursively scan nested subdirectories up
+//!   to 6 levels deep (skipping hidden folders and symlinked directories while
+//!   supporting symlinked image files).
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `modules::module_01::blur_detection` — Laplacian-variance sharpness

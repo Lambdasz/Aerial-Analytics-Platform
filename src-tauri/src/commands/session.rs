@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::models::{Image, Session, SessionStatus};
 use crate::modules::module_01::error::SessionError;
-use crate::modules::module_01::{self as flight_session, import_io};
+use crate::modules::module_01::{self as flight_session, import_io, thumbnail};
 use crate::plugin_manager::error::CommandError;
 use crate::AppState;
 
@@ -192,12 +192,17 @@ pub(crate) fn delete_session_impl(
             message: "deleting a session also deletes its imported images; pass confirm=true after asking the user".to_string(),
         });
     }
-    let project_id = {
+    let (project_id, images) = {
         let conn = state.db.lock().map_err(lock_err)?;
         let session = flight_session::get_session(&conn, session_id)?;
+        let images = flight_session::get_images_by_session(&conn, session_id).unwrap_or_default();
         flight_session::delete_session(&conn, session_id)?;
-        session.project_id
+        (session.project_id, images)
     };
+    let cache_dir = state.library_root.join(".thumbs");
+    for img in &images {
+        thumbnail::discard_thumbnail(Path::new(&img.file_path), &cache_dir);
+    }
     let project = project_id.to_string();
     let session = session_id.to_string();
     if import_io::remove_session_files(&state.library_root, &project, &session) {
@@ -338,6 +343,10 @@ pub(crate) fn move_image_impl(
         &target.project_id.to_string(),
         &target_session_id.to_string(),
     );
+    let cache_dir = state.library_root.join(".thumbs");
+    // Compute the old thumbnail key before the file is relocated, since key
+    // computation needs the file's metadata on disk.
+    let old_thumb_key = thumbnail::thumbnail_cache_key(Path::new(&image.file_path)).ok();
     let new_path = import_io::relocate_image_file(Path::new(&image.file_path), &dest_dir)?;
     // Store the resolved form so later library checks never trip over a
     // symlinked library root. `dunce` matches what import stores: it leaves
@@ -361,11 +370,9 @@ pub(crate) fn move_image_impl(
         }
         return Err(err.into());
     }
-    let cache_dir = state.library_root.join(".thumbs");
-    crate::modules::module_01::thumbnail::discard_thumbnail(
-        Path::new(&image.file_path),
-        &cache_dir,
-    );
+    if let Some(key) = old_thumb_key {
+        thumbnail::discard_by_key(&key, &cache_dir);
+    }
     flight_session::recalculate_session_date_range(&conn, source.id)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
     if let Err(err) = flight_session::reclassify_session_blur(

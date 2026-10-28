@@ -1931,7 +1931,9 @@ const MAX_FOLDER_DEPTH: usize = 6;
 /// Collects importable image files under `dir`, recursively walking subfolders up to 6 levels.
 ///
 /// Hidden entries (names starting with `.`, which covers `.trash`) and symlinked
-/// directories are not traversed. Unreadable subfolders are skipped without aborting.
+/// directories are not traversed (preventing loops and runaway traversal). Symlinked
+/// image files pointing to regular files are accepted. Unreadable subfolders are skipped
+/// without aborting.
 fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
     if depth > MAX_FOLDER_DEPTH {
         return Ok(());
@@ -1947,6 +1949,13 @@ fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) -> st
         };
         if ft.is_dir() {
             let _ = collect_image_files(&path, depth + 1, files);
+        } else if ft.is_symlink() {
+            // Include symlinked image files without following symlinked directories
+            if let Ok(meta) = fs::metadata(&path) {
+                if meta.is_file() && is_import_extension(&path) {
+                    files.push(path);
+                }
+            }
         } else if ft.is_file() && is_import_extension(&path) {
             files.push(path);
         }
@@ -3414,6 +3423,94 @@ mod tests {
             "the top-level image and the nested pair all import"
         );
         assert!(entries.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn nested_folder_with_duplicate_file_names_imports_with_suffixes() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        let sub1 = source_dir.path().join("sub1");
+        let sub2 = source_dir.path().join("sub2");
+        fs::create_dir_all(&sub1).expect("sub1");
+        fs::create_dir_all(&sub2).expect("sub2");
+
+        // Same file name in different subfolders, but distinct content seeds so
+        // they are not rejected as content duplicates.
+        write_jpeg_seeded(&sub1, "DJI_0001.JPG", 1);
+        write_jpeg_seeded(&sub2, "DJI_0001.JPG", 2);
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        assert_eq!(report.imported_image_ids.len(), 2, "both files import");
+        assert!(
+            report.duplicates.is_empty(),
+            "distinct bytes are not duplicates"
+        );
+
+        let project_id = {
+            let conn = db.lock().expect("db lock");
+            crate::modules::module_01::get_session(&conn, session_id)
+                .unwrap()
+                .project_id
+        };
+        let dest_dir = session_images_dir(
+            library.path(),
+            &project_id.to_string(),
+            &session_id.to_string(),
+        );
+        let mut on_disk: Vec<String> = fs::read_dir(&dest_dir)
+            .expect("session folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        assert_eq!(
+            on_disk,
+            vec!["DJI_0001 (2).JPG".to_string(), "DJI_0001.JPG".to_string()],
+            "the second same-named file gets a suffix: {on_disk:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_scan_includes_symlinked_image_files_and_skips_symlinked_directories() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let outside_dir = tempfile::tempdir().expect("outside dir");
+
+        // A real file outside, symlinked into source_dir
+        let real_file = write_jpeg(outside_dir.path(), "real.JPG");
+        let symlinked_file = source_dir.path().join("symlinked.JPG");
+        std::os::unix::fs::symlink(&real_file, &symlinked_file).expect("symlink file");
+
+        // A directory outside, symlinked into source_dir (must not be traversed)
+        let outside_sub = outside_dir.path().join("sub");
+        fs::create_dir_all(&outside_sub).expect("outside sub");
+        write_jpeg(&outside_sub, "should_be_skipped.JPG");
+        let symlinked_dir = source_dir.path().join("symdir");
+        std::os::unix::fs::symlink(&outside_sub, &symlinked_dir).expect("symlink dir");
+
+        let entries = scan_sources(&sources(&[source_dir.path().to_path_buf()]), true);
+        assert_eq!(
+            entries.len(),
+            1,
+            "symlinked file is included, but symlinked directory is skipped"
+        );
+        assert!(entries[0]
+            .as_ref()
+            .unwrap()
+            .source_path
+            .ends_with("symlinked.JPG"));
     }
 
     #[test]
