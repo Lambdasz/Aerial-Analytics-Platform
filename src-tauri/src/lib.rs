@@ -543,6 +543,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Shared application state injected into every Tauri command via `.manage()`.
+#[derive(Clone)]
 pub struct AppState {
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,

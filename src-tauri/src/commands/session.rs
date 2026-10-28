@@ -14,6 +14,13 @@ fn lock_err(e: impl std::fmt::Display) -> CommandError {
     SessionError::LockPoisoned(e.to_string()).into()
 }
 
+fn join_err(e: impl std::fmt::Display) -> CommandError {
+    CommandError {
+        code: "TASK_JOIN_ERROR".to_string(),
+        message: format!("the background task stopped unexpectedly: {e}"),
+    }
+}
+
 /// Creates a new, empty session (no images assigned yet).
 #[tauri::command]
 pub fn create_session(
@@ -84,11 +91,14 @@ pub fn update_session_status(
 /// (`IO_ERROR`, `UNSUPPORTED_FORMAT`, `MAGIC_MISMATCH`) when the file cannot
 /// be read.
 #[tauri::command]
-pub fn get_image_metadata(
-    state: tauri::State<AppState>,
+pub async fn get_image_metadata(
+    state: tauri::State<'_, AppState>,
     image_id: Uuid,
 ) -> Result<crate::models::ImageMetadata, CommandError> {
-    get_image_metadata_impl(&state, image_id)
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_image_metadata_impl(&app, image_id))
+        .await
+        .map_err(join_err)?
 }
 
 /// Testable core of [`get_image_metadata`].
@@ -227,12 +237,15 @@ pub struct DeleteImageOutcome {
 /// the user's original — is deliberately left untouched: rows are the app's,
 /// originals are the user's.
 #[tauri::command]
-pub fn delete_image(
-    state: tauri::State<AppState>,
+pub async fn delete_image(
+    state: tauri::State<'_, AppState>,
     image_id: Uuid,
     confirm: bool,
 ) -> Result<DeleteImageOutcome, CommandError> {
-    delete_image_impl(&state, image_id, confirm)
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_image_impl(&app, image_id, confirm))
+        .await
+        .map_err(join_err)?
 }
 
 /// Testable core of [`delete_image`]: identical behaviour against an owned
@@ -266,6 +279,8 @@ pub(crate) fn delete_image_impl(
     };
     // Only files inside the app-owned project layout are removed.
     let path = Path::new(&file_path);
+    let cache_dir = state.library_root.join(".thumbs");
+    crate::modules::module_01::thumbnail::discard_thumbnail(path, &cache_dir);
     let files_left = import_io::is_library_copy(&state.library_root, path)
         && import_io::discard_image_file(&state.library_root, path).is_err();
     Ok(DeleteImageOutcome { files_left })
@@ -288,12 +303,15 @@ pub(crate) fn delete_image_impl(
 /// when the row still points outside the app library, and `STORAGE_ERROR`
 /// when the file cannot be moved.
 #[tauri::command]
-pub fn move_image_to_session(
-    state: tauri::State<AppState>,
+pub async fn move_image_to_session(
+    state: tauri::State<'_, AppState>,
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
-    move_image_impl(&state, image_id, target_session_id)
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || move_image_impl(&app, image_id, target_session_id))
+        .await
+        .map_err(join_err)?
 }
 
 /// Testable core of [`move_image_to_session`].
@@ -302,7 +320,8 @@ pub(crate) fn move_image_impl(
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
-    let (image, source, target) = load_image_and_target(state, image_id, target_session_id)?;
+    let conn = state.db.lock().map_err(lock_err)?;
+    let (image, source, target) = validate_image_and_target(&conn, image_id, target_session_id)?;
     // Moving touches the user's disk: only the app's own copies may leave
     // their folder. A migrated row may still point at the user's original,
     // which must never be moved out from under them.
@@ -319,9 +338,6 @@ pub(crate) fn move_image_impl(
         &target.project_id.to_string(),
         &target_session_id.to_string(),
     );
-    // The lock is held across the file move so no other command can see the
-    // new path before the row is updated (or the old path after the move).
-    let conn = state.db.lock().map_err(lock_err)?;
     let new_path = import_io::relocate_image_file(Path::new(&image.file_path), &dest_dir)?;
     // Store the resolved form so later library checks never trip over a
     // symlinked library root. `dunce` matches what import stores: it leaves
@@ -331,22 +347,25 @@ pub(crate) fn move_image_impl(
     if let Err(err) =
         flight_session::move_image_row(&conn, image_id, target_session_id, &new_path_string)
     {
-        // Roll the file back so the row and the disk cannot disagree. If even
-        // the rollback fails, say so: the row still points at the source
-        // session while the file sits under the target session.
-        let source_dir = Path::new(&image.file_path)
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_path_buf();
-        if let Err(rollback_err) = import_io::relocate_image_file(&new_path, &source_dir) {
+        // Roll the file back to the exact original path so the row and the
+        // disk cannot disagree.
+        if let Err(rollback_err) = std::fs::rename(&new_path, &image.file_path) {
             eprintln!(
                 "warning: a failed move could not be rolled back on disk; \
                  the row and its file disagree until the next move succeeds"
             );
-            return Err(rollback_err.into());
+            return Err(CommandError {
+                code: "STORAGE_ERROR".to_string(),
+                message: format!("{err}; rollback also failed: {rollback_err}"),
+            });
         }
         return Err(err.into());
     }
+    let cache_dir = state.library_root.join(".thumbs");
+    crate::modules::module_01::thumbnail::discard_thumbnail(
+        Path::new(&image.file_path),
+        &cache_dir,
+    );
     flight_session::recalculate_session_date_range(&conn, source.id)?;
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
     if let Err(err) = flight_session::reclassify_session_blur(
@@ -379,12 +398,15 @@ pub(crate) fn move_image_impl(
 /// Same as [`move_image_to_session`], with `STORAGE_ERROR` when the file
 /// cannot be copied.
 #[tauri::command]
-pub fn copy_image_to_session(
-    state: tauri::State<AppState>,
+pub async fn copy_image_to_session(
+    state: tauri::State<'_, AppState>,
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
-    copy_image_impl(&state, image_id, target_session_id)
+    let app = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || copy_image_impl(&app, image_id, target_session_id))
+        .await
+        .map_err(join_err)?
 }
 
 /// Testable core of [`copy_image_to_session`].
@@ -393,7 +415,8 @@ pub(crate) fn copy_image_impl(
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
-    let (image, _source, target) = load_image_and_target(state, image_id, target_session_id)?;
+    let conn = state.db.lock().map_err(lock_err)?;
+    let (image, _source, target) = validate_image_and_target(&conn, image_id, target_session_id)?;
     if !import_io::is_library_copy(&state.library_root, Path::new(&image.file_path)) {
         return Err(CommandError {
             code: "NOT_A_LIBRARY_COPY".to_string(),
@@ -420,9 +443,6 @@ pub(crate) fn copy_image_impl(
         analysis_ready: Some(image.format.as_deref() == Some("jpeg")),
         ..image
     };
-    // The lock is held across the insert and its cleanup so a failed insert
-    // never leaves a rowless file behind another command could trip over.
-    let conn = state.db.lock().map_err(lock_err)?;
     if let Err(err) = flight_session::insert_image(&conn, &copy) {
         // The row is the source of truth; a copy that never got one is
         // removed again. If even that fails, say so — the file is an orphan
@@ -446,17 +466,16 @@ pub(crate) fn copy_image_impl(
     Ok(())
 }
 
-/// Reads the image and both sessions, enforcing the rules that need no disk:
-/// same project, different session.
-fn load_image_and_target(
-    state: &AppState,
+/// Reads the image and both sessions under an already-acquired database lock,
+/// enforcing the rules that need no disk: same project, different session.
+fn validate_image_and_target(
+    conn: &rusqlite::Connection,
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(Image, Session, Session), CommandError> {
-    let conn = state.db.lock().map_err(lock_err)?;
-    let image = flight_session::get_image(&conn, image_id)?;
-    let source = flight_session::get_session(&conn, image.session_id)?;
-    let target = flight_session::get_session(&conn, target_session_id)?;
+    let image = flight_session::get_image(conn, image_id)?;
+    let source = flight_session::get_session(conn, image.session_id)?;
+    let target = flight_session::get_session(conn, target_session_id)?;
     if source.project_id != target.project_id {
         return Err(CommandError {
             code: "CROSS_PROJECT_IMAGE".to_string(),

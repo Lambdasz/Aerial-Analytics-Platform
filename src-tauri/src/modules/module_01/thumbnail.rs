@@ -10,7 +10,7 @@
 //! ([`warm_thumbnail`]), so opening a session's list is a few-kilobyte read
 //! instead of a decode pass.
 
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::path::Path;
 
 use exif::{In, Tag};
@@ -80,6 +80,10 @@ fn thumbnail_cache_key(path: &Path) -> Result<String, MetadataError> {
 }
 
 /// Stores `bytes` at `cache_file`, best-effort: a read-only library still serves thumbs.
+///
+/// Uses a unique named temp file per writer so concurrent writes (e.g. background
+/// import warming racing an on-demand UI request) never overwrite each other's partial
+/// file, and persists atomically into place.
 fn publish_thumbnail(cache_file: &Path, bytes: &[u8]) {
     let Some(dir) = cache_file.parent() else {
         return;
@@ -87,9 +91,21 @@ fn publish_thumbnail(cache_file: &Path, bytes: &[u8]) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let tmp = cache_file.with_extension("jpg.part");
-    if std::fs::write(&tmp, bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, cache_file);
+    if let Ok(mut tmp) = tempfile::NamedTempFile::new_in(dir) {
+        if tmp.write_all(bytes).is_ok() {
+            let _ = tmp.persist(cache_file);
+        }
+    }
+}
+
+/// Removes the cached thumbnail for `path` from `cache_dir`, if present.
+///
+/// Called when an image is deleted or moved, preventing stale cache files
+/// from accumulating indefinitely in `<library_root>/.thumbs`.
+pub(crate) fn discard_thumbnail(path: &Path, cache_dir: &Path) {
+    if let Ok(key) = thumbnail_cache_key(path) {
+        let cache_file = cache_dir.join(format!("{key}.jpg"));
+        let _ = std::fs::remove_file(cache_file);
     }
 }
 

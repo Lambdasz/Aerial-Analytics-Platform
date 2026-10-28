@@ -523,7 +523,7 @@ fn import_planned(
     // otherwise stalls the final progress step). Detached and best-effort —
     // a failure here only means the list builds the thumbnail lazily.
     let thumbs_dir = thumbs_dir.to_path_buf();
-    std::thread::spawn(move || warm_imported_thumbnails(dest_paths, thumbs_dir));
+    tauri::async_runtime::spawn_blocking(move || warm_imported_thumbnails(dest_paths, thumbs_dir));
     Ok(report)
 }
 
@@ -1831,10 +1831,9 @@ fn scan_sources(
     let mut files: Vec<PathBuf> = Vec::new();
     if from_folder {
         for source in sources {
-            match fs::read_dir(source) {
-                Ok(_) => {
-                    let mut here: Vec<PathBuf> = Vec::new();
-                    collect_image_files(Path::new(source), 1, &mut here);
+            let mut here: Vec<PathBuf> = Vec::new();
+            match collect_image_files(Path::new(source), 1, &mut here) {
+                Ok(()) => {
                     // One stable order across every level, so the same folder
                     // imports in the same sequence every time.
                     here.sort();
@@ -1929,29 +1928,30 @@ fn hash_all(files: Vec<PathBuf>) -> Vec<Result<ImportCandidate, RejectedFile>> {
 /// symlink cycle.
 const MAX_FOLDER_DEPTH: usize = 6;
 
-/// Collects importable image files under `dir`, walking subfolders.
+/// Collects importable image files under `dir`, recursively walking subfolders up to 6 levels.
 ///
-/// Hidden entries (names starting with `.`, which covers `.trash`) are
-/// skipped on every level. Unreadable subfolders are skipped, not fatal: one
-/// locked directory must not abort the rest of the folder.
-fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) {
+/// Hidden entries (names starting with `.`, which covers `.trash`) and symlinked
+/// directories are not traversed. Unreadable subfolders are skipped without aborting.
+fn collect_image_files(dir: &Path, depth: usize, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
     if depth > MAX_FOLDER_DEPTH {
-        return;
+        return Ok(());
     }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
+    let entries = fs::read_dir(dir)?;
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-        if path.is_dir() {
-            collect_image_files(&path, depth + 1, files);
-        } else if path.is_file() && is_import_extension(&path) {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            let _ = collect_image_files(&path, depth + 1, files);
+        } else if ft.is_file() && is_import_extension(&path) {
             files.push(path);
         }
     }
+    Ok(())
 }
 
 /// A path's file name, or an empty string when it has none.

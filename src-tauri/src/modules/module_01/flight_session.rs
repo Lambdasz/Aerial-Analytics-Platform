@@ -1128,16 +1128,19 @@ pub fn get_images_by_session(
     Ok(images)
 }
 
-/// Clears `raw_sibling_id` on a JPEG/DNG partner and demotes a DNG that no
-/// longer has a JPEG pair.
+/// Clears `raw_sibling_id` on a JPEG/DNG partner, demotes a DNG that no
+/// longer has a JPEG pair, and clears an unscored DNG's copied `is_blurry` flag.
 ///
 /// A lone DNG is not analysis-ready (Module 1 cannot hand raw pixels to a
-/// plugin); a surviving JPEG stays as it was. One statement so both effects
-/// share the caller's transaction.
+/// plugin); a surviving JPEG stays as it was. If the DNG copied its blur flag
+/// from its partner, unlinking it clears that flag so an unscored DNG does not
+/// carry a stale blur warning forever. One statement so all effects share the
+/// caller's transaction.
 fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionError> {
     conn.execute(
         "UPDATE image SET raw_sibling_id = NULL, \
-            analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END \
+            analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END, \
+            is_blurry = CASE WHEN blur_score IS NULL THEN NULL ELSE is_blurry END \
          WHERE id = ?1",
         params![sibling_id.to_string()],
     )?;
@@ -1199,7 +1202,8 @@ pub fn move_image_row(
     with_immediate_transaction(conn, |conn| {
         conn.execute(
             "UPDATE image SET session_id = ?2, file_path = ?3, raw_sibling_id = NULL, \
-                analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END \
+                analysis_ready = CASE WHEN format = 'dng' THEN 0 ELSE analysis_ready END, \
+                is_blurry = CASE WHEN blur_score IS NULL THEN NULL ELSE is_blurry END \
              WHERE id = ?1",
             params![
                 image_id.to_string(),
@@ -2938,6 +2942,52 @@ mod tests {
             jpeg.analysis_ready,
             Some(true),
             "a lone jpeg stays analysable"
+        );
+    }
+
+    #[test]
+    fn deleting_a_jpeg_clears_is_blurry_on_an_unscored_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let jpeg_id = Uuid::new_v4();
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_from_metadata(
+            jpeg_id,
+            session.id,
+            "/lib/a.jpg".to_string(),
+            &full_metadata(),
+        );
+        jpeg.format = Some("jpeg".to_string());
+        jpeg.raw_sibling_id = Some(dng_id);
+        jpeg.analysis_ready = Some(true);
+        jpeg.blur_score = Some(15.0);
+        jpeg.is_blurry = Some(true);
+
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        dng.analysis_ready = Some(true);
+        dng.blur_score = None;
+        dng.is_blurry = Some(true);
+
+        insert_image(&conn, &jpeg).expect("jpeg row");
+        insert_image(&conn, &dng).expect("dng row");
+
+        delete_image_row(&conn, jpeg_id).expect("delete jpeg");
+
+        let dng = get_image(&conn, dng_id).expect("dng survives");
+        assert_eq!(dng.raw_sibling_id, None);
+        assert_eq!(dng.analysis_ready, Some(false));
+        assert_eq!(
+            dng.is_blurry, None,
+            "an unscored lone dng must have is_blurry cleared"
         );
     }
 }
