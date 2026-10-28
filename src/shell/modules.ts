@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 
 import { Module01Page } from "../modules/module-01/Module01Page";
 import { Module02Page } from "../modules/module-02/Module02Page";
-import { Module03Page } from "../modules/module-03/Module03Page";
+import { Module03Page } from "../modules/module-03";
 import { Module09Page } from "../modules/module-09/Module09Page";
 import { Module10Page } from "../modules/module-10/Module10Page";
 import { Module11Page } from "../modules/module-11/Module11Page";

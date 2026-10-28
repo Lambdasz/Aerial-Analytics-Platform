@@ -1,0 +1,54 @@
+{
+  "layer_id": "result_tree_002",
+  "layer_name": "Deteksi Pohon - Titik B (OTW angkut sawit)",
+  "display_preference": {
+    "type": "point",
+    "color": "#27AE60",
+    "icon": "tree_marker",
+    "fields": [
+      {
+        "key": "tree_id",
+        "label": "ID Pohon",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "confidence",
+        "label": "Keyakinan",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "height_est_m",
+        "label": "Tinggi Estimasi",
+        "unit": "m",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      }
+    ],
+    "image_url": "/map_storage/images/result_image/result_tree_002_1792992425683.jpg"
+  },
+  "spatial_results": [
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          116.862,
+          -1.22
+        ]
+      },
+      "properties": {
+        "tree_id": "T-004",
+        "confidence": 0.93,
+        "height_est_m": 12.5,
+        "image_url": "/map_storage/images/result_image/result_tree_002_1792992425683.jpg"
+      },
+      "image_url": "/map_storage/images/result_image/result_tree_002_1792992425683.jpg"
+    }
+  ],
+  "updated_at": "2026-10-26T05:27:05.682Z"
+}

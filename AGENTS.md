@@ -135,5 +135,6 @@ Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payl
 - `CONTRIBUTING.md` — full development workflow, branching, PR process.
 - `README.md` — project overview and getting started.
 - `src-tauri/src/plugin_manager/DOCS/` — detailed plugin system design docs (6 files).
+- `docs/modules/module_3/` — comprehensive Module 03 architecture, pipeline, and IPC mapping documentation.
 - `.github/workflows/ci.yml` — CI pipeline definition.
 - `.github/pull_request_template.md` — PR checklist.

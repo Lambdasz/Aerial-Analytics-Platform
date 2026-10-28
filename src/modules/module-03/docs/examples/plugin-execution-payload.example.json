@@ -1,0 +1,39 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/execution_payload.v1.json",
+  "execution_id": "exec_kariangau_001",
+  "session_id": "session_kariangau_01",
+  "output_dir": "/tmp/aerial_analytics/runs/exec_kariangau_001",
+  "target": {
+    "granularity": "single_image",
+    "image_path": "/data/drone/DJI_20260914_0001.JPG",
+    "mime_type": "image/jpeg",
+    "metadata": {
+      "resolution": [4000, 3000],
+      "gps": {
+        "lat": -1.2215,
+        "lon": 116.8595
+      },
+      "altitude": 120.0,
+      "timestamp": "2026-09-14T08:00:00Z"
+    }
+  },
+  "aoi": {
+    "type": "geojson_polygon",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [116.858, -1.223],
+          [116.861, -1.223],
+          [116.861, -1.2205],
+          [116.858, -1.2205],
+          [116.858, -1.223]
+        ]
+      ]
+    }
+  },
+  "parameters": {
+    "vegetation_index": "ExG",
+    "threshold": 0.5
+  }
+}
