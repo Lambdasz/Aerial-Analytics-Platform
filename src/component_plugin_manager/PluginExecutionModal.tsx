@@ -46,6 +46,8 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
 
   const activeJobIdRef = useRef<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const onSuccessRef = useRef(onSuccess);
+  const onCloseRef = useRef(onClose);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -53,6 +55,11 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     activeJobIdRef.current = activeJobId;
@@ -131,17 +138,24 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
         if (isDisposed) return;
 
         if (finalResult.status === "failure") {
+          activeJobIdRef.current = null;
           if (isMountedRef.current) {
             setExecutionError(finalResult.error ?? "Plugin execution failed.");
             setProgress(null);
             setActiveJobId(null);
           }
         } else {
-          onSuccess(finalResult);
-          onClose();
+          activeJobIdRef.current = null;
+          if (isMountedRef.current) {
+            setActiveJobId(null);
+            setProgress(null);
+          }
+          onSuccessRef.current(finalResult);
+          onCloseRef.current();
         }
       } catch (err) {
         if (isMountedRef.current && !isDisposed) {
+          activeJobIdRef.current = null;
           setExecutionError(formatErrorMessage(err));
           setProgress(null);
           setActiveJobId(null);
@@ -238,8 +252,12 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
       if (unlistenProgress) unlistenProgress();
       if (unlistenCompleted) unlistenCompleted();
       if (pollInterval) clearInterval(pollInterval);
+      const targetId = activeJobIdRef.current ?? activeJobId;
+      if (targetId && !isFinished) {
+        void abortPluginJob(targetId).catch(() => {});
+      }
     };
-  }, [activeJobId, onSuccess, onClose]);
+  }, [activeJobId]);
 
   // 3. Handle Job Submission
   const handleLaunch = useCallback(async () => {
@@ -261,9 +279,11 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
         parameters: validation.data,
       });
 
+      activeJobIdRef.current = handle.job_id;
       setActiveJobId(handle.job_id);
       // Wait for job completion via event listener or polling fallback
     } catch (err) {
+      activeJobIdRef.current = null;
       setExecutionError(formatErrorMessage(err));
       setActiveJobId(null);
     }
@@ -275,6 +295,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     setIsAborting(true);
     try {
       await abortPluginJob(activeJobId);
+      activeJobIdRef.current = null;
       if (isMountedRef.current) {
         setActiveJobId(null);
         setProgress(null);
@@ -292,8 +313,10 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
   }, [activeJobId]);
 
   const handleClose = () => {
-    if (activeJobId) {
-      void abortPluginJob(activeJobId).catch(() => {});
+    const idToAbort = activeJobIdRef.current ?? activeJobId;
+    if (idToAbort) {
+      activeJobIdRef.current = null;
+      void abortPluginJob(idToAbort).catch(() => {});
     }
     onClose();
   };

@@ -64,6 +64,9 @@ export const RenderDynamicInput: React.FC<RenderDynamicInputProps> = ({
               trimmed === "." ||
               trimmed === "-." ||
               trimmed === "+." ||
+              trimmed === "-0" ||
+              trimmed === "+0" ||
+              /^[+-]?0+$/.test(trimmed) ||
               trimmed.endsWith(".") ||
               (trimmed.includes(".") && trimmed.endsWith("0")) ||
               Number.isNaN(val)
