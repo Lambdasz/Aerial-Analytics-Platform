@@ -30,6 +30,8 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
+sha2 = "0.10"
+dunce = "1"
 tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -37,9 +39,16 @@ chrono = { version = "0.4", features = ["serde"] }
 geojson = "1"
 tauri-plugin-dialog = "2"
 
+# Module 1.4 Dependencies
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Module 1 Dependencies
+kamadak-exif = "0.6.1"
+unicode-normalization = "0.1"
+base64 = "0.22"
+
 # Module 3 Dependencies
 tiff = "0.9"
-kamadak-exif = "0.6"
 jpeg-decoder = "=0.3.2"
 png = "0.17"
 fs4 = "1.1"

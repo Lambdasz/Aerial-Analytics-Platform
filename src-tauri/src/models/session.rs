@@ -1,24 +1,38 @@
 //! Data model definitions for `Session`, `Project`, and `Image`.
 //!
+//! These are the canonical persisted records for Module 1's organisational
+//! hierarchy:
+//!
+//! ```text
+//! Project
+//! └── Session (date_start/date_end derived from its images)
+//!     └── Image (one persisted record per imported file)
+//! ```
+//!
+//! [`Image`] here is the storage-side record (id, path, location, capture
+//! time, plus the most-queried EXIF-derived fields). It carries the
+//! acceptance-critical metadata (GPS, date, altitude, resolution) as
+//! nullable columns so images with missing tags still persist — see
+//! [`crate::modules::module_01::REQUIRED_METADATA_FIELDS`]. For the full
+//! EXIF/XMP telemetry captured during import (camera settings, flight
+//! data, etc.), see [`crate::models::image::ImageMetadata`], and
+//! [`crate::models::image`] generally for the in-flight import pipeline
+//! types that precede a record landing here.
+//!
 //! # A Note on Temporal Representation
-//! The structures defined herein deliberately employ two distinct categories of
-//! datetime types; these categories must not be conflated:
-//! - `NaiveDateTime` (timezone-naive; i.e., devoid of associated timezone
-//!   information) is employed for fields whose values are derived from the EXIF
-//!   metadata embedded by the drone's onboard camera (namely, `date_start`,
-//!   `date_end`, and `captured_at`). The majority of camera systems record EXIF
-//!   timestamps as local time relative to the location at which the photograph
-//!   was captured, without encoding a corresponding UTC offset. Accordingly,
-//!   `NaiveDateTime`—rather than `DateTime<Utc>`—constitutes the appropriate
-//!   representation in this context. These values MUST NOT be assumed to
-//!   represent Coordinated Universal Time (UTC), nor should they be directly
-//!   compared against the `DateTime<Utc>` fields described below without
-//!   explicit and deliberate timezone conversion.
-//! - `DateTime<Utc>` (timezone-aware, invariably expressed in Coordinated
-//!   Universal Time) is employed for fields that are generated programmatically
-//!   by the system at the moment a given record is created or subsequently
-//!   modified (namely, `created_at` and `updated_at`), as opposed to values
-//!   derived from EXIF metadata.
+//!
+//! These structs use two different datetime types on purpose — don't mix
+//! them up:
+//! - `NaiveDateTime` (no timezone attached) is used for fields sourced from
+//!   the drone camera's EXIF metadata (`date_start`, `date_end`,
+//!   `captured_at`). Most cameras write EXIF timestamps as local time at the
+//!   capture location, with no UTC offset recorded, so `NaiveDateTime` is
+//!   the honest representation here. Don't assume these values are UTC, and
+//!   don't compare them directly against the `DateTime<Utc>` fields below
+//!   without an explicit timezone conversion.
+//! - `DateTime<Utc>` (always UTC) is used for fields the system generates
+//!   itself when a record is created or modified (`created_at`,
+//!   `updated_at`) — these have nothing to do with EXIF data.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -29,6 +43,12 @@ use uuid::Uuid;
 pub struct Project {
     pub id: Uuid,
     pub name: String,
+    /// Optional short description of the mapping project.
+    pub description: Option<String>,
+    /// Timezone-aware; invariably expressed in UTC.
+    pub created_at: DateTime<Utc>,
+    /// Timezone-aware; invariably expressed in UTC.
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,6 +56,24 @@ pub struct Project {
 pub enum SessionStatus {
     Active,
     Archived,
+}
+
+impl SessionStatus {
+    /// Text stored in the `session.status` column.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionStatus::Active => "active",
+            SessionStatus::Archived => "archived",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); unknown values read as `Active`.
+    pub fn from_db(raw: &str) -> Self {
+        match raw {
+            "archived" => SessionStatus::Archived,
+            _ => SessionStatus::Active,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,20 +99,87 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A persisted image record belonging to a session.
+///
+/// This is the canonical stored record. Location, capture time, and the
+/// most-queried EXIF fields are nullable: an image with missing metadata is
+/// still imported, with absent tags stored as `NULL` (M1-23 "incomplete
+/// metadata"). Use [`crate::modules::module_01::missing_required_fields`]
+/// to recover which required fields are missing for a stored record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Image {
     pub id: Uuid,
     pub session_id: Uuid,
-    /// Absolute path to the original file (not a directory path, and not a
-    /// reference to any derived or multi-variant representation thereof).
+    /// Absolute path to the project's copy of the image inside the app-owned
+    /// library folder — not the path the user imported from, and not a
+    /// directory or any derived/multi-variant representation. Import copies
+    /// the source here, so moving or deleting the original never breaks a
+    /// stored image. Rows migrated from before copy-on-import still point at
+    /// the original file until they are re-imported.
     pub file_path: String,
-    pub location_lat: f64,
-    pub location_lon: f64,
+    /// GPS latitude in decimal degrees. `None` when the source image has no
+    /// GPS tags.
+    pub location_lat: Option<f64>,
+    /// GPS longitude in decimal degrees. `None` when the source image has no
+    /// GPS tags.
+    pub location_lon: Option<f64>,
     /// Timezone-naive. Derived from EXIF metadata, representing local camera
     /// time at the moment of image acquisition (the majority of camera systems
     /// do not encode a timezone offset within their EXIF data). Serves as the
     /// primary source for the computation of the `date_start` and `date_end`
-    /// fields of the associated `Session`.
-    pub captured_at: NaiveDateTime,
+    /// fields of the associated `Session`. `None` when the source image has
+    /// no `DateTimeOriginal` tag; such images are skipped by the session
+    /// date-range derivation.
+    pub captured_at: Option<NaiveDateTime>,
+    /// GPS altitude in metres above sea level (EXIF). `None` when absent.
+    pub gps_altitude_m: Option<f64>,
+    /// Image width in pixels. `None` when dimensions could not be read.
+    pub width: Option<u32>,
+    /// Image height in pixels. `None` when dimensions could not be read.
+    pub height: Option<u32>,
+    /// Detected image format, as a lowercase string (`"jpeg"` / `"dng"`).
+    pub format: Option<String>,
+    /// Camera manufacturer (e.g. `"DJI"`). `None` when absent.
+    pub make: Option<String>,
+    /// Camera model name (e.g. `"Mavic 3"`). `None` when absent.
+    pub camera_model: Option<String>,
+    /// Absolute path the image was imported from, kept for provenance only.
+    /// `None` for rows migrated from before copy-on-import (their
+    /// `file_path` is still the original path).
+    pub source_path: Option<String>,
+    /// SHA-256 of the file bytes, lowercase hex. Project-scope duplicate
+    /// detection compares it with the hashes of every image in the project.
+    /// `None` for rows migrated from before copy-on-import.
+    pub content_hash: Option<String>,
+    /// Size of the stored file in bytes. `None` when unknown (migrated rows).
+    pub file_size: Option<u64>,
+    /// The other half of a JPG/DNG stem pair: the same stem imported as both
+    /// formats links the two rows in both directions. `None` when the image
+    /// has no sibling.
+    pub raw_sibling_id: Option<Uuid>,
+    /// Whether a plugin can analyse this row today. `true` for JPEGs and for
+    /// DNGs with a same-stem JPEG standing in for them; `false` for a DNG
+    /// with no JPEG (Module 1 does not decode raw pixels). `None` for rows
+    /// migrated from before copy-on-import, where readiness is decided from
+    /// `format` instead.
+    pub analysis_ready: Option<bool>,
+    /// Laplacian-variance sharpness score of the stored copy (downscaled to
+    /// a fixed long edge first when larger, so the value is comparable
+    /// across source resolutions). Higher is sharper. `None` when scoring
+    /// failed (corrupt or undecodable file), the source was too small to
+    /// downscale without upscaling, or for rows imported before this field
+    /// existed.
+    pub blur_score: Option<f64>,
+    /// Whether this image is classified as blurry relative to its flight
+    /// session's other scored images (plus an absolute hard-floor safety
+    /// net). Re-derived for the whole session by
+    /// [`crate::modules::module_01::flight_session::reclassify_session_blur`],
+    /// so this value is **not** frozen at import: it is meant to reflect the
+    /// session's current score set, not the state at the moment this
+    /// particular row was inserted — but that only holds if every path that
+    /// changes a session's image set calls that function. Today only import
+    /// does; see its docs for what that means for a future delete/move path.
+    /// `None` when `blur_score` is `None`.
+    pub is_blurry: Option<bool>,
 }

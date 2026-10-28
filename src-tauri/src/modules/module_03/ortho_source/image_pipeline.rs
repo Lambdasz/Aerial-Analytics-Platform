@@ -604,7 +604,7 @@ pub fn decode_and_scale_png(
                 }
                 png::ColorType::GrayscaleAlpha => {
                     let mut rgba_row = Vec::with_capacity(orig_w as usize * 4);
-                    for chunk in row_slice.chunks_exact(2) {
+                    for chunk in row_slice.as_chunks::<2>().0 {
                         rgba_row.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
                     }
                     resampler.push_row_u8(y, &rgba_row, None)?;
@@ -634,7 +634,7 @@ pub fn decode_and_scale_png(
                 }
                 png::ColorType::GrayscaleAlpha => {
                     let mut rgba_row = Vec::with_capacity(orig_w as usize * 4);
-                    for chunk in row_slice.chunks_exact(2) {
+                    for chunk in row_slice.as_chunks::<2>().0 {
                         rgba_row.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
                     }
                     resampler.push_row_u8(y_in, &rgba_row, None)?;

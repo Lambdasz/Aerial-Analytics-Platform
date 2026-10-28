@@ -72,11 +72,11 @@ impl AppInstanceLock {
 
         #[cfg(not(windows))]
         {
-            use fs4::fs_std::FileExt;
             let mut file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&lock_path)
                 .map_err(|e| {
                     eprintln!(
@@ -91,23 +91,23 @@ impl AppInstanceLock {
                     ))
                 })?;
 
-            file.try_lock_exclusive().map_err(|e| {
-                if e.kind() == std::io::ErrorKind::WouldBlock {
+            file.try_lock().map_err(|e| match e {
+                std::fs::TryLockError::WouldBlock => {
                     OrthoImportError::AplikasiSudahBerjalan(format!(
-                        "Instansi aplikasi lain sedang berjalan (advisory flock '{}' aktif): {}",
-                        lock_path.display(),
-                        e
+                        "Instansi aplikasi lain sedang berjalan (advisory flock '{}' aktif)",
+                        lock_path.display()
                     ))
-                } else {
+                }
+                std::fs::TryLockError::Error(io_err) => {
                     eprintln!(
                         "[INSTANCE LOCK] Kegagalan I/O saat mengunci flock '{}': {}",
                         lock_path.display(),
-                        e
+                        io_err
                     );
                     OrthoImportError::InternalError(format!(
                         "Gagal mengunci berkas lock instance '{}': {}",
                         lock_path.display(),
-                        e
+                        io_err
                     ))
                 }
             })?;

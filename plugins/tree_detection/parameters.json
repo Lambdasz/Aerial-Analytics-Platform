@@ -1,0 +1,61 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "confidence_threshold",
+      "label": "Confidence Threshold",
+      "type": "number",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "description": "Detections with confidence below this value are discarded (Confidence Filtering)."
+    },
+    {
+      "name": "density_unit",
+      "label": "Density Unit",
+      "type": "select",
+      "options": ["per_ha", "per_m2"],
+      "default": "per_ha",
+      "description": "Unit used for the tree density metric."
+    },
+    {
+      "name": "detector",
+      "label": "Detection Model",
+      "type": "select",
+      "options": ["stub"],
+      "default": "stub",
+      "description": "Detection backend. 'stub' returns no detections and only exercises the pipeline; real models are added in treedet/detectors.py."
+    },
+    {
+      "name": "iou_threshold",
+      "label": "Duplicate Overlap (IoU)",
+      "type": "number",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.05,
+      "description": "Overlapping boxes above this IoU are treated as the same tree (de-duplication across tiles)."
+    },
+    {
+      "name": "tile_size",
+      "label": "Tile Size (px)",
+      "type": "number",
+      "default": 1024,
+      "min": 256,
+      "max": 4096,
+      "step": 128,
+      "description": "Size of the square tiles the image is split into before inference."
+    },
+    {
+      "name": "gsd_cm",
+      "label": "Ground Sampling Distance (cm/px)",
+      "type": "number",
+      "default": 3.0,
+      "min": 0.1,
+      "max": 100.0,
+      "step": 0.1,
+      "description": "Used only when the image metadata has no gsd_m value."
+    }
+  ]
+}

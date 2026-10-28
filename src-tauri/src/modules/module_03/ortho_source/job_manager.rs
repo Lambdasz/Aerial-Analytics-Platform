@@ -292,7 +292,7 @@ pub fn cleanup_stale_import_jobs() -> Result<(), OrthoImportError> {
         }
 
         // Urutkan descending berdasarkan mtime (terbaru di awal)
-        job_files.sort_by(|a, b| b.1.cmp(&a.1));
+        job_files.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         // Hapus berkas job di luar retensi MAX_JOB_HISTORY_RETENTION (20)
         if job_files.len() > MAX_JOB_HISTORY_RETENTION {

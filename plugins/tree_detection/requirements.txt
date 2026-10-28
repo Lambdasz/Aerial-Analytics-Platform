@@ -1,0 +1,4 @@
+# Python dependencies for the Tree Detection & Counting plugin (Module 7).
+# Add the detection model's packages here once the model is chosen
+# (e.g. numpy, opencv-python-headless, rasterio, pyproj, torch).
+pydantic>=2,<3

@@ -1,8 +1,9 @@
-import { Module03Page } from "./modules/module-03";
 import "./App.css";
 
+import { AppShell } from "./shell/AppShell";
+
 function App() {
-  return <Module03Page />;
+  return <AppShell />;
 }
 
 export default App;

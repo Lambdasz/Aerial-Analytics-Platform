@@ -453,11 +453,10 @@ fn parse_geokeys(keys: &[u16]) -> Result<(u16, u32), OrthoImportError> {
                     // GeographicTypeGeoKey (e.g. 4326)
                     geographic_crs = Some(val_offset as u32);
                 }
-                3072 => {
+                3072 if val_offset != 32767 => {
                     // ProjectedCSTypeGeoKey (e.g. 3857, 32601..=32660, 32701..=32760)
-                    if val_offset != 32767 {
-                        projected_crs = Some(val_offset as u32);
-                    }
+                    // 32767 = user-defined, not a concrete code.
+                    projected_crs = Some(val_offset as u32);
                 }
                 _ => {}
             }

@@ -4,6 +4,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![rusqlite](https://img.shields.io/badge/rusqlite-0.32-003B57?logo=sqlite&logoColor=white)](https://github.com/rusqlite/rusqlite)
 [![Blueprint](https://img.shields.io/badge/Blueprint.js-6-2d72d2?style=flat&logo=blueprint&logoColor=white)](https://blueprintjs.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
@@ -28,6 +29,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
     * [3. Development](#3-development)
   * [Dealing with Dependencies](#dealing-with-dependencies)
   * [Available Scripts](#available-scripts)
+    * [Generating Rust Documentation](#generating-rust-documentation)
   * [Continuous Integration](#continuous-integration)
   * [Project Structure](#project-structure)
   * [Contributing](#contributing)
@@ -40,6 +42,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 - **Frontend Language**: [TypeScript 6](https://www.typescriptlang.org/)
 - **Backend Language**: [Rust](https://rust-lang.org/)
+- **Database**: [SQLite](https://sqlite.org/) via [rusqlite 0.32](https://github.com/rusqlite/rusqlite) (bundled)
 - **UI Framework**: [React 19](https://react.dev/)
 - **UI Component Library**: [Blueprint.js](https://blueprintjs.com/)
 - **Map**: [Leaflet](https://leafletjs.com/) / [react-leaflet](https://react-leaflet.js.org/)
@@ -208,12 +211,22 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── Proyek.md                 # Full project brief (11 modules)
 │   ├── README_modul3.md          # Module 3 (Map Explorer) design doc
 │   └── README_UMUM.md            # General README (alternate version)
+├── CONTRIBUTING.md               # Contribution guidelines
+├── eslint.config.js              # JavaScript/TypeScript linting rules
+├── index.html                    # HTML entry point for the web app
+├── LICENSE.md                    # MIT License
+├── package.json                  # Node.js dependencies and scripts
+├── package-lock.json             # Locked versions of npm dependencies
 ├── plugins/                      # Analytical plugins (Module 2: Extension System)
 │   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
 │   ├── mock_rust/                # Native Rust mock plugin (tree-canopy-density)
 │   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Python)
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
 │   └── template/                 # Canonical starter template for new plugins
+├── public/                       # Static assets served directly
+│   ├── tauri.svg
+│   └── vite.svg
+├── README.md                     # Project documentation
 ├── schemas/                      # JSON Schema definitions for plugin contracts
 │   ├── plugin.schema.json        # Plugin manifest schema
 │   ├── execution_payload.schema.json
@@ -221,6 +234,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── inputs.schema.json
 │   ├── outputs.schema.json
 │   └── parameters.schema.json
+├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── main.tsx                  # Application entry point
 │   ├── App.tsx                   # Root React component → AppShell
@@ -237,6 +251,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── components/
 │   │   ├── types/
 │   │   ├── fixtures/
+│   │   ├── docs/                 # Module docs: examples/, README_modul3.md, README_UMUM.md
 │   │   └── error.ts
 │   ├── features/                 # Feature modules (mostly scaffolding)
 │   ├── component_plugin_manager/ # Plugin manager UI components
@@ -249,7 +264,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── build.rs                  # Rust build script
 │   ├── Cargo.toml                # Rust project manifest
 │   ├── Cargo.lock                # Locked Rust dependency versions
-│   ├── capabilities/             # ACL capability definitions (allow new commands here)
+│   ├── capabilities/             # ACL permissions — plugin/core only (custom commands are auto-allowed)
 │   │   └── default.json
 │   ├── rustfmt.toml              # Rust code formatting rules
 │   ├── tauri.conf.json           # Tauri app config (devUrl: localhost:1420)
@@ -262,9 +277,8 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   ├── session.rs        # Flight session CRUD commands
 │       │   └── mod.rs
 │       ├── models/               # Serde structs/enums shared with the frontend
-│       │   ├── metadata.rs       # Image metadata types
 │       │   ├── session.rs        # Flight session types
-│       │   ├── image_import.rs   # Image import types
+│       │   ├── image.rs          # Image import and image metadata types
 │       │   └── mod.rs
 │       ├── services/             # Domain logic — pure functions where practical
 │       ├── modules/

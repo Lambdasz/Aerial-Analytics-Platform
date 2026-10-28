@@ -35,6 +35,10 @@ target/
 **/target/
 plugins/**/bin/
 
+# Full-resolution sample photos and raw drone material: never commit
+# these (privacy + repo size).
+src-tauri/src/sampel/
+
 # Python cache & artifacts
 __pycache__/
 *.py[cod]
@@ -55,3 +59,8 @@ map_storage/**/.trash_*
 
 map_storage_backup/
 
+# Local SQLite DB (dev-only, created by `run()` in src-tauri/src/lib.rs)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

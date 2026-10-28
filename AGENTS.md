@@ -24,10 +24,11 @@ npm run format            # Prettier write
 npm run format:rust:check # cargo fmt --check (manifest: src-tauri/Cargo.toml)
 npm run format:rust       # cargo fmt
 
+cargo test --manifest-path src-tauri/Cargo.toml                               # Rust unit + doc tests
 cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  # generate rustdoc
 ```
 
-**There is no test runner configured yet.** Do not reference one in changes or PR descriptions.
+**No JS/TS test runner** (no `test` script in `package.json`) — don't mention one in changes or PRs. Rust tests exist (`cargo test`, see above). Plugin tests: `python -m unittest discover -s tests -v` from inside the plugin dir (`plugins/rgb-landcover-classification/` or `plugins/tree_detection/`; needs the plugin's Python deps).
 
 ### Pre-commit gates (all four MUST pass)
 
@@ -37,7 +38,7 @@ cargo doc --manifest-path src-tauri/Cargo.toml --document-private-items --open  
 npm run lint:fix && npm run format && npm run format:rust
 ```
 
-Commit messages are validated by commitlint (Conventional Commits). CI (`.github/workflows/ci.yml`) runs the same checks plus a cross-platform build (macOS, Ubuntu, Windows).
+Commit messages are validated by commitlint (Conventional Commits). CI (`.github/workflows/ci.yml`) runs the same checks, `cargo test` (Ubuntu + macOS), and a cross-platform `tauri build --no-bundle` (macOS, Ubuntu, Windows).
 
 ## Git Conventions
 
@@ -68,24 +69,39 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
 - `src/` — React frontend. Entry: `src/main.tsx`, root: `src/App.tsx` → `src/shell/AppShell.tsx`.
   - `src/shell/` — App shell, sidebar, module routing.
   - `src/map/` — Leaflet map explorer, AOI drawing, layer management.
-  - `src/features/` — Feature modules (mostly scaffolding).
+  - `src/modules/module-NN/` — module pages (01–03, 10 have real UI; 09/11 are `ModulePlaceholder`, others absent).
+  - `src/features/`, `src/component_plugin_manager/` — feature code (mostly scaffolding).
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
-- `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`.
-  - `plugin_manager/` — Plugin discovery, lifecycle, async execution, error isolation.
-  - `commands/` — Tauri IPC commands (thin handlers).
+- `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).
+  - `plugin_manager.rs` + `plugin_manager/` — plugin discovery, lifecycle, async execution, error isolation. The entry is the file `plugin_manager.rs`; never reintroduce `plugin_manager/mod.rs` alongside it (Rust rejects both existing).
+  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, `import.rs`, `image_preview.rs`, `project.rs`; `e2e_tests.rs` is `#[cfg(test)]` only). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, plugin commands inline in `plugin_manager/{executor,registry,lifecycle}.rs`, and `greet`/`import_plots`/`get_dummy_spatial_layers` inline in `lib.rs`.
+  - Command e2e pattern: heavy commands expose a `*_impl` fn taking `&AppState`; the `#[tauri::command]` wrapper stays thin, and `commands/e2e_tests.rs` drives the `*_impl` fns against a real tempdir SQLite + library root (no Tauri runtime). Follow this when adding file-touching commands.
   - `models/` — Shared Rust types (must derive `Serialize`/`Deserialize` if crossing IPC boundary).
-  - `services/` — Business logic (commands delegate here).
-  - `modules/` — Module-specific logic (module_01 metadata, module_10 temporal).
-  - `map_controller/` — Map data provider and AOI storage.
-  - `reporting/` — Reporting module.
-- `plugins/` — Plugin implementations (mock, mock_rust, rgb-vegetation-detection, rgb-landcover-classification, template).
+  - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_10/` (temporal change analysis).
+  - `plot.rs` / `plot_api.rs` — Module 9 (GeoJSON plot import, plot API).
+  - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
+  - `reporting.rs` + `reporting/` — Module 11 scaffolding. **Not compiled**: `lib.rs` has no `mod reporting;`, so changes there aren't built or checked until it's wired in.
+  - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
+- `plugins/` — Plugin implementations (mock, mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, template).
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
 
-### Adding new Tauri commands (3 required steps)
+### Adding new Tauri commands (2 required steps)
 
-1. Implement the `#[tauri::command]` function (thin — parse/validate, delegate to `services/`, map errors).
+1. Implement the `#[tauri::command]` function in `src-tauri/src/commands/` — never in `modules/`, `plugin_manager/`, or `lib.rs` (thin — parse/validate, delegate to the module's logic in `modules/module_NN/`, map errors). Stateful commands take `tauri::State<AppState>` (`AppState` in `lib.rs` holds the plugin job tracker and the shared SQLite connection).
 2. Register it in `invoke_handler(tauri::generate_handler![...])` in `src-tauri/src/lib.rs`.
-3. Add the permission to `src-tauri/capabilities/default.json` for the `main` window.
+
+**Do NOT add capability entries for custom commands.** They are auto-allowed; an unknown `allow-*` entry in `src-tauri/capabilities/default.json` breaks the Tauri build script ("Permission ... not found"). That file is only for plugin/core permissions (e.g. `opener:default`, `dialog:default`). (CONTRIBUTING.md still claims otherwise — the build script is the source of truth.)
+
+### Rustdoc: module entries in `lib.rs`
+
+Each module gets a `## Module N — Name` section in the crate docs at the top of `src-tauri/src/lib.rs`, separated by `//! ---`. Follow the Module 1/2/3 shape:
+
+1. One-paragraph description.
+2. Component bullets — backticked module paths. If the module has deep docs, put them in the submodule's own rustdoc and link to it (e.g. ``[`map_controller`]``) instead of inlining detail; keep the `lib.rs` entry short. The linked module must be `pub` or the intra-doc link warns.
+3. `### Tauri Commands` table (`| Command | Description |`) listing that module's registered commands. Plugin modules (4/7/8) instead use a `### Plugin Contract` table (Architecture/Interface/Entrypoint/CLI/Execution/Progress) plus a `main()` code block — `python` fences for `main.py`, `rust,ignore` for binary entrypoints (a bare `rust` `fn main` doctest fails clippy's `needless_doctest_main`). Escape `|` inside table cells as `\|`.
+4. A `**Status**:` paragraph — what's implemented vs `todo!()` stubs.
+
+There is also a `## Development Priorities` table right after the intro; keep it in sync when module scope changes.
 
 ### Plugin contract
 
@@ -96,22 +112,26 @@ Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payl
 ### Key constraints
 
 - **Failing plugins MUST NOT crash the core app.** All plugin execution is isolated via async subprocesses (Tokio). Design plugin boundaries with this in mind.
+- **Local DB is SQLite via `rusqlite`** (`bundled` feature — no system SQLite needed). `run()` in `lib.rs` resolves the database location in one pure step (`plan_db_location`): an existing `<app-data-dir>/aerial.db` wins; `AAP_DB_PATH` overrides it; otherwise a legacy dev placeholder `./aerial.db` in the CWD is copied (never moved) into the app-data dir so history survives. The connection is shared through `AppState.db` (`Arc<Mutex<rusqlite::Connection>>`); schema is created/upgraded by `modules::module_01::init_schema`. The database path is absolute so background library sweeps and data access remain stable across working directories.
+- **Disk-side deletion is batched-trash, not rm.** Callbacks that remove or move files never delete outright: content moves into `<library_root>/.trash/<unix-seconds>-<pid>/` (session-relative layout, no-clobber per file), and batches older than 30 days are purged by the next sweep. `delete_session` attempts a real removal first; if that fails part-way the whole left-over folder is rescued into the current trash batch and only then may it report `files_left=true`.
+- **Imported images are copied into an app-owned library.** `AppState.library_root` (`Arc<PathBuf>`) is resolved once in `run()`: `<app-data-dir>/library`, overridable with `AAP_LIBRARY_ROOT`. `commands::import::import_images` copies each accepted file there before recording it, and `image.file_path` stores the copy's absolute path — never the user's original, which may be moved or deleted. Layout: `<library_root>/projects/<project_id>/sessions/<session_id>/images/<file_name>`. The originals are read-only. List thumbnails are derived cache under `<library_root>/.thumbs` (keyed by source path, mtime, and size — outside `projects/`, so the orphan sweep never touches them); import warms one entry per copy on a detached thread so opening a session list stays a cache read without slowing the import, and `thumbnail_image` does its file work on a blocking thread.
 - **Vite port is fixed at 1420** (`strictPort: true` in `vite.config.ts`) because Tauri's `devUrl` expects it (`src-tauri/tauri.conf.json`). `src-tauri/**` is excluded from Vite's file watcher.
 - **TypeScript strict mode** is enabled (`tsconfig.json`): `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`.
 - **Prettier**: semicolons on, double quotes, trailing commas, 100 char print width.
 
 ### Where new code goes
 
-- New Tauri command → `src-tauri/src/commands/` + register in `lib.rs` + add capability in `default.json`.
-- Command bodies MUST stay thin — logic belongs in `services/`.
+- New Tauri command → `src-tauri/src/commands/` only (one file per domain, e.g. `session.rs`) + register in `lib.rs` (no capability entry — see above).
+- Command bodies MUST stay thin — logic belongs in `src-tauri/src/modules/module_NN/`.
 - New Rust data model → `src-tauri/src/models/`.
 - New TypeScript helper → `src/lib/`.
-- New UI → `src/features/<feature>/`. Promote to shared `src/components/` only when 2+ features need it.
+- New UI → `src/features/<feature>/` (note: pages currently live in `src/modules/module-NN/`). Promote to shared `src/components/` only when 2+ features need it.
 - New plugin → its own directory under `plugins/` following the template structure.
+- Module docs → update that module's `## Module N` entry in `lib.rs` (rustdoc convention above) in the same change.
 
 ## Reference files
 
-- `docs/Proyek.md` — full project brief (11 modules, feature lists).
+- `src-tauri/src/lib.rs` crate docs — full project brief (11 modules, possible features) + module index/status (see rustdoc convention above).
 - `CONTRIBUTING.md` — full development workflow, branching, PR process.
 - `README.md` — project overview and getting started.
 - `src-tauri/src/plugin_manager/DOCS/` — detailed plugin system design docs (6 files).
