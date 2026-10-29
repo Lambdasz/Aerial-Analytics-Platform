@@ -24,14 +24,3 @@
   border-radius: 4px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
-
-/*
- * Flight photo cells are spacing tiles (2.5:1, wider than the 3:2 frame), so
- * the overlay letterboxes instead of stretching or cropping: aerial imagery
- * must show every pixel. Leaflet sets the image element's inline
- * width/height, which makes object-fit effective. The uncovered cell margins
- * stay transparent — the basemap shows through between columns.
- */
-.flight-photo-overlay {
-  object-fit: contain;
-}

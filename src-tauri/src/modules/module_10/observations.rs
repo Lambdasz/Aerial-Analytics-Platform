@@ -143,6 +143,7 @@ mod tests {
             analysis_ready: Some(true),
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         }
     }
 

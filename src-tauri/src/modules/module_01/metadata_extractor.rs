@@ -79,6 +79,8 @@ struct RawExifTags {
     pub gps_longitude: Option<f64>,
     /// Raw `GPSAltitude` + `GPSAltitudeRef` in metres.
     pub gps_altitude_m: Option<f64>,
+    /// Raw `GPSImgDirection` in degrees clockwise from true north.
+    pub gps_img_direction: Option<f64>,
     /// Raw `DateTimeOriginal` tag, unparsed (EXIF format `YYYY:MM:DD HH:MM:SS`).
     pub date_time_original_raw: Option<String>,
     /// `Make` tag.
@@ -808,6 +810,8 @@ fn from_exif(exif: &exif::Exif) -> RawExifTags {
             let below = exif_uint(exif, Tag::GPSAltitudeRef) == Some(1);
             altitude_signed(altitude, Some(u8::from(below)))
         }),
+        gps_img_direction: exif_rational(exif, Tag::GPSImgDirection)
+            .filter(|degrees| (0.0..360.0).contains(degrees)),
     }
 }
 
@@ -1323,6 +1327,7 @@ fn merge_tags(
         gps_latitude: exif.gps_latitude,
         gps_longitude: exif.gps_longitude,
         gps_altitude_m: exif.gps_altitude_m,
+        heading_deg: exif.gps_img_direction,
         absolute_altitude_m: xmp.absolute_altitude_m,
         date_time_original: exif
             .date_time_original_raw
@@ -1379,11 +1384,12 @@ pub(crate) const REQUIRED_METADATA_FIELDS: &[&str] = &[
 /// The single source of truth for field names: [`describe_completeness`] and
 /// [`missing_required_fields`] both derive from it, so adding a field to
 /// [`ImageMetadata`] means editing this table only.
-fn field_presence(metadata: &ImageMetadata) -> [(&'static str, bool); 32] {
+fn field_presence(metadata: &ImageMetadata) -> [(&'static str, bool); 33] {
     [
         ("gps_latitude", metadata.gps_latitude.is_some()),
         ("gps_longitude", metadata.gps_longitude.is_some()),
         ("gps_altitude_m", metadata.gps_altitude_m.is_some()),
+        ("heading_deg", metadata.heading_deg.is_some()),
         (
             "absolute_altitude_m",
             metadata.absolute_altitude_m.is_some(),
@@ -1809,7 +1815,7 @@ mod tests {
     fn completeness_empty_is_all_missing() {
         let report = describe_completeness(&ImageMetadata::default());
         assert!(report.present.is_empty());
-        assert_eq!(report.missing.len(), 32);
+        assert_eq!(report.missing.len(), 33);
         assert!(report.missing.contains(&"gps_latitude".to_string()));
         // Every required field shows up as missing.
         for name in REQUIRED_METADATA_FIELDS {
@@ -1829,7 +1835,7 @@ mod tests {
             report.present,
             vec!["gps_latitude".to_string(), "width".to_string()]
         );
-        assert_eq!(report.present.len() + report.missing.len(), 32);
+        assert_eq!(report.present.len() + report.missing.len(), 33);
         assert!(report.missing.contains(&"date_time_original".to_string()));
     }
 

@@ -3,7 +3,7 @@
   "granularity": "single_image",
   "supported_mime_types": ["image/jpeg", "image/png", "image/tiff"],
   "requires_metadata": ["resolution"],
-  "optional_metadata": ["gps", "altitude", "timestamp"],
+  "optional_metadata": ["gps", "altitude", "timestamp", "camera_model"],
   "supports_aoi": true,
   "aoi_format": "geojson_polygon"
 }

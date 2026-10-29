@@ -910,6 +910,7 @@ pub fn run() {
             map_controller::annotations::commands::delete_annotation_cmd,
             // Module 3 — Spatial Results
             map_controller::sp_result::commands::save_spatial_result,
+            commands::publish::publish_plugin_run,
             map_controller::sp_result::commands::get_saved_spatial_results,
             map_controller::sp_result::commands::get_saved_spatial_results_summary,
             map_controller::sp_result::commands::get_saved_spatial_result,

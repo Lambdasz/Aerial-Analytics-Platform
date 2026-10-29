@@ -219,7 +219,11 @@ pub(crate) async fn check_plugin_health_internal(
 pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDto {
     let plugin_id = bundle.manifest.metadata.id.clone();
     let version = bundle.manifest.metadata.version.clone();
-    let plugin_dir = &bundle.install_path;
+    // Absolute paths only: a relative program with a relative `current_dir`
+    // is resolved against the child's working directory by glibc, which
+    // silently doubles path segments and fails to spawn.
+    let plugin_dir =
+        std::path::absolute(&bundle.install_path).unwrap_or_else(|_| bundle.install_path.clone());
     let entrypoint = &bundle.manifest.runtime.entrypoint;
     let healthcheck_flag = bundle
         .manifest
@@ -877,7 +881,10 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
             }
         };
 
-        let path = entry.path();
+        // Absolute paths only: spawning a relative program together with a
+        // relative `current_dir` makes glibc resolve the program against the
+        // *new* working directory, so `../plugins/x/../plugins/x/...` fails.
+        let path = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
         if !path.is_dir() {
             continue;
         }
