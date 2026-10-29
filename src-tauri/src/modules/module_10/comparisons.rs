@@ -10,7 +10,7 @@
 //! an open SQLite connection.
 
 use chrono::{SecondsFormat, Utc};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -199,6 +199,19 @@ pub fn list_comparisons(
             .collect::<Result<Vec<_>, _>>()?,
     };
     Ok(rows)
+}
+
+/// Fetches one comparison by id. Impure.
+pub fn get_comparison(
+    conn: &Connection,
+    comparison_id: &str,
+) -> Result<Option<ComparisonRecord>, rusqlite::Error> {
+    conn.query_row(
+        &format!("SELECT {COMPARISON_COLUMNS} FROM temporal_comparison WHERE id = ?1"),
+        params![comparison_id],
+        row_to_comparison,
+    )
+    .optional()
 }
 
 /// Deletes comparisons that reference a session. Impure.

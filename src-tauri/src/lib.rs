@@ -993,6 +993,7 @@ pub fn run() {
             modules::module_10::commands::get_significant_change_areas,
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,
+            modules::module_10::commands::export_comparison_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

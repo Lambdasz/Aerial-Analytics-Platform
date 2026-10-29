@@ -35,10 +35,12 @@ use super::analysis::{
     DEFAULT_SIGNIFICANCE_THRESHOLD,
 };
 use super::comparisons::{
-    insert_comparison, list_comparisons, magnitude_level_name, ComparisonRecord, NewComparison,
+    get_comparison, insert_comparison, list_comparisons, magnitude_level_name, ComparisonRecord,
+    NewComparison,
 };
 use super::coverage::{coverage_from_image_path, CoverageError, VegetationCoverage};
 use super::observations::{observations_from_images, ObservationCollection, SkippedImage};
+use super::visualization::{describe_analytical_results, AnalysisSummary};
 
 fn lock_err(e: impl std::fmt::Display) -> CommandError {
     SessionError::LockPoisoned(e.to_string()).into()
@@ -264,6 +266,8 @@ pub struct SessionComparison {
     pub magnitude: f64,
     /// `rendah` | `sedang` | `tinggi`.
     pub magnitude_level: String,
+    /// 10.8 analytical summary lines for the panel.
+    pub summary: AnalysisSummary,
 }
 
 /// Runs a before/after comparison between two sessions (10.2 + 10.3).
@@ -369,7 +373,75 @@ pub fn compare_sessions(
         change,
         magnitude,
         magnitude_level: magnitude_level_name(level).to_string(),
+        summary: describe_analytical_results(&[], &[], Some(change)),
     })
+}
+
+/// Writes one stored comparison to `map_storage/exports/` as JSON (10.8 export).
+///
+/// Returns the written path so the page can tell the user where the file is.
+#[tauri::command]
+pub fn export_comparison_json(
+    state: tauri::State<AppState>,
+    comparison_id: String,
+) -> Result<String, CommandError> {
+    let record = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        get_comparison(&conn, &comparison_id)
+            .map_err(|error| CommandError {
+                code: "TEMPORAL_STORAGE_ERROR".to_string(),
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_COMPARISON_NOT_FOUND".to_string(),
+                message: format!("comparison '{comparison_id}' not found"),
+            })?
+    };
+
+    let change = VegetationCoverageChange {
+        before: record.before_value,
+        after: record.after_value,
+        change: record.delta,
+    };
+    let summary = describe_analytical_results(&[], &[], Some(change));
+    let payload = serde_json::json!({
+        "comparison_id": record.id,
+        "metric": record.metric,
+        "project_id": record.project_id,
+        "before_session_id": record.before_session_id,
+        "after_session_id": record.after_session_id,
+        "before_image_id": record.before_image_id,
+        "after_image_id": record.after_image_id,
+        "before_date": record.before_date,
+        "after_date": record.after_date,
+        "interval_days": record.interval_days,
+        "before": record.before_value,
+        "after": record.after_value,
+        "delta": record.delta,
+        "magnitude": record.magnitude,
+        "magnitude_level": record.magnitude_level,
+        "created_at": record.created_at,
+        "summary": summary,
+        "contract": change.to_contract_json(),
+    });
+
+    let exports = crate::modules::module_03::state::get_global_state()
+        .storage_dir
+        .join("exports");
+    std::fs::create_dir_all(&exports).map_err(|error| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("cannot create '{}': {error}", exports.display()),
+    })?;
+    let path = exports.join(format!("temporal_comparison_{}.json", record.id));
+    let text = serde_json::to_string_pretty(&payload).map_err(|error| CommandError {
+        code: "SERIALIZATION_ERROR".to_string(),
+        message: error.to_string(),
+    })?;
+    std::fs::write(&path, text).map_err(|error| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("cannot write '{}': {error}", path.display()),
+    })?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Latest stored comparisons for a project, newest first (dashboard input).

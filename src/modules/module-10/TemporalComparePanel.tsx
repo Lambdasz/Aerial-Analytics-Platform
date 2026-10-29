@@ -7,6 +7,7 @@ import {
   type ComparisonRecord,
   type SessionComparisonReport,
   compareSessions,
+  exportComparisonJson,
   getChangeSummary,
 } from "./module10Commands";
 
@@ -90,6 +91,8 @@ export function TemporalComparePanel({
   const [report, setReport] = useState<SessionComparisonReport | null>(null);
   const [history, setHistory] = useState<ComparisonRecord[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Default the pair to the oldest and newest session, without writing state
@@ -115,6 +118,20 @@ export function TemporalComparePanel({
   }, [projectId]);
 
   const canCompare = beforeId !== "" && afterId !== "" && beforeId !== afterId && !isRunning;
+
+  const exportReport = async () => {
+    if (!report) return;
+    setIsExporting(true);
+    setExportNotice(null);
+    try {
+      const path = await exportComparisonJson(report.comparisonId);
+      setExportNotice(`Saved to ${path}`);
+    } catch (err) {
+      setError(commandErrorMessage(err));
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const run = async () => {
     setIsRunning(true);
@@ -210,6 +227,26 @@ export function TemporalComparePanel({
               Magnitudo: {report.magnitude.toFixed(1)} ({report.magnitudeLevel})
             </Tag>
           </div>
+        </div>
+      )}
+
+      {report && (
+        <div style={{ marginTop: 12 }}>
+          {report.summary.vegetationChange && (
+            <div className="m10-footnote">{report.summary.vegetationChange}</div>
+          )}
+          <Button
+            small
+            icon="export"
+            text="Ekspor JSON"
+            loading={isExporting}
+            onClick={() => void exportReport()}
+          />
+          {exportNotice && (
+            <div className="m10-footnote" style={{ marginTop: 4 }}>
+              {exportNotice}
+            </div>
+          )}
         </div>
       )}
 

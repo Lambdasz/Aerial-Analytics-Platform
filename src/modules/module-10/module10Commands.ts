@@ -176,6 +176,11 @@ export interface SessionComparisonReport {
   change: VegetationCoverageChange;
   magnitude: number;
   magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  summary: {
+    landCoverChanges: string[];
+    treeCountChanges: string[];
+    vegetationChange: string | null;
+  };
 }
 
 /** One persisted comparison row (history / dashboard input). */
@@ -210,4 +215,8 @@ export function compareSessions(
 
 export function getChangeSummary(projectId: string): Promise<ComparisonRecord[]> {
   return invoke<ComparisonRecord[]>("get_change_summary", { projectId });
+}
+
+export function exportComparisonJson(comparisonId: string): Promise<string> {
+  return invoke<string>("export_comparison_json", { comparisonId });
 }
