@@ -600,11 +600,37 @@
 //!
 //! ## Module 11 — Aerial Analytics Dashboard & Reporting
 //!
-//! Integrated interface for summarising and communicating results: project
-//! dashboards, plot comparison, temporal summaries, chart generation, report
-//! export, and GIS data export.
+//! Read-only presentation layer: it summarises what Modules 1, 4-6, 9 and 10
+//! stored and never recomputes analysis.
 //!
-//! **Status**: Not yet implemented.
+//! - `modules::module_11::dashboard` — project dashboard aggregates (sessions,
+//!   images, plots and area, indicator aggregates, plugin usage, latest
+//!   comparison) and flattened plugin result rows for the explorer
+//!   ([`modules::module_11::dashboard::build_project_dashboard`]).
+//! - `modules::module_11::exports` — plot indicator CSV, plots GeoJSON and a
+//!   JSON dashboard snapshot written under `map_storage/exports/`.
+//! - `modules::module_11::report` — self-contained printable HTML report
+//!   ([`modules::module_11::report::write_report`]).
+//! - `reporting` — compatibility layer for the original contract; its two
+//!   commands delegate to the implementation above.
+//!
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `get_project_dashboard` | Project summary, indicator aggregates, plugin usage, latest comparison |
+//! | `list_dashboard_plugin_results` | Flattened plugin metrics for the result explorer |
+//! | `export_dashboard_plot_csv` | Plot indicators as CSV |
+//! | `export_dashboard_plots_geojson` | Plots as GeoJSON |
+//! | `export_dashboard_json` | Dashboard plus explorer rows as JSON |
+//! | `generate_dashboard_report` | Printable HTML report for a project |
+//! | `generate_report` / `export_data` | Original reporting contract, delegating to the commands above (XLSX rejected) |
+//!
+//! **Status**: Implemented. The Module 11 page shows summary cards, indicator
+//! and plugin charts, an interactive result explorer with image preview and a
+//! link into the map gallery, and the export/report actions. Figures are empty
+//! when the underlying modules have no data (e.g. a project with a single
+//! observation date produces no temporal comparison).
 
 mod commands;
 pub mod map_controller;

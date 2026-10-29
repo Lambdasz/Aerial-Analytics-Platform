@@ -69,21 +69,20 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
 - `src/` — React frontend. Entry: `src/main.tsx`, root: `src/App.tsx` → `src/shell/AppShell.tsx`.
   - `src/shell/` — App shell, sidebar, module routing.
   - `src/map/` — Leaflet map explorer, AOI drawing, layer management.
-  - `src/modules/module-NN/` — module pages (01–03, 09, 10 have real UI; 11 is `ModulePlaceholder`, others absent). Module 09 also exposes `PlotAnalyticsPanel`, mounted as the **Plots** tab in the Module 3 sidebar.
+  - `src/modules/module-NN/` — module pages (01–03, 09, 10, 11 have real UI; others absent). Module 09 also exposes `PlotAnalyticsPanel`, mounted as the **Plots** tab in the Module 3 sidebar; Module 11 hosts the dashboard, result explorer, exports and HTML report.
   - `src/features/`, `src/component_plugin_manager/` — feature code (mostly scaffolding).
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
 - `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).
   - `plugin_manager.rs` + `plugin_manager/` — plugin discovery, lifecycle, async execution, error isolation. The entry is the file `plugin_manager.rs`; never reintroduce `plugin_manager/mod.rs` alongside it (Rust rejects both existing).
-  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, `import.rs`, `image_preview.rs`, `project.rs`, `publish.rs`, `plots.rs`; `e2e_tests.rs` is `#[cfg(test)]` only). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, plugin commands inline in `plugin_manager/{executor,registry,lifecycle}.rs`, and `greet`/`import_plots`/`get_dummy_spatial_layers` inline in `lib.rs`.
+  - `commands/` — ALL `#[tauri::command]` functions MUST live here (currently `session.rs`, `import.rs`, `image_preview.rs`, `project.rs`, `publish.rs`, `plots.rs`, `dashboard.rs`; `e2e_tests.rs` is `#[cfg(test)]` only). Legacy exceptions that predate the rule — don't copy them, migrate when touched: `modules/module_10/commands.rs`, plugin commands inline in `plugin_manager/{executor,registry,lifecycle}.rs`, and `greet`/`import_plots`/`get_dummy_spatial_layers` inline in `lib.rs`.
   - Command e2e pattern: heavy commands expose a `*_impl` fn taking `&AppState`; the `#[tauri::command]` wrapper stays thin, and `commands/e2e_tests.rs` drives the `*_impl` fns against a real tempdir SQLite + library root (no Tauri runtime). Follow this when adding file-touching commands.
   - `models/` — Shared Rust types (must derive `Serialize`/`Deserialize` if crossing IPC boundary).
-  - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_09/` (plots + indicators), `module_10/` (temporal change analysis).
+  - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_09/` (plots + indicators), `module_10/` (temporal change analysis), `module_11/` (dashboard aggregation, exports, HTML report).
   - `plot.rs` / `plot_api.rs` — the original Module 9 GeoJSON importer and a legacy cross-module contract; the implementation now lives in `modules/module_09/` (its `todo!()` stubs are superseded).
   - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
-  - `modules/module_11/` — dashboard aggregation (`dashboard`), exports (`exports`) and the printable HTML report (`report`).
   - `reporting.rs` + `reporting/` — the original Module 11 contract, now a thin compiled layer: its two commands delegate to `modules/module_11` (report = HTML, exports = CSV/GeoJSON/JSON; XLSX is rejected). The former stub tree was removed.
   - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
-- `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4/5/6 are Rust binary plugins: build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored).
+- `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4-6 are complete Rust binary plugins; 7-8 are implemented but run placeholder models (tree detector returns no detections, land-cover weights untrained). Build a Rust plugin with build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored).
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
 
 ### Adding new Tauri commands (2 required steps)

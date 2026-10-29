@@ -222,6 +222,8 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Rust binary)
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
 │   ├── vegetation_coverage_analytics/ # Vegetation coverage + zonation plugin (Rust)
+│   ├── vegetation_condition_analysis/ # Vegetation condition plugin (Rust)
+│   ├── tree_detection/           # Tree detection plugin (placeholder detector)
 │   └── template/                 # Canonical starter template for new plugins
 ├── public/                       # Static assets served directly
 │   ├── tauri.svg
@@ -246,6 +248,9 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── module-01/            # Image & Project Manager page
 │   │   ├── module-02/            # Plugin System page
 │   │   ├── module-03/            # Map Explorer page
+│   │   ├── module-09/            # Area & Plot Analytics page (+ Plots tab panel)
+│   │   ├── module-10/            # Temporal Change Analysis page
+│   │   ├── module-11/            # Dashboard & Reporting page
 │   │   └── ...
 │   ├── map/                      # Leaflet map explorer, AOI drawing, layer management
 │   │   ├── components/
@@ -275,6 +280,11 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       ├── lib.rs                # run(): registers commands + Tauri plugins
 │       ├── commands/             # #[tauri::command] fns — thin, no business logic
 │       │   ├── session.rs        # Flight session CRUD commands
+│       │   ├── import.rs         # Image import
+│       │   ├── project.rs        # Project CRUD
+│       │   ├── publish.rs        # Publish plugin runs to the map
+│       │   ├── plots.rs          # Plot CRUD, indicators, plot layer
+│       │   ├── dashboard.rs      # Module 11 dashboard + exports
 │       │   └── mod.rs
 │       ├── models/               # Serde structs/enums shared with the frontend
 │       │   ├── session.rs        # Flight session types
@@ -282,8 +292,10 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   └── mod.rs
 │       ├── services/             # Domain logic — pure functions where practical
 │       ├── modules/
-│       │   ├── module_01/        # Image metadata extraction
-│       │   └── module_10/        # Temporal change contracts
+│       │   ├── module_01/        # Image metadata extraction, sessions, schema
+│       │   ├── module_09/        # Plots + per-plot indicators
+│       │   ├── module_10/        # Temporal change analysis
+│       │   └── module_11/        # Dashboard aggregation, exports, HTML report
 │       ├── plugin_manager/       # Plugin discovery, lifecycle, execution, error isolation
 │       │   ├── commands.rs       # Plugin Tauri IPC commands
 │       │   ├── executor.rs       # Async subprocess supervision
@@ -295,7 +307,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   ├── error.rs          # Plugin error types
 │       │   └── DOCS/             # Detailed plugin system design docs
 │       ├── map_controller/       # Map data provider and AOI storage
-│       ├── reporting/            # Reporting module
+│       ├── reporting/            # Module 11 compatibility layer (delegates to modules/module_11)
 │       ├── plot.rs               # GeoJSON plot import and validation
 │       └── plot_api.rs           # Cross-module plot analysis API
 ├── test-data/                    # Test data files
