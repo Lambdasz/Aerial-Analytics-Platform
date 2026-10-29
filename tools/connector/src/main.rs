@@ -6,6 +6,7 @@
 mod db;
 mod models;
 mod payload;
+mod publish;
 mod runner;
 
 use std::path::{Path, PathBuf};
@@ -68,6 +69,27 @@ enum Command {
         /// Override the manifest timeout (seconds).
         #[arg(long)]
         timeout: Option<u64>,
+        /// Publish the result into map_storage after a successful run.
+        #[arg(long)]
+        publish: bool,
+        /// Layer name for the published layer (default: "Connector: <file>").
+        #[arg(long)]
+        layer_name: Option<String>,
+        /// Map storage root (default: AAP_STORAGE_DIR, then ./map_storage).
+        #[arg(long)]
+        storage: Option<PathBuf>,
+    },
+    /// Publish an existing run directory into map_storage (Map Explorer).
+    Publish {
+        /// Run directory containing payload.json + result.json.
+        #[arg(long)]
+        run: PathBuf,
+        /// Layer name (default: "Connector: <file>").
+        #[arg(long)]
+        layer_name: Option<String>,
+        /// Map storage root (default: AAP_STORAGE_DIR, then ./map_storage).
+        #[arg(long)]
+        storage: Option<PathBuf>,
     },
 }
 
@@ -118,6 +140,9 @@ fn main() -> Result<()> {
             plugin,
             params_file,
             timeout,
+            publish: do_publish,
+            layer_name,
+            storage,
         } => {
             run(
                 &conn,
@@ -126,10 +151,38 @@ fn main() -> Result<()> {
                 &plugin,
                 params_file.as_deref(),
                 timeout,
+                PublishOpts {
+                    do_publish,
+                    layer_name: layer_name.as_deref(),
+                    storage: storage.as_deref(),
+                },
             )?;
+        }
+        Command::Publish {
+            run,
+            layer_name,
+            storage,
+        } => {
+            let out = publish::publish(
+                &run,
+                &publish::resolve_storage_root(storage.as_deref()),
+                layer_name.as_deref(),
+            )?;
+            println!(
+                "# published layer {} ({} features) -> {}",
+                out.layer_id,
+                out.feature_count,
+                out.layer_path.display()
+            );
         }
     }
     Ok(())
+}
+
+struct PublishOpts<'a> {
+    do_publish: bool,
+    layer_name: Option<&'a str>,
+    storage: Option<&'a Path>,
 }
 
 fn run(
@@ -139,6 +192,7 @@ fn run(
     plugin_dir: &Path,
     params_file: Option<&Path>,
     timeout_secs: Option<u64>,
+    publish_opts: PublishOpts<'_>,
 ) -> Result<()> {
     if !plugin_dir.join("main.py").exists() {
         bail!("no main.py in {}", plugin_dir.display());
@@ -208,6 +262,19 @@ fn run(
 
     print_run_report(&outcome.result, outcome.wall_time);
     println!("result: {}", result_path.display());
+    if publish_opts.do_publish {
+        let out = publish::publish(
+            &output_dir,
+            &publish::resolve_storage_root(publish_opts.storage),
+            publish_opts.layer_name,
+        )?;
+        println!(
+            "# published layer {} ({} features) -> {} (reopen Map Explorer to see it)",
+            out.layer_id,
+            out.feature_count,
+            out.layer_path.display()
+        );
+    }
     Ok(())
 }
 
