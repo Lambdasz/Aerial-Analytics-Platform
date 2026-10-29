@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Icon } from "@blueprintjs/core";
 import { useMap } from "react-leaflet";
 import { useImageSync } from "../store/ImageSyncContext";
 import type { DroneImageMetadata } from "../types/marker";
+import { loadImageThumbnail } from "../../../lib/imagePreview";
 import "../styles/ImagePopupCard.css";
 
 interface ImagePopupCardProps {
@@ -12,6 +13,26 @@ interface ImagePopupCardProps {
 export const ImagePopupCard: React.FC<ImagePopupCardProps> = ({ image }) => {
   const map = useMap();
   const { setActiveImage } = useImageSync();
+  // Initial state mirrors the props: markers carry no thumbnail, so a lazy
+  // fetch starts below (session-cached by loadImageThumbnail, so re-opening
+  // the same image costs nothing). setState only fires in the async callback.
+  const [thumbUrl, setThumbUrl] = useState<string>(image.thumbnail_url);
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  useEffect(() => {
+    if (image.thumbnail_url || !image.file_path) return;
+    let alive = true;
+    loadImageThumbnail(image.file_path, image.file_size)
+      .then((url) => {
+        if (alive) setThumbUrl(url);
+      })
+      .catch(() => {
+        if (alive) setThumbFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [image.thumbnail_url, image.file_path, image.file_size]);
 
   const handleFocus = () => {
     map.flyTo([image.latitude, image.longitude], 20, { duration: 1.5 });
@@ -24,12 +45,21 @@ export const ImagePopupCard: React.FC<ImagePopupCardProps> = ({ image }) => {
 
   return (
     <div className="glass-popup-card">
-      <img
-        src={image.thumbnail_url}
-        alt={image.file_name}
-        className="popup-thumbnail"
-        loading="lazy"
-      />
+      {thumbUrl ? (
+        <img src={thumbUrl} alt={image.file_name} className="popup-thumbnail" loading="lazy" />
+      ) : (
+        <div
+          className="popup-thumbnail"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "rgba(143,153,168,0.12)",
+          }}
+        >
+          <Icon icon={thumbFailed ? "media" : "cloud-download"} size={20} />
+        </div>
+      )}
       <div
         style={{
           fontSize: "14px",

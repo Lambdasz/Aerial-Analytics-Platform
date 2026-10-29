@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useEffect } from "react";
 import * as L from "leaflet";
 import "../leaflet-setup";
-import { Button, NonIdealState, Tooltip, Tag } from "@blueprintjs/core";
+import { Button, NonIdealState, Tooltip, Tag, InputGroup } from "@blueprintjs/core";
 import type { LayerState, AnnotationFeature, SpatialGeometry } from "../types/layer";
+import type { DroneImageMetadata } from "../types/marker";
 import type { LayerPayload } from "../types/map";
 import { getInitialMapLayers, getSavedSpatialResults } from "../services/api";
 import { useAnnotations } from "../hooks/useAnnotations";
@@ -12,44 +13,123 @@ import { AnnotationSidebarForm } from "../molecules/AnnotationSidebarForm";
 import { calculateLineLengthMeters, calculateGeodesicAreaMeters } from "../lib/geoJson";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { FLIGHT_PHOTOS_LAYER_ID } from "../config/mapConfig";
 
-const INITIAL_LAYERS: LayerState[] = [];
+/** Reads the persisted visibility map (shared with ortho toggles). */
+const readSavedModes = (): Record<string, boolean> => {
+  try {
+    const raw = localStorage.getItem("aap_ortho_display_modes");
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/** Reads the persisted opacity map. */
+const readSavedOpacities = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem("aap_layer_opacities");
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * The synthetic Flight Photos layer entry.
+ *
+ * Built at least once per mount (initial state) and re-checked after every
+ * list change: an entry that only existed inside the one-shot load effect
+ * stayed missing after hot reload, which left the overlays on screen with no
+ * visibility/opacity control in the panel.
+ */
+const buildFlightPhotosLayer = (): LayerState => {
+  const modes = readSavedModes();
+  const opacities = readSavedOpacities();
+  return {
+    layer_id: FLIGHT_PHOTOS_LAYER_ID,
+    layer_name: "Flight Photos",
+    category: "image_overlay",
+    is_visible: modes[FLIGHT_PHOTOS_LAYER_ID] ?? true,
+    opacity: opacities[FLIGHT_PHOTOS_LAYER_ID] ?? 0.5,
+    z_index: 12,
+    source_type: "session_images",
+    source_id: FLIGHT_PHOTOS_LAYER_ID,
+  };
+};
+
+/**
+ * Returns the list with the Flight Photos entry guaranteed present.
+ * Pure — safe inside setState updaters (a lint-clean substitute for
+ * re-injecting from an effect after state was preserved across hot reload).
+ */
+const ensureFlightPhotos = (list: LayerState[]): LayerState[] =>
+  list.some((l) => l.layer_id === FLIGHT_PHOTOS_LAYER_ID)
+    ? list
+    : [buildFlightPhotosLayer(), ...list];
 
 type LayerManagerProps = {
   map?: L.Map | null;
+  /** Marker sesi aktif — sumber daftar per-foto di bawah Flight Photos. */
+  markers?: ReadonlyArray<DroneImageMetadata>;
+  /** image_id yang sedang disembunyikan dari peta. */
+  hiddenPhotoIds?: ReadonlySet<string>;
+  onTogglePhotoHidden?: (imageId: string) => void;
   onAnnotationsChange?: (annotations: AnnotationFeature[]) => void;
   onLayersChange?: (layers: LayerState[]) => void;
 };
 
 export const LayerManager: React.FC<LayerManagerProps> = ({
   map,
+  markers,
+  hiddenPhotoIds,
+  onTogglePhotoHidden,
   onAnnotationsChange,
   onLayersChange,
 }) => {
-  const [layers, setLayers] = useState<LayerState[]>(INITIAL_LAYERS);
+  const [layers, setLayers] = useState<LayerState[]>(() => [buildFlightPhotosLayer()]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [isAddingAnnotation, setIsAddingAnnotation] = useState(false);
+  const [isPhotoListOpen, setIsPhotoListOpen] = useState(false);
+  const [photoFilter, setPhotoFilter] = useState("");
 
   // Hook manajemen anotasi mandiri
   const { annotations, addAnnotation, removeAnnotation } = useAnnotations();
+
+  // The Flight Photos entry is part of the initial state, but state
+  // preserved across hot reload can predate it — derive the displayed/sent
+  // list so the entry and its controls always exist.
+  const effectiveLayers = useMemo(() => ensureFlightPhotos(layers), [layers]);
 
   // =========================
   // CATEGORY LIST (Kategori Base Maps tidak disertakan)
   // =========================
   const categories = useMemo(() => {
-    const uniqueCategories = Array.from(new Set(layers.map((layer) => layer.category)));
+    const uniqueCategories = Array.from(new Set(effectiveLayers.map((layer) => layer.category)));
     return ["All", ...uniqueCategories];
-  }, [layers]);
+  }, [effectiveLayers]);
 
   // =========================
   // FILTERED LAYERS
   // =========================
   const visibleLayers = useMemo(() => {
     if (selectedCategory === "All") {
-      return layers;
+      return effectiveLayers;
     }
-    return layers.filter((layer) => layer.category === selectedCategory);
-  }, [layers, selectedCategory]);
+    return effectiveLayers.filter((layer) => layer.category === selectedCategory);
+  }, [effectiveLayers, selectedCategory]);
+
+  // =========================
+  // PER-PHOTO VISIBILITY LIST (Flight Photos children)
+  // =========================
+  const photoList = markers ?? [];
+  const hiddenPhotoCount = photoList.filter((m) => hiddenPhotoIds?.has(m.image_id)).length;
+  const query = photoFilter.trim().toLowerCase();
+  const filteredPhotoList = query
+    ? photoList.filter((m) => m.file_name.toLowerCase().includes(query))
+    : photoList;
+  const showPhotoList =
+    photoList.length > 0 && visibleLayers.some((l) => l.layer_id === FLIGHT_PHOTOS_LAYER_ID);
 
   // =========================
   // SEND ANNOTATIONS & LAYERS TO PARENT
@@ -59,8 +139,8 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   }, [annotations, onAnnotationsChange]);
 
   useEffect(() => {
-    onLayersChange?.(layers);
-  }, [layers, onLayersChange]);
+    onLayersChange?.(effectiveLayers);
+  }, [effectiveLayers, onLayersChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +215,10 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
               };
             });
 
-          setLayers([...filtered, ...spatialLayers]);
+          // Flight Photos stays first so its toggle/opacity controls are
+          // visible without scrolling; build fresh to honor any preference
+          // the user already changed.
+          setLayers([buildFlightPhotosLayer(), ...filtered, ...spatialLayers]);
         }
       })
       .catch((err) => {
@@ -273,7 +356,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       if (!layerId) return;
 
       setLayers((currentLayers) =>
-        currentLayers.map((item) => {
+        ensureFlightPhotos(currentLayers).map((item) => {
           const matches =
             item.layer_id === layerId || item.source_id === layerId || item.layer_name === layerId;
           if (!matches) return item;
@@ -315,7 +398,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
   const handleToggleVisibility = (layer: LayerState) => {
     setLayers((currentLayers) =>
-      currentLayers.map((item) => {
+      ensureFlightPhotos(currentLayers).map((item) => {
         if (item.layer_id === layer.layer_id) {
           const nextVal = !item.is_visible;
 
@@ -344,7 +427,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
   const handleSetOpacity = (layer: LayerState, value: number) => {
     setLayers((currentLayers) =>
-      currentLayers.map((item) => {
+      ensureFlightPhotos(currentLayers).map((item) => {
         if (item.layer_id === layer.layer_id) {
           try {
             const raw = localStorage.getItem("aap_layer_opacities");
@@ -433,6 +516,135 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
             }}
           />
         ))
+      )}
+
+      {/* Daftar Per-Foto (Anak Layer Flight Photos) */}
+      {showPhotoList && (
+        <div
+          style={{
+            marginBottom: "16px",
+            padding: "12px 16px 16px",
+            background: "var(--color-gallery-white)",
+            borderRadius: "var(--radius-cards)",
+            boxShadow: "var(--shadow-subtle)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
+            <Button
+              minimal
+              small
+              icon={isPhotoListOpen ? "chevron-down" : "chevron-right"}
+              text={`Foto Penerbangan (${photoList.length})`}
+              style={{ fontWeight: 600, paddingLeft: 0 }}
+              onClick={() => setIsPhotoListOpen((open) => !open)}
+            />
+            {hiddenPhotoCount > 0 && (
+              <Tag
+                minimal
+                round
+                style={{
+                  background: "var(--color-control-gray)",
+                  color: "var(--color-slate)",
+                  fontSize: "10px",
+                  fontWeight: 600,
+                }}
+              >
+                {hiddenPhotoCount} disembunyikan
+              </Tag>
+            )}
+          </div>
+
+          {isPhotoListOpen && (
+            <>
+              <InputGroup
+                small
+                fill
+                leftIcon="search"
+                placeholder="Filter nama file…"
+                value={photoFilter}
+                onChange={(event) => setPhotoFilter(event.target.value)}
+                style={{ margin: "8px 0" }}
+              />
+              {hiddenPhotoCount > 0 && (
+                <Button
+                  minimal
+                  small
+                  text="Tampilkan semua"
+                  onClick={() => {
+                    for (const photo of photoList) {
+                      if (hiddenPhotoIds?.has(photo.image_id)) {
+                        onTogglePhotoHidden?.(photo.image_id);
+                      }
+                    }
+                  }}
+                  style={{ marginBottom: "6px" }}
+                />
+              )}
+              <div style={{ maxHeight: "280px", overflowY: "auto" }}>
+                {filteredPhotoList.length === 0 ? (
+                  <div style={{ fontSize: "11px", color: "var(--color-slate)" }}>
+                    Tidak ada foto yang cocok.
+                  </div>
+                ) : (
+                  filteredPhotoList.map((photo) => {
+                    const isHidden = hiddenPhotoIds?.has(photo.image_id) ?? false;
+                    return (
+                      <div
+                        key={photo.image_id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "8px",
+                          padding: "4px 0",
+                          borderBottom: "1px solid var(--color-hairline-silver)",
+                        }}
+                      >
+                        <span
+                          title={photo.file_name}
+                          style={{
+                            flex: 1,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            fontSize: "11px",
+                            fontFamily: "monospace",
+                            color: isHidden ? "var(--color-slate)" : "var(--color-ink)",
+                          }}
+                        >
+                          {photo.file_name}
+                        </span>
+                        <Tooltip
+                          content={
+                            isHidden ? "Tampilkan foto di peta" : "Sembunyikan foto dari peta"
+                          }
+                          placement="top"
+                        >
+                          <Button
+                            minimal
+                            small
+                            icon={isHidden ? "eye-off" : "eye-open"}
+                            style={{
+                              color: isHidden ? "var(--color-slate)" : "var(--color-apple-blue)",
+                            }}
+                            onClick={() => onTogglePhotoHidden?.(photo.image_id)}
+                          />
+                        </Tooltip>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {/* Anotasi Spasial Section */}

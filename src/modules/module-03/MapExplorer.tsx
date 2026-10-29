@@ -30,6 +30,7 @@ import type { LayerState, AnnotationFeature } from "./types/layer";
 import type { StoredImageMetadata } from "./types/storage";
 import { getStorageRootPath, getInstanceStatus } from "./services/api";
 import { setCachedStorageRoot } from "./lib/fieldResolution";
+import { useSessionImageMarkers } from "./hooks/useSessionImageMarkers";
 import { isTauri } from "@tauri-apps/api/core";
 
 // Leaflet default icon fix for Vite bundler
@@ -82,6 +83,22 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isReadOnly, setIsReadOnly] = useState<boolean>(false);
   const [resolutionWarning, setResolutionWarning] = useState<string | null>(null);
+  // Session photo markers: one fetch, shared by map + gallery.
+  const { markers } = useSessionImageMarkers();
+  // Per-photo visibility, toggled from the Layers panel.
+  const [hiddenPhotoIds, setHiddenPhotoIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  const handleTogglePhotoHidden = useCallback((imageId: string) => {
+    setHiddenPhotoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(imageId)) {
+        next.delete(imageId);
+      } else {
+        next.add(imageId);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const handleImageSaved = (e: Event) => {
@@ -230,6 +247,9 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
         sidebar={
           <MapLeftPanel
             map={mapInstance}
+            markers={markers}
+            hiddenPhotoIds={hiddenPhotoIds}
+            onTogglePhotoHidden={handleTogglePhotoHidden}
             onAnnotationsChange={handleAnnotationsChange}
             onLayersChange={handleLayersChange}
             isCollapsed={isSidebarCollapsed}
@@ -249,6 +269,8 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
             activeBasemap={activeBasemap}
             layers={layers}
             annotations={annotations}
+            markers={markers}
+            hiddenPhotoIds={hiddenPhotoIds}
             onMapReady={setMapInstance}
             onActiveLayersChange={setActiveLayers}
           />

@@ -22,8 +22,6 @@ import { DeleteOrthoAlert } from "../molecules/DeleteOrthoAlert";
 import { showToast } from "../lib/toaster";
 import "../styles/ImageGallerySidebar.css";
 
-const EMPTY_MARKERS: ReadonlyArray<DroneImageMetadata> = [];
-
 interface RasterThumbProps {
   src?: string;
   filename: string;
@@ -65,10 +63,11 @@ const RasterThumb: React.FC<RasterThumbProps> = ({ src, filename, format, extens
 
 export interface ImageGallerySidebarProps {
   map?: L.Map | null;
+  /** Session photo markers (shared with the map). */
+  markers?: ReadonlyArray<DroneImageMetadata>;
 }
 
-export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map }) => {
-  const markers = EMPTY_MARKERS;
+export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map, markers = [] }) => {
   const { activeImageId, setActiveImage, interactionSource } = useImageSync();
   const [storedImages, setStoredImages] = useState<StoredImageMetadata[]>([]);
   const [isImagesLoading, setIsImagesLoading] = useState(true);
