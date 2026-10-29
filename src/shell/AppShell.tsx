@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navbar } from "@blueprintjs/core";
 
 import { Sidebar } from "./Sidebar";
@@ -16,6 +16,16 @@ export function AppShell() {
   const [activeModuleId, setActiveModuleId] = useState(DEFAULT_MODULE_ID);
   const activeModule = findModule(activeModuleId);
   const ActivePage = activeModule.Page;
+
+  // Cross-module navigation: pages dispatch `open-module` with a module id.
+  useEffect(() => {
+    const handleOpenModule = (event: Event) => {
+      const detail = (event as CustomEvent<{ moduleId?: string }>).detail;
+      if (detail?.moduleId) setActiveModuleId(detail.moduleId);
+    };
+    window.addEventListener("open-module", handleOpenModule);
+    return () => window.removeEventListener("open-module", handleOpenModule);
+  }, []);
 
   return (
     <div className="app-shell">
