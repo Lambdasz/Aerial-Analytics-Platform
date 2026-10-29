@@ -7,7 +7,7 @@ import { MapViewControlBar } from "./MapViewControlBar";
 import { SpatialResultLayer } from "./SpatialResultLayer";
 import { SavedAoiLayer } from "./SavedAoiLayer";
 import { SavedOrthoImageLayer } from "./SavedOrthoImageLayer";
-import { ManagedMapLayers } from "./ManagedMapLayers";
+import { FlightPhotoLayer } from "./FlightPhotoLayer";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AutoCenterOnImages } from "./AutoCenterOnImages";
 import type { LayerPayload } from "../types/map";
@@ -83,9 +83,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       <AnnotationLayer annotations={annotations} />
 
       {/* =========================
-          IMAGE LOCATION MARKERS (MARKER PANE Z-INDEX 600)
+          FLIGHT PHOTOS (IMAGE OVERLAYS, ESTIMATED FOOTPRINTS)
+          Replaces point markers: each frame drapes over the map.
           ========================= */}
-      <ManagedMapLayers layers={layers} markers={markers} />
+      <FlightPhotoLayer markers={markers} layers={layers} />
 
       {/* =========================
           AUTO-CENTER (ONCE, TO SESSION IMAGERY)

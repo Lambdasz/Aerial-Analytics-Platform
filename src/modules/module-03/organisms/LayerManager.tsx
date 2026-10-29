@@ -12,6 +12,7 @@ import { AnnotationSidebarForm } from "../molecules/AnnotationSidebarForm";
 import { calculateLineLengthMeters, calculateGeodesicAreaMeters } from "../lib/geoJson";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { FLIGHT_PHOTOS_LAYER_ID } from "../config/mapConfig";
 
 const INITIAL_LAYERS: LayerState[] = [];
 
@@ -135,7 +136,27 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
               };
             });
 
-          setLayers([...filtered, ...spatialLayers]);
+          // Synthetic entry: session flight photos draped as image overlays.
+          // Exists only client-side; visibility/opacity use the same
+          // localStorage-backed mode/opacity maps as every other layer.
+          const flightPhotos: LayerState = {
+            layer_id: FLIGHT_PHOTOS_LAYER_ID,
+            layer_name: "Flight Photos",
+            category: "image_overlay",
+            is_visible:
+              savedModes[FLIGHT_PHOTOS_LAYER_ID] !== undefined
+                ? savedModes[FLIGHT_PHOTOS_LAYER_ID]
+                : true,
+            opacity:
+              savedOpacities[FLIGHT_PHOTOS_LAYER_ID] !== undefined
+                ? savedOpacities[FLIGHT_PHOTOS_LAYER_ID]
+                : 0.7,
+            z_index: 12,
+            source_type: "session_images",
+            source_id: FLIGHT_PHOTOS_LAYER_ID,
+          };
+
+          setLayers([...filtered, ...spatialLayers, flightPhotos]);
         }
       })
       .catch((err) => {

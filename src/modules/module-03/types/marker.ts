@@ -10,4 +10,7 @@ export interface DroneImageMetadata {
   file_path?: string;
   /** Recorded file size, part of the thumbnail cache identity. */
   file_size?: number | null;
+  /** Pixel dimensions — used for the footprint aspect ratio. */
+  width?: number | null;
+  height?: number | null;
 }

@@ -10,6 +10,8 @@ interface SessionImageRow {
   locationLon: number | null;
   gpsAltitudeM: number | null;
   fileSize: number | null;
+  width: number | null;
+  height: number | null;
 }
 
 interface SessionRow {
@@ -77,6 +79,8 @@ export async function fetchSessionImageMarkers(): Promise<DroneImageMetadata[]> 
       thumbnail_url: "",
       file_path: img.filePath,
       file_size: img.fileSize,
+      width: img.width,
+      height: img.height,
     }));
 }
 
