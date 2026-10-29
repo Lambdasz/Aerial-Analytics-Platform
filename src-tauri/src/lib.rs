@@ -835,6 +835,12 @@ pub fn run() {
             if let Err(err) = modules::module_01::init_schema(&db_conn) {
                 eprintln!("warning: could not initialize the session/image schema: {err}");
             }
+            if let Err(err) = modules::module_09::migrate_plot_schema(&db_conn) {
+                eprintln!("warning: could not initialize the plot schema: {err}");
+            }
+            if let Err(err) = modules::module_09::indicators::migrate_indicator_schema(&db_conn) {
+                eprintln!("warning: could not initialize the plot indicator schema: {err}");
+            }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
                 Some(value) => absolute_path(PathBuf::from(value))?,
                 None => app_data.join("library"),
@@ -911,6 +917,15 @@ pub fn run() {
             // Module 3 — Spatial Results
             map_controller::sp_result::commands::save_spatial_result,
             commands::publish::publish_plugin_run,
+            commands::plots::create_plot,
+            commands::plots::list_plots,
+            commands::plots::get_plot_by_id,
+            commands::plots::rename_plot,
+            commands::plots::delete_plot,
+            commands::plots::import_plots_into_project,
+            commands::plots::save_plot_indicators,
+            commands::plots::list_plot_indicators,
+            commands::plots::publish_plots_layer,
             map_controller::sp_result::commands::get_saved_spatial_results,
             map_controller::sp_result::commands::get_saved_spatial_results_summary,
             map_controller::sp_result::commands::get_saved_spatial_result,
