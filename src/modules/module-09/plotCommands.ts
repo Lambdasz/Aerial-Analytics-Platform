@@ -8,6 +8,7 @@ export interface PlotRecord {
   sessionId: string | null;
   name: string;
   geometry: { type: "Polygon"; coordinates: number[][][] };
+  sourceAoiId: string | null;
   areaM2: number;
   areaHa: number;
   perimeterM: number;
@@ -55,8 +56,15 @@ export function createPlot(
   geometry: PlotGeometry,
   projectId: string | null,
   sessionId: string | null = null,
+  sourceAoiId: string | null = null,
 ): Promise<PlotRecord> {
-  return invoke<PlotRecord>("create_plot", { name, geometry, projectId, sessionId });
+  return invoke<PlotRecord>("create_plot", {
+    name,
+    geometry,
+    projectId,
+    sessionId,
+    sourceAoiId,
+  });
 }
 
 export function renamePlot(plotId: string, name: string): Promise<PlotRecord> {

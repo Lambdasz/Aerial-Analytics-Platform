@@ -46,10 +46,18 @@ pub fn create_plot(
     session_id: Option<String>,
     name: String,
     geometry: Value,
+    source_aoi_id: Option<String>,
 ) -> Result<PlotRecord, CommandError> {
     let polygon = polygon_from_geometry(&geometry)?;
     let conn = state.db.lock().map_err(|_| lock_error())?;
-    Ok(insert_plot(&conn, project_id, session_id, &name, &polygon)?)
+    Ok(insert_plot(
+        &conn,
+        project_id,
+        session_id,
+        &name,
+        &polygon,
+        source_aoi_id,
+    )?)
 }
 
 /// Lists plots, optionally limited to one project.
@@ -123,6 +131,7 @@ pub fn import_plots_into_project(
                     None,
                     &candidate.plot_name,
                     &polygon,
+                    None,
                 ) {
                     Ok(record) => stored.push(record),
                     Err(error) => skipped.push(format!("{}: {error}", candidate.plot_name)),

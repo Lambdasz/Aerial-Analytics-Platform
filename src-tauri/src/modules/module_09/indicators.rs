@@ -302,6 +302,7 @@ mod tests {
             None,
             "Plot A",
             &polygon,
+            None,
         )
         .unwrap();
         conn

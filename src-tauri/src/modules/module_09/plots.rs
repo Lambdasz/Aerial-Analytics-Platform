@@ -26,14 +26,15 @@ const PLOT_TABLE_DDL: &str = "CREATE TABLE IF NOT EXISTS plot (
     session_id    TEXT,
     name          TEXT NOT NULL,
     geometry      TEXT NOT NULL,
+    source_aoi_id TEXT,
     area_m2       REAL NOT NULL,
     perimeter_m   REAL NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 )";
 
-const PLOT_COLUMNS: &str =
-    "id, project_id, session_id, name, geometry, area_m2, perimeter_m, created_at, updated_at";
+const PLOT_COLUMNS: &str = "id, project_id, session_id, name, geometry, source_aoi_id, \
+    area_m2, perimeter_m, created_at, updated_at";
 
 /// A stored plot boundary with its geodesic metrics.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -45,6 +46,8 @@ pub struct PlotRecord {
     pub name: String,
     /// GeoJSON `geometry` object of type `Polygon` (WGS 84, lon/lat order).
     pub geometry: Value,
+    /// Map Explorer AOI this plot was created from, when it was not drawn here.
+    pub source_aoi_id: Option<String>,
     pub area_m2: f64,
     pub area_ha: f64,
     pub perimeter_m: f64,
@@ -80,6 +83,13 @@ impl From<crate::plugin_manager::error::CommandError> for PlotError {
 /// rewrites existing tables.
 pub fn migrate_plot_schema(conn: &Connection) -> Result<(), PlotError> {
     conn.execute(PLOT_TABLE_DDL, [])?;
+    // Older databases predate `source_aoi_id`; add it without a rebuild.
+    let has_source = conn
+        .prepare("SELECT 1 FROM pragma_table_info('plot') WHERE name = 'source_aoi_id'")?
+        .exists([])?;
+    if !has_source {
+        conn.execute("ALTER TABLE plot ADD COLUMN source_aoi_id TEXT", [])?;
+    }
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_plot_project ON plot(project_id)",
         [],
@@ -173,18 +183,19 @@ fn row_to_plot(row: &Row) -> rusqlite::Result<PlotRecord> {
     let geometry_text: String = row.get(4)?;
     let geometry: Value = serde_json::from_str(&geometry_text)
         .unwrap_or_else(|_| json!({"type": "Polygon", "coordinates": []}));
-    let area_m2: f64 = row.get(5)?;
+    let area_m2: f64 = row.get(6)?;
     Ok(PlotRecord {
         id: row.get(0)?,
         project_id: row.get(1)?,
         session_id: row.get(2)?,
         name: row.get(3)?,
         geometry,
+        source_aoi_id: row.get(5)?,
         area_m2,
         area_ha: area_m2 / 10_000.0,
-        perimeter_m: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        perimeter_m: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -210,6 +221,7 @@ pub fn insert_plot(
     session_id: Option<String>,
     name: &str,
     polygon: &Polygon,
+    source_aoi_id: Option<String>,
 ) -> Result<PlotRecord, PlotError> {
     let name = validate_name(name)?;
     let (area_m2, perimeter_m) = metrics(polygon);
@@ -220,6 +232,7 @@ pub fn insert_plot(
         session_id,
         name,
         geometry: geometry_value(polygon),
+        source_aoi_id: source_aoi_id.clone(),
         area_m2,
         area_ha: area_m2 / 10_000.0,
         perimeter_m,
@@ -227,13 +240,16 @@ pub fn insert_plot(
         updated_at: timestamp,
     };
     conn.execute(
-        &format!("INSERT INTO plot ({PLOT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"),
+        &format!(
+            "INSERT INTO plot ({PLOT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+        ),
         params![
             record.id,
             record.project_id,
             record.session_id,
             record.name,
             serde_json::to_string(&record.geometry).map_err(|e| PlotError(e.to_string()))?,
+            record.source_aoi_id,
             record.area_m2,
             record.perimeter_m,
             record.created_at,
@@ -249,8 +265,11 @@ pub fn list_plots(
     project_id: Option<&str>,
 ) -> Result<Vec<PlotRecord>, PlotError> {
     let sql = match project_id {
+        // Plots imported before a project was selected carry NULL; keep them
+        // visible instead of hiding them behind the project filter.
         Some(_) => format!(
-            "SELECT {PLOT_COLUMNS} FROM plot WHERE project_id = ?1 ORDER BY created_at DESC"
+            "SELECT {PLOT_COLUMNS} FROM plot \
+             WHERE project_id = ?1 OR project_id IS NULL ORDER BY created_at DESC"
         ),
         None => format!("SELECT {PLOT_COLUMNS} FROM plot ORDER BY created_at DESC"),
     };
@@ -362,8 +381,15 @@ mod tests {
     fn crud_roundtrip() {
         let conn = memory_db();
         let polygon = polygon_from_geometry(&square(116.833, -1.270, 0.002)).unwrap();
-        let created =
-            insert_plot(&conn, Some("project-1".into()), None, " Plot A ", &polygon).unwrap();
+        let created = insert_plot(
+            &conn,
+            Some("project-1".into()),
+            None,
+            " Plot A ",
+            &polygon,
+            None,
+        )
+        .unwrap();
         assert_eq!(created.name, "Plot A");
         assert!(created.area_ha > 0.0);
 
@@ -383,7 +409,7 @@ mod tests {
     fn empty_names_are_rejected() {
         let conn = memory_db();
         let polygon = polygon_from_geometry(&square(0.0, 0.0, 0.001)).unwrap();
-        assert!(insert_plot(&conn, None, None, "   ", &polygon).is_err());
-        assert!(insert_plot(&conn, None, None, &"x".repeat(101), &polygon).is_err());
+        assert!(insert_plot(&conn, None, None, "   ", &polygon, None).is_err());
+        assert!(insert_plot(&conn, None, None, &"x".repeat(101), &polygon, None).is_err());
     }
 }
