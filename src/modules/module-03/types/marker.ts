@@ -6,4 +6,8 @@ export interface DroneImageMetadata {
   altitude_agl: number;
   heading_deg: number;
   thumbnail_url: string;
+  /** Library path — lets the popup lazily fetch a thumbnail via `thumbnail_image`. */
+  file_path?: string;
+  /** Recorded file size, part of the thumbnail cache identity. */
+  file_size?: number | null;
 }

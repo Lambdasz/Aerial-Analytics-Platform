@@ -7,9 +7,11 @@ import { MapSearchBar } from "../molecules/MapSearchBar";
 import L from "leaflet";
 
 import type { LayerState, AnnotationFeature } from "../types/layer";
+import type { DroneImageMetadata } from "../types/marker";
 
 interface MapLeftPanelProps {
   map: L.Map | null;
+  markers: ReadonlyArray<DroneImageMetadata>;
   onAnnotationsChange?: (annotations: AnnotationFeature[]) => void;
   onLayersChange?: (layers: LayerState[]) => void;
   isCollapsed: boolean;
@@ -18,6 +20,7 @@ interface MapLeftPanelProps {
 
 export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
   map,
+  markers,
   onAnnotationsChange,
   onLayersChange,
   isCollapsed,
@@ -197,7 +200,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
               padding: "15px",
             }}
           >
-            <ImageGallerySidebar map={map} />
+            <ImageGallerySidebar map={map} markers={markers} />
           </div>
         </div>
       </div>

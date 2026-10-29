@@ -14,8 +14,6 @@ import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
 
-const EMPTY_MARKERS: ReadonlyArray<DroneImageMetadata> = [];
-
 export interface MapCanvasProps {
   /** Basemap aktif yang sedang digunakan */
   activeBasemap?: BasemapKey;
@@ -23,6 +21,8 @@ export interface MapCanvasProps {
   layers?: LayerState[];
   /** Daftar fitur anotasi spasial titik */
   annotations?: AnnotationFeature[];
+  /** Marker foto drone dari sesi terbaru (session imagery) */
+  markers?: ReadonlyArray<DroneImageMetadata>;
   /** Callback ref saat instance Leaflet map siap */
   onMapReady?: (map: L.Map | null) => void;
   /** Callback saat daftar layer hasil spasial diperbarui */
@@ -36,6 +36,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   activeBasemap = "osm",
   layers = [],
   annotations = [],
+  markers = [],
   onMapReady,
   onActiveLayersChange,
 }) => {
@@ -84,12 +85,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       {/* =========================
           IMAGE LOCATION MARKERS (MARKER PANE Z-INDEX 600)
           ========================= */}
-      <ManagedMapLayers layers={layers} markers={EMPTY_MARKERS} />
+      <ManagedMapLayers layers={layers} markers={markers} />
 
       {/* =========================
           AUTO-CENTER (ONCE, TO SESSION IMAGERY)
           ========================= */}
-      <AutoCenterOnImages />
+      <AutoCenterOnImages markers={markers} />
 
       {/* =========================
           MAP CONTROLS
