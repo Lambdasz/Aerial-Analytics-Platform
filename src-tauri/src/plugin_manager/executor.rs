@@ -278,6 +278,8 @@ pub async fn start_plugin_job(
                         };
                     }
                     record.result = Some(dto.clone());
+                    // The pid is stale from now on: never signal it again.
+                    record.child_pid = None;
                     use tauri::Emitter;
                     let _ = app_handle.emit("plugin://completed", &dto);
                 }
@@ -286,6 +288,7 @@ pub async fn start_plugin_job(
                     record.status = JobStatusDto::Failed {
                         error: err_msg.clone(),
                     };
+                    record.child_pid = None;
                     use tauri::Emitter;
                     let _ = app_handle.emit(
                         "plugin://completed",
@@ -350,8 +353,16 @@ pub async fn abort_plugin_job(
         handle.abort();
     }
 
-    // Forcibly terminate child OS process tree
-    if let Some(pid) = record.child_pid {
+    // Forcibly terminate child OS process tree. Only for jobs that can still
+    // be running: finished jobs keep no pid, and a stale pid could now belong
+    // to an unrelated process (a negated pid would target its whole group).
+    let finished = matches!(
+        record.status,
+        JobStatusDto::Completed { .. } | JobStatusDto::Failed { .. } | JobStatusDto::Aborted
+    );
+    if finished {
+        record.child_pid = None;
+    } else if let Some(pid) = record.child_pid.take() {
         kill_process_tree(pid);
     }
 
@@ -652,18 +663,84 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
 /// zombies if only the direct child PID were signaled. On Windows,
 /// `taskkill /T` already walks the process tree.
 pub(crate) fn kill_process_tree(pid: u32) {
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .output();
+    match kill_target(pid, process_group_of(pid), std::process::id()) {
+        KillTarget::Refuse(reason) => {
+            eprintln!("plugin cancel: refusing to signal pid {pid} ({reason})");
+        }
+        KillTarget::Process => {
+            eprintln!("plugin cancel: SIGKILL pid {pid}");
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output();
+            }
+        }
+        KillTarget::Group => {
+            eprintln!("plugin cancel: SIGKILL process group {pid}");
+            #[cfg(unix)]
+            unsafe {
+                // Negative pid targets the whole group, which is safe only
+                // because `kill_target` verified the child is its leader.
+                libc::kill(-(pid as i32), libc::SIGKILL);
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .output();
+            }
+        }
     }
-    #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &format!("-{}", pid)])
-            .output();
+}
+
+/// What a cancellation is allowed to signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KillTarget {
+    /// Signal only the process itself.
+    Process,
+    /// Signal the whole process group (the child is its leader).
+    Group,
+    /// Do not signal anything; the reason is logged.
+    Refuse(&'static str),
+}
+
+/// Decides how a cancellation may signal `pid`.
+///
+/// Guards the cases that can take down more than the plugin: PID 0 and 1, our
+/// own process, and a process group that is not actually the child's. Pure.
+pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> KillTarget {
+    if pid <= 1 {
+        return KillTarget::Refuse("reserved pid");
     }
+    if pid == own_pid {
+        return KillTarget::Refuse("would signal the app itself");
+    }
+    match group_of_pid {
+        Some(group) if group == pid => KillTarget::Group,
+        _ => KillTarget::Process,
+    }
+}
+
+/// Process group id read from `/proc/<pid>/stat`, when available. I/O read.
+#[cfg(unix)]
+fn process_group_of(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the parenthesised command name: state ppid pgrp ...
+    let after_comm = stat.rsplit_once(')')?.1;
+    let mut fields = after_comm.split_whitespace();
+    let _state = fields.next()?;
+    let _ppid = fields.next()?;
+    fields.next()?.parse().ok()
+}
+
+#[cfg(not(unix))]
+fn process_group_of(_pid: u32) -> Option<u32> {
+    None
 }
 
 /// Prepares the cross-platform Tokio process command for the plugin entrypoint.
@@ -975,6 +1052,34 @@ pub(crate) fn generate_job_id() -> String {
 // ---------------------------------------------------------------------------
 // 8. UNIT TESTS
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod kill_guard_tests {
+    use super::{kill_target, KillTarget};
+
+    #[test]
+    fn refuses_reserved_and_own_pids() {
+        assert_eq!(
+            kill_target(0, Some(0), 4242),
+            KillTarget::Refuse("reserved pid")
+        );
+        assert_eq!(
+            kill_target(1, Some(1), 4242),
+            KillTarget::Refuse("reserved pid")
+        );
+        assert_eq!(
+            kill_target(4242, Some(4242), 4242),
+            KillTarget::Refuse("would signal the app itself")
+        );
+    }
+
+    #[test]
+    fn signals_group_only_when_child_is_leader() {
+        assert_eq!(kill_target(1234, Some(1234), 4242), KillTarget::Group);
+        assert_eq!(kill_target(1234, Some(77), 4242), KillTarget::Process);
+        assert_eq!(kill_target(1234, None, 4242), KillTarget::Process);
+    }
+}
 
 #[cfg(test)]
 mod tests {

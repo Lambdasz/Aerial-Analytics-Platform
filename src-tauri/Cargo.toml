@@ -24,6 +24,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 image = "0.25"
 
+# Process signals (plugin cancellation safety)
+libc = "0.2"
+
 # Module 2 Dependencies
 tokio = { version = "1", features = ["process", "time", "sync", "rt", "fs", "macros"] }
 thiserror = "2"
