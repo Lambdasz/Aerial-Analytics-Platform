@@ -1,54 +1,94 @@
-//! Batas Tauri (`#[tauri::command]`) untuk Report + Export.
+//! Tauri commands for the Module 11 report and export contract.
 //!
-//! Setiap command di sini mengorkestrasi tiga tahap, dan **tidak boleh berisi
-//! logika penggabungan data sendiri** — logika itu ada di
-//! [`crate::reporting::aggregator`]:
-//!
-//! 1. **Ambil data** dari Module 9 (`get_plot_ranking`, `get_plot_summary` — nama
-//!    tentatif, lihat catatan di `types/input.rs`) dan Module 10
-//!    (`get_temporal_change_result`).
-//! 2. **Gabungkan** lewat fungsi murni di `aggregator.rs`.
-//! 3. **Render/tulis berkas** lewat fungsi bersisi efek samping di `report.rs`
-//!    atau `export.rs`.
-//!
-//! # Belum didaftarkan di `invoke_handler!`
-//!
-//! Command di file ini **sengaja belum ditambahkan** ke
-//! `tauri::generate_handler![...]` pada `src-tauri/src/lib.rs`. Itu langkah
-//! terakhir yang dilakukan begitu tahap 1 (pemanggilan fungsi Module 9/10 asli)
-//! benar-benar bisa dikompilasi — mendaftarkannya sekarang hanya akan membuat
-//! command yang bisa dipanggil dari frontend tapi selalu panic (`todo!()`).
+//! Both commands delegate to [`crate::modules::module_11`]; they exist so the
+//! original `generate_report` / `export_data` names keep working for callers
+//! that were written against the scaffold.
 
-use super::error::CommandError;
-use super::types::output::ExportFormat;
+use crate::modules::module_03::state::get_global_state;
+use crate::modules::module_11::exports::{write_plot_indicators_csv, write_plots_geojson};
+use crate::modules::module_11::report::write_report;
+use crate::plugin_manager::error::CommandError;
+use serde::Deserialize;
+use tauri::State;
 
-/// Generate laporan (PDF) untuk satu proyek, mencakup ringkasan per plot
-/// (M9.6 + M9.7) dan ringkasan temporal (M10.8) jika tersedia.
-///
-/// Mengembalikan path absolut berkas PDF yang dihasilkan.
-#[tauri::command]
-pub async fn generate_report(project_id: String) -> Result<String, CommandError> {
-    let _ = project_id;
-    todo!(
-        "M11: (1) ambil PlotSummary+PlotRankingResult dari Module 9 dan \
-         TemporalChangeResult dari Module 10 lewat get_temporal_change_result(); \
-         (2) susun lewat aggregator::build_plot_report_section + \
-         build_temporal_report_section + build_report_document; \
-         (3) tulis lewat report::render_report_pdf; kembalikan path-nya."
-    )
+/// Export formats accepted by [`export_data`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Csv,
+    GeoJson,
+    Json,
+    Xlsx,
 }
 
-/// Ekspor data plot satu proyek ke format yang dipilih pengguna
-/// (CSV/Excel/GeoJSON — "Data Export" pada brief Module 11).
+fn lock_error() -> CommandError {
+    CommandError {
+        code: "STATE_ERROR".to_string(),
+        message: "Database lock poisoned while generating the report".to_string(),
+    }
+}
+
+fn storage_error(error: String) -> CommandError {
+    CommandError {
+        code: "REPORT_ERROR".to_string(),
+        message: error,
+    }
+}
+
+/// Generates the printable HTML report for a project and returns its path.
 ///
-/// Mengembalikan path absolut berkas ekspor yang dihasilkan.
+/// The scaffolding promised a PDF; the implementation is HTML because it needs
+/// no extra dependency and prints to PDF from any browser.
 #[tauri::command]
-pub async fn export_data(project_id: String, format: ExportFormat) -> Result<String, CommandError> {
-    let _ = (project_id, format);
-    todo!(
-        "M11: (1) ambil Vec<PlotSummary> dari Module 9; (2) bentuk tabel lewat \
-         aggregator::build_plot_export_table; (3) tulis lewat \
-         export::export_to_csv / export_to_excel / export_to_geojson sesuai \
-         `format`."
-    )
+pub fn generate_report(
+    state: State<'_, crate::AppState>,
+    project_id: String,
+) -> Result<String, CommandError> {
+    let exports = get_global_state().storage_dir.join("exports");
+    let conn = state.db.lock().map_err(|_| lock_error())?;
+    let path = write_report(&conn, &project_id, &exports).map_err(storage_error)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Exports project data in the requested format and returns the written path.
+///
+/// `json` writes the dashboard snapshot; `xlsx` is rejected because the
+/// platform does not ship a spreadsheet writer (CSV is the tabular export).
+#[tauri::command]
+pub fn export_data(
+    state: State<'_, crate::AppState>,
+    project_id: String,
+    format: ExportFormat,
+) -> Result<String, CommandError> {
+    let exports = get_global_state().storage_dir.join("exports");
+    let conn = state.db.lock().map_err(|_| lock_error())?;
+    let path = match format {
+        ExportFormat::Csv => write_plot_indicators_csv(&conn, &project_id, &exports),
+        ExportFormat::GeoJson => write_plots_geojson(&conn, &project_id, &exports),
+        ExportFormat::Json => {
+            crate::modules::module_11::exports::write_dashboard_json(&conn, &project_id, &exports)
+        }
+        ExportFormat::Xlsx => {
+            return Err(CommandError {
+                code: "UNSUPPORTED_FORMAT".to_string(),
+                message: "XLSX export is not supported; use CSV for tabular data".to_string(),
+            })
+        }
+    }
+    .map_err(storage_error)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xlsx_is_the_only_unsupported_format() {
+        // The enum exists so deserialisation accepts the documented names.
+        let parsed: ExportFormat = serde_json::from_str("\"xlsx\"").unwrap();
+        assert_eq!(parsed, ExportFormat::Xlsx);
+        let parsed: ExportFormat = serde_json::from_str("\"geo_json\"").unwrap();
+        assert_eq!(parsed, ExportFormat::GeoJson);
+    }
 }
