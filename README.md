@@ -223,7 +223,6 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
 │   ├── vegetation_coverage_analytics/ # Vegetation coverage + zonation plugin (Rust)
 │   ├── vegetation_condition_analysis/ # Vegetation condition plugin (Rust)
-│   ├── tree_detection/           # Tree detection plugin (placeholder detector)
 │   └── template/                 # Canonical starter template for new plugins
 ├── public/                       # Static assets served directly
 │   ├── tauri.svg
