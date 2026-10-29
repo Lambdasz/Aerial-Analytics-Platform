@@ -7,6 +7,7 @@ use crate::modules::module_11::dashboard::{
 use crate::modules::module_11::exports::{
     write_dashboard_json, write_plot_indicators_csv, write_plots_geojson,
 };
+use crate::modules::module_11::report::write_report;
 use crate::plugin_manager::error::CommandError;
 use tauri::State;
 
@@ -87,5 +88,16 @@ pub fn export_dashboard_json(
 ) -> Result<String, CommandError> {
     let conn = state.db.lock().map_err(|_| lock_error())?;
     let path = write_dashboard_json(&conn, &project_id, &export_dir()).map_err(storage_error)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Generates the printable HTML report for a project and returns its path.
+#[tauri::command]
+pub fn generate_dashboard_report(
+    state: State<'_, crate::AppState>,
+    project_id: String,
+) -> Result<String, CommandError> {
+    let conn = state.db.lock().map_err(|_| lock_error())?;
+    let path = write_report(&conn, &project_id, &export_dir()).map_err(storage_error)?;
     Ok(path.to_string_lossy().into_owned())
 }

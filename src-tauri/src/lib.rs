@@ -1000,6 +1000,7 @@ pub fn run() {
             commands::dashboard::export_dashboard_plot_csv,
             commands::dashboard::export_dashboard_plots_geojson,
             commands::dashboard::export_dashboard_json,
+            commands::dashboard::generate_dashboard_report,
             map_controller::sp_result::commands::get_saved_spatial_results,
             map_controller::sp_result::commands::get_saved_spatial_results_summary,
             map_controller::sp_result::commands::get_saved_spatial_result,

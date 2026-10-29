@@ -24,6 +24,7 @@ import {
   exportDashboardGeojson,
   exportDashboardJson,
   formatMetric,
+  generateDashboardReport,
   getProjectDashboard,
   listDashboardPluginResults,
 } from "./module11Commands";
@@ -458,6 +459,13 @@ export function Module11Page() {
                 text="Dashboard snapshot (JSON)"
                 loading={isExporting === "json"}
                 onClick={() => void runExport("json", exportDashboardJson)}
+              />
+              <Button
+                icon="document"
+                intent={Intent.PRIMARY}
+                text="Generate report (HTML)"
+                loading={isExporting === "report"}
+                onClick={() => void runExport("report", generateDashboardReport)}
               />
             </div>
             <div style={{ fontSize: 11, color: "var(--color-slate)", marginTop: 8 }}>

@@ -104,3 +104,7 @@ export function formatMetric(row: PluginResultRow): string {
   }
   return row.textValue ?? "";
 }
+
+export function generateDashboardReport(projectId: string): Promise<string> {
+  return invoke<string>("generate_dashboard_report", { projectId });
+}

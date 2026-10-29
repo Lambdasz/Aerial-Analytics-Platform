@@ -6,5 +6,6 @@
 
 pub mod dashboard;
 pub mod exports;
+pub mod report;
 
 pub use dashboard::{build_project_dashboard, list_plugin_results, ProjectDashboard};
