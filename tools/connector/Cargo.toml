@@ -1,0 +1,14 @@
+[package]
+name = "connector"
+version = "0.1.0"
+edition = "2021"
+description = "External bridge: read app DB, run plugins on session images, publish results to map storage"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
