@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0-alpha] — 2026-10-29
+
+Sixth functional milestone. Completes Module 11: an analytics dashboard built from stored results, a printable report, and data exports.
+
+### Added
+
+- **Project dashboard**: sessions, images (with geotagged count), plots and total area, plugin result count, mean per indicator, images per plugin, and the latest temporal comparison — all read-only summaries of results other modules already stored
+- **Interactive result explorer**: stored plugin metrics per image, with a detail dialog showing a lazily loaded image preview and a shortcut to open the image in the Map Explorer gallery
+- **Plot comparison summary**: indicator means and per-plot values across the project, sharing the data behind the Module 9 ranking view
+- **Temporal summary**: latest comparison and comparison history in the dashboard
+- **Data export**: plot indicators as CSV, plots as GeoJSON, and a dashboard snapshot as JSON, all written to `map_storage/exports/` with the path reported in the UI
+- **Printable report**: a self-contained HTML report per project (summary cards, inline SVG charts, plot indicators, plugin usage, temporal comparisons, result explorer), free of scripts and external assets so it can be archived or printed to PDF
+- Cross-module navigation hook (`open-module`) so dashboard rows can jump to the map
+
+### Changed
+
+- The original Module 11 reporting contract is now a compiled compatibility layer: its `generate_report` and `export_data` commands delegate to the dashboard implementation instead of panicking; the report is HTML and exports are CSV/GeoJSON/JSON
+
+### Removed
+
+- The unused Module 11 stub tree (local duplicates of Module 9/10 types, `todo!()` aggregator/export/PDF scaffolding), superseded by `modules/module_11`
+
 ## [0.8.0-alpha] — 2026-10-29
 
 Fifth functional milestone. Adds Module 9 (area & plot analytics) and Module 10 (temporal change analysis), and makes downstream analysis read plugin results instead of recomputing them.
@@ -183,6 +205,7 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[0.9.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.8.0-alpha...v0.9.0-alpha
 [0.8.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.5.0-alpha...v0.6.0-alpha

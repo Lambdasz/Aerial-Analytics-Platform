@@ -611,6 +611,7 @@ pub mod map_controller;
 pub mod modules;
 mod plot;
 pub mod plugin_manager;
+mod reporting;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
@@ -995,6 +996,14 @@ pub fn run() {
             commands::plots::save_plot_indicators,
             commands::plots::list_plot_indicators,
             commands::plots::publish_plots_layer,
+            commands::dashboard::get_project_dashboard,
+            commands::dashboard::list_dashboard_plugin_results,
+            commands::dashboard::export_dashboard_plot_csv,
+            commands::dashboard::export_dashboard_plots_geojson,
+            commands::dashboard::export_dashboard_json,
+            commands::dashboard::generate_dashboard_report,
+            reporting::commands::generate_report,
+            reporting::commands::export_data,
             map_controller::sp_result::commands::get_saved_spatial_results,
             map_controller::sp_result::commands::get_saved_spatial_results_summary,
             map_controller::sp_result::commands::get_saved_spatial_result,

@@ -80,7 +80,8 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
   - `modules/` — Module business logic: `module_01/` (metadata extraction, image import, flight sessions + SQLite schema), `module_09/` (plots + indicators), `module_10/` (temporal change analysis).
   - `plot.rs` / `plot_api.rs` — the original Module 9 GeoJSON importer and a legacy cross-module contract; the implementation now lives in `modules/module_09/` (its `todo!()` stubs are superseded).
   - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
-  - `reporting.rs` + `reporting/` — Module 11 scaffolding. **Not compiled**: `lib.rs` has no `mod reporting;`, so changes there aren't built or checked until it's wired in.
+  - `modules/module_11/` — dashboard aggregation (`dashboard`), exports (`exports`) and the printable HTML report (`report`).
+  - `reporting.rs` + `reporting/` — the original Module 11 contract, now a thin compiled layer: its two commands delegate to `modules/module_11` (report = HTML, exports = CSV/GeoJSON/JSON; XLSX is rejected). The former stub tree was removed.
   - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
 - `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4/5/6 are Rust binary plugins: build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored).
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
