@@ -82,7 +82,7 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
   - `map_controller/` — map backend (geometry, AOI, layers, spatial results); deep docs live in `map_controller.rs`.
   - `reporting.rs` + `reporting/` — Module 11 scaffolding. **Not compiled**: `lib.rs` has no `mod reporting;`, so changes there aren't built or checked until it's wired in.
   - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
-- `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4/5/6 are Rust binary plugins: build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored).
+- `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4/5/6 are Rust binary plugins: build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored). Module 7 (tree detection and counting) is Python and lives in its own repo, `Lambdasz/Module-7-Potencial-Men`; it is installed as a plugin, not vendored here.
 - `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
 
 ### Adding new Tauri commands (2 required steps)
