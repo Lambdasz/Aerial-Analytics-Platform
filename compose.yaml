@@ -1,0 +1,32 @@
+name: aerial-analytics-platform
+
+services:
+  toolchain:
+    build:
+      context: .
+      target: runtime
+      args:
+        USER_UID: ${HOST_UID:-1000}
+        USER_GID: ${HOST_GID:-1000}
+    image: aap-toolchain:dev
+    working_dir: /workspace
+    init: true
+    environment:
+      HOME: /home/dev
+      npm_config_cache: /home/dev/.npm
+    volumes:
+      - .:/workspace
+      # Persist heavy caches/state outside the bind mount so repeat runs stay fast
+      # and host node_modules/target ownership never conflicts.
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - npm-cache:/home/dev/.npm
+      - node-modules:/workspace/node_modules
+      - cargo-target:/workspace/src-tauri/target
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  npm-cache:
+  node-modules:
+  cargo-target:
