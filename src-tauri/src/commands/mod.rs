@@ -7,6 +7,8 @@ pub mod import;
 #[allow(unused_imports)]
 pub mod project;
 #[allow(unused_imports)]
+pub mod publish;
+#[allow(unused_imports)]
 pub mod session;
 
 #[allow(unused_imports)]
@@ -15,5 +17,7 @@ pub use image_preview::*;
 pub use import::*;
 #[allow(unused_imports)]
 pub use project::*;
+#[allow(unused_imports)]
+pub use publish::*;
 #[allow(unused_imports)]
 pub use session::*;

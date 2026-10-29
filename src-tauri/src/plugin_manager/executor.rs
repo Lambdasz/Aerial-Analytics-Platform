@@ -148,7 +148,7 @@ impl ActiveJobTracker {
 /// to kick off compute-intensive analysis workflows in an isolated child process without blocking the main Tauri desktop runtime.
 #[tauri::command]
 pub async fn start_plugin_job(
-    request: StartJobRequestDto,
+    mut request: StartJobRequestDto,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
@@ -180,6 +180,18 @@ pub async fn start_plugin_job(
             code: "IMAGE_NOT_FOUND".to_string(),
             message: format!("Target image file not found: {:?}", target_img),
         });
+    }
+
+    // 2b. Callers that did not decode EXIF can still get complete payloads:
+    // fill resolution/GPS/altitude/timestamp from the imported image row.
+    if request.metadata.is_none() {
+        request.metadata = {
+            let conn = state.db.lock().map_err(|_| CommandError {
+                code: "STATE_ERROR".to_string(),
+                message: "Database lock poisoned while resolving image metadata".to_string(),
+            })?;
+            autofill_image_metadata(&conn, &request.target_image_path)
+        };
     }
 
     // 3. Generate unique execution ID
@@ -427,6 +439,46 @@ pub(crate) fn verify_plugin_executable(
     Ok(())
 }
 
+/// Builds plugin payload metadata from the imported image row.
+///
+/// Pure aside from the already-open connection read: returns `None` when the
+/// path is not a tracked library image or when the row carries no usable
+/// values, so plugins keep their own fallbacks.
+pub(crate) fn autofill_image_metadata(
+    conn: &rusqlite::Connection,
+    image_path: &str,
+) -> Option<serde_json::Value> {
+    let image =
+        crate::modules::module_01::flight_session::find_image_by_path(conn, image_path).ok()??;
+
+    let mut metadata = serde_json::Map::new();
+    if let (Some(width), Some(height)) = (image.width, image.height) {
+        metadata.insert("resolution".to_string(), serde_json::json!([width, height]));
+    }
+    if let (Some(lat), Some(lon)) = (image.location_lat, image.location_lon) {
+        metadata.insert(
+            "gps".to_string(),
+            serde_json::json!({ "lat": lat, "lon": lon }),
+        );
+    }
+    if let Some(altitude) = image.gps_altitude_m {
+        metadata.insert("altitude".to_string(), serde_json::json!(altitude));
+        metadata.insert("relative_altitude".to_string(), serde_json::json!(altitude));
+    }
+    if let Some(captured_at) = image.captured_at {
+        metadata.insert(
+            "timestamp".to_string(),
+            serde_json::json!(captured_at.to_string()),
+        );
+    }
+
+    if metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(metadata))
+    }
+}
+
 /// Constructs the `ExecutionPayload` struct for a given job request.
 ///
 /// **Pure function** — no filesystem I/O, no subprocess interaction.
@@ -622,6 +674,11 @@ pub(crate) async fn resolve_executable(
     payload_path: &Path,
     result_path: &Path,
 ) -> Result<tokio::process::Command, PluginError> {
+    // Absolute paths only: spawning a relative program together with a
+    // relative `current_dir` resolves the program against the child's cwd.
+    let absolute_dir = std::path::absolute(plugin_dir).unwrap_or_else(|_| plugin_dir.to_path_buf());
+    let plugin_dir = absolute_dir.as_path();
+
     match runtime_type {
         "python" => {
             // Check for local virtual environment Python
