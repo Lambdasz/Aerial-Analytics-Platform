@@ -1,0 +1,33 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/execution_payload.v1.json",
+  "execution_id": "exec_m6_example",
+  "session_id": "session_example",
+  "output_dir": "/tmp/aerial-analytics/module6",
+  "target": {
+    "granularity": "single_image",
+    "image_path": "/data/library/projects/p1/sessions/s1/images/01_0001.JPG",
+    "mime_type": "image/jpeg",
+    "metadata": {
+      "resolution": [3976, 2652],
+      "gps": { "lat": 29.76096, "lon": 115.974797 },
+      "altitude": 405.76,
+      "timestamp": "2018-09-17T12:44:21"
+    }
+  },
+  "parameters": {
+    "mask_source": "auto",
+    "mask_path": "",
+    "exg_threshold": 0.04,
+    "min_brightness": 0.08,
+    "max_brightness": 0.95,
+    "threshold_vigorous": 0.25,
+    "threshold_moderate": 0.05,
+    "yellowing_hue_min": 50.0,
+    "yellowing_hue_max": 75.0,
+    "yellowing_sat_min": 0.2,
+    "browning_min_rbvi": 0.15,
+    "browning_r_g_ratio": 0.9,
+    "grid_size": 4,
+    "plots": ""
+  }
+}

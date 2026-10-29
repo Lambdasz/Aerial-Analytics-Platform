@@ -218,10 +218,10 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 ├── package.json                  # Node.js dependencies and scripts
 ├── package-lock.json             # Locked versions of npm dependencies
 ├── plugins/                      # Analytical plugins (Module 2: Extension System)
-│   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
 │   ├── mock_rust/                # Native Rust mock plugin (tree-canopy-density)
-│   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Python)
+│   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Rust binary)
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
+│   ├── vegetation_coverage_analytics/ # Vegetation coverage + zonation plugin (Rust)
 │   └── template/                 # Canonical starter template for new plugins
 ├── public/                       # Static assets served directly
 │   ├── tauri.svg

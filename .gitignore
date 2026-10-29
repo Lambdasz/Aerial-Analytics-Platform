@@ -48,8 +48,8 @@ __pycache__/
 plugins/plugin_state.json
 
 # Ngeblok hasil run, soale isinya cmn temporary
-runs/*
-!runs/.gitkeep
+**/runs/*
+!**/runs/.gitkeep
 src/map/dummy_image/drone_ortho.png
 
 # Map storage: ignore heavy raw GeoTIFF files, OS lock, jobs, and staging

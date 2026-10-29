@@ -53,7 +53,9 @@ pub fn default_threshold(method: &str) -> Option<f64> {
 
 pub fn load_manifest_metadata() -> (String, String) {
     let candidates = [
-        std::env::current_dir().ok().map(|d| d.join("manifest.json")),
+        std::env::current_dir()
+            .ok()
+            .map(|d| d.join("manifest.json")),
         std::env::current_exe()
             .ok()
             .and_then(|e| e.parent().map(|p| p.join("manifest.json"))),
@@ -68,10 +70,11 @@ pub fn load_manifest_metadata() -> (String, String) {
         .map(|v| v["metadata"].clone())
         .unwrap_or(Value::Null);
 
-    let pick = |key: &str, default: &str| {
-        meta[key].as_str().unwrap_or(default).to_string()
-    };
-    (pick("id", "rgb-vegetation-detection"), pick("version", "1.0.0"))
+    let pick = |key: &str, default: &str| meta[key].as_str().unwrap_or(default).to_string();
+    (
+        pick("id", "rgb-vegetation-detection"),
+        pick("version", "1.0.0"),
+    )
 }
 
 /// Healthcheck: semua dependensi ter-link saat compile, jadi selalu "available".
@@ -154,7 +157,10 @@ pub fn apply_threshold(index: &[f64], threshold_value: f64) -> Result<Vec<u8>> {
             "threshold_value must be between 0.0 and 1.0, got {threshold_value:?}"
         )));
     }
-    Ok(index.iter().map(|&v| u8::from(v > threshold_value)).collect())
+    Ok(index
+        .iter()
+        .map(|&v| u8::from(v > threshold_value))
+        .collect())
 }
 
 /// Jumlah mentah pixel bernilai 1.
@@ -173,7 +179,11 @@ pub struct GreenStats {
 pub fn analyze_green_pixels(rgb: &RgbArray) -> GreenStats {
     let n = rgb.pixels.len() as f64;
     if rgb.pixels.is_empty() {
-        return GreenStats { mean_green: 0.0, std_green: 0.0, max_green: 0.0 };
+        return GreenStats {
+            mean_green: 0.0,
+            std_green: 0.0,
+            max_green: 0.0,
+        };
     }
     let greens = || rgb.pixels.iter().map(|p| p[1]);
     let mean = greens().sum::<f64>() / n;
@@ -186,7 +196,12 @@ pub fn analyze_green_pixels(rgb: &RgbArray) -> GreenStats {
 }
 
 /// Simpan mask sebagai PNG (nilai piksel 0/255).
-pub fn generate_mask_artifact(mask: &[u8], width: usize, height: usize, output_path: &str) -> Result<String> {
+pub fn generate_mask_artifact(
+    mask: &[u8],
+    width: usize,
+    height: usize,
+    output_path: &str,
+) -> Result<String> {
     let visual: Vec<u8> = mask.iter().map(|&m| m * 255).collect();
     image::GrayImage::from_raw(width as u32, height as u32, visual)
         .ok_or_else(|| AnalysisError::Value("Mask size does not match image size".into()))?
@@ -225,7 +240,12 @@ pub fn visualize_detection(rgb: &RgbArray, mask: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Simpan bytes RGB sebagai PNG.
-pub fn save_rgb_artifact(bytes: Vec<u8>, width: usize, height: usize, output_path: &str) -> Result<String> {
+pub fn save_rgb_artifact(
+    bytes: Vec<u8>,
+    width: usize,
+    height: usize,
+    output_path: &str,
+) -> Result<String> {
     image::RgbImage::from_raw(width as u32, height as u32, bytes)
         .ok_or_else(|| AnalysisError::Value("Buffer size does not match image size".into()))?
         .save(output_path)
@@ -243,9 +263,10 @@ pub fn calculate_bounds_from_geometry(geometry: &Value) -> Result<Vec<f64>> {
     let coords = ring
         .iter()
         .map(|pt| {
-            pt[0].as_f64().zip(pt[1].as_f64()).ok_or_else(|| {
-                AnalysisError::Value("Invalid polygon coordinate point".into())
-            })
+            pt[0]
+                .as_f64()
+                .zip(pt[1].as_f64())
+                .ok_or_else(|| AnalysisError::Value("Invalid polygon coordinate point".into()))
         })
         .collect::<Result<Vec<(f64, f64)>>>()?;
 
@@ -266,6 +287,16 @@ pub fn calculate_gsd(
     (relative_altitude_m * SENSOR_DIAGONAL_35MM_MM) / (focal_length_35mm * diagonal_px)
 }
 
+/// GSD from altitude and an assumed horizontal field of view. Pure function.
+pub fn calculate_gsd_from_hfov(
+    relative_altitude_m: f64,
+    hfov_deg: f64,
+    image_width_px: usize,
+) -> f64 {
+    let ground_width_m = 2.0 * relative_altitude_m * (hfov_deg / 2.0).to_radians().tan();
+    ground_width_m / image_width_px as f64
+}
+
 /// Menghitung [min_lon, min_lat, max_lon, max_lat] dari titik GPS pusat + GSD, tanpa AOI. Pure function.
 pub fn calculate_bounds_from_gps(
     lat: f64,
@@ -281,7 +312,12 @@ pub fn calculate_bounds_from_gps(
     let delta_lat = (ground_height_m / 2.0) / METERS_PER_DEGREE_LAT;
     let delta_lon = (ground_width_m / 2.0) / (METERS_PER_DEGREE_LAT * lat.to_radians().cos());
 
-    vec![lon - delta_lon, lat - delta_lat, lon + delta_lon, lat + delta_lat]
+    vec![
+        lon - delta_lon,
+        lat - delta_lat,
+        lon + delta_lon,
+        lat + delta_lat,
+    ]
 }
 
 // ------------------------------------------------------------ Orchestrator
@@ -291,7 +327,7 @@ fn truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().map_or(true, |f| f != 0.0),
+        Value::Number(n) => n.as_f64() != Some(0.0),
         Value::String(s) => !s.is_empty(),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
@@ -332,7 +368,34 @@ fn resolve_output_dir(payload: &Value, output_path: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn resolve_bounds(payload: &Value, meta: &Value, width: usize, height: usize) -> Result<Option<Vec<f64>>> {
+/// Explicit `[min_lon, min_lat, max_lon, max_lat]` override. The app sends the
+/// visible flight-photo tile so masks line up with the imagery on the map.
+fn parse_bounds_override(parameters: &Value) -> Option<Vec<f64>> {
+    let raw = &parameters["image_bounds"];
+    let parsed = match raw {
+        Value::Array(_) => raw.clone(),
+        Value::String(text) if !text.trim().is_empty() => {
+            serde_json::from_str::<Value>(text).ok()?
+        }
+        _ => return None,
+    };
+    let values: Vec<f64> = parsed
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_f64)
+        .collect();
+    (values.len() == 4 && values[2] > values[0] && values[3] > values[1]).then_some(values)
+}
+
+fn resolve_bounds(
+    payload: &Value,
+    meta: &Value,
+    width: usize,
+    height: usize,
+) -> Result<Option<Vec<f64>>> {
+    if let Some(bounds) = parse_bounds_override(&payload["parameters"]) {
+        return Ok(Some(bounds));
+    }
     let geometry = &payload["aoi"]["geometry"];
     let (gps, resolution, altitude, focal) = (
         &meta["gps"],
@@ -344,7 +407,10 @@ fn resolve_bounds(payload: &Value, meta: &Value, width: usize, height: usize) ->
     if truthy(geometry) {
         return calculate_bounds_from_geometry(geometry).map(Some);
     }
-    if ![gps, resolution, altitude, focal].into_iter().all(truthy) {
+    // GPS + altitude are enough: without a focal length fall back to an
+    // assumed horizontal field of view, otherwise masks land on disk with no
+    // placement and cannot be published to the map.
+    if ![gps, resolution, altitude].into_iter().all(truthy) {
         return Ok(None);
     }
 
@@ -352,7 +418,11 @@ fn resolve_bounds(payload: &Value, meta: &Value, width: usize, height: usize) ->
         v.as_f64()
             .ok_or_else(|| AnalysisError::Value(format!("invalid {name}")))
     };
-    let gsd = calculate_gsd(num(altitude, "relative_altitude")?, num(focal, "focal_length_35mm")?, width, height);
+    let distance = num(altitude, "relative_altitude")?;
+    let gsd = match focal.as_f64() {
+        Some(focal) if focal > 0.0 => calculate_gsd(distance, focal, width, height),
+        _ => calculate_gsd_from_hfov(distance, 60.0, width),
+    };
     Ok(Some(calculate_bounds_from_gps(
         num(&gps["lat"], "gps.lat")?,
         num(&gps["lon"], "gps.lon")?,
@@ -394,7 +464,8 @@ fn analyze(payload: &Value, output_path: &Path, start: Instant) -> Result<Value>
     let stats = analyze_green_pixels(&rgb);
 
     let mask_path = output_dir.join(format!("{exec_id}_vegetation_mask.png"));
-    let mask_path = generate_mask_artifact(&mask, rgb.width, rgb.height, &mask_path.to_string_lossy())?;
+    let mask_path =
+        generate_mask_artifact(&mask, rgb.width, rgb.height, &mask_path.to_string_lossy())?;
 
     let overlay_path = output_dir.join(format!("{exec_id}_overlay.png"));
     let overlay_path = save_rgb_artifact(
@@ -456,7 +527,9 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
 
     let payload = fs::read_to_string(input_path)
         .map_err(|e| AnalysisError::Io(e.to_string()))
-        .and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| AnalysisError::Value(e.to_string())));
+        .and_then(|s| {
+            serde_json::from_str::<Value>(&s).map_err(|e| AnalysisError::Value(e.to_string()))
+        });
 
     let outcome = payload
         .as_ref()
@@ -466,7 +539,10 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
     match outcome {
         Ok(result) => match write_json(out, &result) {
             Ok(()) => {
-                println!("Analysis completed successfully in {}ms", result["execution_time_ms"]);
+                println!(
+                    "Analysis completed successfully in {}ms",
+                    result["execution_time_ms"]
+                );
                 0
             }
             Err(e) => {
@@ -493,12 +569,20 @@ mod tests {
     use super::*;
 
     fn img(pixels: Vec<[f64; 3]>) -> RgbArray {
-        RgbArray { width: pixels.len(), height: 1, pixels }
+        RgbArray {
+            width: pixels.len(),
+            height: 1,
+            pixels,
+        }
     }
 
     #[test]
     fn exg_detects_green_not_gray() {
-        let rgb = img(vec![[10.0, 200.0, 10.0], [100.0, 100.0, 100.0], [0.0, 0.0, 0.0]]);
+        let rgb = img(vec![
+            [10.0, 200.0, 10.0],
+            [100.0, 100.0, 100.0],
+            [0.0, 0.0, 0.0],
+        ]);
         let idx = calculate_vegetation_index(&rgb, "ExG").unwrap();
         assert_eq!(apply_threshold(&idx, 0.10).unwrap(), vec![1, 0, 0]);
     }
@@ -533,7 +617,10 @@ mod tests {
     #[test]
     fn bounds_from_geometry() {
         let g = json!({"coordinates": [[[1.0, 2.0], [3.0, 0.5], [2.0, 4.0]]]});
-        assert_eq!(calculate_bounds_from_geometry(&g).unwrap(), vec![1.0, 0.5, 3.0, 4.0]);
+        assert_eq!(
+            calculate_bounds_from_geometry(&g).unwrap(),
+            vec![1.0, 0.5, 3.0, 4.0]
+        );
     }
 
     #[test]

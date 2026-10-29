@@ -1,31 +1,26 @@
 {
   "$schema": "https://aerial-analytics.local/schemas/plugin.v1.json",
   "manifest_version": 1,
-
   "metadata": {
-    "id": "rgb-vegetation-exg",
-    "name": "RGB Vegetation Detection",
+    "id": "vegetation-condition-analysis",
+    "name": "RGB Vegetation Condition Analysis",
     "version": "1.0.0",
     "author": "PBL Team 2026",
     "license": "MIT",
-    "description": "Extracts vegetation masks and calculates coverage using RGB Excess Green (ExG) index.",
+    "description": "Assesses visible vegetation condition from RGB aerial imagery: VARI green intensity, canopy colour statistics, vigorous/moderate/severe condition classes, yellowing (chlorosis) and browning (necrosis) percentages, plus zonation and per-plot comparison.",
     "category": "vegetation",
-    "tags": ["rgb", "vegetation", "indices", "exg"],
+    "tags": ["rgb", "vegetation", "condition", "vari", "chlorosis", "necrosis", "rust"],
     "min_core_version": "0.1.0"
   },
-
   "runtime": {
-    "type": "python",
-    "min_python_version": "3.10",
-    "entrypoint": "main.py",
-    "dependencies_file": "requirements.txt",
+    "type": "binary",
+    "entrypoint": "bin/main",
+    "dependencies_file": null,
     "healthcheck_flag": "--healthcheck"
   },
-
   "parameters": "parameters.json",
   "inputs": "inputs.json",
   "outputs": "outputs.json",
-
   "execution": {
     "timeout_seconds": 120,
     "concurrency": "sequential",
