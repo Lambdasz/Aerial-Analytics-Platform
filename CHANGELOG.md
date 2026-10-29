@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0-alpha] — 2026-10-29
+
+Fifth functional milestone. Adds Module 9 (area & plot analytics) and Module 10 (temporal change analysis), and makes downstream analysis read plugin results instead of recomputing them.
+
+### Added
+
+**Module 9 — Area & Plot Analytics**
+
+- Plot boundaries drawn on a map, imported from GeoJSON, or promoted from a saved Map Explorer area of interest, stored with geodesic area and perimeter
+- Per-plot analysis: run any plugin once per plot with the boundary as its area of interest, storing the resulting indicators with units
+- Plot statistics, multi-plot comparison ranked by any indicator, and a per-plot summary grouped by plugin
+- A **Plots** tab inside the Map Explorer sidebar with the same workflow, plus a "N saved AOIs not added as plot(s)" prompt with one-click promotion
+- Plots publishable as a map layer with area and perimeter in the popup
+
+**Module 10 — Simple Temporal Change Analysis**
+
+- Compare two sessions of a project: before/after imagery, vegetation coverage change in percentage points, interval in days, and magnitude classification
+- Persisted comparison history per project, plus a JSON export containing the dashboard contract payload
+- Spatial change detection: vegetation gain and loss regions between two dates, computed from masks, filtered by minimum area, and published as a map layer
+- Explicit baseline/comparison session pickers replacing the implicit "latest two dates" behaviour
+
+**Cross-module**
+
+- Published plugin runs are stored per image (`plugin_image_result`) with metrics and artifact paths
+- Module 10 prefers plugin coverage values and masks, falling back to its own excess-green measurement only when no run exists, and reports which source was used
+
+### Changed
+
+- Plugin results are persisted on publish, so in-app runs become readable by later analysis instead of being recomputed
+
+### Fixed
+
+- Restored the shared design tokens (colours, radii, shadows, fonts) that had disappeared from the global stylesheet, which had left map panels transparent and text unthemed
+- Plugin Manager now uses the app's light theme instead of a hardcoded dark palette
+- Ticking a plot checkbox no longer blanks the window (event field read after React cleared it)
+- The analyse dialog now pre-selects a plugin and an analysis-ready image, so Run is enabled when the form looks complete
+- Plots with no project (imported before a project was selected) stay visible under the project filter
+- Map Explorer wraps its layout in an error boundary, showing a recoverable message instead of a white screen
+
 ## [0.7.0-alpha] — 2026-10-29
 
 Fourth functional milestone. Adds vegetation analysis Modules 4–6 as plugins, lets plugins be run and displayed straight from the app, and puts session imagery on the map.
@@ -143,6 +182,7 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[0.8.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.4.0-alpha...v0.5.0-alpha

@@ -194,7 +194,7 @@
 //! | Priority | Modules | Rationale |
 //! |----------|---------|-----------|
 //! | **Critical** | 1, 2, 3 | The application does not run without these. |
-//! | **High** | 4 + 5 + 6 (single plugin), 7, 8 | Proves the plugin architecture — without them the demo is just a map. Implementation details still subject to paper review. |
+//! | **High** | 4, 5, 6 (three Rust plugins), 7, 8 | Proves the plugin architecture — without them the demo is just a map. Implementation details still subject to paper review. |
 //! | **Medium** | 9, 10 | Simplify plugin usage and analysis; the app works without them, but with more friction. |
 //! | **Low** | 11 | Only fully functional once all other modules are complete. |
 //!
@@ -370,53 +370,92 @@
 //!
 //! ## Module 4 — RGB Vegetation Detection Plugin
 //!
-//! Plugin for identifying vegetation from standard RGB aerial imagery using
-//! indices such as ExG, ExR, or VARI. Generates vegetation masks and
-//! statistics.
+//! Identifies vegetation in standard RGB aerial imagery with the ExG, ExR or
+//! VARI index, producing a binary mask, a tinted overlay, and coverage/colour
+//! statistics. Footprints fall back to an assumed 60° HFOV when the image has
+//! no focal length, so artefacts are georeferenced.
 //!
 //! ### Plugin Contract
 //!
-//! Uses the Module 2 plugin template architecture (`plugins/template/`).
-//! No Rust backend code — the platform side is entirely Module 2.
-//!
 //! | Item | Value |
 //! |------|-------|
-//! | Architecture | Module 2 plugin template (`plugins/template/`) |
+//! | Architecture | Rust binary plugin (`plugins/rgb-vegetation-detection/`) |
 //! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
-//! | Entrypoint | `plugins/rgb-vegetation-detection/main.py` — `def main() -> None` (Python) |
-//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
-//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
-//! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, result file on disk |
 //!
-//! Entrypoint (`main.py`, Python):
+//! Entrypoint:
 //!
-//! ```python
-//! def main() -> None:
-//!     # --healthcheck
-//!     # --input <execution_payload.json> --output <execution_result.json>
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
 //! ```
 //!
-//! **Status**: Python plugin skeleton at `plugins/rgb-vegetation-detection/`
-//! (simulated detection). No Rust backend code.
+//! **Status**: Implemented (`rgb-vegetation-detection`). ExG/ExR/VARI with
+//! configurable threshold, mask + overlay artefacts, 7 unit tests. The build
+//! step copying `target/release/main` to `bin/` is documented in the plugin
+//! README.
 //!
 //! ---
 //!
 //! ## Module 5 — Vegetation Coverage Analytics
 //!
-//! Quantifies vegetation coverage using outputs from Module 4. Calculates
-//! coverage percentages, classifies areas (low / medium / high), and supports
-//! plot-based and multi-plot comparison.
+//! Quantifies vegetation coverage from a canopy mask: coverage percentage and
+//! vegetated area (needs a GSD), low/medium/high classification, an N×N
+//! zonation layer, and per-plot coverage with average/highest/lowest ranking.
 //!
-//! **Status**: Not yet implemented.
+//! ### Plugin Contract
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Rust binary plugin (`plugins/vegetation_coverage_analytics/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, artefacts on disk |
+//!
+//! Entrypoint:
+//!
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
+//! ```
+//!
+//! **Status**: Implemented (`vegetation-coverage-analytics`): mask source
+//! `auto` (ExG/ExR/VARI) or `file` (Module 4 mask), zonation GeoJSON, plot
+//! comparison, 16 unit tests. Artefacts carry WGS 84 bounds for the map.
 //!
 //! ---
 //!
 //! ## Module 6 — RGB Vegetation Condition Analysis
 //!
-//! Analyses visible vegetation conditions using RGB colour information:
-//! greenness intensity, yellowing, browning, and condition zonation.
+//! Assesses visible vegetation condition from RGB imagery: VARI green
+//! intensity, canopy RGB/HSL statistics, vigorous/moderate/severe condition
+//! classes, chlorosis (yellowing) and necrosis (browning) shares, condition
+//! zonation, and per-plot comparison.
 //!
-//! **Status**: Not yet implemented.
+//! ### Plugin Contract
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Rust binary plugin (`plugins/vegetation_condition_analysis/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, artefacts on disk |
+//!
+//! Entrypoint:
+//!
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
+//! ```
+//!
+//! **Status**: Implemented (`vegetation-condition-analysis`), ported from the
+//! Module 6 research implementation: canopy isolation, VARI, colour statistics,
+//! condition classes, yellowing/necrosis masks (tinted RGBA), zonation and plot
+//! summaries, 14 unit tests.
 //!
 //! ---
 //!
@@ -490,52 +529,72 @@
 //!
 //! ## Module 9 — Area & Plot Analytics
 //!
-//! Spatial analytical system for defining plots and summarising analytical
-//! results within them. Aggregates per-plot statistics for the dashboard.
+//! Stores named plot boundaries and summarises analysis results within them:
+//! plot definition (draw on the map, import GeoJSON, or promote a Map Explorer
+//! AOI), geodesic area/perimeter, per-plot analysis, plot statistics,
+//! comparison, ranking and summaries.
 //!
-//! - `plot` — GeoJSON plot import and validation (`plot::parse_plots`).
-//! - `plot_api` — cross-module API for plot definition, per-plot analysis,
-//!   and statistics ([`plot_api::define_plot`], [`plot_api::analyze_plot`],
-//!   [`plot_api::get_plot_statistics`]).
+//! - `modules::module_09::plots` — plot table, GeoJSON polygon validation and
+//!   geodesic metrics ([`modules::module_09::plots::insert_plot`]).
+//! - `modules::module_09::indicators` — latest indicator value per
+//!   (plot, plugin, indicator) ([`modules::module_09::indicators::save_indicators`]).
+//! - `plot` / `plot_api` — the original GeoJSON importer (`plot::parse_plots`)
+//!   and a legacy cross-module contract whose stubs are superseded by
+//!   `modules::module_09`.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `import_plots` | Parse a GeoJSON file into plot boundaries |
+//! | `create_plot` / `list_plots` / `get_plot_by_id` / `rename_plot` / `delete_plot` | Plot CRUD with area and perimeter computed on write |
+//! | `import_plots_into_project` | Import a GeoJSON file of plots into a project |
+//! | `import_plots` | Parse a GeoJSON file without storing it (legacy) |
+//! | `save_plot_indicators` / `list_plot_indicators` | Persist and read per-plot plugin metrics |
+//! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer |
 //!
-//! **Status**: GeoJSON parser fully implemented with unit tests. Plot API
-//! functions are `todo!()` stubs.
+//! **Status**: Implemented. The Module 09 page and a **Plots** tab inside the
+//! Module 3 sidebar share the same commands; runs execute a plugin once per
+//! plot with the boundary as AOI, and indicator values feed the ranking view.
 //!
 //! ---
 //!
 //! ## Module 10 — Simple Temporal Change Analysis
 //!
-//! Compares RGB aerial observations captured at different times. Calculates
-//! changes in vegetation coverage, land-cover transitions, and tree-count
-//! deltas between observation periods.
+//! Compares two observation dates: before/after imagery, vegetation coverage
+//! change, change magnitude, and the regions where vegetation appeared or
+//! disappeared. Plugin measurements are reused instead of recomputed — the
+//! coverage and masks published by Modules 4-6 win, with the built-in ExG rule
+//! only as a fallback.
 //!
-//! - `modules::module_10` — cross-module data contracts for change area
-//!   detection and temporal results (`modules::module_10::functions`).
+//! - `modules::module_10::analysis` — pure 10.1-10.7 functions (periods,
+//!   before/after, coverage change, land-cover and tree-count comparisons,
+//!   magnitudes, significant areas).
+//! - `modules::module_10::coverage` — ExG coverage from an image file.
+//! - `modules::module_10::spatial_change` — mask diff, resampling, connected
+//!   change regions and GeoJSON ([`modules::module_10::spatial_change::build_report`]).
+//! - `modules::module_10::comparisons` — `temporal_comparison` history table.
+//! - `modules::module_10::visualization` — 10.8 summary lines and payload.
+//! - `plugin_manager::result_store` — `plugin_image_result` table written when a
+//!   run is published, read here for coverage and masks.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
 //! | `get_observation_periods` | Group a session's images per acquisition date (10.1) |
-//! | `get_vegetation_change` | Compare vegetation coverage of the two latest periods (10.2 + 10.3) |
-//! | `get_land_cover_changes` | Compare per-location land-cover classes (10.4) |
-//! | `get_tree_count_changes` | Compare per-location tree counts (10.5) |
-//! | `get_change_magnitudes` | Per-location change magnitude and level (10.6) |
-//! | `get_significant_change_areas` | Flag locations above the magnitude threshold (10.7) |
-//! | `compare_sessions` | Run a comparison between two sessions' analysis results (vegetation coverage, land-cover, tree count) and produce a temporal result |
-//! | `get_change_summary` | Return the latest computed temporal summary for a project, for Module 11 to consume |
+//! | `get_vegetation_change` | Compare the two latest periods of one session (10.2 + 10.3) |
+//! | `compare_sessions` | Compare two sessions of a project, store the result (10.2 + 10.3) |
+//! | `detect_change_areas` | Spatial gain/loss regions between two sessions, published as a layer (10.7) |
+//! | `get_change_summary` | Stored comparisons for a project (dashboard input) |
+//! | `export_comparison_json` | Write a stored comparison to `map_storage/exports/` |
+//! | `get_land_cover_changes` / `get_tree_count_changes` | Per-location comparisons supplied by Modules 3/4/7 |
+//! | `get_change_magnitudes` / `get_significant_change_areas` | Magnitude and thresholded areas per location (10.6 / 10.7) |
 //!
-//! **Status**: 10.1 - 10.8 implemented. 10.1 - 10.3 read Module 1.4 images and
-//! their pixels; 10.4 - 10.7 are per-location pure functions exposed as
-//! commands, with the location maps produced by Module 3/4/5. `compare_sessions`
-//! and `get_change_summary` remain `todo!()` stubs until those modules publish
-//! their results.
+//! **Status**: 10.1-10.3 and 10.7 implemented; 10.4/10.5 exist as pure
+//! per-location functions awaiting producers (tree detection is still a
+//! placeholder detector, land-cover needs trained weights). Spatial detection
+//! uses nearest-neighbour alignment and axis-aligned boxes, documented as a
+//! limitation — it needs two dates with GPS and altitude to produce output.
 //!
 //! ---
 //!
