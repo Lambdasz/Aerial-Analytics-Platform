@@ -1,6 +1,6 @@
 [package]
 name = "aerial-analytics-platform"
-version = "0.1.0"
+version = "1.0.0"
 description = "Platform to process and analyze RGB aerial imagery captured using standard drones"
 authors = ["you"]
 edition = "2021"

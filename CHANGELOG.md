@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] — 2026-10-29
+
+First stable release. All eleven modules have working implementations; the platform covers the full flow from aerial image import to a printable analytics report.
+
+No breaking changes: plugin contracts, CLI flags and database migrations stay backwards compatible, and every schema change since the first alpha was additive (the app upgrades an existing `aerial.db` on startup).
+
+### Scope
+
+- **Modules 1-3** — project, session and image management with EXIF metadata, the plugin system with isolated execution, and the Map Explorer with orthomosaic, AOI, annotation, measurement, spatial-result and session-photo layers.
+- **Modules 4-6** — vegetation detection, coverage analytics and condition analysis as Rust plugins with mask, zonation, plot and comparison outputs.
+- **Modules 7-8** — tree detection and land-cover classification plugins against placeholder models; the pipelines, contracts and map outputs are complete, the detectors are not trained.
+- **Module 9** — plot definition (draw, import, or promote a Map Explorer AOI), geodesic area and perimeter, per-plot plugin runs, stored indicators, comparison, ranking and summaries.
+- **Module 10** — session comparisons with before/after imagery, vegetation coverage change and magnitude, spatial gain/loss regions published to the map, comparison history and JSON export. Reads plugin coverage and masks instead of recomputing them.
+- **Module 11** — project dashboard, plugin result explorer, plot and temporal summaries, CSV/GeoJSON/JSON exports, and a self-contained printable HTML report.
+- **Tooling** — `tools/connector` (database bridge, plugin runner, map publisher), Docker dev/CI toolchain, connector result publishing and plugin result storage.
+
+### Known limitations
+
+- The tree detector returns no detections and the land-cover model has no trained weights; their comparison outputs stay empty until real models land.
+- Temporal comparison needs two flights over the same area; with a single observation date the dashboard reports that instead of inventing change.
+- Spatial change detection uses nearest-neighbour alignment and axis-aligned boxes — adequate for the brief, not orthorectification.
+
 ## [0.9.0-alpha] — 2026-10-29
 
 Sixth functional milestone. Completes Module 11: an analytics dashboard built from stored results, a printable report, and data exports.
@@ -205,6 +227,7 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[1.0.0]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.9.0-alpha...v1.0.0
 [0.9.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.8.0-alpha...v0.9.0-alpha
 [0.8.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.7.0-alpha...v0.8.0-alpha
 [0.7.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.6.0-alpha...v0.7.0-alpha
