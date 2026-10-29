@@ -278,6 +278,10 @@ pub struct ImageMetadata {
     /// ellipsoid RTK, depending on drone model).
     pub absolute_altitude_m: Option<f64>,
 
+    /// Camera heading/yaw in degrees clockwise from true north
+    /// (EXIF `GPSImgDirection`). Needed to rotate ground footprints.
+    pub heading_deg: Option<f64>,
+
     // --- timestamp ---
     /// Date and time when the image was captured (EXIF `DateTimeOriginal`).
     pub date_time_original: Option<NaiveDateTime>,

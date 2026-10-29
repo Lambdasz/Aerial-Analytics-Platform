@@ -1,0 +1,130 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "total_pixels",
+      "label": "Total Pixels",
+      "type": "integer",
+      "unit": "px",
+      "description": "Pixels evaluated (whole mask, or the AOI subset when an AOI is supplied)."
+    },
+    {
+      "key": "vegetation_pixels",
+      "label": "Vegetation Pixels",
+      "type": "integer",
+      "unit": "px",
+      "description": "Pixels flagged as vegetation."
+    },
+    {
+      "key": "coverage_percentage",
+      "label": "Vegetation Coverage",
+      "type": "float",
+      "unit": "%",
+      "description": "Vegetation pixels as a percentage of the evaluated area."
+    },
+    {
+      "key": "vegetation_area_sqm",
+      "label": "Vegetation Area",
+      "type": "float",
+      "unit": "m²",
+      "description": "Vegetated ground area; null when no ground sample distance is available."
+    },
+    {
+      "key": "total_area_sqm",
+      "label": "Evaluated Area",
+      "type": "float",
+      "unit": "m²",
+      "description": "Total evaluated ground area; null when no ground sample distance is available."
+    },
+    {
+      "key": "classification",
+      "label": "Coverage Classification",
+      "type": "string",
+      "unit": "",
+      "description": "Coverage class derived from the configured low and medium limits: low, medium or high."
+    },
+    {
+      "key": "gsd_m",
+      "label": "Ground Sample Distance",
+      "type": "float",
+      "unit": "m/px",
+      "description": "Ground sample distance used for the area metrics; null when it could not be derived."
+    },
+    {
+      "key": "grid_cells",
+      "label": "Zonation Cells",
+      "type": "integer",
+      "unit": "cells",
+      "description": "Number of grid cells in the zonation artifact."
+    },
+    {
+      "key": "plots_analyzed",
+      "label": "Plots Analysed",
+      "type": "integer",
+      "unit": "plots",
+      "description": "Number of plots evaluated from the plots parameter (0 when none were supplied)."
+    },
+    {
+      "key": "average_plot_coverage",
+      "label": "Average Plot Coverage",
+      "type": "float",
+      "unit": "%",
+      "description": "Mean coverage across analysed plots; null when no plots were supplied."
+    },
+    {
+      "key": "highest_plot_id",
+      "label": "Highest Coverage Plot",
+      "type": "string",
+      "unit": "",
+      "description": "Plot id with the highest coverage; null when no plots were supplied."
+    },
+    {
+      "key": "lowest_plot_id",
+      "label": "Lowest Coverage Plot",
+      "type": "string",
+      "unit": "",
+      "description": "Plot id with the lowest coverage; null when no plots were supplied."
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "coverage_zonation",
+      "label": "Coverage Zonation Grid",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": false,
+      "layer_hint": {
+        "layer_type": "vector_overlay",
+        "default_opacity": 0.5,
+        "color_palette": "YlGn"
+      }
+    },
+    {
+      "key": "plot_coverage",
+      "label": "Per-Plot Coverage",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "vector_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "Greens"
+      }
+    },
+    {
+      "key": "vegetation_mask",
+      "label": "Vegetation Mask Used",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.5,
+        "color_palette": "Greens"
+      }
+    }
+  ]
+}

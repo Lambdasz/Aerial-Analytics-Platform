@@ -71,6 +71,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       <SavedOrthoImageLayer layers={layers} />
 
       {/* =========================
+          FLIGHT PHOTOS (DRAWN ABOVE ORTHO, BELOW ANALYTIC RESULTS)
+          Replaces point markers: each frame drapes over the map. Vector
+          analysis layers must stay clickable, so they render afterwards.
+          ========================= */}
+      <FlightPhotoLayer markers={markers} layers={layers} hiddenPhotoIds={hiddenPhotoIds} />
+
+      {/* =========================
           AREA OF INTEREST (AOI PANE Z-INDEX 350)
           ========================= */}
       <SavedAoiLayer />
@@ -84,12 +91,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           SPATIAL ANNOTATIONS (OVERLAY PANE Z-INDEX 400 & MARKER PANE 600)
           ========================= */}
       <AnnotationLayer annotations={annotations} />
-
-      {/* =========================
-          FLIGHT PHOTOS (IMAGE OVERLAYS, ESTIMATED FOOTPRINTS)
-          Replaces point markers: each frame drapes over the map.
-          ========================= */}
-      <FlightPhotoLayer markers={markers} layers={layers} hiddenPhotoIds={hiddenPhotoIds} />
 
       {/* =========================
           AUTO-CENTER (ONCE, TO SESSION IMAGERY)

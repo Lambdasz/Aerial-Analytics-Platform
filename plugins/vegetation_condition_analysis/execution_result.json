@@ -1,0 +1,58 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/execution_result.v1.json",
+  "execution_id": "exec_m6_example",
+  "status": "success",
+  "execution_time_ms": 640,
+  "metrics": {
+    "total_pixels": 10544352,
+    "vegetation_pixels": 4183590,
+    "vegetation_coverage_pct": 39.68,
+    "mean_vari": 0.2014,
+    "mean_r": 0.3421,
+    "mean_g": 0.4418,
+    "mean_b": 0.2873,
+    "std_r": 0.0871,
+    "std_g": 0.0692,
+    "std_b": 0.0812,
+    "mean_hue_deg": 88.4,
+    "mean_saturation": 0.3216,
+    "vigorous_pct": 46.2,
+    "moderate_stress_pct": 39.5,
+    "severe_stress_pct": 14.3,
+    "dominant_condition": "vigorous",
+    "yellowing_pct": 6.4,
+    "browning_pct": 3.1,
+    "grid_cells": 16,
+    "plots_analyzed": 1,
+    "highest_plot_id": "A",
+    "lowest_plot_id": "A"
+  },
+  "artifacts": {
+    "condition_map": {
+      "file_path": "/tmp/aerial-analytics/module6/exec_m6_example_condition_map.png",
+      "format": "image/png",
+      "bounds": [115.972373, 29.759557, 115.977221, 29.762364]
+    },
+    "yellowing_mask": {
+      "file_path": "/tmp/aerial-analytics/module6/exec_m6_example_yellowing_mask.png",
+      "format": "image/png",
+      "bounds": [115.972373, 29.759557, 115.977221, 29.762364]
+    },
+    "browning_mask": {
+      "file_path": "/tmp/aerial-analytics/module6/exec_m6_example_browning_mask.png",
+      "format": "image/png",
+      "bounds": [115.972373, 29.759557, 115.977221, 29.762364]
+    },
+    "condition_zonation": {
+      "file_path": "/tmp/aerial-analytics/module6/exec_m6_example_condition_zonation.geojson",
+      "format": "application/geo+json",
+      "bounds": [115.972373, 29.759557, 115.977221, 29.762364]
+    },
+    "plot_condition": {
+      "file_path": "/tmp/aerial-analytics/module6/exec_m6_example_plot_condition.geojson",
+      "format": "application/geo+json",
+      "bounds": [115.972373, 29.759557, 115.977221, 29.762364]
+    }
+  },
+  "error": null
+}

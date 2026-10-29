@@ -39,7 +39,8 @@ fn export_mask_for_downstream(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let mask_path = Path::new(output_dir).join(format!("{stem}_{method}_vegetation_mask.png"));
-    let vegetation_mask = generate_mask_artifact(&mask, rgb.width, rgb.height, &mask_path.to_string_lossy())?;
+    let vegetation_mask =
+        generate_mask_artifact(&mask, rgb.width, rgb.height, &mask_path.to_string_lossy())?;
 
     Ok(MaskExport {
         vegetation_mask,
@@ -53,14 +54,25 @@ fn read_mask_raw(mask_path: &str) -> Result<(Vec<u8>, usize, usize), AnalysisErr
     let gray = image::open(mask_path)
         .map_err(|e| AnalysisError::Io(e.to_string()))?
         .to_luma8();
-    Ok((gray.as_raw().clone(), gray.width() as usize, gray.height() as usize))
+    Ok((
+        gray.as_raw().clone(),
+        gray.width() as usize,
+        gray.height() as usize,
+    ))
 }
 
 /// Proses satu gambar: (baris ringkasan JSON, ok?, teks log).
-fn process_image(images_dir: &str, out_dir: &str, name: &str, method: &str, threshold: f64) -> (Value, bool, String) {
+fn process_image(
+    images_dir: &str,
+    out_dir: &str,
+    name: &str,
+    method: &str,
+    threshold: f64,
+) -> (Value, bool, String) {
     let verify = || -> Result<(Value, bool, String), AnalysisError> {
         let path = Path::new(images_dir).join(name);
-        let hasil = export_mask_for_downstream(&path.to_string_lossy(), out_dir, method, threshold)?;
+        let hasil =
+            export_mask_for_downstream(&path.to_string_lossy(), out_dir, method, threshold)?;
         let (raw, mask_w, mask_h) = read_mask_raw(&hasil.vegetation_mask)?;
         let (h, w) = hasil.image_size;
 
@@ -101,12 +113,19 @@ fn process_image(images_dir: &str, out_dir: &str, name: &str, method: &str, thre
     })
 }
 
-fn run_experiment(images_dir: &str, out_dir: &str, method: &str, threshold: Option<f64>) -> ExitCode {
+fn run_experiment(
+    images_dir: &str,
+    out_dir: &str,
+    method: &str,
+    threshold: Option<f64>,
+) -> ExitCode {
     if !Path::new(images_dir).is_dir() {
         println!("Folder foto tidak ditemukan: {images_dir}");
         return ExitCode::FAILURE;
     }
-    let threshold = threshold.or_else(|| default_threshold(method)).unwrap_or(0.10);
+    let threshold = threshold
+        .or_else(|| default_threshold(method))
+        .unwrap_or(0.10);
 
     let names: BTreeSet<String> = fs::read_dir(images_dir)
         .into_iter()
@@ -134,7 +153,10 @@ fn run_experiment(images_dir: &str, out_dir: &str, method: &str, threshold: Opti
     let summary: Vec<&Value> = results.iter().map(|(row, _, _)| row).collect();
     let summary_path = Path::new(out_dir).join(format!("experiment_summary_{method}.json"));
     let written = fs::create_dir_all(out_dir).and_then(|()| {
-        fs::write(&summary_path, serde_json::to_string_pretty(&summary).unwrap_or_default())
+        fs::write(
+            &summary_path,
+            serde_json::to_string_pretty(&summary).unwrap_or_default(),
+        )
     });
     if let Err(e) = written {
         eprintln!("Gagal menulis ringkasan: {e}");
@@ -147,7 +169,11 @@ fn run_experiment(images_dir: &str, out_dir: &str, method: &str, threshold: Opti
         results.len(),
         summary_path.display()
     );
-    if ok_count == results.len() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    if ok_count == results.len() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {

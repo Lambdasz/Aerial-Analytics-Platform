@@ -9,6 +9,7 @@ interface SessionImageRow {
   locationLat: number | null;
   locationLon: number | null;
   gpsAltitudeM: number | null;
+  headingDeg: number | null;
   fileSize: number | null;
   width: number | null;
   height: number | null;
@@ -74,8 +75,8 @@ export async function fetchSessionImageMarkers(): Promise<DroneImageMetadata[]> 
       latitude: img.locationLat,
       longitude: img.locationLon,
       altitude_agl: img.gpsAltitudeM ?? 0,
-      // The DB stores no heading; 0 keeps the icon upright.
-      heading_deg: 0,
+      // Heading (EXIF GPSImgDirection, imported by Module 1); 0 when absent.
+      heading_deg: img.headingDeg ?? 0,
       thumbnail_url: "",
       file_path: img.filePath,
       file_size: img.fileSize,
