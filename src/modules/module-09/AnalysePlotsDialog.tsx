@@ -92,7 +92,9 @@ export function AnalysePlotsDialog({
     Promise.all([getInstalledPlugins(), listProjects()])
       .then(([installed, projectList]) => {
         if (cancelled) return;
-        setPlugins(installed.filter((plugin) => plugin.enabled));
+        const enabled = installed.filter((plugin) => plugin.enabled);
+        setPlugins(enabled);
+        setPluginId((prev) => prev || enabled[0]?.id || "");
         setProjects(projectList);
         setProjectId((prev) => prev || projectList[0]?.id || "");
         setIsLoading(false);
@@ -129,8 +131,9 @@ export function AnalysePlotsDialog({
     getImagesBySession(sessionId)
       .then((loaded) => {
         if (cancelled) return;
-        setImages(loaded.filter((image) => image.analysisReady !== false));
-        setImageId(loaded[0]?.id ?? "");
+        const usable = loaded.filter((image) => image.analysisReady !== false);
+        setImages(usable);
+        setImageId(usable[0]?.id ?? "");
       })
       .catch(() => undefined);
     return () => {
@@ -236,8 +239,8 @@ export function AnalysePlotsDialog({
             <HTMLSelect
               fill
               value={pluginId}
-              placeholder="Select a plugin"
               onChange={(event) => setPluginId(event.currentTarget.value)}
+              placeholder={plugins.length === 0 ? "No enabled plugins" : "Select a plugin"}
               options={plugins.map((plugin) => ({
                 label: `${plugin.name} (${plugin.runtime_type})`,
                 value: plugin.id,

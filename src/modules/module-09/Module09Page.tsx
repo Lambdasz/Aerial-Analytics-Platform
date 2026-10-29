@@ -183,7 +183,13 @@ export function Module09Page() {
     const failures: string[] = [];
     for (const aoi of chosen) {
       try {
-        await createPlot(aoi.properties.name, aoi.geometry, currentProjectId());
+        await createPlot(
+          aoi.properties.name,
+          aoi.geometry,
+          currentProjectId(),
+          null,
+          aoi.properties.aoi_id,
+        );
       } catch (err) {
         failures.push(`${aoi.properties.name}: ${errorMessage(err)}`);
       }
@@ -400,10 +406,9 @@ export function Module09Page() {
                         checked={plots.length > 0 && selected.size === plots.length}
                         indeterminate={selected.size > 0 && selected.size < plots.length}
                         onChange={(event) => {
+                          const checked = event.currentTarget.checked;
                           setSelected(
-                            event.currentTarget.checked
-                              ? new Set(plots.map((plot) => plot.id))
-                              : new Set<string>(),
+                            checked ? new Set(plots.map((plot) => plot.id)) : new Set<string>(),
                           );
                         }}
                       />
@@ -630,9 +635,10 @@ export function Module09Page() {
                     key={aoi.properties.aoi_id}
                     checked={checkedAois.has(aoi.properties.aoi_id)}
                     onChange={(event) => {
+                      const checked = event.currentTarget.checked;
                       setCheckedAois((previous) => {
                         const next = new Set(previous);
-                        if (event.currentTarget.checked) next.add(aoi.properties.aoi_id);
+                        if (checked) next.add(aoi.properties.aoi_id);
                         else next.delete(aoi.properties.aoi_id);
                         return next;
                       });
