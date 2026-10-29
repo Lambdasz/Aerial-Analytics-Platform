@@ -14,7 +14,58 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FLIGHT_PHOTOS_LAYER_ID } from "../config/mapConfig";
 
-const INITIAL_LAYERS: LayerState[] = [];
+/** Reads the persisted visibility map (shared with ortho toggles). */
+const readSavedModes = (): Record<string, boolean> => {
+  try {
+    const raw = localStorage.getItem("aap_ortho_display_modes");
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/** Reads the persisted opacity map. */
+const readSavedOpacities = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem("aap_layer_opacities");
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * The synthetic Flight Photos layer entry.
+ *
+ * Built at least once per mount (initial state) and re-checked after every
+ * list change: an entry that only existed inside the one-shot load effect
+ * stayed missing after hot reload, which left the overlays on screen with no
+ * visibility/opacity control in the panel.
+ */
+const buildFlightPhotosLayer = (): LayerState => {
+  const modes = readSavedModes();
+  const opacities = readSavedOpacities();
+  return {
+    layer_id: FLIGHT_PHOTOS_LAYER_ID,
+    layer_name: "Flight Photos",
+    category: "image_overlay",
+    is_visible: modes[FLIGHT_PHOTOS_LAYER_ID] ?? true,
+    opacity: opacities[FLIGHT_PHOTOS_LAYER_ID] ?? 0.5,
+    z_index: 12,
+    source_type: "session_images",
+    source_id: FLIGHT_PHOTOS_LAYER_ID,
+  };
+};
+
+/**
+ * Returns the list with the Flight Photos entry guaranteed present.
+ * Pure — safe inside setState updaters (a lint-clean substitute for
+ * re-injecting from an effect after state was preserved across hot reload).
+ */
+const ensureFlightPhotos = (list: LayerState[]): LayerState[] =>
+  list.some((l) => l.layer_id === FLIGHT_PHOTOS_LAYER_ID)
+    ? list
+    : [buildFlightPhotosLayer(), ...list];
 
 type LayerManagerProps = {
   map?: L.Map | null;
@@ -27,30 +78,35 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   onAnnotationsChange,
   onLayersChange,
 }) => {
-  const [layers, setLayers] = useState<LayerState[]>(INITIAL_LAYERS);
+  const [layers, setLayers] = useState<LayerState[]>(() => [buildFlightPhotosLayer()]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [isAddingAnnotation, setIsAddingAnnotation] = useState(false);
 
   // Hook manajemen anotasi mandiri
   const { annotations, addAnnotation, removeAnnotation } = useAnnotations();
 
+  // The Flight Photos entry is part of the initial state, but state
+  // preserved across hot reload can predate it — derive the displayed/sent
+  // list so the entry and its controls always exist.
+  const effectiveLayers = useMemo(() => ensureFlightPhotos(layers), [layers]);
+
   // =========================
   // CATEGORY LIST (Kategori Base Maps tidak disertakan)
   // =========================
   const categories = useMemo(() => {
-    const uniqueCategories = Array.from(new Set(layers.map((layer) => layer.category)));
+    const uniqueCategories = Array.from(new Set(effectiveLayers.map((layer) => layer.category)));
     return ["All", ...uniqueCategories];
-  }, [layers]);
+  }, [effectiveLayers]);
 
   // =========================
   // FILTERED LAYERS
   // =========================
   const visibleLayers = useMemo(() => {
     if (selectedCategory === "All") {
-      return layers;
+      return effectiveLayers;
     }
-    return layers.filter((layer) => layer.category === selectedCategory);
-  }, [layers, selectedCategory]);
+    return effectiveLayers.filter((layer) => layer.category === selectedCategory);
+  }, [effectiveLayers, selectedCategory]);
 
   // =========================
   // SEND ANNOTATIONS & LAYERS TO PARENT
@@ -60,8 +116,8 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   }, [annotations, onAnnotationsChange]);
 
   useEffect(() => {
-    onLayersChange?.(layers);
-  }, [layers, onLayersChange]);
+    onLayersChange?.(effectiveLayers);
+  }, [effectiveLayers, onLayersChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,27 +192,10 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
               };
             });
 
-          // Synthetic entry: session flight photos draped as image overlays.
-          // Exists only client-side; visibility/opacity use the same
-          // localStorage-backed mode/opacity maps as every other layer.
-          const flightPhotos: LayerState = {
-            layer_id: FLIGHT_PHOTOS_LAYER_ID,
-            layer_name: "Flight Photos",
-            category: "image_overlay",
-            is_visible:
-              savedModes[FLIGHT_PHOTOS_LAYER_ID] !== undefined
-                ? savedModes[FLIGHT_PHOTOS_LAYER_ID]
-                : true,
-            opacity:
-              savedOpacities[FLIGHT_PHOTOS_LAYER_ID] !== undefined
-                ? savedOpacities[FLIGHT_PHOTOS_LAYER_ID]
-                : 0.7,
-            z_index: 12,
-            source_type: "session_images",
-            source_id: FLIGHT_PHOTOS_LAYER_ID,
-          };
-
-          setLayers([...filtered, ...spatialLayers, flightPhotos]);
+          // Flight Photos stays first so its toggle/opacity controls are
+          // visible without scrolling; build fresh to honor any preference
+          // the user already changed.
+          setLayers([buildFlightPhotosLayer(), ...filtered, ...spatialLayers]);
         }
       })
       .catch((err) => {
@@ -294,7 +333,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
       if (!layerId) return;
 
       setLayers((currentLayers) =>
-        currentLayers.map((item) => {
+        ensureFlightPhotos(currentLayers).map((item) => {
           const matches =
             item.layer_id === layerId || item.source_id === layerId || item.layer_name === layerId;
           if (!matches) return item;
@@ -336,7 +375,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
   // =========================
   const handleToggleVisibility = (layer: LayerState) => {
     setLayers((currentLayers) =>
-      currentLayers.map((item) => {
+      ensureFlightPhotos(currentLayers).map((item) => {
         if (item.layer_id === layer.layer_id) {
           const nextVal = !item.is_visible;
 
@@ -365,7 +404,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 
   const handleSetOpacity = (layer: LayerState, value: number) => {
     setLayers((currentLayers) =>
-      currentLayers.map((item) => {
+      ensureFlightPhotos(currentLayers).map((item) => {
         if (item.layer_id === layer.layer_id) {
           try {
             const raw = localStorage.getItem("aap_layer_opacities");

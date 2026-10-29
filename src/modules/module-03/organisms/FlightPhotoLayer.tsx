@@ -33,7 +33,7 @@ export const FlightPhotoLayer: React.FC<FlightPhotoLayerProps> = ({ markers, lay
 
   const layerState = layers.find((l) => l.layer_id === FLIGHT_PHOTOS_LAYER_ID);
   const visible = layerState ? layerState.is_visible : true;
-  const opacity = layerState?.opacity ?? 0.7;
+  const opacity = layerState?.opacity ?? 0.5;
 
   const withPath = useMemo(() => markers.filter((m) => m.file_path), [markers]);
 
