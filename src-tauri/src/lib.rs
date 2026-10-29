@@ -591,10 +591,11 @@
 //! | `get_change_magnitudes` / `get_significant_change_areas` | Magnitude and thresholded areas per location (10.6 / 10.7) |
 //!
 //! **Status**: 10.1-10.3 and 10.7 implemented; 10.4/10.5 exist as pure
-//! per-location functions awaiting producers (tree detection is still a
-//! placeholder detector, land-cover needs trained weights). Spatial detection
-//! uses nearest-neighbour alignment and axis-aligned boxes, documented as a
-//! limitation — it needs two dates with GPS and altitude to produce output.
+//! per-location functions awaiting producers (tree detection runs out of
+//! tree and is not wired in yet, land-cover needs trained weights). Spatial
+//! detection uses nearest-neighbour alignment and axis-aligned boxes,
+//! documented as a limitation — it needs two dates with GPS and altitude to
+//! produce output.
 //!
 //! ---
 //!
