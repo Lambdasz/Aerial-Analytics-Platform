@@ -244,6 +244,9 @@ export function TemporalComparePanel({
             >
               Magnitudo: {report.magnitude.toFixed(1)} ({report.magnitudeLevel})
             </Tag>
+            <div className="m10-footnote" style={{ marginTop: 6 }}>
+              Sumber: sebelum {report.beforeCoverageSource}, sesudah {report.afterCoverageSource}
+            </div>
           </div>
         </div>
       )}
@@ -298,6 +301,10 @@ export function TemporalComparePanel({
               {spatial.changedFractionPercent.toFixed(1)}% ({spatial.magnitudeLevel})
             </div>
             <div className="m10-delta__interval">{spatial.features.length} region di peta</div>
+            <div className="m10-footnote" style={{ marginTop: 4 }}>
+              Masker: {spatial.beforeMaskSource.startsWith("plugin") ? "plugin" : "ExG bawaan"} →{" "}
+              {spatial.afterMaskSource.startsWith("plugin") ? "plugin" : "ExG bawaan"}
+            </div>
             <Tag
               minimal
               round

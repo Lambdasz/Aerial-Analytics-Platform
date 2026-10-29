@@ -176,6 +176,8 @@ export interface SessionComparisonReport {
   change: VegetationCoverageChange;
   magnitude: number;
   magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  beforeCoverageSource: string;
+  afterCoverageSource: string;
   summary: {
     landCoverChanges: string[];
     treeCountChanges: string[];
@@ -243,6 +245,8 @@ export interface SpatialChangeReport {
   geojson: unknown;
   layerId: string;
   layerName: string;
+  beforeMaskSource: string;
+  afterMaskSource: string;
 }
 
 /** 10.7 spatial change regions between two sessions (publishes a map layer). */

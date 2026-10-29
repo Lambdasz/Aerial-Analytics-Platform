@@ -15,6 +15,8 @@ import type { ParameterDefinition, StandardJobResult, JobProgress } from "../typ
 
 export interface PluginExecutionTarget {
   imagePath: string;
+  /** Stored image id, so results can be keyed per image downstream. */
+  imageId?: string;
   mimeType: string;
   sessionId?: string;
   aoi?: unknown;

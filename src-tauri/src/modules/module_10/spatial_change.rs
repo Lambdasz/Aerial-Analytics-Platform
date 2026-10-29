@@ -99,6 +99,9 @@ pub struct SpatialChangeReport {
     pub geojson: Value,
     pub layer_id: String,
     pub layer_name: String,
+    /// `plugin-mask:<path>` when a published mask was used, `builtin:exg` otherwise.
+    pub before_mask_source: String,
+    pub after_mask_source: String,
 }
 
 /// Footprint of an observation from its GPS point, altitude and pixel size.
@@ -158,6 +161,27 @@ pub fn mask_from_image(
         return Err(SpatialChangeError::EmptyImage);
     }
     Ok(mask_from_rgb(rgb.as_raw(), width, height, bounds))
+}
+
+/// Loads a plugin vegetation mask PNG (any non-zero luminance counts as
+/// vegetation) over `bounds`. Used when Module 4/5 already produced a mask.
+pub fn mask_from_png(path: &Path, bounds: [f64; 4]) -> Result<VegetationMask, SpatialChangeError> {
+    let image = image::open(path).map_err(|source| SpatialChangeError::ReadImage {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let luma = image.to_luma8();
+    let (width, height) = (luma.width() as usize, luma.height() as usize);
+    if width == 0 || height == 0 {
+        return Err(SpatialChangeError::EmptyImage);
+    }
+    let data = luma.pixels().map(|pixel| u8::from(pixel[0] > 10)).collect();
+    Ok(VegetationMask {
+        width,
+        height,
+        bounds,
+        data,
+    })
 }
 
 /// Intersection of two footprints, or `None` when they do not overlap. Pure.
@@ -390,6 +414,8 @@ pub fn build_report(
         geojson,
         layer_id,
         layer_name,
+        before_mask_source: String::new(),
+        after_mask_source: String::new(),
     })
 }
 

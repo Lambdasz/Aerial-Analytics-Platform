@@ -41,9 +41,11 @@ use super::comparisons::{
 use super::coverage::{coverage_from_image_path, CoverageError, VegetationCoverage};
 use super::observations::{observations_from_images, ObservationCollection, SkippedImage};
 use super::spatial_change::{
-    bounds_for_observation, build_report, mask_from_image, SpatialChangeError, SpatialChangeReport,
+    bounds_for_observation, build_report, mask_from_image, mask_from_png, SpatialChangeError,
+    SpatialChangeReport, VegetationMask,
 };
 use super::visualization::{describe_analytical_results, AnalysisSummary};
+use crate::plugin_manager::result_store;
 
 fn lock_err(e: impl std::fmt::Display) -> CommandError {
     SessionError::LockPoisoned(e.to_string()).into()
@@ -269,8 +271,79 @@ pub struct SessionComparison {
     pub magnitude: f64,
     /// `rendah` | `sedang` | `tinggi`.
     pub magnitude_level: String,
+    /// `plugin:<id>` when a plugin result was used, `builtin:exg` otherwise.
+    pub before_coverage_source: String,
+    pub after_coverage_source: String,
     /// 10.8 analytical summary lines for the panel.
     pub summary: AnalysisSummary,
+}
+
+/// Coverage and its source for one observation.
+///
+/// Plugin results come first (`coverage_percentage` from Module 5,
+/// `vegetation_coverage_pct` from Module 6); the built-in ExG measurement is
+/// only a fallback so Module 10 never contradicts what the plugins reported.
+fn coverage_for(
+    state: &tauri::State<AppState>,
+    observation: &ImageObservation,
+) -> Result<(VegetationCoverage, String), CommandError> {
+    let stored = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        result_store::latest_metric(
+            &conn,
+            &observation.image_id.to_string(),
+            &["coverage_percentage", "vegetation_coverage_pct"],
+        )
+        .ok()
+        .flatten()
+    };
+    if let Some((percent, plugin_id)) = stored {
+        return Ok((
+            VegetationCoverage {
+                sampled_pixels: 0,
+                vegetation_pixels: 0,
+                coverage_percent: percent.clamp(0.0, 100.0),
+            },
+            format!("plugin:{plugin_id}"),
+        ));
+    }
+    let coverage =
+        coverage_from_image_path(Path::new(&observation.file_path)).map_err(|error| {
+            CommandError {
+                code: "VEGETATION_COVERAGE_ERROR".to_string(),
+                message: error.to_string(),
+            }
+        })?;
+    Ok((coverage, "builtin:exg".to_string()))
+}
+
+/// Vegetation mask and its source for one observation.
+///
+/// A vegetation mask published by Module 4/5 wins; otherwise the mask is
+/// measured from the stored image with the built-in ExG rule.
+fn mask_for(
+    state: &tauri::State<AppState>,
+    observation: &ImageObservation,
+    bounds: [f64; 4],
+) -> Result<(VegetationMask, String), CommandError> {
+    let artifact = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        result_store::latest_artifact(
+            &conn,
+            &observation.image_id.to_string(),
+            &["vegetation_mask", "mask_image"],
+            "image/",
+        )
+        .ok()
+        .flatten()
+    };
+    if let Some(path) = artifact {
+        if let Ok(mask) = mask_from_png(Path::new(&path), bounds) {
+            return Ok((mask, format!("plugin-mask:{path}")));
+        }
+    }
+    let mask = mask_from_image(Path::new(&observation.file_path), bounds).map_err(spatial_error)?;
+    Ok((mask, "builtin:exg".to_string()))
 }
 
 /// Runs a before/after comparison between two sessions (10.2 + 10.3).
@@ -319,18 +392,8 @@ pub fn compare_sessions(
     let after = latest_observation(&after_images)?;
     let comparison = compare_before_after(before, after).map_err(CommandError::from)?;
 
-    let before_coverage = coverage_from_image_path(Path::new(&comparison.before.file_path))
-        .map_err(|error| CommandError {
-            code: "VEGETATION_COVERAGE_ERROR".to_string(),
-            message: error.to_string(),
-        })?;
-    let after_coverage =
-        coverage_from_image_path(Path::new(&comparison.after.file_path)).map_err(|error| {
-            CommandError {
-                code: "VEGETATION_COVERAGE_ERROR".to_string(),
-                message: error.to_string(),
-            }
-        })?;
+    let (before_coverage, before_coverage_source) = coverage_for(&state, &comparison.before)?;
+    let (after_coverage, after_coverage_source) = coverage_for(&state, &comparison.after)?;
     let change = calculate_vegetation_change(
         before_coverage.coverage_percent,
         after_coverage.coverage_percent,
@@ -376,6 +439,8 @@ pub fn compare_sessions(
         change,
         magnitude,
         magnitude_level: magnitude_level_name(level).to_string(),
+        before_coverage_source,
+        after_coverage_source,
         summary: describe_analytical_results(&[], &[], Some(change)),
     })
 }
@@ -525,10 +590,8 @@ pub fn detect_change_areas(
     let before_bounds = bounds_of(&comparison.before)?;
     let after_bounds = bounds_of(&comparison.after)?;
 
-    let before_mask = mask_from_image(Path::new(&comparison.before.file_path), before_bounds)
-        .map_err(spatial_error)?;
-    let after_mask = mask_from_image(Path::new(&comparison.after.file_path), after_bounds)
-        .map_err(spatial_error)?;
+    let (before_mask, before_mask_source) = mask_for(&state, &comparison.before, before_bounds)?;
+    let (after_mask, after_mask_source) = mask_for(&state, &comparison.after, after_bounds)?;
 
     // Provisional report to get the changed fraction, then classify it.
     let provisional = build_report(
@@ -554,7 +617,7 @@ pub fn detect_change_areas(
         comparison.before.acquisition_date(),
         comparison.after.acquisition_date()
     );
-    let report = build_report(
+    let mut report = build_report(
         &before_mask,
         &after_mask,
         min_area_m2.unwrap_or(10.0),
@@ -563,6 +626,8 @@ pub fn detect_change_areas(
         layer_name.clone(),
     )
     .map_err(spatial_error)?;
+    report.before_mask_source = before_mask_source;
+    report.after_mask_source = after_mask_source;
 
     // Publish the polygons so Module 3 can show them.
     let features: Vec<SpatialResult> = report

@@ -163,8 +163,12 @@ fn coverage_fields() -> Vec<FieldDef> {
 #[tauri::command]
 pub fn publish_plugin_run(
     app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     result: Value,
     layer_name: Option<String>,
+    image_id: Option<String>,
+    session_id: Option<String>,
+    plugin_id: Option<String>,
 ) -> Result<Vec<LayerPayload>, CommandError> {
     crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
 
@@ -229,6 +233,23 @@ pub fn publish_plugin_run(
         let saved = get_global_state().save_spatial_result(payload)?;
         let _ = app.emit("spatial_result:saved", &saved);
         saved_layers.push(saved);
+    }
+
+    // Keep the run so other modules read plugin output instead of recomputing.
+    if let (Some(image_id), Some(plugin_id)) = (image_id.as_deref(), plugin_id.as_deref()) {
+        let conn = state.db.lock().map_err(|_| CommandError {
+            code: "STATE_ERROR".to_string(),
+            message: "Database lock poisoned while storing the plugin result".to_string(),
+        })?;
+        let _ = crate::plugin_manager::result_store::upsert_result(
+            &conn,
+            image_id,
+            session_id.as_deref(),
+            plugin_id,
+            Some(&execution_id),
+            &result["metrics"],
+            &result["artifacts"],
+        );
     }
     Ok(saved_layers)
 }
