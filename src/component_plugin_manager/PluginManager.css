@@ -2,9 +2,9 @@
 
 .plugin-shell {
   min-height: 100%;
-  background: #11161c;
-  color: #e7edf4;
-  font-family: Manrope, sans-serif;
+  background: var(--color-studio-mist, #f5f5f7);
+  color: var(--color-ink, #1d1d1f);
+  font-family: var(--font-sf-pro-text, Manrope, sans-serif);
   box-sizing: border-box;
 }
 
@@ -22,7 +22,7 @@
 .plugin-shell .eyebrow,
 .plugin-shell .stats-grid span {
   margin: 0;
-  color: #84919e;
+  color: var(--color-slate, #707070);
   font-family: "DM Mono", monospace;
   font-size: 10px;
   letter-spacing: 0.08em;
@@ -65,7 +65,7 @@
 .plugin-shell .panel-heading p,
 .plugin-shell .details-copy {
   margin: 0;
-  color: #84919e;
+  color: var(--color-slate, #707070);
   font-size: 12px;
 }
 
@@ -79,9 +79,9 @@
 .plugin-shell .stats-grid > div,
 .plugin-shell .plugin-panel,
 .plugin-shell .details-panel {
-  border: 1px solid #303943;
-  border-radius: 6px;
-  background: #1a2128;
+  border: 1px solid var(--color-hairline-silver, #d6d6d6);
+  border-radius: 14px;
+  background: var(--color-gallery-white, #ffffff);
 }
 
 .plugin-shell .stats-grid > div {
@@ -112,11 +112,11 @@
 .plugin-shell .panel-heading input {
   width: 150px;
   padding: 8px 10px;
-  border: 1px solid #3a4651;
-  border-radius: 4px;
+  border: 1px solid var(--color-hairline-silver, #d6d6d6);
+  border-radius: 999px;
   outline: 0;
-  color: #e7edf4;
-  background: #11161c;
+  color: var(--color-ink, #1d1d1f);
+  background: var(--color-gallery-white, #ffffff);
   font-size: 11px;
 }
 
@@ -130,18 +130,18 @@
 }
 
 .plugin-shell .version {
-  color: #73c6a2;
+  color: var(--color-apple-blue, #0066cc);
   font:
     11px "DM Mono",
     monospace;
 }
 
 .plugin-shell .status-ready {
-  color: #73c6a2;
+  color: var(--color-apple-blue, #0066cc);
 }
 
 .plugin-shell .status-disabled {
-  color: #e8796f;
+  color: #b42318;
 }
 
 .plugin-shell .details-copy {

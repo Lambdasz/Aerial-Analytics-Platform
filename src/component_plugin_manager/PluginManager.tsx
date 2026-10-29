@@ -531,7 +531,9 @@ export function PluginManager() {
                           alignItems: "center",
                           justifyContent: "space-between",
                           padding: "12px 16px",
-                          borderLeft: isSelected ? "4px solid #137cbd" : "4px solid transparent",
+                          borderLeft: isSelected
+                            ? "4px solid var(--color-apple-blue, #0066cc)"
+                            : "4px solid transparent",
                           backgroundColor: isSelected ? "rgba(19, 124, 189, 0.05)" : undefined,
                         }}
                         onClick={() => setSelectedPluginId(plugin.id)}
@@ -786,7 +788,7 @@ export function PluginManager() {
                   style={{
                     maxHeight: 240,
                     overflowY: "auto",
-                    border: "1px solid #d8e1e8",
+                    border: "1px solid var(--color-hairline-silver, #d6d6d6)",
                     borderRadius: 4,
                     marginTop: 6,
                   }}
@@ -892,8 +894,8 @@ export function PluginManager() {
                 <h4>Parameters Specification (parameters.json)</h4>
                 <pre
                   style={{
-                    background: "#202b33",
-                    color: "#f5f8fa",
+                    background: "var(--color-paper-frost, #fafafc)",
+                    color: "var(--color-ink, #1d1d1f)",
                     padding: 12,
                     borderRadius: 4,
                     maxHeight: 180,
@@ -906,8 +908,8 @@ export function PluginManager() {
                 <h4>Inputs Specification (inputs.json)</h4>
                 <pre
                   style={{
-                    background: "#202b33",
-                    color: "#f5f8fa",
+                    background: "var(--color-paper-frost, #fafafc)",
+                    color: "var(--color-ink, #1d1d1f)",
                     padding: 12,
                     borderRadius: 4,
                     maxHeight: 140,
@@ -920,8 +922,8 @@ export function PluginManager() {
                 <h4>Outputs Specification (outputs.json)</h4>
                 <pre
                   style={{
-                    background: "#202b33",
-                    color: "#f5f8fa",
+                    background: "var(--color-paper-frost, #fafafc)",
+                    color: "var(--color-ink, #1d1d1f)",
                     padding: 12,
                     borderRadius: 4,
                     maxHeight: 140,
