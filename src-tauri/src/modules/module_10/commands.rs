@@ -28,10 +28,14 @@ use crate::AppState;
 
 use super::analysis::{
     calculate_change_magnitudes, calculate_tree_count_changes, calculate_vegetation_change,
-    detect_significant_change_areas, group_by_acquisition_date, identify_land_cover_changes,
-    latest_before_after, ChangeMagnitudeEntry, ImageObservation, LandCoverChange,
-    ObservationPeriod, SignificantChangeArea, TemporalChangeError, TreeCountChange,
-    VegetationCoverageChange, DEFAULT_SIGNIFICANCE_THRESHOLD,
+    classify_change_magnitude, compare_before_after, detect_significant_change_areas,
+    group_by_acquisition_date, identify_land_cover_changes, latest_before_after,
+    ChangeMagnitudeEntry, ImageObservation, LandCoverChange, ObservationPeriod,
+    SignificantChangeArea, TemporalChangeError, TreeCountChange, VegetationCoverageChange,
+    DEFAULT_SIGNIFICANCE_THRESHOLD,
+};
+use super::comparisons::{
+    insert_comparison, list_comparisons, magnitude_level_name, ComparisonRecord, NewComparison,
 };
 use super::coverage::{coverage_from_image_path, CoverageError, VegetationCoverage};
 use super::observations::{observations_from_images, ObservationCollection, SkippedImage};
@@ -245,31 +249,140 @@ pub fn get_significant_change_areas(
     .map_err(CommandError::from)
 }
 
-/// Runs a comparison between two sessions' analysis results (vegetation
-/// coverage, land-cover, tree count) and produces a
-/// [`TemporalChangeResult`](super::functions::TemporalChangeResult)
-/// and change-area payload.
-///
-/// **Status**: `todo!()` stub — added so Module 10 has a minimal
-/// contract before the deadline, matching the Module 9 (`plot_api`) pattern.
-#[tauri::command]
-pub fn compare_sessions(
-    _baseline_session_id: String,
-    _target_session_id: String,
-) -> Result<super::functions::TemporalChangeResult, String> {
-    todo!("M10: run comparison between two sessions' analysis results")
+/// Result of comparing two sessions: the representative images, their measured
+/// vegetation coverage, and the stored comparison row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionComparison {
+    pub comparison_id: String,
+    pub before: ImageObservation,
+    pub after: ImageObservation,
+    pub interval_days: i64,
+    pub before_coverage: VegetationCoverage,
+    pub after_coverage: VegetationCoverage,
+    pub change: VegetationCoverageChange,
+    pub magnitude: f64,
+    /// `rendah` | `sedang` | `tinggi`.
+    pub magnitude_level: String,
 }
 
-/// Returns the latest computed temporal summary for a project,
-/// for Module 11 (dashboard / reporting) to consume.
+/// Runs a before/after comparison between two sessions (10.2 + 10.3).
 ///
-/// **Status**: `todo!()` stub — added so Module 10 has a minimal
-/// contract before the deadline, matching the Module 9 (`plot_api`) pattern.
+/// Each session contributes its latest captured image. Coverage is measured on
+/// those pixels, the difference is classified, and the result is stored in
+/// `temporal_comparison` so the page and the dashboard can list it later.
+#[tauri::command]
+pub fn compare_sessions(
+    state: tauri::State<AppState>,
+    before_session_id: Uuid,
+    after_session_id: Uuid,
+) -> Result<SessionComparison, CommandError> {
+    let (project_id, before_images, after_images) = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        let before_session = flight_session::get_session(&conn, before_session_id)?;
+        let after_session = flight_session::get_session(&conn, after_session_id)?;
+        let before_images = flight_session::get_images_by_session(&conn, before_session_id)?;
+        let after_images = flight_session::get_images_by_session(&conn, after_session_id)?;
+        // Sessions from different projects cannot be meaningfully compared.
+        if before_session.project_id != after_session.project_id {
+            return Err(CommandError {
+                code: "TEMPORAL_SESSION_MISMATCH".to_string(),
+                message: "both sessions must belong to the same project".to_string(),
+            });
+        }
+        (
+            before_session.project_id.to_string(),
+            before_images,
+            after_images,
+        )
+    };
+
+    let latest_observation = |images: &[Image]| -> Result<ImageObservation, CommandError> {
+        observations_from_images(images)
+            .observations
+            .into_iter()
+            .max_by(|left, right| left.captured_at.cmp(&right.captured_at))
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "a session has no image with a capture date".to_string(),
+            })
+    };
+
+    let before = latest_observation(&before_images)?;
+    let after = latest_observation(&after_images)?;
+    let comparison = compare_before_after(before, after).map_err(CommandError::from)?;
+
+    let before_coverage = coverage_from_image_path(Path::new(&comparison.before.file_path))
+        .map_err(|error| CommandError {
+            code: "VEGETATION_COVERAGE_ERROR".to_string(),
+            message: error.to_string(),
+        })?;
+    let after_coverage =
+        coverage_from_image_path(Path::new(&comparison.after.file_path)).map_err(|error| {
+            CommandError {
+                code: "VEGETATION_COVERAGE_ERROR".to_string(),
+                message: error.to_string(),
+            }
+        })?;
+    let change = calculate_vegetation_change(
+        before_coverage.coverage_percent,
+        after_coverage.coverage_percent,
+    )
+    .map_err(CommandError::from)?;
+    let magnitude = change.change.abs();
+    let level = classify_change_magnitude(magnitude).map_err(CommandError::from)?;
+
+    let stored = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        insert_comparison(
+            &conn,
+            &NewComparison {
+                project_id: Some(project_id),
+                before_session_id: before_session_id.to_string(),
+                after_session_id: after_session_id.to_string(),
+                before_image_id: comparison.before.image_id.to_string(),
+                after_image_id: comparison.after.image_id.to_string(),
+                before_date: comparison.before.acquisition_date().to_string(),
+                after_date: comparison.after.acquisition_date().to_string(),
+                interval_days: comparison.interval_days,
+                metric: "vegetation_coverage_percent".to_string(),
+                before_value: change.before,
+                after_value: change.after,
+                delta: change.change,
+                magnitude,
+                magnitude_level: magnitude_level_name(level).to_string(),
+            },
+        )
+        .map_err(|error| CommandError {
+            code: "TEMPORAL_STORAGE_ERROR".to_string(),
+            message: error.to_string(),
+        })?
+    };
+
+    Ok(SessionComparison {
+        comparison_id: stored.id,
+        before: comparison.before,
+        after: comparison.after,
+        interval_days: comparison.interval_days,
+        before_coverage,
+        after_coverage,
+        change,
+        magnitude,
+        magnitude_level: magnitude_level_name(level).to_string(),
+    })
+}
+
+/// Latest stored comparisons for a project, newest first (dashboard input).
 #[tauri::command]
 pub fn get_change_summary(
-    _project_id: String,
-) -> Result<super::functions::TemporalChangeResult, String> {
-    todo!("M10: return latest temporal summary for a project")
+    state: tauri::State<AppState>,
+    project_id: Uuid,
+) -> Result<Vec<ComparisonRecord>, CommandError> {
+    let conn = state.db.lock().map_err(lock_err)?;
+    list_comparisons(&conn, Some(&project_id.to_string()), 50).map_err(|error| CommandError {
+        code: "TEMPORAL_STORAGE_ERROR".to_string(),
+        message: error.to_string(),
+    })
 }
 
 #[cfg(test)]

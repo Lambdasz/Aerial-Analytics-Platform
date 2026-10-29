@@ -12,10 +12,12 @@
 //!   analysis.
 //! - [`functions`] — cross-module DTO contracts (10.7 → Module 3.4 and
 //!   10.8 → Module 11.5).
+//! - [`comparisons`] — persisted before/after comparison history.
 //! - [`visualization`] — 10.8 payload and analytical summary for the UI.
 
 pub mod analysis;
 pub mod commands;
+pub mod comparisons;
 pub mod coverage;
 pub mod functions;
 pub mod observations;

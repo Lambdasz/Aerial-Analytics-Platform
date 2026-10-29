@@ -841,6 +841,11 @@ pub fn run() {
             if let Err(err) = modules::module_09::indicators::migrate_indicator_schema(&db_conn) {
                 eprintln!("warning: could not initialize the plot indicator schema: {err}");
             }
+            if let Err(err) =
+                modules::module_10::comparisons::migrate_comparison_schema(&db_conn)
+            {
+                eprintln!("warning: could not initialize the temporal comparison schema: {err}");
+            }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
                 Some(value) => absolute_path(PathBuf::from(value))?,
                 None => app_data.join("library"),
