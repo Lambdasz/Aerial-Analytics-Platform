@@ -2,25 +2,55 @@
   "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
   "metrics": [
     {
-      "key": "vegetation_coverage_pct",
-      "label": "Vegetation Coverage",
-      "type": "float",
-      "unit": "%",
-      "description": "Percentage of analyzed area covered by vegetation."
+      "key": "green_coverage",
+      "label": "Green Pixel Count",
+      "type": "integer",
+      "unit": "pixels",
+      "description": "Jumlah mentah (raw count) pixel yang terdeteksi sebagai vegetasi. Bukan persentase - perhitungan persentase yang telah diolah lebih lanjut adalah tanggung jawab Module 5."
     },
     {
-      "key": "total_pixels_analyzed",
-      "label": "Pixels Analyzed",
-      "type": "integer",
-      "unit": "px"
+      "key": "mean_green",
+      "label": "Mean Green Value",
+      "type": "float",
+      "unit": "",
+      "description": "Rata-rata nilai channel hijau dari seluruh citra."
+    },
+    {
+      "key": "std_green",
+      "label": "Green Value Std Dev",
+      "type": "float",
+      "unit": "",
+      "description": "Standar deviasi nilai channel hijau dari seluruh citra."
+    },
+    {
+      "key": "max_green",
+      "label": "Max Green Value",
+      "type": "float",
+      "unit": "",
+      "description": "Nilai maksimum channel hijau dari seluruh citra."
+    },
+    {
+      "key": "method_used",
+      "label": "Vegetation Index Method Used",
+      "type": "string",
+      "unit": "",
+      "description": "Index yang dipakai pada eksekusi ini (ExG/ExR/VARI), echo dari Plugin Configuration untuk traceability."
+    },
+    {
+      "key": "threshold_used",
+      "label": "Threshold Value Used",
+      "type": "float",
+      "unit": "",
+      "description": "Nilai threshold yang dipakai pada eksekusi ini, echo dari Plugin Configuration untuk traceability."
     }
   ],
   "artifacts": [
     {
-      "key": "mask_image",
-      "label": "Vegetation Mask",
+      "key": "vegetation_mask",
+      "label": "Vegetation Binary Mask",
       "type": "raster",
       "format": "image/png",
+      "optional": false,
       "coordinate_system": "pixel",
       "layer_hint": {
         "layer_type": "raster_overlay",
@@ -29,16 +59,16 @@
       }
     },
     {
-      "key": "geojson_boundary",
-      "label": "Vegetation Polygons",
-      "type": "vector",
-      "format": "application/geo+json",
-      "coordinate_system": "crs",
+      "key": "detection_overlay",
+      "label": "Detection Visualization Overlay",
+      "type": "raster",
+      "format": "image/png",
       "optional": true,
+      "coordinate_system": "pixel",
       "layer_hint": {
-        "layer_type": "polygon_boundary",
-        "stroke_color": "#2185d0",
-        "fill_opacity": 0.2
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.8,
+        "color_palette": "Greens"
       }
     }
   ]
