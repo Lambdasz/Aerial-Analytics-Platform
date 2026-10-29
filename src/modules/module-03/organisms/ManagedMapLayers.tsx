@@ -2,8 +2,6 @@ import React from "react";
 import { DroneImageMarker } from "./DroneImageMarker";
 import type { LayerState } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
-import { useMapZoom } from "../hooks/useMapZoom";
-import { MIN_POINT_FEATURE_ZOOM } from "../config/mapConfig";
 
 export interface ManagedMapLayersProps {
   layers: LayerState[];
@@ -11,45 +9,21 @@ export interface ManagedMapLayersProps {
   minZoom?: number;
 }
 
-export const ManagedMapLayers: React.FC<ManagedMapLayersProps> = ({
-  layers,
-  markers,
-  minZoom = MIN_POINT_FEATURE_ZOOM,
-}) => {
-  const currentZoom = useMapZoom();
-  const sortedLayers = [...layers].sort((a, b) => a.z_index - b.z_index);
-
-  return (
-    <>
-      {sortedLayers.map((layer) => {
-        if (!layer.is_visible) {
-          return null;
-        }
-
-        // =========================
-        // DRONE IMAGERY
-        // =========================
-        if (layer.layer_id === "flight_session_01") {
-          // Sembunyikan marker foto drone jika zoom out di bawah threshold
-          if (currentZoom < minZoom) {
-            return null;
-          }
-
-          return (
-            <React.Fragment key={layer.layer_id}>
-              {markers.map((marker) => (
-                <DroneImageMarker
-                  key={`${layer.layer_id}-${marker.image_id}`}
-                  image={marker}
-                  opacity={layer.opacity}
-                />
-              ))}
-            </React.Fragment>
-          );
-        }
-
-        return null;
-      })}
-    </>
-  );
-};
+/**
+ * Renders session photo markers on the marker pane.
+ *
+ * The old layer-gated branch (`layer_id === "flight_session_01"`) was dead
+ * code — no layer entry ever carried that id — so photo markers never showed.
+ * They now render straight from the markers array at any zoom: the session
+ * extent fits well below the 17+ point-feature threshold, and hiding them
+ * right after auto-center would look broken.
+ *
+ * `layers` / `minZoom` stay in the props for caller compatibility.
+ */
+export const ManagedMapLayers: React.FC<ManagedMapLayersProps> = ({ markers }) => (
+  <>
+    {markers.map((marker) => (
+      <DroneImageMarker key={marker.image_id} image={marker} opacity={1} />
+    ))}
+  </>
+);

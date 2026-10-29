@@ -61,6 +61,13 @@ export const MIN_POINT_FEATURE_ZOOM = 17;
 
 export const MIN_FEATURE_ZOOM = MIN_POLYGON_FEATURE_ZOOM;
 
+/**
+ * Synthetic LayerManager entry for session flight photos draped as image
+ * overlays (see FlightPhotoLayer). Not persisted server-side — visibility and
+ * opacity ride on the existing localStorage-backed layer state.
+ */
+export const FLIGHT_PHOTOS_LAYER_ID = "flight_photos";
+
 export const BASEMAPS = {
   osm: {
     name: "OpenStreetMap",

@@ -7,13 +7,12 @@ import { MapViewControlBar } from "./MapViewControlBar";
 import { SpatialResultLayer } from "./SpatialResultLayer";
 import { SavedAoiLayer } from "./SavedAoiLayer";
 import { SavedOrthoImageLayer } from "./SavedOrthoImageLayer";
-import { ManagedMapLayers } from "./ManagedMapLayers";
+import { FlightPhotoLayer } from "./FlightPhotoLayer";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { AutoCenterOnImages } from "./AutoCenterOnImages";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
-
-const EMPTY_MARKERS: ReadonlyArray<DroneImageMetadata> = [];
 
 export interface MapCanvasProps {
   /** Basemap aktif yang sedang digunakan */
@@ -22,6 +21,10 @@ export interface MapCanvasProps {
   layers?: LayerState[];
   /** Daftar fitur anotasi spasial titik */
   annotations?: AnnotationFeature[];
+  /** Marker foto drone dari sesi terbaru (session imagery) */
+  markers?: ReadonlyArray<DroneImageMetadata>;
+  /** image_id yang disembunyikan per-foto dari panel Layers */
+  hiddenPhotoIds?: ReadonlySet<string>;
   /** Callback ref saat instance Leaflet map siap */
   onMapReady?: (map: L.Map | null) => void;
   /** Callback saat daftar layer hasil spasial diperbarui */
@@ -35,6 +38,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   activeBasemap = "osm",
   layers = [],
   annotations = [],
+  markers = [],
+  hiddenPhotoIds,
   onMapReady,
   onActiveLayersChange,
 }) => {
@@ -81,9 +86,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       <AnnotationLayer annotations={annotations} />
 
       {/* =========================
-          IMAGE LOCATION MARKERS (MARKER PANE Z-INDEX 600)
+          FLIGHT PHOTOS (IMAGE OVERLAYS, ESTIMATED FOOTPRINTS)
+          Replaces point markers: each frame drapes over the map.
           ========================= */}
-      <ManagedMapLayers layers={layers} markers={EMPTY_MARKERS} />
+      <FlightPhotoLayer markers={markers} layers={layers} hiddenPhotoIds={hiddenPhotoIds} />
+
+      {/* =========================
+          AUTO-CENTER (ONCE, TO SESSION IMAGERY)
+          ========================= */}
+      <AutoCenterOnImages markers={markers} />
 
       {/* =========================
           MAP CONTROLS
