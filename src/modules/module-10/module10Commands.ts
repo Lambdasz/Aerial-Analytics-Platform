@@ -220,3 +220,40 @@ export function getChangeSummary(projectId: string): Promise<ComparisonRecord[]>
 export function exportComparisonJson(comparisonId: string): Promise<string> {
   return invoke<string>("export_comparison_json", { comparisonId });
 }
+
+export interface ChangeFeature {
+  changeType: "gain" | "loss";
+  pixels: number;
+  areaM2: number;
+  bbox: [number, number, number, number];
+}
+
+export interface SpatialChangeReport {
+  beforeBounds: [number, number, number, number];
+  afterBounds: [number, number, number, number];
+  changeBounds: [number, number, number, number];
+  gridWidth: number;
+  gridHeight: number;
+  gainAreaM2: number;
+  lossAreaM2: number;
+  changedFractionPercent: number;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  features: ChangeFeature[];
+  geojson: unknown;
+  layerId: string;
+  layerName: string;
+}
+
+/** 10.7 spatial change regions between two sessions (publishes a map layer). */
+export function detectChangeAreas(
+  beforeSessionId: string,
+  afterSessionId: string,
+  minAreaM2 = 10,
+): Promise<SpatialChangeReport> {
+  return invoke<SpatialChangeReport>("detect_change_areas", {
+    beforeSessionId,
+    afterSessionId,
+    minAreaM2,
+  });
+}

@@ -105,7 +105,7 @@ fn downscale(image: DynamicImage) -> DynamicImage {
 }
 
 /// Excess green index: green must dominate both red and blue by a margin.
-fn is_vegetation(red: u8, green: u8, blue: u8) -> bool {
+pub fn is_vegetation(red: u8, green: u8, blue: u8) -> bool {
     let (red, green, blue) = (f32::from(red), f32::from(green), f32::from(blue));
     2.0 * green - red - blue > EXCESS_GREEN_THRESHOLD
 }

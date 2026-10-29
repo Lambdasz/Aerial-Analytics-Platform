@@ -994,6 +994,7 @@ pub fn run() {
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,
             modules::module_10::commands::export_comparison_json,
+            modules::module_10::commands::detect_change_areas,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -6,7 +6,9 @@ import { commandErrorMessage, type Session } from "../module-01/sessionCommands"
 import {
   type ComparisonRecord,
   type SessionComparisonReport,
+  type SpatialChangeReport,
   compareSessions,
+  detectChangeAreas,
   exportComparisonJson,
   getChangeSummary,
 } from "./module10Commands";
@@ -93,6 +95,8 @@ export function TemporalComparePanel({
   const [isRunning, setIsRunning] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [spatial, setSpatial] = useState<SpatialChangeReport | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Default the pair to the oldest and newest session, without writing state
@@ -130,6 +134,20 @@ export function TemporalComparePanel({
       setError(commandErrorMessage(err));
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const runSpatial = async () => {
+    setIsDetecting(true);
+    setSpatial(null);
+    setError(null);
+    try {
+      const result = await detectChangeAreas(beforeId, afterId);
+      setSpatial(result);
+    } catch (err) {
+      setError(commandErrorMessage(err));
+    } finally {
+      setIsDetecting(false);
     }
   };
 
@@ -247,6 +265,48 @@ export function TemporalComparePanel({
               {exportNotice}
             </div>
           )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+        <Button
+          small
+          icon="map-marker"
+          text="Deteksi area perubahan"
+          loading={isDetecting}
+          disabled={!canCompare}
+          onClick={() => void runSpatial()}
+        />
+        <span className="m10-footnote">
+          Membandingkan masker vegetasi kedua citra; area berubah dipublikasikan sebagai layer peta.
+        </span>
+      </div>
+
+      {spatial && (
+        <div className="m10-grid" style={{ marginTop: 12 }}>
+          <div className="m10-compare__card">
+            <div className="m10-compare__label">Vegetasi bertambah</div>
+            <div className="m10-coverage__value">{spatial.gainAreaM2.toFixed(0)} m²</div>
+          </div>
+          <div className="m10-compare__card">
+            <div className="m10-compare__label">Vegetasi berkurang</div>
+            <div className="m10-coverage__value">{spatial.lossAreaM2.toFixed(0)} m²</div>
+          </div>
+          <div className="m10-delta">
+            <div className="m10-delta__label">Area berubah</div>
+            <div className="m10-delta__value">
+              {spatial.changedFractionPercent.toFixed(1)}% ({spatial.magnitudeLevel})
+            </div>
+            <div className="m10-delta__interval">{spatial.features.length} region di peta</div>
+            <Tag
+              minimal
+              round
+              intent={LEVEL_INTENT[spatial.magnitudeLevel]}
+              style={{ marginTop: 6 }}
+            >
+              Layer: {spatial.layerName}
+            </Tag>
+          </div>
         </div>
       )}
 

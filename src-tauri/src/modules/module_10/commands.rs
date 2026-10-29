@@ -40,6 +40,9 @@ use super::comparisons::{
 };
 use super::coverage::{coverage_from_image_path, CoverageError, VegetationCoverage};
 use super::observations::{observations_from_images, ObservationCollection, SkippedImage};
+use super::spatial_change::{
+    bounds_for_observation, build_report, mask_from_image, SpatialChangeError, SpatialChangeReport,
+};
 use super::visualization::{describe_analytical_results, AnalysisSummary};
 
 fn lock_err(e: impl std::fmt::Display) -> CommandError {
@@ -455,6 +458,187 @@ pub fn get_change_summary(
         code: "TEMPORAL_STORAGE_ERROR".to_string(),
         message: error.to_string(),
     })
+}
+
+/// Spatial change detection (10.7) between two sessions (10.2 before/after).
+///
+/// Both session images need GPS, altitude and pixel dimensions. Vegetation
+/// masks are compared over the shared footprint; changed regions above
+/// `min_area_m2` (default 10 m²) are published as a Map Explorer layer.
+#[tauri::command]
+pub fn detect_change_areas(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    before_session_id: Uuid,
+    after_session_id: Uuid,
+    min_area_m2: Option<f64>,
+) -> Result<SpatialChangeReport, CommandError> {
+    use crate::modules::module_03::sp_result::types::{
+        FieldDef, LayerDisplayMode, LayerPayload, SpatialGeometry, SpatialProperties, SpatialResult,
+    };
+    use crate::modules::module_03::state::get_global_state;
+    use tauri::Emitter;
+
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
+
+    let latest_image = |session_id: Uuid| -> Result<Image, CommandError> {
+        let conn = state.db.lock().map_err(lock_err)?;
+        let images = flight_session::get_images_by_session(&conn, session_id)?;
+        observations_from_images(&images)
+            .observations
+            .into_iter()
+            .max_by(|left, right| left.captured_at.cmp(&right.captured_at))
+            .map(|observation| (observation.image_id, observation.captured_at))
+            .and_then(|(image_id, _)| images.into_iter().find(|image| image.id == image_id))
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "a session has no image with a capture date".to_string(),
+            })
+    };
+
+    let observations_for = |image: &Image| -> Result<ImageObservation, CommandError> {
+        observations_from_images(std::slice::from_ref(image))
+            .observations
+            .into_iter()
+            .next()
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "image has no capture date".to_string(),
+            })
+    };
+
+    let before_image = latest_image(before_session_id)?;
+    let after_image = latest_image(after_session_id)?;
+    let before = observations_for(&before_image)?;
+    let after = observations_for(&after_image)?;
+    let comparison = compare_before_after(before, after).map_err(CommandError::from)?;
+
+    let bounds_of = |observation: &ImageObservation| -> Result<[f64; 4], CommandError> {
+        bounds_for_observation(observation).ok_or_else(|| CommandError {
+            code: "TEMPORAL_MISSING_GEOREFERENCE".to_string(),
+            message: format!(
+                "'{}' needs GPS, altitude and pixel size for spatial change detection",
+                observation.file_path
+            ),
+        })
+    };
+    let before_bounds = bounds_of(&comparison.before)?;
+    let after_bounds = bounds_of(&comparison.after)?;
+
+    let before_mask = mask_from_image(Path::new(&comparison.before.file_path), before_bounds)
+        .map_err(spatial_error)?;
+    let after_mask = mask_from_image(Path::new(&comparison.after.file_path), after_bounds)
+        .map_err(spatial_error)?;
+
+    // Provisional report to get the changed fraction, then classify it.
+    let provisional = build_report(
+        &before_mask,
+        &after_mask,
+        min_area_m2.unwrap_or(10.0),
+        "rendah".to_string(),
+        String::new(),
+        String::new(),
+    )
+    .map_err(spatial_error)?;
+    let level = classify_change_magnitude(provisional.changed_fraction_percent)
+        .map_err(CommandError::from)?;
+
+    let short = |id: Uuid| id.to_string().replace('-', "")[..8].to_string();
+    let layer_id = format!(
+        "temporal_{}_{}",
+        short(before_session_id),
+        short(after_session_id)
+    );
+    let layer_name = format!(
+        "Perubahan {} → {}",
+        comparison.before.acquisition_date(),
+        comparison.after.acquisition_date()
+    );
+    let report = build_report(
+        &before_mask,
+        &after_mask,
+        min_area_m2.unwrap_or(10.0),
+        magnitude_level_name(level).to_string(),
+        layer_id.clone(),
+        layer_name.clone(),
+    )
+    .map_err(spatial_error)?;
+
+    // Publish the polygons so Module 3 can show them.
+    let features: Vec<SpatialResult> = report
+        .features
+        .iter()
+        .map(|feature| {
+            let [min_lon, min_lat, max_lon, max_lat] = feature.bbox;
+            let mut properties = serde_json::Map::new();
+            properties.insert("change_type".into(), serde_json::json!(feature.change_type));
+            properties.insert("area_m2".into(), serde_json::json!(feature.area_m2.round()));
+            properties.insert("pixels".into(), serde_json::json!(feature.pixels));
+            SpatialResult {
+                source: layer_id.clone(),
+                geometry: SpatialGeometry::Polygon {
+                    coordinates: vec![vec![
+                        vec![min_lon, min_lat],
+                        vec![max_lon, min_lat],
+                        vec![max_lon, max_lat],
+                        vec![min_lon, max_lat],
+                        vec![min_lon, min_lat],
+                    ]],
+                },
+                properties: SpatialProperties::Generic(properties),
+                image_url: None,
+                edited_fields: None,
+                extra: serde_json::Map::new(),
+            }
+        })
+        .collect();
+
+    if !features.is_empty() {
+        let fields = vec![
+            FieldDef {
+                key: "change_type".into(),
+                label: "Change".into(),
+                unit: None,
+                visible: true,
+                custom: false,
+                kind: Some("text".into()),
+            },
+            FieldDef {
+                key: "area_m2".into(),
+                label: "Area".into(),
+                unit: Some("m²".into()),
+                visible: true,
+                custom: false,
+                kind: Some("number".into()),
+            },
+        ];
+        let payload = LayerPayload {
+            layer_id: layer_id.clone(),
+            layer_name,
+            display_preference: LayerDisplayMode::Polygon {
+                color: "#b42318".to_string(),
+                opacity: 0.45,
+                image_url: None,
+                fields: Some(fields),
+            },
+            spatial_results: features,
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            concurrency_token: None,
+            extra: serde_json::Map::new(),
+        };
+        if let Ok(saved) = get_global_state().save_spatial_result(payload) {
+            let _ = app.emit("spatial_result:saved", &saved);
+        }
+    }
+
+    Ok(report)
+}
+
+fn spatial_error(error: SpatialChangeError) -> CommandError {
+    CommandError {
+        code: "TEMPORAL_SPATIAL_ERROR".to_string(),
+        message: error.to_string(),
+    }
 }
 
 #[cfg(test)]
