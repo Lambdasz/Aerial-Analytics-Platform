@@ -43,6 +43,7 @@ Fifth functional milestone. Adds Module 9 (area & plot analytics) and Module 10 
 - The analyse dialog now pre-selects a plugin and an analysis-ready image, so Run is enabled when the form looks complete
 - Plots with no project (imported before a project was selected) stay visible under the project filter
 - Map Explorer wraps its layout in an error boundary, showing a recoverable message instead of a white screen
+- Cancelling an analysis can no longer affect other processes: stopping a run used a stale process id with a group-wide kill, which could terminate unrelated processes and log the user out. Cancellation is now bounded to the plugin's own process group and never reuses an id after a job ends
 
 ## [0.7.0-alpha] — 2026-10-29
 
