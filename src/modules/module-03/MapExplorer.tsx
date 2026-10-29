@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { Component, useState, useCallback, useEffect, type ReactNode } from "react";
 import type * as L from "leaflet";
 import Leaflet from "leaflet";
 
@@ -44,6 +44,47 @@ Leaflet.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   shadowUrl: markerShadow,
 });
+
+interface ExplorerBoundaryState {
+  error: Error | null;
+}
+
+/** Keeps a render failure inside the module instead of blanking the window. */
+class ExplorerErrorBoundary extends Component<{ children: ReactNode }, ExplorerBoundaryState> {
+  override state: ExplorerBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): ExplorerBoundaryState {
+    return { error };
+  }
+
+  override render() {
+    if (this.state.error) {
+      return (
+        <div
+          role="alert"
+          style={{
+            padding: 24,
+            margin: 24,
+            borderRadius: 14,
+            border: "1px solid var(--color-hairline-silver, #d6d6d6)",
+            background: "var(--color-gallery-white, #fff)",
+            color: "var(--color-ink, #1d1d1f)",
+            fontFamily: "var(--font-sf-pro-text, sans-serif)",
+          }}
+        >
+          <strong>Map Explorer hit an error</strong>
+          <p style={{ margin: "8px 0", fontSize: 13, color: "var(--color-slate, #707070)" }}>
+            {this.state.error.message}
+          </p>
+          <button type="button" onClick={() => this.setState({ error: null })}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export interface MapExplorerProps {
   /** Nama kelas CSS opsional untuk kontainer terluar */
@@ -241,41 +282,43 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
           </button>
         </div>
       )}
-      <MapExplorerLayout
-        className={className}
-        style={mergedStyle}
-        sidebar={
-          <MapLeftPanel
-            map={mapInstance}
-            markers={markers}
-            hiddenPhotoIds={hiddenPhotoIds}
-            onTogglePhotoHidden={handleTogglePhotoHidden}
-            onAnnotationsChange={handleAnnotationsChange}
-            onLayersChange={handleLayersChange}
-            isCollapsed={isSidebarCollapsed}
-            setIsCollapsed={setIsSidebarCollapsed}
-          />
-        }
-        thumbnail={
-          <MapTypeThumbnail
-            activeBasemap={activeBasemap}
-            onToggle={toggleBasemap}
-            isSidebarCollapsed={isSidebarCollapsed}
-          />
-        }
-        legend={<MapLegend layers={activeLayers} />}
-        map={
-          <MapCanvas
-            activeBasemap={activeBasemap}
-            layers={layers}
-            annotations={annotations}
-            markers={markers}
-            hiddenPhotoIds={hiddenPhotoIds}
-            onMapReady={setMapInstance}
-            onActiveLayersChange={setActiveLayers}
-          />
-        }
-      />
+      <ExplorerErrorBoundary>
+        <MapExplorerLayout
+          className={className}
+          style={mergedStyle}
+          sidebar={
+            <MapLeftPanel
+              map={mapInstance}
+              markers={markers}
+              hiddenPhotoIds={hiddenPhotoIds}
+              onTogglePhotoHidden={handleTogglePhotoHidden}
+              onAnnotationsChange={handleAnnotationsChange}
+              onLayersChange={handleLayersChange}
+              isCollapsed={isSidebarCollapsed}
+              setIsCollapsed={setIsSidebarCollapsed}
+            />
+          }
+          thumbnail={
+            <MapTypeThumbnail
+              activeBasemap={activeBasemap}
+              onToggle={toggleBasemap}
+              isSidebarCollapsed={isSidebarCollapsed}
+            />
+          }
+          legend={<MapLegend layers={activeLayers} />}
+          map={
+            <MapCanvas
+              activeBasemap={activeBasemap}
+              layers={layers}
+              annotations={annotations}
+              markers={markers}
+              hiddenPhotoIds={hiddenPhotoIds}
+              onMapReady={setMapInstance}
+              onActiveLayersChange={setActiveLayers}
+            />
+          }
+        />
+      </ExplorerErrorBoundary>
     </ImageSyncProvider>
   );
 };

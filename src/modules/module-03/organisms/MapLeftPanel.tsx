@@ -3,6 +3,7 @@ import { ImageGallerySidebar } from "./ImageGallerySidebar";
 import { LayerManager } from "./LayerManager";
 import { AoiToolbar } from "./AoiToolbar";
 import { SpResultListPanel } from "./SpResultListPanel";
+import { PlotAnalyticsPanel } from "../../module-09/PlotAnalyticsPanel";
 import { MapSearchBar } from "../molecules/MapSearchBar";
 import L from "leaflet";
 
@@ -116,6 +117,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
               { id: "layers", label: "Layers" },
               { id: "aoi", label: "AOI" },
               { id: "results", label: "Hasil Analisis" },
+              { id: "plots", label: "Plots" },
               { id: "gallery", label: "Gallery" },
             ].map((tab) => (
               <div
@@ -198,6 +200,17 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
             }}
           >
             <SpResultListPanel map={map} />
+          </div>
+          <div
+            className="no-scrollbar"
+            style={{
+              display: activeTab === "plots" ? "block" : "none",
+              height: "100%",
+              overflowY: "auto",
+              padding: "15px",
+            }}
+          >
+            <PlotAnalyticsPanel />
           </div>
           <div
             className="no-scrollbar"
