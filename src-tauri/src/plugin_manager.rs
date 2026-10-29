@@ -49,3 +49,4 @@ pub mod models;
 pub mod payload;
 pub mod registry;
 pub mod result_handler;
+pub mod result_store;

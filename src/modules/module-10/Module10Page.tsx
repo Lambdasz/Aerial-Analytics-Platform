@@ -28,6 +28,8 @@ import {
   getVegetationChange,
 } from "./module10Commands";
 
+import { TemporalComparePanel } from "./TemporalComparePanel";
+
 import "./Module10Page.css";
 
 /** Same key Module 1 uses, so the project picked there carries over. */
@@ -336,6 +338,10 @@ export function Module10Page() {
           />
         </div>
       </header>
+
+      {projectId !== "" && sessions.length > 0 && (
+        <TemporalComparePanel projectId={projectId} sessions={sessions} />
+      )}
 
       {pageError && (
         <Callout intent={Intent.DANGER} icon="error" title="Gagal memuat data Modul 1.4">

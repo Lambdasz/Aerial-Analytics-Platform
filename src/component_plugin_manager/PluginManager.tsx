@@ -296,6 +296,7 @@ export function PluginManager() {
     setExecPluginId(pendingPluginId);
     setExecTarget({
       imagePath: image.filePath,
+      imageId: image.id,
       mimeType,
       sessionId: image.sessionId,
     });
@@ -320,6 +321,9 @@ export function PluginManager() {
       const saved = await invoke<Array<{ layer_name: string }>>("publish_plugin_run", {
         result,
         layerName: `${pluginName} · ${new Date().toLocaleTimeString()}`,
+        imageId: execTarget?.imageId ?? null,
+        sessionId: execTarget?.sessionId ?? null,
+        pluginId: execPluginId,
       });
       const names = saved.map((layer) => layer.layer_name);
       setPublishNotice(
