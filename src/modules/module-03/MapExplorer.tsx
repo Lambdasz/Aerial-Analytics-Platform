@@ -85,6 +85,20 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
   const [resolutionWarning, setResolutionWarning] = useState<string | null>(null);
   // Session photo markers: one fetch, shared by map + gallery.
   const { markers } = useSessionImageMarkers();
+  // Per-photo visibility, toggled from the Layers panel.
+  const [hiddenPhotoIds, setHiddenPhotoIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  const handleTogglePhotoHidden = useCallback((imageId: string) => {
+    setHiddenPhotoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(imageId)) {
+        next.delete(imageId);
+      } else {
+        next.add(imageId);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const handleImageSaved = (e: Event) => {
@@ -234,6 +248,8 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
           <MapLeftPanel
             map={mapInstance}
             markers={markers}
+            hiddenPhotoIds={hiddenPhotoIds}
+            onTogglePhotoHidden={handleTogglePhotoHidden}
             onAnnotationsChange={handleAnnotationsChange}
             onLayersChange={handleLayersChange}
             isCollapsed={isSidebarCollapsed}
@@ -254,6 +270,7 @@ export const MapExplorer: React.FC<MapExplorerProps> = ({
             layers={layers}
             annotations={annotations}
             markers={markers}
+            hiddenPhotoIds={hiddenPhotoIds}
             onMapReady={setMapInstance}
             onActiveLayersChange={setActiveLayers}
           />

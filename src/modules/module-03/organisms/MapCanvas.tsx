@@ -23,6 +23,8 @@ export interface MapCanvasProps {
   annotations?: AnnotationFeature[];
   /** Marker foto drone dari sesi terbaru (session imagery) */
   markers?: ReadonlyArray<DroneImageMetadata>;
+  /** image_id yang disembunyikan per-foto dari panel Layers */
+  hiddenPhotoIds?: ReadonlySet<string>;
   /** Callback ref saat instance Leaflet map siap */
   onMapReady?: (map: L.Map | null) => void;
   /** Callback saat daftar layer hasil spasial diperbarui */
@@ -37,6 +39,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   layers = [],
   annotations = [],
   markers = [],
+  hiddenPhotoIds,
   onMapReady,
   onActiveLayersChange,
 }) => {
@@ -86,7 +89,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           FLIGHT PHOTOS (IMAGE OVERLAYS, ESTIMATED FOOTPRINTS)
           Replaces point markers: each frame drapes over the map.
           ========================= */}
-      <FlightPhotoLayer markers={markers} layers={layers} />
+      <FlightPhotoLayer markers={markers} layers={layers} hiddenPhotoIds={hiddenPhotoIds} />
 
       {/* =========================
           AUTO-CENTER (ONCE, TO SESSION IMAGERY)
