@@ -164,3 +164,50 @@ export function getSignificantChangeAreas(
     threshold,
   });
 }
+
+/** 10.3 cross-session comparison: baseline vs target session. */
+export interface SessionComparisonReport {
+  comparisonId: string;
+  before: ImageObservation;
+  after: ImageObservation;
+  intervalDays: number;
+  beforeCoverage: VegetationCoverage;
+  afterCoverage: VegetationCoverage;
+  change: VegetationCoverageChange;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+}
+
+/** One persisted comparison row (history / dashboard input). */
+export interface ComparisonRecord {
+  id: string;
+  projectId: string | null;
+  beforeSessionId: string;
+  afterSessionId: string;
+  beforeImageId: string;
+  afterImageId: string;
+  beforeDate: string;
+  afterDate: string;
+  intervalDays: number;
+  metric: string;
+  beforeValue: number;
+  afterValue: number;
+  delta: number;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  createdAt: string;
+}
+
+export function compareSessions(
+  beforeSessionId: string,
+  afterSessionId: string,
+): Promise<SessionComparisonReport> {
+  return invoke<SessionComparisonReport>("compare_sessions", {
+    beforeSessionId,
+    afterSessionId,
+  });
+}
+
+export function getChangeSummary(projectId: string): Promise<ComparisonRecord[]> {
+  return invoke<ComparisonRecord[]>("get_change_summary", { projectId });
+}
