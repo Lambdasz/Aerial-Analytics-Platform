@@ -164,3 +164,100 @@ export function getSignificantChangeAreas(
     threshold,
   });
 }
+
+/** 10.3 cross-session comparison: baseline vs target session. */
+export interface SessionComparisonReport {
+  comparisonId: string;
+  before: ImageObservation;
+  after: ImageObservation;
+  intervalDays: number;
+  beforeCoverage: VegetationCoverage;
+  afterCoverage: VegetationCoverage;
+  change: VegetationCoverageChange;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  beforeCoverageSource: string;
+  afterCoverageSource: string;
+  summary: {
+    landCoverChanges: string[];
+    treeCountChanges: string[];
+    vegetationChange: string | null;
+  };
+}
+
+/** One persisted comparison row (history / dashboard input). */
+export interface ComparisonRecord {
+  id: string;
+  projectId: string | null;
+  beforeSessionId: string;
+  afterSessionId: string;
+  beforeImageId: string;
+  afterImageId: string;
+  beforeDate: string;
+  afterDate: string;
+  intervalDays: number;
+  metric: string;
+  beforeValue: number;
+  afterValue: number;
+  delta: number;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  createdAt: string;
+}
+
+export function compareSessions(
+  beforeSessionId: string,
+  afterSessionId: string,
+): Promise<SessionComparisonReport> {
+  return invoke<SessionComparisonReport>("compare_sessions", {
+    beforeSessionId,
+    afterSessionId,
+  });
+}
+
+export function getChangeSummary(projectId: string): Promise<ComparisonRecord[]> {
+  return invoke<ComparisonRecord[]>("get_change_summary", { projectId });
+}
+
+export function exportComparisonJson(comparisonId: string): Promise<string> {
+  return invoke<string>("export_comparison_json", { comparisonId });
+}
+
+export interface ChangeFeature {
+  changeType: "gain" | "loss";
+  pixels: number;
+  areaM2: number;
+  bbox: [number, number, number, number];
+}
+
+export interface SpatialChangeReport {
+  beforeBounds: [number, number, number, number];
+  afterBounds: [number, number, number, number];
+  changeBounds: [number, number, number, number];
+  gridWidth: number;
+  gridHeight: number;
+  gainAreaM2: number;
+  lossAreaM2: number;
+  changedFractionPercent: number;
+  magnitude: number;
+  magnitudeLevel: "rendah" | "sedang" | "tinggi";
+  features: ChangeFeature[];
+  geojson: unknown;
+  layerId: string;
+  layerName: string;
+  beforeMaskSource: string;
+  afterMaskSource: string;
+}
+
+/** 10.7 spatial change regions between two sessions (publishes a map layer). */
+export function detectChangeAreas(
+  beforeSessionId: string,
+  afterSessionId: string,
+  minAreaM2 = 10,
+): Promise<SpatialChangeReport> {
+  return invoke<SpatialChangeReport>("detect_change_areas", {
+    beforeSessionId,
+    afterSessionId,
+    minAreaM2,
+  });
+}

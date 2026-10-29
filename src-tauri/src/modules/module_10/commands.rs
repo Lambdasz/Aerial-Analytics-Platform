@@ -28,13 +28,24 @@ use crate::AppState;
 
 use super::analysis::{
     calculate_change_magnitudes, calculate_tree_count_changes, calculate_vegetation_change,
-    detect_significant_change_areas, group_by_acquisition_date, identify_land_cover_changes,
-    latest_before_after, ChangeMagnitudeEntry, ImageObservation, LandCoverChange,
-    ObservationPeriod, SignificantChangeArea, TemporalChangeError, TreeCountChange,
-    VegetationCoverageChange, DEFAULT_SIGNIFICANCE_THRESHOLD,
+    classify_change_magnitude, compare_before_after, detect_significant_change_areas,
+    group_by_acquisition_date, identify_land_cover_changes, latest_before_after,
+    ChangeMagnitudeEntry, ImageObservation, LandCoverChange, ObservationPeriod,
+    SignificantChangeArea, TemporalChangeError, TreeCountChange, VegetationCoverageChange,
+    DEFAULT_SIGNIFICANCE_THRESHOLD,
+};
+use super::comparisons::{
+    get_comparison, insert_comparison, list_comparisons, magnitude_level_name, ComparisonRecord,
+    NewComparison,
 };
 use super::coverage::{coverage_from_image_path, CoverageError, VegetationCoverage};
 use super::observations::{observations_from_images, ObservationCollection, SkippedImage};
+use super::spatial_change::{
+    bounds_for_observation, build_report, mask_from_image, mask_from_png, SpatialChangeError,
+    SpatialChangeReport, VegetationMask,
+};
+use super::visualization::{describe_analytical_results, AnalysisSummary};
+use crate::plugin_manager::result_store;
 
 fn lock_err(e: impl std::fmt::Display) -> CommandError {
     SessionError::LockPoisoned(e.to_string()).into()
@@ -245,31 +256,454 @@ pub fn get_significant_change_areas(
     .map_err(CommandError::from)
 }
 
-/// Runs a comparison between two sessions' analysis results (vegetation
-/// coverage, land-cover, tree count) and produces a
-/// [`TemporalChangeResult`](super::functions::TemporalChangeResult)
-/// and change-area payload.
-///
-/// **Status**: `todo!()` stub — added so Module 10 has a minimal
-/// contract before the deadline, matching the Module 9 (`plot_api`) pattern.
-#[tauri::command]
-pub fn compare_sessions(
-    _baseline_session_id: String,
-    _target_session_id: String,
-) -> Result<super::functions::TemporalChangeResult, String> {
-    todo!("M10: run comparison between two sessions' analysis results")
+/// Result of comparing two sessions: the representative images, their measured
+/// vegetation coverage, and the stored comparison row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionComparison {
+    pub comparison_id: String,
+    pub before: ImageObservation,
+    pub after: ImageObservation,
+    pub interval_days: i64,
+    pub before_coverage: VegetationCoverage,
+    pub after_coverage: VegetationCoverage,
+    pub change: VegetationCoverageChange,
+    pub magnitude: f64,
+    /// `rendah` | `sedang` | `tinggi`.
+    pub magnitude_level: String,
+    /// `plugin:<id>` when a plugin result was used, `builtin:exg` otherwise.
+    pub before_coverage_source: String,
+    pub after_coverage_source: String,
+    /// 10.8 analytical summary lines for the panel.
+    pub summary: AnalysisSummary,
 }
 
-/// Returns the latest computed temporal summary for a project,
-/// for Module 11 (dashboard / reporting) to consume.
+/// Coverage and its source for one observation.
 ///
-/// **Status**: `todo!()` stub — added so Module 10 has a minimal
-/// contract before the deadline, matching the Module 9 (`plot_api`) pattern.
+/// Plugin results come first (`coverage_percentage` from Module 5,
+/// `vegetation_coverage_pct` from Module 6); the built-in ExG measurement is
+/// only a fallback so Module 10 never contradicts what the plugins reported.
+fn coverage_for(
+    state: &tauri::State<AppState>,
+    observation: &ImageObservation,
+) -> Result<(VegetationCoverage, String), CommandError> {
+    let stored = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        result_store::latest_metric(
+            &conn,
+            &observation.image_id.to_string(),
+            &["coverage_percentage", "vegetation_coverage_pct"],
+        )
+        .ok()
+        .flatten()
+    };
+    if let Some((percent, plugin_id)) = stored {
+        return Ok((
+            VegetationCoverage {
+                sampled_pixels: 0,
+                vegetation_pixels: 0,
+                coverage_percent: percent.clamp(0.0, 100.0),
+            },
+            format!("plugin:{plugin_id}"),
+        ));
+    }
+    let coverage =
+        coverage_from_image_path(Path::new(&observation.file_path)).map_err(|error| {
+            CommandError {
+                code: "VEGETATION_COVERAGE_ERROR".to_string(),
+                message: error.to_string(),
+            }
+        })?;
+    Ok((coverage, "builtin:exg".to_string()))
+}
+
+/// Vegetation mask and its source for one observation.
+///
+/// A vegetation mask published by Module 4/5 wins; otherwise the mask is
+/// measured from the stored image with the built-in ExG rule.
+fn mask_for(
+    state: &tauri::State<AppState>,
+    observation: &ImageObservation,
+    bounds: [f64; 4],
+) -> Result<(VegetationMask, String), CommandError> {
+    let artifact = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        result_store::latest_artifact(
+            &conn,
+            &observation.image_id.to_string(),
+            &["vegetation_mask", "mask_image"],
+            "image/",
+        )
+        .ok()
+        .flatten()
+    };
+    if let Some(path) = artifact {
+        if let Ok(mask) = mask_from_png(Path::new(&path), bounds) {
+            return Ok((mask, format!("plugin-mask:{path}")));
+        }
+    }
+    let mask = mask_from_image(Path::new(&observation.file_path), bounds).map_err(spatial_error)?;
+    Ok((mask, "builtin:exg".to_string()))
+}
+
+/// Runs a before/after comparison between two sessions (10.2 + 10.3).
+///
+/// Each session contributes its latest captured image. Coverage is measured on
+/// those pixels, the difference is classified, and the result is stored in
+/// `temporal_comparison` so the page and the dashboard can list it later.
+#[tauri::command]
+pub fn compare_sessions(
+    state: tauri::State<AppState>,
+    before_session_id: Uuid,
+    after_session_id: Uuid,
+) -> Result<SessionComparison, CommandError> {
+    let (project_id, before_images, after_images) = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        let before_session = flight_session::get_session(&conn, before_session_id)?;
+        let after_session = flight_session::get_session(&conn, after_session_id)?;
+        let before_images = flight_session::get_images_by_session(&conn, before_session_id)?;
+        let after_images = flight_session::get_images_by_session(&conn, after_session_id)?;
+        // Sessions from different projects cannot be meaningfully compared.
+        if before_session.project_id != after_session.project_id {
+            return Err(CommandError {
+                code: "TEMPORAL_SESSION_MISMATCH".to_string(),
+                message: "both sessions must belong to the same project".to_string(),
+            });
+        }
+        (
+            before_session.project_id.to_string(),
+            before_images,
+            after_images,
+        )
+    };
+
+    let latest_observation = |images: &[Image]| -> Result<ImageObservation, CommandError> {
+        observations_from_images(images)
+            .observations
+            .into_iter()
+            .max_by(|left, right| left.captured_at.cmp(&right.captured_at))
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "a session has no image with a capture date".to_string(),
+            })
+    };
+
+    let before = latest_observation(&before_images)?;
+    let after = latest_observation(&after_images)?;
+    let comparison = compare_before_after(before, after).map_err(CommandError::from)?;
+
+    let (before_coverage, before_coverage_source) = coverage_for(&state, &comparison.before)?;
+    let (after_coverage, after_coverage_source) = coverage_for(&state, &comparison.after)?;
+    let change = calculate_vegetation_change(
+        before_coverage.coverage_percent,
+        after_coverage.coverage_percent,
+    )
+    .map_err(CommandError::from)?;
+    let magnitude = change.change.abs();
+    let level = classify_change_magnitude(magnitude).map_err(CommandError::from)?;
+
+    let stored = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        insert_comparison(
+            &conn,
+            &NewComparison {
+                project_id: Some(project_id),
+                before_session_id: before_session_id.to_string(),
+                after_session_id: after_session_id.to_string(),
+                before_image_id: comparison.before.image_id.to_string(),
+                after_image_id: comparison.after.image_id.to_string(),
+                before_date: comparison.before.acquisition_date().to_string(),
+                after_date: comparison.after.acquisition_date().to_string(),
+                interval_days: comparison.interval_days,
+                metric: "vegetation_coverage_percent".to_string(),
+                before_value: change.before,
+                after_value: change.after,
+                delta: change.change,
+                magnitude,
+                magnitude_level: magnitude_level_name(level).to_string(),
+            },
+        )
+        .map_err(|error| CommandError {
+            code: "TEMPORAL_STORAGE_ERROR".to_string(),
+            message: error.to_string(),
+        })?
+    };
+
+    Ok(SessionComparison {
+        comparison_id: stored.id,
+        before: comparison.before,
+        after: comparison.after,
+        interval_days: comparison.interval_days,
+        before_coverage,
+        after_coverage,
+        change,
+        magnitude,
+        magnitude_level: magnitude_level_name(level).to_string(),
+        before_coverage_source,
+        after_coverage_source,
+        summary: describe_analytical_results(&[], &[], Some(change)),
+    })
+}
+
+/// Writes one stored comparison to `map_storage/exports/` as JSON (10.8 export).
+///
+/// Returns the written path so the page can tell the user where the file is.
+#[tauri::command]
+pub fn export_comparison_json(
+    state: tauri::State<AppState>,
+    comparison_id: String,
+) -> Result<String, CommandError> {
+    let record = {
+        let conn = state.db.lock().map_err(lock_err)?;
+        get_comparison(&conn, &comparison_id)
+            .map_err(|error| CommandError {
+                code: "TEMPORAL_STORAGE_ERROR".to_string(),
+                message: error.to_string(),
+            })?
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_COMPARISON_NOT_FOUND".to_string(),
+                message: format!("comparison '{comparison_id}' not found"),
+            })?
+    };
+
+    let change = VegetationCoverageChange {
+        before: record.before_value,
+        after: record.after_value,
+        change: record.delta,
+    };
+    let summary = describe_analytical_results(&[], &[], Some(change));
+    let payload = serde_json::json!({
+        "comparison_id": record.id,
+        "metric": record.metric,
+        "project_id": record.project_id,
+        "before_session_id": record.before_session_id,
+        "after_session_id": record.after_session_id,
+        "before_image_id": record.before_image_id,
+        "after_image_id": record.after_image_id,
+        "before_date": record.before_date,
+        "after_date": record.after_date,
+        "interval_days": record.interval_days,
+        "before": record.before_value,
+        "after": record.after_value,
+        "delta": record.delta,
+        "magnitude": record.magnitude,
+        "magnitude_level": record.magnitude_level,
+        "created_at": record.created_at,
+        "summary": summary,
+        "contract": change.to_contract_json(),
+    });
+
+    let exports = crate::modules::module_03::state::get_global_state()
+        .storage_dir
+        .join("exports");
+    std::fs::create_dir_all(&exports).map_err(|error| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("cannot create '{}': {error}", exports.display()),
+    })?;
+    let path = exports.join(format!("temporal_comparison_{}.json", record.id));
+    let text = serde_json::to_string_pretty(&payload).map_err(|error| CommandError {
+        code: "SERIALIZATION_ERROR".to_string(),
+        message: error.to_string(),
+    })?;
+    std::fs::write(&path, text).map_err(|error| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("cannot write '{}': {error}", path.display()),
+    })?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Latest stored comparisons for a project, newest first (dashboard input).
 #[tauri::command]
 pub fn get_change_summary(
-    _project_id: String,
-) -> Result<super::functions::TemporalChangeResult, String> {
-    todo!("M10: return latest temporal summary for a project")
+    state: tauri::State<AppState>,
+    project_id: Uuid,
+) -> Result<Vec<ComparisonRecord>, CommandError> {
+    let conn = state.db.lock().map_err(lock_err)?;
+    list_comparisons(&conn, Some(&project_id.to_string()), 50).map_err(|error| CommandError {
+        code: "TEMPORAL_STORAGE_ERROR".to_string(),
+        message: error.to_string(),
+    })
+}
+
+/// Spatial change detection (10.7) between two sessions (10.2 before/after).
+///
+/// Both session images need GPS, altitude and pixel dimensions. Vegetation
+/// masks are compared over the shared footprint; changed regions above
+/// `min_area_m2` (default 10 m²) are published as a Map Explorer layer.
+#[tauri::command]
+pub fn detect_change_areas(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    before_session_id: Uuid,
+    after_session_id: Uuid,
+    min_area_m2: Option<f64>,
+) -> Result<SpatialChangeReport, CommandError> {
+    use crate::modules::module_03::sp_result::types::{
+        FieldDef, LayerDisplayMode, LayerPayload, SpatialGeometry, SpatialProperties, SpatialResult,
+    };
+    use crate::modules::module_03::state::get_global_state;
+    use tauri::Emitter;
+
+    crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
+
+    let latest_image = |session_id: Uuid| -> Result<Image, CommandError> {
+        let conn = state.db.lock().map_err(lock_err)?;
+        let images = flight_session::get_images_by_session(&conn, session_id)?;
+        observations_from_images(&images)
+            .observations
+            .into_iter()
+            .max_by(|left, right| left.captured_at.cmp(&right.captured_at))
+            .map(|observation| (observation.image_id, observation.captured_at))
+            .and_then(|(image_id, _)| images.into_iter().find(|image| image.id == image_id))
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "a session has no image with a capture date".to_string(),
+            })
+    };
+
+    let observations_for = |image: &Image| -> Result<ImageObservation, CommandError> {
+        observations_from_images(std::slice::from_ref(image))
+            .observations
+            .into_iter()
+            .next()
+            .ok_or_else(|| CommandError {
+                code: "TEMPORAL_NO_DATED_IMAGES".to_string(),
+                message: "image has no capture date".to_string(),
+            })
+    };
+
+    let before_image = latest_image(before_session_id)?;
+    let after_image = latest_image(after_session_id)?;
+    let before = observations_for(&before_image)?;
+    let after = observations_for(&after_image)?;
+    let comparison = compare_before_after(before, after).map_err(CommandError::from)?;
+
+    let bounds_of = |observation: &ImageObservation| -> Result<[f64; 4], CommandError> {
+        bounds_for_observation(observation).ok_or_else(|| CommandError {
+            code: "TEMPORAL_MISSING_GEOREFERENCE".to_string(),
+            message: format!(
+                "'{}' needs GPS, altitude and pixel size for spatial change detection",
+                observation.file_path
+            ),
+        })
+    };
+    let before_bounds = bounds_of(&comparison.before)?;
+    let after_bounds = bounds_of(&comparison.after)?;
+
+    let (before_mask, before_mask_source) = mask_for(&state, &comparison.before, before_bounds)?;
+    let (after_mask, after_mask_source) = mask_for(&state, &comparison.after, after_bounds)?;
+
+    // Provisional report to get the changed fraction, then classify it.
+    let provisional = build_report(
+        &before_mask,
+        &after_mask,
+        min_area_m2.unwrap_or(10.0),
+        "rendah".to_string(),
+        String::new(),
+        String::new(),
+    )
+    .map_err(spatial_error)?;
+    let level = classify_change_magnitude(provisional.changed_fraction_percent)
+        .map_err(CommandError::from)?;
+
+    let short = |id: Uuid| id.to_string().replace('-', "")[..8].to_string();
+    let layer_id = format!(
+        "temporal_{}_{}",
+        short(before_session_id),
+        short(after_session_id)
+    );
+    let layer_name = format!(
+        "Perubahan {} → {}",
+        comparison.before.acquisition_date(),
+        comparison.after.acquisition_date()
+    );
+    let mut report = build_report(
+        &before_mask,
+        &after_mask,
+        min_area_m2.unwrap_or(10.0),
+        magnitude_level_name(level).to_string(),
+        layer_id.clone(),
+        layer_name.clone(),
+    )
+    .map_err(spatial_error)?;
+    report.before_mask_source = before_mask_source;
+    report.after_mask_source = after_mask_source;
+
+    // Publish the polygons so Module 3 can show them.
+    let features: Vec<SpatialResult> = report
+        .features
+        .iter()
+        .map(|feature| {
+            let [min_lon, min_lat, max_lon, max_lat] = feature.bbox;
+            let mut properties = serde_json::Map::new();
+            properties.insert("change_type".into(), serde_json::json!(feature.change_type));
+            properties.insert("area_m2".into(), serde_json::json!(feature.area_m2.round()));
+            properties.insert("pixels".into(), serde_json::json!(feature.pixels));
+            SpatialResult {
+                source: layer_id.clone(),
+                geometry: SpatialGeometry::Polygon {
+                    coordinates: vec![vec![
+                        vec![min_lon, min_lat],
+                        vec![max_lon, min_lat],
+                        vec![max_lon, max_lat],
+                        vec![min_lon, max_lat],
+                        vec![min_lon, min_lat],
+                    ]],
+                },
+                properties: SpatialProperties::Generic(properties),
+                image_url: None,
+                edited_fields: None,
+                extra: serde_json::Map::new(),
+            }
+        })
+        .collect();
+
+    if !features.is_empty() {
+        let fields = vec![
+            FieldDef {
+                key: "change_type".into(),
+                label: "Change".into(),
+                unit: None,
+                visible: true,
+                custom: false,
+                kind: Some("text".into()),
+            },
+            FieldDef {
+                key: "area_m2".into(),
+                label: "Area".into(),
+                unit: Some("m²".into()),
+                visible: true,
+                custom: false,
+                kind: Some("number".into()),
+            },
+        ];
+        let payload = LayerPayload {
+            layer_id: layer_id.clone(),
+            layer_name,
+            display_preference: LayerDisplayMode::Polygon {
+                color: "#b42318".to_string(),
+                opacity: 0.45,
+                image_url: None,
+                fields: Some(fields),
+            },
+            spatial_results: features,
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            concurrency_token: None,
+            extra: serde_json::Map::new(),
+        };
+        if let Ok(saved) = get_global_state().save_spatial_result(payload) {
+            let _ = app.emit("spatial_result:saved", &saved);
+        }
+    }
+
+    Ok(report)
+}
+
+fn spatial_error(error: SpatialChangeError) -> CommandError {
+    CommandError {
+        code: "TEMPORAL_SPATIAL_ERROR".to_string(),
+        message: error.to_string(),
+    }
 }
 
 #[cfg(test)]
