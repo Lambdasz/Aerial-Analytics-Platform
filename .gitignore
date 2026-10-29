@@ -67,3 +67,6 @@ map_storage_backup/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Python virtualenvs (plugin runtimes)
+**/.venv/
