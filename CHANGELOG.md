@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0-alpha] — 2026-10-29
+
+Fourth functional milestone. Adds vegetation analysis Modules 4–6 as plugins, lets plugins be run and displayed straight from the app, and puts session imagery on the map.
+
+### Added
+
+**Vegetation plugins (Module 2 contract, Rust binaries)**
+
+- Module 4 — RGB Vegetation Detection: vegetation masks from ExG/ExR/VARI with configurable thresholds, plus a tinted detection overlay and coverage/colour statistics
+- Module 5 — Vegetation Coverage Analytics: coverage percentage and vegetated area from a canopy mask, low/medium/high classification, N×N zonation layer, and per-plot coverage with an average/highest/lowest comparison
+- Module 6 — RGB Vegetation Condition Analysis: VARI green intensity, canopy RGB/HSL colour statistics, vigorous/moderate/severe condition classes, chlorosis (yellowing) and necrosis (browning) shares, condition zonation and per-plot comparison
+- Plugins accept an optional explicit image extent so results can be placed on a known tile, and fall back to GPS plus altitude when an image carries no focal length
+
+**Plugin execution from the app**
+
+- Module 2 gains a Run Plugin action that picks project → session → image from the app database and launches the run with the plugin's parameter form
+- Finished runs are published to Map Explorer automatically: GeoJSON artifacts become vector layers, georeferenced rasters become image overlays, and an open map updates without reloading
+- Payload metadata (resolution, GPS, altitude, timestamp) is filled from the imported image when the caller does not supply it
+
+**Map Explorer and Module 1**
+
+- Session flight photos appear on the map as image overlays with popups and gallery cards, throttled thumbnail loading, and a per-photo visibility list under the Flight Photos layer entry
+- The map centres on the newest session's imagery when it opens
+- Imported images now store the camera heading from EXIF `GPSImgDirection`
+
+**Tooling**
+
+- `tools/connector`: read-only CLI over the app database (`projects`, `sessions`, `session`), a plugin runner with payload generation, timeout and result validation, and a publisher that writes run results into Map Explorer storage
+
+### Changed
+
+- Flight photo overlays keep their true estimated footprint instead of being shrunk to non-overlapping tiles; survey overlap is expected, and the outlines stay true to the camera coverage
+- Flight photos render above the orthomosaic but below AOI, analysis results and annotations, so analysis layers stay clickable
+- Plugin healthchecks re-run whenever the Plugin Manager opens, replacing stale statuses from earlier sessions
+
+### Removed
+
+- The demo mock plugin (`rgb-vegetation-exg`). It emitted a fixed Balikpapan polygon and was named identically to the real Module 4 plugin, so its results were mistaken for real analysis
+
+### Fixed
+
+- Plugin healthchecks and runs failed with `ENOENT` on every platform: a relative entrypoint was spawned with a relative working directory, so the program was resolved against the wrong folder. Plugin directories are now absolute at discovery and at both spawn sites
+- Flight photo layers no longer disappear from the Layers panel when application state survives a hot reload
+- Connector run outputs are ignored by git; the previous pattern was root-anchored and never matched `tools/connector/runs`
+
 ## [0.6.0-alpha] — 2026-10-29
 
 Tooling milestone. Adds a containerized dev/CI toolchain; no application-code changes.
@@ -98,6 +143,7 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[0.7.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.6.0-alpha...v0.7.0-alpha
 [0.6.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.3.0-alpha...v0.4.0-alpha
