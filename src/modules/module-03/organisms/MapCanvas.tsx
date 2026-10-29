@@ -9,6 +9,7 @@ import { SavedAoiLayer } from "./SavedAoiLayer";
 import { SavedOrthoImageLayer } from "./SavedOrthoImageLayer";
 import { ManagedMapLayers } from "./ManagedMapLayers";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { AutoCenterOnImages } from "./AutoCenterOnImages";
 import type { LayerPayload } from "../types/map";
 import type { LayerState, AnnotationFeature } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
@@ -84,6 +85,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           IMAGE LOCATION MARKERS (MARKER PANE Z-INDEX 600)
           ========================= */}
       <ManagedMapLayers layers={layers} markers={EMPTY_MARKERS} />
+
+      {/* =========================
+          AUTO-CENTER (ONCE, TO SESSION IMAGERY)
+          ========================= */}
+      <AutoCenterOnImages />
 
       {/* =========================
           MAP CONTROLS
