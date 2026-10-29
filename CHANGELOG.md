@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0-alpha] — 2026-10-29
+
+Tooling milestone. Adds a containerized dev/CI toolchain; no application-code changes.
+
+### Added
+
+- `Dockerfile` for a headless dev/CI toolchain mirroring CI (Ubuntu 24.04, Node 24, Rust stable with clippy/rustfmt, Tauri Linux system deps), running as a non-root user with `HOST_UID`/`HOST_GID` overrides
+- `compose.yaml` binding the repo into the toolchain container, with named volumes persisting cargo registry/git/target, npm cache, and `node_modules`
+- `.dockerignore` to keep the image build context small
+
+### Fixed
+
+- `plugins/plugin_state.json` (app-generated runtime state) is now gitignored so it no longer breaks `npm run format:check` when present locally
+
 ## [0.5.0-alpha] — 2026-10-28
 
 Third functional milestone. Ships the Module 3 Aerial Image Map Explorer, previously a placeholder backed by dummy markers.
@@ -84,6 +98,7 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
+[0.6.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.5.0-alpha...v0.6.0-alpha
 [0.5.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.4.0-alpha...v0.5.0-alpha
 [0.4.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.3.0-alpha...v0.4.0-alpha
 [0.3.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/releases/tag/v0.3.0-alpha
