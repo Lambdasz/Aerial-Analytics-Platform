@@ -5,11 +5,15 @@
 
 mod db;
 mod models;
+mod payload;
+mod runner;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use serde_json::Value;
 
 use models::{ImageRow, ProjectRow, SessionRow};
 
@@ -46,6 +50,24 @@ enum Command {
         /// Emit JSON instead of a table.
         #[arg(long)]
         json: bool,
+    },
+    /// Run a plugin on one session image (payload + subprocess + result check).
+    Run {
+        /// Session id, or unique session name.
+        #[arg(long)]
+        session: String,
+        /// Image file name (e.g. 01_0001.JPG) or image id.
+        #[arg(long)]
+        image: String,
+        /// Plugin directory (contains main.py + manifest.json).
+        #[arg(long)]
+        plugin: PathBuf,
+        /// JSON object overriding plugin parameter defaults.
+        #[arg(long)]
+        params_file: Option<PathBuf>,
+        /// Override the manifest timeout (seconds).
+        #[arg(long)]
+        timeout: Option<u64>,
     },
 }
 
@@ -90,8 +112,154 @@ fn main() -> Result<()> {
                 print_images(&images, paths);
             }
         }
+        Command::Run {
+            session,
+            image,
+            plugin,
+            params_file,
+            timeout,
+        } => {
+            run(
+                &conn,
+                &session,
+                &image,
+                &plugin,
+                params_file.as_deref(),
+                timeout,
+            )?;
+        }
     }
     Ok(())
+}
+
+fn run(
+    conn: &rusqlite::Connection,
+    session: &str,
+    image_ref: &str,
+    plugin_dir: &Path,
+    params_file: Option<&Path>,
+    timeout_secs: Option<u64>,
+) -> Result<()> {
+    if !plugin_dir.join("main.py").exists() {
+        bail!("no main.py in {}", plugin_dir.display());
+    }
+    let session_id = resolve_session(conn, session)?;
+    let images = db::list_images(conn, &session_id)?;
+    if images.is_empty() {
+        bail!("no images in session {session_id}");
+    }
+    let image = resolve_image(&images, image_ref)?;
+    if image.analysis_ready == Some(false) {
+        bail!(
+            "image {} is not analysis-ready (analysis_ready=false)",
+            image.file_name()
+        );
+    }
+
+    let defaults = payload::default_parameters(plugin_dir)?;
+    let overrides = match params_file {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("read {}", path.display()))?;
+            serde_json::from_str::<serde_json::Map<String, Value>>(&raw)
+                .with_context(|| format!("{} must be a JSON object", path.display()))?
+        }
+        None => serde_json::Map::new(),
+    };
+    let parameters = payload::merge_parameters(defaults, overrides);
+
+    let execution_id = format!("conn_{}", uuid::Uuid::new_v4());
+    // Repo-root relative: `runs/` is gitignored; absolute would hide the
+    // results from the project tree.
+    let runs_root = std::env::var("AAP_RUNS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("runs"));
+    let output_dir = runs_root.join(&execution_id);
+    std::fs::create_dir_all(&output_dir)
+        .with_context(|| format!("create {}", output_dir.display()))?;
+    // Plugin cwd is the plugin dir; payload fields must be absolute.
+    let output_dir = output_dir
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", output_dir.display()))?;
+
+    let payload = payload::build(&execution_id, &output_dir, &session_id, image, parameters)?;
+    let payload_path = output_dir.join("payload.json");
+    let result_path = output_dir.join("result.json");
+    std::fs::write(&payload_path, serde_json::to_string_pretty(&payload)?)
+        .with_context(|| format!("write {}", payload_path.display()))?;
+
+    println!(
+        "running {} on {} (session {session})",
+        plugin_dir.display(),
+        image.file_name()
+    );
+    println!("output: {}", output_dir.display());
+
+    let timeout =
+        Duration::from_secs(timeout_secs.unwrap_or_else(|| runner::manifest_timeout(plugin_dir)));
+    let outcome = runner::run_plugin(plugin_dir, &payload_path, &result_path, timeout)
+        .with_context(|| {
+            format!(
+                "plugin run failed; artifacts left in {}",
+                output_dir.display()
+            )
+        })?;
+    runner::validate_result(&outcome.result, &execution_id, &output_dir)?;
+
+    print_run_report(&outcome.result, outcome.wall_time);
+    println!("result: {}", result_path.display());
+    Ok(())
+}
+
+/// Exact file name, exact image id, or unique file-name prefix — else error.
+fn resolve_image<'a>(images: &'a [ImageRow], image_ref: &str) -> Result<&'a ImageRow> {
+    if let Some(hit) = images.iter().find(|i| i.id == image_ref) {
+        return Ok(hit);
+    }
+    if let Some(hit) = images.iter().find(|i| i.file_name() == image_ref) {
+        return Ok(hit);
+    }
+    let matches: Vec<&ImageRow> = images
+        .iter()
+        .filter(|i| i.file_name().starts_with(image_ref))
+        .collect();
+    match matches.len() {
+        0 => bail!("no image matches {image_ref:?}"),
+        1 => Ok(matches.into_iter().next().expect("len checked")),
+        _ => bail!(
+            "ambiguous image {image_ref:?}: {}",
+            matches
+                .iter()
+                .take(5)
+                .map(|i| i.file_name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn print_run_report(result: &Value, wall_time: Duration) {
+    let status = result["status"].as_str().unwrap_or("?");
+    let ms = result["execution_time_ms"].as_i64().unwrap_or(-1);
+    println!(
+        "# status={status} plugin_time={ms}ms wall={:.1}s",
+        wall_time.as_secs_f64()
+    );
+    if let Some(err) = result.get("error").and_then(Value::as_str) {
+        println!("# error: {err}");
+    }
+    println!("{:<24}  METRIC", "KEY");
+    if let Some(metrics) = result["metrics"].as_object() {
+        for (k, v) in metrics {
+            println!("{k:<24} {v:>10}");
+        }
+    }
+    println!("{:<24} ARTIFACT", "KEY");
+    if let Some(artifacts) = result["artifacts"].as_object() {
+        for (k, a) in artifacts {
+            println!("{k:<24} {}", a["file_path"].as_str().unwrap_or("?"));
+        }
+    }
 }
 
 fn resolve_project(conn: &rusqlite::Connection, project: &str) -> Result<String> {
