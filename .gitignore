@@ -70,3 +70,4 @@ map_storage_backup/
 
 # Python virtualenvs (plugin runtimes)
 **/.venv/
+*.pt

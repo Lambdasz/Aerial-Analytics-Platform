@@ -1,0 +1,10 @@
+{
+  "family": "DeepLabV3+",
+  "supported_backbones": ["resnet101", "xception"],
+  "num_classes": 5,
+  "class_names": ["vegetation", "bare_soil", "water", "built_up", "other"],
+  "weights": {
+    "resnet101": "models/deeplabv3plus_resnet101.pt",
+    "xception": "models/deeplabv3plus_xception.pt"
+  }
+}
