@@ -204,6 +204,7 @@
 pub mod annotations;
 pub mod aoi;
 pub mod commands;
+pub mod dto;
 pub mod error;
 pub mod geometry;
 pub mod layer;
@@ -218,3 +219,5 @@ pub mod storage;
 pub mod storage_commands;
 pub mod storage_utils;
 pub mod types;
+
+pub use dto::*;
