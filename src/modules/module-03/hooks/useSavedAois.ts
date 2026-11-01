@@ -10,8 +10,13 @@ export function useSavedAois() {
     let cancelled = false;
 
     getSavedAois()
-      .then((list) => {
-        if (!cancelled) setSavedAois(list);
+      .then((data) => {
+        if (!cancelled) {
+          const list = Array.isArray(data)
+            ? data
+            : ((data as unknown as { aois?: AoiFeature[] })?.aois ?? []);
+          setSavedAois(list);
+        }
       })
       .catch((err) => {
         console.warn("Gagal memuat saved AOIs:", err);

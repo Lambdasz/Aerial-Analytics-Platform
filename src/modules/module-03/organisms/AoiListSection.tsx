@@ -26,6 +26,8 @@ export const AoiListSection: React.FC<AoiListSectionProps> = ({
   onEditAoi,
   onDeleteAoi,
 }) => {
+  const aoiList = Array.isArray(savedAois) ? savedAois : [];
+
   return (
     <div>
       <div
@@ -48,7 +50,7 @@ export const AoiListSection: React.FC<AoiListSectionProps> = ({
             fontWeight: 500,
           }}
         >
-          {savedAois.length} Area
+          {aoiList.length} Area
         </span>
       </div>
 
@@ -58,7 +60,7 @@ export const AoiListSection: React.FC<AoiListSectionProps> = ({
         </div>
       )}
 
-      {!isLoadingAois && savedAois.length === 0 && (
+      {!isLoadingAois && aoiList.length === 0 && (
         <div
           style={{
             textAlign: "center",
@@ -79,7 +81,7 @@ export const AoiListSection: React.FC<AoiListSectionProps> = ({
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-        {savedAois.map((item) => (
+        {aoiList.map((item) => (
           <AoiCardItem
             key={item.properties.aoi_id}
             item={item}
