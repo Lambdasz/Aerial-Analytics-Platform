@@ -1,53 +1,50 @@
 import React from "react";
 import { Dialog, Button, Spinner, Classes } from "@blueprintjs/core";
-import type { DeleteOrthoSummary, StoredImageMetadata } from "../types/storage";
+import type { DeleteSpatialResultSummary, SpatialResultSummary } from "../../types/spatialResult";
 
-export interface DeleteOrthoAlertProps {
+export interface DeleteSpResultAlertProps {
   isOpen: boolean;
+  item: SpatialResultSummary | null;
+  dependents: DeleteSpatialResultSummary | null;
+  isLoadingCount: boolean;
+  isDeleting: boolean;
   onClose: () => void;
-  image: StoredImageMetadata | null;
-  summary: DeleteOrthoSummary | null;
-  isLoadingSummary: boolean;
-  isProcessing: boolean;
   onConfirm: () => void;
 }
 
-export const DeleteOrthoAlert: React.FC<DeleteOrthoAlertProps> = ({
+export const DeleteSpResultAlert: React.FC<DeleteSpResultAlertProps> = ({
   isOpen,
+  item,
+  dependents,
+  isLoadingCount,
+  isDeleting,
   onClose,
-  image,
-  summary,
-  isLoadingSummary,
-  isProcessing,
   onConfirm,
 }) => {
-  if (!image) return null;
-
-  const isCorrupted = Boolean(image.is_corrupted);
-  const annoCount = summary ? summary.annotations_deleted_count : 0;
+  if (!item) return null;
 
   return (
     <Dialog
       isOpen={isOpen}
-      onClose={isProcessing ? undefined : onClose}
-      canEscapeKeyClose={!isProcessing}
-      canOutsideClickClose={!isProcessing}
+      onClose={isDeleting ? undefined : onClose}
+      canEscapeKeyClose={!isDeleting}
+      canOutsideClickClose={!isDeleting}
       style={{ width: "460px", maxWidth: "92vw", borderRadius: "16px", overflow: "hidden" }}
     >
       <div className={Classes.DIALOG_BODY} style={{ padding: "24px 24px 16px 24px" }}>
         {/* Judul Dialog */}
         <div style={{ marginBottom: "12px" }}>
           <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
-            Hapus Citra Ortofoto?
+            Hapus Layer Analisis?
           </div>
         </div>
 
         <p style={{ fontSize: "13px", color: "#334155", lineHeight: "1.5", margin: "0 0 14px 0" }}>
-          Apakah Anda yakin ingin menghapus citra <strong>"{image.filename}"</strong>? Tindakan ini
-          bersifat permanen dan tidak dapat dibatalkan.
+          Apakah Anda yakin ingin menghapus layer <strong>"{item.layer_name || item.id}"</strong>?
+          Tindakan ini bersifat permanen dan tidak dapat dibatalkan.
         </p>
 
-        {isLoadingSummary ? (
+        {isLoadingCount ? (
           <div
             style={{
               display: "flex",
@@ -61,9 +58,21 @@ export const DeleteOrthoAlert: React.FC<DeleteOrthoAlertProps> = ({
             }}
           >
             <Spinner size={16} />
-            <span style={{ fontSize: "12px", color: "#64748b" }}>
-              Menghitung data turunan yang terikat...
-            </span>
+            <span style={{ fontSize: "12px", color: "#64748b" }}>Memeriksa dependensi...</span>
+          </div>
+        ) : item.is_corrupted ? (
+          <div
+            style={{
+              background: "#f8fafc",
+              border: "1px solid #f1f5f9",
+              borderRadius: "12px",
+              padding: "12px 16px",
+              fontSize: "12px",
+              color: "#dc2626",
+              marginBottom: "14px",
+            }}
+          >
+            Menghapus berkas dan folder hasil analisis yang rusak secara tuntas dari penyimpanan.
           </div>
         ) : (
           <div
@@ -77,18 +86,35 @@ export const DeleteOrthoAlert: React.FC<DeleteOrthoAlertProps> = ({
             }}
           >
             <div style={{ fontWeight: 600, color: "#0f172a", marginBottom: "6px" }}>
-              Rincian data yang akan dibersihkan:
+              Data yang akan dibersihkan:
             </div>
             <ul style={{ margin: 0, paddingLeft: "18px", color: "#475569", lineHeight: "1.6" }}>
-              {isCorrupted ? (
-                <li>Menghapus folder berkas citra yang metadata-nya rusak secara tuntas.</li>
-              ) : (
-                <li>Menghapus folder citra asli dan pratinjau display.</li>
-              )}
-              <li>Menghapus 1 entitas layer di panel layer.</li>
-              <li>Menghapus {annoCount} anotasi yang terikat pada citra ini.</li>
+              <li>
+                Berkas spasial dan fitur ({dependents?.feature_count ?? item.feature_count} fitur)
+              </li>
+              <li>Registrasi layer tampilan pada peta ({dependents?.layers_removed ?? 1} layer)</li>
             </ul>
           </div>
+        )}
+
+        {/* Penegasan foto yang dirujuk */}
+        {item.thumbnail_url && !item.is_corrupted && (
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#64748b",
+              margin: 0,
+              lineHeight: "1.4",
+              wordBreak: "break-all",
+              overflowWrap: "anywhere",
+            }}
+          >
+            Catatan: Berkas citra/foto bersama yang dirujuk (
+            <code style={{ wordBreak: "break-all", overflowWrap: "anywhere" }}>
+              {item.thumbnail_url}
+            </code>
+            ) tidak akan dihapus dari penyimpanan.
+          </p>
         )}
       </div>
 
@@ -97,7 +123,7 @@ export const DeleteOrthoAlert: React.FC<DeleteOrthoAlertProps> = ({
           <Button
             minimal
             text="Batal"
-            disabled={isProcessing}
+            disabled={isDeleting}
             onClick={onClose}
             style={{
               background: "#f1f5f9",
@@ -110,8 +136,8 @@ export const DeleteOrthoAlert: React.FC<DeleteOrthoAlertProps> = ({
           />
           <Button
             minimal
-            text={isProcessing ? "Menghapus..." : "Hapus Permanen"}
-            loading={isProcessing}
+            text={isDeleting ? "Menghapus..." : "Hapus Permanen"}
+            loading={isDeleting}
             onClick={onConfirm}
             style={{
               background: "#ef4444",

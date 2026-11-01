@@ -8,8 +8,8 @@ import {
   Intent,
   Callout,
 } from "@blueprintjs/core";
-import { cancelImportJob, getImportJobStatus } from "../services/api";
-import type { JobRecord } from "../types/storage";
+import { cancelImportJob, getImportJobStatus } from "../../services/api";
+import type { JobRecord } from "../../types/storage";
 
 export interface ImportProgressModalProps {
   isOpen: boolean;
@@ -61,12 +61,10 @@ export const ImportProgressModal: React.FC<ImportProgressModalProps> = ({
       return;
     }
 
-    // Ambil status di turn asynchronous berikutnya agar tidak cascading render
     const initialTimer = window.setTimeout(() => {
       void fetchStatus();
     }, 10);
 
-    // Polling periodik (setiap 600ms) untuk sinkronisasi progres
     pollTimerRef.current = window.setInterval(() => {
       void fetchStatus();
     }, 600);
@@ -148,32 +146,35 @@ export const ImportProgressModal: React.FC<ImportProgressModalProps> = ({
                     ? Intent.SUCCESS
                     : Intent.PRIMARY
               }
-              stripes={jobRecord?.status === "running"}
-              animate={jobRecord?.status === "running"}
+              stripes={!isFinished}
+              animate={!isFinished}
             />
           </div>
 
-          <div style={{ fontSize: "12px", color: "#5c7080" }}>
-            {jobRecord?.message || "Menghubungkan ke backend pengolah citra..."}
-          </div>
-
-          {isPointOfNoReturn && jobRecord?.status === "running" && (
-            <Callout intent={Intent.WARNING} icon="lock" title="Tahap Akhir Tidak Dapat Dibatalkan">
-              Proses telah memasuki tahap akhir (registrasi layer dan rename atomik). Pembatalan
-              tidak dapat dilakukan lagi untuk mencegah kerusakan integritas data.
-            </Callout>
+          {jobRecord?.message && (
+            <div
+              style={{
+                fontSize: "12px",
+                color: "#5c7080",
+                background: "#f5f8fa",
+                padding: "8px 12px",
+                borderRadius: "4px",
+                fontFamily: "monospace",
+              }}
+            >
+              {jobRecord.message}
+            </div>
           )}
 
           {errorMsg && (
-            <Callout intent={Intent.DANGER} icon="error" title="Impor Gagal">
+            <Callout intent={Intent.DANGER} icon="error" style={{ fontSize: "12px" }}>
               {errorMsg}
             </Callout>
           )}
 
-          {jobRecord?.status === "running" && (
+          {isPointOfNoReturn && !isFinished && (
             <div style={{ fontSize: "11px", color: "#8a9ba8", fontStyle: "italic" }}>
-              Tips: Anda dapat menutup panel ini. Pekerjaan akan terus berjalan di latar belakang
-              dan Anda dapat membukanya kembali sewaktu-waktu.
+              * Pekerjaan telah mencapai tahap pendaftaran akhir dan tidak dapat dibatalkan.
             </div>
           )}
         </div>
@@ -182,21 +183,23 @@ export const ImportProgressModal: React.FC<ImportProgressModalProps> = ({
       <DialogFooter
         actions={
           <div style={{ display: "flex", gap: "8px" }}>
-            {jobRecord?.status === "running" && (
+            {!isFinished && (
               <Button
                 intent={Intent.DANGER}
-                outlined
-                icon="cross"
-                text={isCancelling ? "Membatalkan..." : "Batalkan Impor"}
-                disabled={isCancelling || isPointOfNoReturn}
+                minimal
+                text="Batalkan Impor"
                 onClick={() => void handleCancel()}
+                loading={isCancelling}
+                disabled={isPointOfNoReturn || isCancelling}
               />
             )}
-            <Button
-              text={isFinished ? "Tutup" : "Lanjutkan di Latar Belakang"}
-              intent={isFinished ? Intent.PRIMARY : Intent.NONE}
-              onClick={onClose}
-            />
+            {isFinished && (
+              <Button
+                intent={jobRecord?.status === "completed" ? Intent.SUCCESS : Intent.NONE}
+                text="Tutup"
+                onClick={onClose}
+              />
+            )}
           </div>
         }
       />

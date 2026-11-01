@@ -14,8 +14,8 @@ import {
   updateSavedSpatialResult,
 } from "../services/api";
 import { SpResultCardItem } from "../molecules/SpResultCardItem";
-import { EditSpResultModal } from "../molecules/EditSpResultModal";
-import { DeleteSpResultAlert } from "../molecules/DeleteSpResultAlert";
+import { EditSpResultModal } from "./dialogs/EditSpResultModal";
+import { DeleteSpResultAlert } from "./dialogs/DeleteSpResultAlert";
 import { showToast } from "../lib/toaster";
 
 export interface SpResultListPanelProps {

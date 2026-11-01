@@ -25,43 +25,43 @@ Audit mendalam berbasis `/boost` telah memetakan seluruh perubahan yang terjadi 
 
 ## 2. Inventaris Lengkap Berkas yang Diubah
 
-| No  | Modul / Sub-Sistem              | Berkas Terkait                                                                                                                                                                           | Ins (+) | Del (-) | Inti Perubahan Teknis                                                                                                                                                         |
-| :-: | :------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----: | :-----: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-|  1  | **Global Shell & Z-Index**      | [`src/shell/style.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/shell/style.css#L245-L275)                                                                         |   +48   |   -0    | Portal Blueprint dipatok ke `z-index: 2500 !important`, suppress outline biru native browser, global range slider webkit/moz thumb styling.                                   |
-|  2  |                                 | [`src/modules/module-03/styles/MapCanvas.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapCanvas.css#L1-L26)                              |   +1    |   -1    | Duplikasi portal dibersihkan untuk menjaga `style.css` sebagai single source of truth.                                                                                        |
-|  3  |                                 | [`src/modules/module-03/MapExplorer.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/MapExplorer.tsx#L218-L250)                                     |   +2    |   -2    | Banner notifikasi diturunkan dari `zIndex: 3000` ke `2000`.                                                                                                                   |
-|  4  |                                 | [`src/modules/module-03/atoms/MapTypeThumbnail.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/atoms/MapTypeThumbnail.tsx#L36-L42)                 |   +2    |   -1    | Tombol basemap switcher diturunkan ke `zIndex: 500`, outline biru browser dihilangkan.                                                                                        |
-|  5  |                                 | [`src/modules/module-03/templates/MapExplorerLayout.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/templates/MapExplorerLayout.tsx#L45-L50)       |   +2    |   -2    | Container panel mengambang diturunkan dari `zIndex: 1000` ke `500`.                                                                                                           |
-|  6  |                                 | [`src/modules/module-03/styles/MapLegend.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapLegend.css#L1-L36)                              |   +20   |   -8    | Legenda peta dipindah ke `bottom: 24px; right: 76px` (celah 12px dari zoom), tombol dark slate `#0f172a`.                                                                     |
-|  7  |                                 | [`src/modules/module-03/molecules/MapLegend.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/MapLegend.tsx#L80-L99)                       |   +1    |   -0    | Tombol legenda peta dilengkapi `outline: "none"`.                                                                                                                             |
-|  8  |                                 | [`src/modules/module-03/styles/MapViewControlBar.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapViewControlBar.css#L1-L10)              |   +7    |   -1    | Kontrol navigasi/zoom diturunkan ke `z-index: 500`, focus ring tombol zoom dihilangkan.                                                                                       |
-|  9  | **Area of Interest (AOI)**      | [`src/modules/module-03/organisms/AoiToolbar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/AoiToolbar.tsx#L215-L275)                   |  +298   |  -141   | Header AOI, tombol + Buat Batas Area, dialog modal AoiModal, banner pemandu saat interaksi peta.                                                                              |
-| 10  |                                 | [`src/modules/module-03/molecules/AoiCreateForm.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AoiCreateForm.tsx#L75-L260)              |   +2    |  -308   | Migrasi form sidebar menjadi modal popup Dialog (AoiModal 480px), deteksi otomatis selesainya poligon.                                                                        |
-| 11  |                                 | [`src/modules/module-03/molecules/AoiCardItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AoiCardItem.tsx#L80-L340)                  |  +119   |  -206   | Kartu ringkas selalu, eliminasi total form ganda inline, ring indikator aktif, 3 tombol aksi (Fokus, Edit, Hapus).                                                            |
-| 12  | **Layer & Anotasi Spasial**     | [`src/modules/module-03/organisms/LayerManager.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/LayerManager.tsx#L680-L960)               |  +118   |   -47   | Unified Page Header, Full CRUD Anotasi via modal `AnnotationModal`, eliminasi form statis sidebar, tombol + Catat Anotasi Spasial, helper banner.                             |
-| 13  |                                 | [`src/modules/module-03/molecules/AnnotationForm.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AnnotationForm.tsx#L125-L260)           |  +185   |  -174   | Segmented pills bentuk anotasi & metode penentuan 100% Foto 2 (`gap: 3px, padding: 5px 4px`), eliminasi badge soft header.                                                    |
-| 14  |                                 | [`src/modules/module-03/molecules/AnnotationSidebarForm.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AnnotationSidebarForm.tsx#L1-L5) |   +3    |  -572   | Migrasi form sidebar menjadi modal popup `AnnotationModal` (480px), file ini re-export untuk backwards compatibility.                                                         |
-| 15  |                                 | [`src/modules/module-03/molecules/LayerItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/LayerItem.tsx#L24-L155)                      |   +78   |   -46   | Truncation ID hex, native range slider 4px bergradien dengan aksen #0f172a, badge persentase soft pill 6px, slider tetap tampil (opacity 0.55) saat OFF.                      |
-| 16  |                                 | [`src/modules/module-03/molecules/LayerCategoryFilter.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/LayerCategoryFilter.tsx#L1-L75)    |   +40   |   -43   | Segmented Control Pill Bar 100% selaras Anotasi/Galeri: 5 opsi membagi rata `flex: 1`, container `borderRadius: 8px, gap: 3px`, tombol `borderRadius: 6px, padding: 5px 4px`. |
-| 17  |                                 | [`src/modules/module-03/molecules/MapSearchBar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/MapSearchBar.tsx#L10-L28)                 |   +9    |   -6    | Pencarian peta berlatar frosted glass, tombol menu tanpa outline browser.                                                                                                     |
-| 18  | **Hasil Analisis Spasial**      | [`src/modules/module-03/organisms/SpResultListPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/SpResultListPanel.tsx#L335-L380)     |   +84   |   -43   | Search box mandiri, segmented filter geometri 100% Foto 2 (`gap: 3px, padding: 5px 4px, background: #f1f5f9`).                                                                |
-| 19  |                                 | [`src/modules/module-03/molecules/SpResultCardItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/SpResultCardItem.tsx#L55-L155)        |   +54   |   -39   | Metadata titik bersih (`Titik • 14 fitur • Diedit`), tombol aksi slate minimalis.                                                                                             |
-| 20  |                                 | [`src/modules/module-03/molecules/EditSpResultModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/EditSpResultModal.tsx#L350-L870)     |  +588   |  -303   | 4 tab mandiri (Umum, Skema, Nilai, Pratinjau), segmented pill tab 100% Foto 2 (`borderRadius: 8px/6px, gap: 3px`), Leaflet terpusat.                                          |
-| 21  |                                 | [`src/modules/module-03/molecules/FeatureValuesEditor.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/FeatureValuesEditor.tsx#L25-L280)  |  +120   |   -58   | Paginasi data besar (>50 fitur), input spesifik tipe (boolean/number/text), validasi border merah.                                                                            |
-| 22  |                                 | [`src/modules/module-03/molecules/FieldManagerTable.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/FieldManagerTable.tsx#L280-L680)     |  +278   |  -130   | Desain tabel modern, modal input penambahan field kustom tanpa FormGroup.                                                                                                     |
-| 23  |                                 | [`src/modules/module-03/molecules/PopupPreviewCard.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/PopupPreviewCard.tsx#L40-L75)         |   +24   |   -45   | Eliminasi total badge artifisial PRATINJAU POPUP PETA dan dot warna, tampilan otentik popup Leaflet.                                                                          |
-| 24  |                                 | [`src/modules/module-03/molecules/DeleteSpResultAlert.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/DeleteSpResultAlert.tsx#L30-L36)   |  +123   |   -52   | Eliminasi total badge AI-slop Tindakan Destruktif, styling word-break & overflow-wrap path panjang agar tidak kepotong.                                                       |
-| 25  | **Impor Orthomosaic & GeoTIFF** | [`src/modules/module-03/organisms/ImportImageModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImportImageModal.tsx#L40-L1520)       |  +900   |  -547   | Tab segmented Opsi A/B, proteksi disk default OFF, input koordinat berbasis string agar minus/desimal mulus.                                                                  |
-| 26  |                                 | [`src/modules/module-03/organisms/ImportProgressModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImportProgressModal.tsx#L125-L130) |   +1    |   -1    | Modal progres impor asinkron dengan radius 16px.                                                                                                                              |
-| 27  |                                 | [`src/modules/module-03/molecules/EditOrthoModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/EditOrthoModal.tsx#L60-L350)            |  +205   |   -71   | Input koordinat berbasis string & `inputMode="decimal"`, sanitasi aman minus/desimal, validasi WGS84.                                                                         |
-| 28  |                                 | [`src/modules/module-03/molecules/DeleteOrthoAlert.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/DeleteOrthoAlert.tsx#L38-L43)         |   +71   |   -25   | Eliminasi total badge AI-slop Tindakan Destruktif, dialog Modern Soft Card bersih dengan detail box #f8fafc.                                                                  |
-| 29  |                                 | [`src/modules/module-03/organisms/ImageGallerySidebar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImageGallerySidebar.tsx#L390-L435) |   +26   |   -45   | Unified Page Header "Project Gallery", counter citra, tombol Impor slate, eliminasi margin horizontal ganda.                                                                  |
-| 30  |                                 | [`src/modules/module-03/styles/ImageGallerySidebar.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/ImageGallerySidebar.css#L14-L85)         |   +63   |   -50   | Segmented pill bar Foto 2 (`gap: 3px, padding: 5px 4px, background: #f1f5f9`), sembunyikan scrollbar visual di .gallery-list.                                                 |
-| 31  | **Panel Kiri & Modul 09**       | [`src/modules/module-03/organisms/MapLeftPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/MapLeftPanel.tsx#L60-L155)                |   +22   |   -13   | Segmented pill tab switch (Layer / Galeri / Anotasi / Analisis / Plots), Z-Index 500 & 501, outline biru dihilangkan.                                                         |
-| 32  |                                 | [`src/modules/module-09/PlotAnalyticsPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-09/PlotAnalyticsPanel.tsx#L310-L525)                       |  +280   |  -117   | Unified Page Header, notifikasi kapsul mengambang (soft green tick-circle + auto-dismiss 4s, soft red error).                                                                 |
-| 33  |                                 | [`src/modules/module-09/AnalysePlotsDialog.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-09/AnalysePlotsDialog.tsx#L160-L460)                       |  +191   |   -62   | Native select minimalis untuk Project/Session/Image, tombol run kapsul hitam, dialog radius 16px.                                                                             |
-| 34  | **Mock Storage Data**           | [`map_storage/spatial_results/result_tree_001.json`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/map_storage/spatial_results/result_tree_001.json#L3)                      |   +2    |   -2    | Rename layer data contoh `(sawit rame)` $\rightarrow$ `(Sawit)` dan pembaharuan timestamp.                                                                                    |
-| 35  | **Popup Peta Leaflet**          | [`src/modules/module-03/lib/popupHtml.ts`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/lib/popupHtml.ts#L45-L580)                                    |   +85   |  -101   | Harmonisasi seluruh popup Leaflet (Orthomosaic, AOI, Anotasi, Spatial Result) ke Modern Soft Card tanpa border-left.                                                          |
+| No  | Modul / Sub-Sistem              | Berkas Terkait                                                                                                                                                                                 | Ins (+) | Del (-) | Inti Perubahan Teknis                                                                                                                                                                     |
+| :-: | :------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----: | :-----: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|  1  | **Global Shell & Z-Index**      | [`src/shell/style.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/shell/style.css#L245-L275)                                                                               |   +48   |   -0    | Portal Blueprint dipatok ke `z-index: 2500 !important`, suppress outline biru native browser, global range slider webkit/moz thumb styling.                                               |
+|  2  |                                 | [`src/modules/module-03/styles/MapCanvas.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapCanvas.css#L1-L26)                                    |   +1    |   -1    | Duplikasi portal dibersihkan untuk menjaga `style.css` sebagai single source of truth.                                                                                                    |
+|  3  |                                 | [`src/modules/module-03/MapExplorer.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/MapExplorer.tsx#L218-L250)                                           |   +2    |   -2    | Banner notifikasi diturunkan dari `zIndex: 3000` ke `2000`.                                                                                                                               |
+|  4  |                                 | [`src/modules/module-03/atoms/MapTypeThumbnail.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/atoms/MapTypeThumbnail.tsx#L36-L42)                       |   +2    |   -1    | Tombol basemap switcher diturunkan ke `zIndex: 500`, outline biru browser dihilangkan.                                                                                                    |
+|  5  |                                 | [`src/modules/module-03/templates/MapExplorerLayout.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/templates/MapExplorerLayout.tsx#L45-L50)             |   +2    |   -2    | Container panel mengambang diturunkan dari `zIndex: 1000` ke `500`.                                                                                                                       |
+|  6  |                                 | [`src/modules/module-03/styles/MapLegend.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapLegend.css#L1-L36)                                    |   +20   |   -8    | Legenda peta dipindah ke `bottom: 24px; right: 76px` (celah 12px dari zoom), tombol dark slate `#0f172a`.                                                                                 |
+|  7  |                                 | [`src/modules/module-03/molecules/MapLegend.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/MapLegend.tsx#L80-L99)                             |   +1    |   -0    | Tombol legenda peta dilengkapi `outline: "none"`.                                                                                                                                         |
+|  8  |                                 | [`src/modules/module-03/styles/MapViewControlBar.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/MapViewControlBar.css#L1-L10)                    |   +7    |   -1    | Kontrol navigasi/zoom diturunkan ke `z-index: 500`, focus ring tombol zoom dihilangkan.                                                                                                   |
+|  9  | **Area of Interest (AOI)**      | [`src/modules/module-03/organisms/AoiToolbar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/AoiToolbar.tsx#L215-L275)                         |  +298   |  -141   | Header AOI, tombol + Buat Batas Area, dialog modal AoiModal, banner pemandu saat interaksi peta.                                                                                          |
+| 10  |                                 | [`src/modules/module-03/organisms/dialogs/AoiModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/dialogs/AoiModal.tsx)                       |  +110   |  -199   | Rampingkan modal AOI (~150 baris) dengan ekstraksi `AoiTypeSelector` dan `AoiGeometryMetricsCard` (stub lama dihapus).                                                                    |
+| 11  |                                 | [`src/modules/module-03/molecules/AoiCardItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AoiCardItem.tsx#L80-L340)                        |  +119   |  -206   | Kartu ringkas selalu, eliminasi total form ganda inline, ring indikator aktif, 3 tombol aksi (Fokus, Edit, Hapus).                                                                        |
+| 12  | **Layer & Anotasi Spasial**     | [`src/modules/module-03/organisms/LayerManager.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/LayerManager.tsx#L680-L960)                     |  +118   |   -47   | Unified Page Header, Full CRUD Anotasi via modal `AnnotationModal`, eliminasi form statis sidebar, tombol + Catat Anotasi Spasial, helper banner.                                         |
+| 13  |                                 | [`src/modules/module-03/molecules/AnnotationForm.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/AnnotationForm.tsx)                           |  +120   |  -384   | Rampingkan menjadi orkestrator murni (~180 baris) mengintegrasikan `AnnotationShapeSelector`, `AnnotationCoordModeSelector`, `AnnotationManualCoordInputs`, & `AnnotationMapPickControl`. |
+| 14  |                                 | [`src/modules/module-03/hooks/useAnnotationMapPicker.ts`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/hooks/useAnnotationMapPicker.ts)                     |  +260   |   -0    | Custom Hook ekstraksi Leaflet/Geoman lifecycle (click, pm:create, cursor crosshair, preview layer sync, window events).                                                                   |
+| 15  |                                 | [`src/modules/module-03/molecules/LayerItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/LayerItem.tsx#L24-L155)                            |   +78   |   -46   | Truncation ID hex, native range slider 4px bergradien dengan aksen #0f172a, badge persentase soft pill 6px, slider tetap tampil (opacity 0.55) saat OFF.                                  |
+| 16  |                                 | [`src/modules/module-03/molecules/LayerCategoryFilter.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/LayerCategoryFilter.tsx#L1-L75)          |   +40   |   -43   | Segmented Control Pill Bar 100% selaras Anotasi/Galeri: 5 opsi membagi rata `flex: 1`, container `borderRadius: 8px, gap: 3px`, tombol `borderRadius: 6px, padding: 5px 4px`.             |
+| 17  |                                 | [`src/modules/module-03/molecules/MapSearchBar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/MapSearchBar.tsx#L10-L28)                       |   +9    |   -6    | Pencarian peta berlatar frosted glass, tombol menu tanpa outline browser.                                                                                                                 |
+| 18  | **Hasil Analisis Spasial**      | [`src/modules/module-03/organisms/SpResultListPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/SpResultListPanel.tsx#L335-L380)           |   +84   |   -43   | Search box mandiri, segmented filter geometri 100% Foto 2 (`gap: 3px, padding: 5px 4px, background: #f1f5f9`).                                                                            |
+| 19  |                                 | [`src/modules/module-03/molecules/SpResultCardItem.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/SpResultCardItem.tsx#L55-L155)              |   +54   |   -39   | Metadata titik bersih (`Titik • 14 fitur • Diedit`), tombol aksi slate minimalis.                                                                                                         |
+| 20  |                                 | [`src/modules/module-03/organisms/dialogs/EditSpResultModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/dialogs/EditSpResultModal.tsx)     |  +420   |  -627   | 4 tab mandiri (Umum, Skema, Nilai, Pratinjau) di `molecules/tabs/`, segmented pill tab 100% Foto 2, Leaflet terpusat (stub perantara dihapus).                                            |
+| 21  |                                 | [`src/modules/module-03/molecules/FeatureValuesEditor.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/FeatureValuesEditor.tsx#L25-L280)        |  +120   |   -58   | Paginasi data besar (>50 fitur), input spesifik tipe (boolean/number/text), validasi border merah.                                                                                        |
+| 22  |                                 | [`src/modules/module-03/molecules/FieldManagerTable.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/FieldManagerTable.tsx)                     |  +120   |  -494   | Rampingkan tabel manajemen skema (~190 baris) dengan ekstraksi `FieldSchemaRow` dan `AddCustomFieldDialog`.                                                                               |
+| 23  |                                 | [`src/modules/module-03/molecules/PopupPreviewCard.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/molecules/PopupPreviewCard.tsx#L40-L75)               |   +24   |   -45   | Eliminasi total badge artifisial PRATINJAU POPUP PETA dan dot warna, tampilan otentik popup Leaflet.                                                                                      |
+| 24  |                                 | [`src/modules/module-03/organisms/dialogs/DeleteSpResultAlert.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/dialogs/DeleteSpResultAlert.tsx) |  +123   |   -52   | Relokasi dialog ke `organisms/dialogs/`, eliminasi total badge AI-slop Tindakan Destruktif, styling word-break & overflow-wrap path (stub lama dihapus).                                  |
+| 25  | **Impor Orthomosaic & GeoTIFF** | [`src/modules/module-03/organisms/ImportImageModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImportImageModal.tsx#L40-L1520)             |  +900   |  -547   | Tab segmented Opsi A/B, proteksi disk default OFF, input koordinat berbasis string agar minus/desimal mulus.                                                                              |
+| 26  |                                 | [`src/modules/module-03/organisms/ImportProgressModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImportProgressModal.tsx#L125-L130)       |   +1    |   -1    | Modal progres impor asinkron dengan radius 16px.                                                                                                                                          |
+| 27  |                                 | [`src/modules/module-03/organisms/dialogs/EditOrthoModal.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/dialogs/EditOrthoModal.tsx)           |  +180   |  -207   | Rampingkan modal orthomosaic (~220 baris) dengan ekstraksi `OrthoBoundingBoxInputs` (stub lama dihapus).                                                                                  |
+| 28  |                                 | [`src/modules/module-03/organisms/dialogs/DeleteOrthoAlert.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/dialogs/DeleteOrthoAlert.tsx)       |   +71   |   -25   | Relokasi dialog ke `organisms/dialogs/`, eliminasi total badge AI-slop Tindakan Destruktif, Modern Soft Card bersih (stub lama dihapus).                                                  |
+| 29  |                                 | [`src/modules/module-03/organisms/ImageGallerySidebar.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/ImageGallerySidebar.tsx#L390-L435)       |   +26   |   -45   | Unified Page Header "Project Gallery", counter citra, tombol Impor slate, eliminasi margin horizontal ganda.                                                                              |
+| 30  |                                 | [`src/modules/module-03/styles/ImageGallerySidebar.css`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/styles/ImageGallerySidebar.css#L14-L85)               |   +63   |   -50   | Segmented pill bar Foto 2 (`gap: 3px, padding: 5px 4px, background: #f1f5f9`), sembunyikan scrollbar visual di .gallery-list.                                                             |
+| 31  | **Panel Kiri & Modul 09**       | [`src/modules/module-03/organisms/MapLeftPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/organisms/MapLeftPanel.tsx#L60-L155)                      |   +22   |   -13   | Segmented pill tab switch (Layer / Galeri / Anotasi / Analisis / Plots), Z-Index 500 & 501, outline biru dihilangkan.                                                                     |
+| 32  |                                 | [`src/modules/module-09/PlotAnalyticsPanel.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-09/PlotAnalyticsPanel.tsx#L310-L525)                             |  +280   |  -117   | Unified Page Header, notifikasi kapsul mengambang (soft green tick-circle + auto-dismiss 4s, soft red error).                                                                             |
+| 33  |                                 | [`src/modules/module-09/AnalysePlotsDialog.tsx`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-09/AnalysePlotsDialog.tsx#L160-L460)                             |  +191   |   -62   | Native select minimalis untuk Project/Session/Image, tombol run kapsul hitam, dialog radius 16px.                                                                                         |
+| 34  | **Mock Storage Data**           | [`map_storage/spatial_results/result_tree_001.json`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/map_storage/spatial_results/result_tree_001.json#L3)                            |   +2    |   -2    | Rename layer data contoh `(sawit rame)` $\rightarrow$ `(Sawit)` dan pembaharuan timestamp.                                                                                                |
+| 35  | **Popup Peta Leaflet**          | [`src/modules/module-03/lib/popupHtml.ts`](file:///Users/azrlb23/Documents/Aerial-Analytics-Platform/src/modules/module-03/lib/popupHtml.ts#L45-L580)                                          |   +85   |  -101   | Harmonisasi seluruh popup Leaflet (Orthomosaic, AOI, Anotasi, Spatial Result) ke Modern Soft Card tanpa border-left.                                                                      |
 
 ---
 
@@ -447,35 +447,53 @@ src/modules/module-03/
 │   ├── TactileToggle.tsx        # [NEW] Smooth toggle switch pill
 │   └── ZoomLevelBadge.tsx       # [NEW] Indikator angka zoom peta
 │
+├── hooks/                       # Custom hooks isolasi side-effects Leaflet/Geoman
+│   ├── useAnnotationMapPicker.ts # [NEW] Isolasi Leaflet click & Geoman pm:create picker
+│   ├── useAnnotations.ts        # [EXISTING] Hook manajemen CRUD anotasi
+│   ├── useAOI.ts                # [EXISTING] Hook lifecycle Geoman batas area (AOI)
+│   └── ...                      # Hook peta lainnya
+│
 ├── molecules/                   # Kombinasi 2+ atoms (form field, baris kartu, slider)
-│   ├── AnnotationCoordInputs.tsx       # [NEW] Input koordinat dengan validasi WGS84
-│   ├── AnnotationInteractiveBanner.tsx  # [NEW] Banner pemandu klik kanvas Leaflet
-│   ├── AoiBboxInputs.tsx               # [NEW] Input 4 batas bounding box AOI
+│   ├── annotation/              # [NEW] Dekomposisi granular form anotasi
+│   │   ├── AnnotationCoordModeSelector.tsx   # Pilihan Gambar di Peta vs Input Manual
+│   │   ├── AnnotationManualCoordInputs.tsx   # Input WGS84 numerik Titik / textarea Garis & Poligon
+│   │   ├── AnnotationMapPickControl.tsx      # Tombol trigger & status koordinat Leaflet
+│   │   └── AnnotationShapeSelector.tsx       # Segmented pill Titik/Garis/Poligon + GeomTypePill
+│   ├── aoi/                     # [NEW] Dekomposisi granular modal AOI
+│   │   ├── AoiGeometryMetricsCard.tsx        # Kartu metrik luas/keliling + trigger gambar ulang
+│   │   └── AoiTypeSelector.tsx               # Input nama dan kategori tipe area
+│   ├── ortho/                   # [NEW] Dekomposisi granular modal orthomosaic
+│   │   └── OrthoBoundingBoxInputs.tsx        # 4 koordinat WGS84 + Gunakan Area Peta Saat Ini
+│   ├── spatial/                 # [NEW] Dekomposisi granular tabel atribut spasial
+│   │   ├── AddCustomFieldDialog.tsx          # Dialog modal penambahan field custom baru
+│   │   ├── DeleteCustomFieldDialog.tsx       # Dialog konfirmasi hapus field custom
+│   │   └── FieldSchemaRow.tsx                # Baris tabel skema kolom atribut individual
+│   ├── tabs/                    # Sub-komponen tab modal hasil spasial
+│   │   ├── SpResultInfoTab.tsx         # Tab umum & visualisasi
+│   │   ├── SpResultFieldsTab.tsx       # Tab skema kolom
+│   │   ├── SpResultValuesTab.tsx       # Tab nilai atribut
+│   │   └── SpResultPopupPreviewTab.tsx # Tab pratinjau popup
+│   ├── AnnotationForm.tsx              # [REFACTORED] Orkestrator ramping form anotasi
+│   ├── AnnotationInteractiveBanner.tsx # [NEW] Banner pemandu klik kanvas Leaflet
 │   ├── FeatureValuesEditor.tsx         # [EXISTING] Editor nilai atribut berpaginasi
-│   ├── FieldManagerTable.tsx           # [EXISTING] Manajemen skema kolom atribut
-│   ├── GalleryPhotoCard.tsx            # [NEW] Kartu foto drone individual
+│   ├── FieldManagerTable.tsx           # [REFACTORED] Tabel manajemen skema ramping
 │   ├── LayerCategoryFilter.tsx         # [EXISTING] Segmented control filter kategori
 │   ├── LayerItem.tsx                   # [REFACTORED] Rakitan baris layer
 │   ├── LayerOpacitySlider.tsx          # [NEW] Slider gradient + badge persentase
 │   ├── MapSearchBar.tsx                # [EXISTING] Bilah pencarian peta
 │   ├── PopupPreviewCard.tsx            # [EXISTING] Kartu pratinjau popup Leaflet
-│   ├── SpResultCardItem.tsx            # [EXISTING] Kartu hasil analisis spasial
-│   └── tabs/                           # [NEW] Sub-komponen tab modal hasil spasial
-│       ├── SpResultInfoTab.tsx         # Tab umum & visualisasi
-│       ├── SpResultFieldsTab.tsx       # Tab skema kolom
-│       ├── SpResultValuesTab.tsx       # Tab nilai atribut
-│       └── SpResultPopupPreviewTab.tsx # Tab pratinjau popup
+│   └── SpResultCardItem.tsx            # [EXISTING] Kartu hasil analisis spasial
 │
 ├── organisms/                   # Panel kompleks & Modal dialog terpadu
-│   ├── dialogs/                 # [NEW] Pengelompokan seluruh modal dialog mandiri
-│   │   ├── AnnotationModal.tsx  # [MOVED & REFACTORED] Modal anotasi spasial
-│   │   ├── AoiModal.tsx         # [MOVED & REFACTORED] Modal pembuatan & edit AOI
-│   │   ├── DeleteOrthoAlert.tsx # [MOVED] Dialog konfirmasi hapus citra
-│   │   ├── DeleteSpResultAlert.tsx # [MOVED] Dialog konfirmasi hapus hasil spasial
-│   │   ├── EditOrthoModal.tsx   # [MOVED] Modal penyesuaian georeferensi citra
-│   │   ├── EditSpResultModal.tsx # [MOVED & REFACTORED] Modal edit hasil spasial
-│   │   ├── ImportImageModal.tsx # [MOVED & DECOMPOSED] Modal orkestrator impor
-│   │   └── ImportProgressModal.tsx # [MOVED] Modal progres impor asinkron
+│   ├── dialogs/                 # Pengelompokan seluruh modal dialog mandiri
+│   │   ├── AnnotationModal.tsx  # [REFACTORED] Modal dialog ramping via useAnnotationMapPicker
+│   │   ├── AoiModal.tsx         # [REFACTORED] Modal dialog ramping via AoiTypeSelector & MetricsCard
+│   │   ├── DeleteOrthoAlert.tsx # Dialog konfirmasi hapus citra
+│   │   ├── DeleteSpResultAlert.tsx # Dialog konfirmasi hapus hasil spasial
+│   │   ├── EditOrthoModal.tsx   # [REFACTORED] Modal dialog ramping via OrthoBoundingBoxInputs
+│   │   ├── EditSpResultModal.tsx # Modal edit hasil spasial 4 tab
+│   │   ├── ImportImageModal.tsx # Modal orkestrator impor citra
+│   │   └── ImportProgressModal.tsx # Modal progres impor asinkron
 │   ├── AoiToolbar.tsx           # [EXISTING] Panel pengelola AOI
 │   ├── ImageGallerySidebar.tsx  # [EXISTING] Panel galeri foto drone
 │   ├── LayerManager.tsx         # [EXISTING] Panel pengelola layer & anotasi
@@ -490,11 +508,11 @@ src/modules/module-03/
 
 ---
 
-### 7.2 Rencana 5 Fase Implementasi Bertahap
+### 7.2 Rencana Eksekusi Dekomposisi Bertahap (Fase 1 s/d Fase 5)
 
 ```mermaid
 flowchart TD
-    subgraph FASE_1 ["Fase 1: Atoms & Shared Molecules (Fondasi)"]
+    subgraph FASE_1 ["Fase 1: Atoms & Shared Molecules (Fondasi) [DONE]"]
         A1[TactileToggle.tsx]
         A2[GeomTypePill.tsx]
         A3[ZoomLevelBadge.tsx]
@@ -503,29 +521,49 @@ flowchart TD
         M2[AnnotationInteractiveBanner.tsx]
     end
 
-    subgraph FASE_2 ["Fase 2: Modal Dialogs & Tab Spasial"]
+    subgraph FASE_2 ["Fase 2: Modal Dialogs & Tab Spasial [DONE]"]
         D1[Folder organisms/dialogs/]
         D2[Pecah 4 Tab EditSpResultModal ke molecules/tabs/]
         D3[Pindahkan AnnotationModal & AoiModal ke organisms/dialogs/]
         D4[Relokasi Alert Dialogs]
     end
 
-    subgraph FASE_3 ["Fase 3: Dekomposisi Berkas Raksasa ImportImageModal"]
-        I1[molecules/import/ImageDropzone.tsx]
-        I2[molecules/import/ImportQueueList.tsx]
-        I3[molecules/import/ExifMetadataViewer.tsx]
-        I4[molecules/import/OrthoAlignmentForm.tsx]
-        I5[Penyusutan ImportImageModal.tsx ke ~200 baris]
+    subgraph FASE_2_5 ["Fase 2.5: Dekomposisi Granular & Eliminasi Dead-Weight Stubs [DONE]"]
+        G1[useAnnotationMapPicker.ts]
+        G2[molecules/annotation/ Sub-Molecules]
+        G3[molecules/aoi/ Sub-Molecules]
+        G4[molecules/ortho/ Sub-Molecules]
+        G5[molecules/spatial/ Sub-Molecules]
+        G6[Hapus 8 Berkas Dead-Weight Stubs]
     end
 
-    subgraph FASE_4 ["Fase 4: Perapian Organisms (Layer & Gallery)"]
-        O1[LayerManager.tsx Menggunakan Atoms & Molecules Baru]
-        O2[ImageGallerySidebar.tsx Ekstrak GalleryPhotoCard.tsx]
-        O3[MapViewControlBar.tsx Menggunakan MapIconButton & ZoomBadge]
+    subgraph FASE_3 ["Fase 3: Dekomposisi Berkas Raksasa ImportImageModal (1.574 baris)"]
+        I1[molecules/import/ImportDropzone.tsx]
+        I2[molecules/import/ImportMetadataCard.tsx]
+        I3[molecules/import/ImportOptionATab.tsx]
+        I4[molecules/import/ImportOptionBTab.tsx]
+        I5[hooks/useImportWorkflow.ts]
+        I6[Relokasi & Rampingkan organisms/dialogs/ImportImageModal.tsx]
+    end
+
+    subgraph FASE_4 ["Fase 4: Dekomposisi Multi-Responsibility Organisms"]
+        O1[molecules/annotation/AnnotationCardItem.tsx]
+        O2[organisms/AnnotationListSection.tsx]
+        O3[organisms/RasterLayerListSection.tsx]
+        O4[Rampingkan organisms/LayerManager.tsx ke ~180 baris]
+        O5[atoms/SafeThumbnail.tsx]
+        O6[molecules/gallery/GalleryPhotoCard.tsx]
+        O7[molecules/gallery/GalleryFilterBar.tsx]
+        O8[Rampingkan organisms/ImageGallerySidebar.tsx ke ~160 baris]
+    end
+
+    subgraph FASE_4_5 ["Fase 4.5: Perampingan Modal EditSpResultModal (609 baris)"]
+        E1[hooks/useSpResultFormController.ts]
+        E2[Rampingkan organisms/dialogs/EditSpResultModal.tsx ke ~130 baris]
     end
 
     subgraph FASE_5 ["Fase 5: Verifikasi Menyeluruh & Quality Gates"]
-        V1[Validasi Path Import Bebas Error]
+        V1[Validasi Path Import Bebas Error & Zero Dead Code]
         V2[Prettier format:check PASS]
         V3[ESLint PASS]
         V4[tsc + Vite Build PASS]
@@ -533,19 +571,220 @@ flowchart TD
     end
 
     FASE_1 --> FASE_2
-    FASE_2 --> FASE_3
+    FASE_2 --> FASE_2_5
+    FASE_2_5 --> FASE_3
     FASE_3 --> FASE_4
-    FASE_4 --> FASE_5
+    FASE_4 --> FASE_4_5
+    FASE_4_5 --> FASE_5
 ```
 
 ---
 
 ### 7.3 Matriks Pelacakan Progress Eksekusi
 
-|    Fase    | Deskripsi Pekerjaan                                                                                                                                      |   Status    | Catatan Teknis / Verifikasi       |
-| :--------: | :------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------: | :-------------------------------- |
-| **Fase 1** | Ekstraksi Atoms (`TactileToggle`, `GeomTypePill`, `ZoomLevelBadge`, `MapIconButton`) dan Molecules (`LayerOpacitySlider`, `AnnotationInteractiveBanner`) | `[PENDING]` | Komponen stateless murni          |
-| **Fase 2** | Restrukturisasi Modal Dialog & Pemecahan 4 Tab `EditSpResultModal` ke `molecules/tabs/`                                                                  | `[PENDING]` | Eliminasi overflow viewport modal |
-| **Fase 3** | Dekomposisi Berkas Raksasa `ImportImageModal` (1.600+ baris) ke sub-komponen `molecules/import/`                                                         | `[PENDING]` | Pemecahan 4 concern terpisah      |
-| **Fase 4** | Integrasi Komponen Baru ke `LayerManager`, `ImageGallerySidebar`, dan `MapViewControlBar`                                                                | `[PENDING]` | Penyelarasan konsumsi props       |
-| **Fase 5** | Verifikasi Menyeluruh Quality Gates (`format`, `lint`, `build`, `clippy`)                                                                                | `[PENDING]` | Gerbang pre-commit 100% lulus     |
+|     Fase     | Deskripsi Pekerjaan                                                                                                                                      |  Status  | Catatan Teknis / Target Verifikasi                                                                                      |
+| :----------: | :------------------------------------------------------------------------------------------------------------------------------------------------------- | :------: | :---------------------------------------------------------------------------------------------------------------------- |
+|  **Fase 1**  | Ekstraksi Atoms (`TactileToggle`, `GeomTypePill`, `ZoomLevelBadge`, `MapIconButton`) dan Molecules (`LayerOpacitySlider`, `AnnotationInteractiveBanner`) | `[DONE]` | Komponen stateless murni & integrasi LayerItem/LayerManager                                                             |
+|  **Fase 2**  | Restrukturisasi Modal Dialog & Pemecahan 4 Tab `EditSpResultModal` ke `molecules/tabs/`                                                                  | `[DONE]` | Eliminasi overflow viewport modal & relokasi ke organisms/dialogs/                                                      |
+| **Fase 2.5** | Dekomposisi Granular Sistem Modal, Ekstraksi Hook Peta, dan Eliminasi 8 Dead-Weight Stubs                                                                | `[DONE]` | True Atomic Design: Anotasi, AOI, Ortho, & Skema Spasial tuntas bersih                                                  |
+|  **Fase 3**  | Dekomposisi Berkas Raksasa `ImportImageModal` (1.574 baris) ke `molecules/import/` + Hook                                                                | `[DONE]` | 1.574 baris diekstrak ke 5 molecules + 1 hook + modal ramping di `organisms/dialogs/` (169 baris, < 180 baris)          |
+|  **Fase 4**  | Dekomposisi `LayerManager` (921 baris $\rightarrow$ 189 baris) & `ImageGallerySidebar` (564 baris $\rightarrow$ 210 baris) via Hooks & Molecules         | `[DONE]` | Ekstraksi `useManagedLayers`, `useGalleryImages`, `RasterLayerListSection`, `AnnotationListSection`, `GalleryPhotoCard` |
+| **Fase 4.5** | Perampingan State Form `EditSpResultModal` (609 baris $\rightarrow$ 214 baris) via `useSpResultFormController` & Tab Molecule                            | `[DONE]` | Ekstraksi 14 form states ke hook, `SpResultTabBar`, dan `UnsavedChangesDialog`                                          |
+|  **Fase 5**  | Verifikasi Menyeluruh Quality Gates (`format`, `lint`, `build`, `clippy`)                                                                                | `[DONE]` | Gerbang pre-commit 100% lulus, 0 warning, 0 error                                                                       |
+
+---
+
+### 7.4 Detail Blueprint Dekomposisi Berkas Gemuk (Fase 3, 4, 4.5)
+
+#### 7.4.1 Blueprint Fase 3: Dekomposisi God Component `ImportImageModal.tsx` (1.574 Baris)
+
+Akar masalah `ImportImageModal.tsx` adalah menggabungkan **dua alur impor yang sama sekali berbeda** (Citra Standar JPG/PNG vs GeoTIFF CRS Presisi Tinggi) beserta seluruh IO dialog OS, dropzone, inspeksi TIFF, kalkulasi batas peta, dan pooling status job prosesor.
+
+**Daftar Berkas yang Diekstrak**:
+
+1. **`molecules/import/ImportDropzone.tsx`** ($\sim$80 baris):
+   - Menangani drag-and-drop HTML5 dan tombol _"Pilih Berkas Dari Komputer"_.
+   - Memanggil Tauri Dialog API (`open`) secara terisolasi dengan filter ekstensi `.jpg,.jpeg,.png,.tif,.tiff`.
+2. **`molecules/import/ImportMetadataCard.tsx`** ($\sim$75 baris):
+   - Komponen pratinjau informasi berkas terpilih: Nama file, badge format, ukuran byte terformat, dimensi piksel, dan tombol ganti berkas.
+3. **`molecules/import/ImportOptionATab.tsx`** ($\sim$160 baris):
+   - Alur Opsi A (Citra Udara Standar JPG/PNG).
+   - Input nama layer kustom, slider rasio kompresi IDCT, pratinjau thumbnail, dan integrasi input manual bounding box koordinat.
+4. **`molecules/import/ImportOptionBTab.tsx`** ($\sim$185 baris):
+   - Alur Opsi B (GeoTIFF Presisi Tinggi).
+   - Display inspeksi metadata backend (CRS, GSD, resolusi piksel, kompresi LZW/DEFLATE).
+   - Toggle kuota disk _"Simpan berkas TIFF asli"_ (default nonaktif `false` untuk keamanan storage).
+   - Form koordinat georeferensi tie-points.
+5. **`hooks/useImportWorkflow.ts`** ($\sim$190 baris):
+   - Custom hook state controller murni yang mengelola:
+     - State `activeTab` ("A" \| "B"), `selectedFile`, `imgDimensions`, `errorMessage`.
+     - State TIFF: `isInspectingTiff`, `tiffInspection`, `tiffBbox`, `saveOriginalTiff`.
+     - Handler submit `handleImportStandard` dan `handleImportGeoTiff`.
+     - Pemicu progres modal asinkron job (`activeJobId`).
+6. **`organisms/dialogs/ImportImageModal.tsx`** (Ramping: $\sim$120 baris):
+   - Relokasi ke folder kanonikal `organisms/dialogs/`.
+   - Hanya sebagai presentational container modal Blueprint yang mengonsumsi `useImportWorkflow` dan merender segmented tab pill bar beserta tombol Batal & Mulai Impor.
+
+---
+
+#### 7.4.2 Blueprint Fase 4: Dekomposisi Multi-Responsibility Organisms (`LayerManager` & `ImageGallerySidebar`)
+
+##### A. Dekomposisi `LayerManager.tsx` (921 Baris)
+
+Akar masalah: Menyatukan pengelolaan daftar layer citra raster/ortho dengan **Sistem CRUD Anotasi Spasial Lengkap** (yang memiliki 500+ baris logic Geoman/Leaflet dan card rendering).
+
+**Daftar Berkas yang Diekstrak**:
+
+1. **`molecules/annotation/AnnotationCardItem.tsx`** ($\sim$110 baris):
+   - Ekstraksi kartu anotasi individual dari inline loop `LayerManager.tsx`.
+   - Menampilkan badge geometri (`<GeomTypePill>`), teks catatan anotasi, tombol aksi ringkas: Fokus Peta, Edit Anotasi, dan Hapus Anotasi.
+2. **`organisms/AnnotationListSection.tsx`** ($\sim$140 baris):
+   - Section independen daftar anotasi: Tombol utama `+ Catat Anotasi Spasial`, search box filter anotasi, empty state, dan daftar kartu `<AnnotationCardItem>`.
+3. **`organisms/RasterLayerListSection.tsx`** ($\sim$130 baris):
+   - Section independen daftar citra udara raster & orthomosaic: Menampung daftar `<LayerItem>`, slider opasitas global, dan toggle visibilitas.
+4. **`organisms/LayerManager.tsx`** (Ramping: $\sim$180 baris):
+   - Bertindak sebagai orkestrator panel murni yang merender segmented pill bar kategori layer (`<LayerCategoryFilter>`) dan me-mount `<RasterLayerListSection>` atau `<AnnotationListSection>`.
+
+##### B. Dekomposisi `ImageGallerySidebar.tsx` (563 Baris)
+
+Akar masalah: Menyatukan kontrol sidebar, filter, paginasi, dan rendering kartu foto galeri dengan fallback error thumbnail.
+
+**Daftar Berkas yang Diekstrak**:
+
+1. **`atoms/SafeThumbnail.tsx`** ($\sim$45 baris):
+   - Komponen atom image loader dengan listener `onError` untuk fallback gracefully ke icon Blueprint atau SVG placeholder jika file di disk tidak ditemukan.
+2. **`molecules/gallery/GalleryPhotoCard.tsx`** ($\sim$120 baris):
+   - Kartu pratinjau citra udara galeri: Thumbnail via `<SafeThumbnail>`, judul file citra terpotong rapi, badge jenis (Ortho/Raster), dimensi, tanggal penerbangan, serta tombol aksi Fokus Peta, Sesuaikan Koordinat, dan Hapus Citra.
+3. **`molecules/gallery/GalleryFilterBar.tsx`** ($\sim$65 baris):
+   - Kontrol filter segmented pill (Semua, Ortho, Raster) dan input pencarian nama citra.
+4. **`organisms/ImageGallerySidebar.tsx`** (Ramping: $\sim$160 baris):
+   - Orkestrator galeri yang menyatukan header, counter citra, tombol pemicu `ImportImageModal`, `<GalleryFilterBar>`, dan grid list `<GalleryPhotoCard>`.
+
+---
+
+#### 7.4.3 Blueprint Fase 4.5: Perampingan State Form `EditSpResultModal.tsx` (609 Baris)
+
+Akar masalah: Walaupun 4 tabnya telah didekomposisi ke `molecules/tabs/`, modal container masih memuat 14 state formulir, logika seleksi berkas foto Tauri / browser blob, dan dirty validation.
+
+**Daftar Berkas yang Diekstrak**:
+
+1. **`hooks/useSpResultFormController.ts`** ($\sim$180 baris):
+   - Mengelola state form: `name`, `displayColor`, `icon`, `imageAction`, `selectedFilePath`, `previewUrl`, `draftFields`, `draftSets`, `draftRemoves`.
+   - Logika pemilihan foto via Tauri API / file input fallback dan pelepasan memory URL Blob (`URL.revokeObjectURL`).
+   - Handler perubahan skema atribut dan mutasi nilai baris fitur.
+   - Eksekusi submit transaksi All-or-Nothing dengan validasi integritas data.
+2. **`organisms/dialogs/EditSpResultModal.tsx`** (Ramping: $\sim$130 baris):
+   - Presentational dialog Blueprint murni yang mengonsumsi `useSpResultFormController`, merender segmented control tab switch, me-mount tab aktif, dan menampilkan dialog konfirmasi batal jika form dirty.
+
+---
+
+### 7.5 Log Implementasi Dekomposisi Atomic Design
+
+#### 7.4.1 Fase 1: Fondasi Atoms Inti & Shared Molecules
+
+- **`atoms/TactileToggle.tsx`**: Komponen tombol toggle kapsul stateless untuk kontrol visibilitas ON/OFF layer dengan gaya _Modern Soft Card_ (`#0f172a` saat aktif, `#f1f5f9` saat nonaktif).
+- **`atoms/GeomTypePill.tsx`**: Badge penanda tipe geometri (`Titik`, `Garis`, `Poligon`) stateless dengan translasi label dinamis.
+- **`atoms/ZoomLevelBadge.tsx`**: Indikator angka zoom peta (`{zoom}z`) stateless.
+- **`atoms/MapIconButton.tsx`**: Tombol kontrol peta serbaguna membungkus Blueprint `<Tooltip>` dan `<Button minimal>`.
+- **`molecules/LayerOpacitySlider.tsx`**: Ekstraksi slider opasitas gradien linear native dengan badge persentase dari `LayerItem.tsx`.
+- **`molecules/AnnotationInteractiveBanner.tsx`**: Ekstraksi banner panduan gelap `#0f172a` saat mode penentuan lokasi anotasi di peta dari `LayerManager.tsx`.
+- **Integrasi**: `LayerItem.tsx` disederhanakan menggunakan `<TactileToggle>` dan `<LayerOpacitySlider>`; `LayerManager.tsx` disederhanakan dengan mengeliminasi 60 baris kode inline helper banner.
+
+#### 7.4.2 Fase 2: Restrukturisasi Modal Dialog & Pemecahan 4 Tab Spasial
+
+- **Pemecahan Tab Spasial (`molecules/tabs/`)**:
+  - `SpResultInfoTab.tsx`: Metadata layer dengan integrasi `<GeomTypePill>`, input nama, visualisasi warna HEX, opsi marker titik, dan pengelola citra utama layer.
+  - `SpResultFieldsTab.tsx`: Manajemen skema field atribut melalui `<FieldManagerTable>`.
+  - `SpResultValuesTab.tsx`: Editor paginasi nilai atribut fitur melalui `<FeatureValuesEditor>`.
+  - `SpResultPopupPreviewTab.tsx`: Simulasi kartu popup Leaflet otentik dengan navigator fitur sebelumnya/selanjutnya.
+- **Relokasi Modal ke `organisms/dialogs/`**:
+  - `EditSpResultModal.tsx`: Berkurang dari 1.047 baris menjadi ~420 baris (~60% reduksi baris kode), mengeliminasi risiko viewport overflow pada layar kecil.
+  - `AnnotationModal.tsx`: Modal pembuatan/edit anotasi spasial dengan integrasi Geoman/Leaflet dipindahkan ke `organisms/dialogs/`.
+  - `AoiModal.tsx`: Modal pembuatan/edit batas area dipindahkan ke `organisms/dialogs/`.
+  - `EditOrthoModal.tsx`: Modal penyesuaian bounding box orthomosaic dipindahkan ke `organisms/dialogs/`.
+  - `DeleteOrthoAlert.tsx`: Dialog konfirmasi hapus citra dipindahkan ke `organisms/dialogs/`.
+  - `DeleteSpResultAlert.tsx`: Dialog konfirmasi hapus hasil analisis dipindahkan ke `organisms/dialogs/`.
+- **Konsumsi Organisms**: Seluruh organisms (`LayerManager.tsx`, `AoiToolbar.tsx`, `SpResultListPanel.tsx`, dan `ImageGallerySidebar.tsx`) mengonsumsi langsung dari `organisms/dialogs/`.
+
+#### 7.4.3 Fase 2.5: Dekomposisi Granular True Atomic Design & Pembersihan Dead-Weight Stubs
+
+- **Pembersihan 8 Berkas Dead-Weight Stubs**:
+  - Menghapus 8 berkas perantara 2-baris di `src/modules/module-03/molecules/` (`AnnotationModal.tsx`, `AoiModal.tsx`, `EditOrthoModal.tsx`, `EditSpResultModal.tsx`, `DeleteOrthoAlert.tsx`, `DeleteSpResultAlert.tsx`, `AnnotationSidebarForm.tsx`, `AoiCreateForm.tsx`) sehingga tidak ada lagi redundansi atau bypass arsitektur.
+- **Dekomposisi Sistem Anotasi**:
+  - **`hooks/useAnnotationMapPicker.ts`**: Mengekstrak seluruh lifecycle Leaflet/Geoman (`map.on("click")`, `map.on("pm:create")`, kursor crosshair, sinkronisasi preview layer sementara, listener window cancel/finish picking) dan controller form modal terisolasi ke custom hook murni.
+  - **`molecules/annotation/AnnotationShapeSelector.tsx`**: Selektor segmented pill bentuk Titik/Garis/Poligon dengan integrasi atom `<GeomTypePill>`.
+  - **`molecules/annotation/AnnotationCoordModeSelector.tsx`**: Selektor metode Gambar di Peta vs Input Manual.
+  - **`molecules/annotation/AnnotationManualCoordInputs.tsx`**: Form input numerik Lat/Lng (Titik) dan textarea baris koordinat (Garis/Poligon).
+  - **`molecules/annotation/AnnotationMapPickControl.tsx`**: Tombol interaksi pemilihan peta, ringkasan koordinat terpilih, dan aksi hapus geometri.
+  - **`AnnotationForm.tsx`**: Dirampingkan menjadi presentational orchestrator (~128 baris) bersih dan bebas logic Leaflet.
+  - **`AnnotationModal.tsx`**: Dirampingkan dari 635 baris menjadi dialog presentasi murni (~46 baris) yang mengonsumsi `useAnnotationModalForm` dari `useAnnotationMapPicker`.
+- **Dekomposisi Sistem AOI (Area of Interest)**:
+  - **`molecules/aoi/AoiTypeSelector.tsx`**: Input nama area dan tipe area opsional.
+  - **`molecules/aoi/AoiGeometryMetricsCard.tsx`**: Kartu metrik luas & keliling poligon beserta tombol trigger gambar/ubah bentuk di peta.
+  - **`AoiModal.tsx`**: Dirampingkan dari 356 baris menjadi dialog modal terstruktur (~113 baris).
+- **Dekomposisi Sistem Orthomosaic**:
+  - **`molecules/ortho/OrthoBoundingBoxInputs.tsx`**: 4 input koordinat WGS84 (West, South, East, North) beserta tombol aksi "Gunakan Area Peta Saat Ini".
+  - **`EditOrthoModal.tsx`**: Dirampingkan dari 434 baris menjadi modal dialog bersih (~156 baris) tanpa redundansi sub-komponen internal.
+- **Dekomposisi Skema Tabel Atribut Spasial**:
+  - **`molecules/spatial/FieldSchemaRow.tsx`**: Baris tabel individual per field dengan kontrol urutan, visibilitas, label, satuan, tipe, dan tombol hapus custom.
+  - **`molecules/spatial/AddCustomFieldDialog.tsx`**: Modal dialog penambahan atribut baru dengan auto-slugification key dan validasi kuota/tipe.
+  - **`molecules/spatial/DeleteCustomFieldDialog.tsx`**: Modal dialog konfirmasi penghapusan field custom terisolasi (~45 baris).
+  - **`FieldManagerTable.tsx`**: Dirampingkan dari 710 baris menjadi tabel pengelola skema ringkas (~112 baris).
+
+#### 7.4.4 Fase 3: Dekomposisi God Component `ImportImageModal.tsx` (1.574 Baris)
+
+- **Ekstraksi Molecules Impor**:
+  - **`molecules/import/ImportDropzone.tsx`**: Komponen dropzone interaktif (HTML5 drag-and-drop & wrapper Tauri dialog `open`) terisolasi dengan filter ekstensi dinamis, ekstraksi ukuran byte, dan MIME type.
+  - **`molecules/import/ImportMetadataCard.tsx`**: Kartu pratinjau informasi berkas terpilih (nama, format tag, MIME type, dimensi piksel, ukuran byte terformat, bit depth, alpha channel, kompresi, dan tombol ganti berkas eksplisit).
+  - **`molecules/import/ImportOptionATab.tsx`**: Form mandiri alur Opsi A (Citra Udara Standar JPG/PNG) lengkap dengan nama layer kustom, slider rasio kompresi IDCT adaptif, checkbox simpan asli, dan input koordinat manual dengan deteksi rasio aspek.
+  - **`molecules/import/ImportOptionBTab.tsx`**: Form mandiri alur Opsi B (GeoTIFF Presisi Tinggi) lengkap dengan tampilan inspeksi CRS/metadata backend, toggle proteksi disk default `false`, dan koreksi koordinat tie points WGS84.
+  - **`molecules/import/ImportTabBar.tsx`**: Segmented control pill switch terisolasi untuk pemilihan Opsi A vs Opsi B.
+- **Ekstraksi State Controller Hook**:
+  - **`hooks/useImportWorkflow.ts`**: Menampung 20+ state formulir impor, validasi koordinat berbasis string ter-buffer, inspeksi header GeoTIFF asinkron, dan pelacakan job ID.
+- **Relokasi & Perampingan Modal**:
+  - **`organisms/dialogs/ImportImageModal.tsx`**: Dipindahkan ke `organisms/dialogs/` dan dirampingkan dari 1.574 baris menjadi 169 baris (< 180 baris) presentational container murni.
+  - **`organisms/dialogs/ImportProgressModal.tsx`**: Dipindahkan ke `organisms/dialogs/` agar seluruh modal dan alert berada di subfolder kanonikal.
+  - File lama di root `organisms/` dihapus tanpa meninggalkan dead-weight stubs.
+
+#### 7.4.5 Fase 4: Dekomposisi Multi-Responsibility Organisms (`LayerManager` & `ImageGallerySidebar`)
+
+- **Dekomposisi `LayerManager.tsx` (921 baris $\rightarrow$ 189 baris)**:
+  - **`hooks/useManagedLayers.ts`**: Mengekstrak pemuatan layer awal, event listeners spasial/ortho/marker, dan persistensi localStorage ke hook terisolasi.
+  - **`molecules/annotation/AnnotationCardItem.tsx`**: Ekstraksi kartu anotasi individual dengan badge geometri `<GeomTypePill>`, metrik panjang/luas, dan 3 tombol aksi (Fokus, Edit, Hapus).
+  - **`organisms/AnnotationListSection.tsx`**: Section mandiri daftar anotasi spasial, tombol utama `+ Catat Anotasi Spasial`, dan integrasi banner interaksi peta.
+  - **`organisms/RasterLayerListSection.tsx`**: Section mandiri daftar citra raster & orthomosaic `<LayerItem>` beserta dropdown foto penerbangan per-foto.
+- **Dekomposisi `ImageGallerySidebar.tsx` (564 baris $\rightarrow$ 210 baris)**:
+  - **`hooks/useGalleryImages.ts`**: Mengekstrak data fetching galeri, cascade summary, penghapusan, pembaruan citra, dan kalkulasi batas peta.
+  - **`atoms/SafeThumbnail.tsx`**: Atom thumbnail viewer dengan fallback elegan saat citra disk tidak ditemukan (`No Image`).
+  - **`molecules/gallery/GalleryFilterBar.tsx`**: Segmented control pill filter galeri (Semua, Ortho, Foto Raster).
+  - **`molecules/gallery/GalleryPhotoCard.tsx`**: Kartu pratinjau foto galeri (mendukung citra raster hasil analisis dan foto drone penerbangan).
+
+#### 7.4.6 Fase 4.5: Perampingan State Form `EditSpResultModal.tsx` (610 baris $\rightarrow$ 214 baris)
+
+- **`hooks/useSpResultFormController.ts`**: Mengekstrak 14 state formulir (nama, warna HEX, icon, mutasi foto/URL blob, skema field kustom, nilai atribut per fitur, dan transaksi all-or-nothing).
+- **`molecules/tabs/SpResultTabBar.tsx`**: Segmented pill switch 4-tab terisolasi.
+- **`molecules/spatial/UnsavedChangesDialog.tsx`**: Modal konfirmasi pembatalan perubahan saat formulir dalam kondisi dirty.
+- **`organisms/dialogs/EditSpResultModal.tsx`**: Dirampingkan menjadi dialog presentasi murni (214 baris) yang mengonsumsi hook controller dan merender subkomponen modular.
+
+#### 7.4.7 Fase 5: Clean-Up Kode Mati, Pemisahan Hook SRP, Reduksi Duplikasi BBox, dan Dekomposisi AoiToolbar
+
+- **Eliminasi Dead Code `types/spatial_result.ts`**:
+  - Berkas `src/modules/module-03/types/spatial_result.ts` dihapus permanen setelah diverifikasi memiliki 0 importer di seluruh codebase repo (telah sepenuhnya digantikan oleh `types/map.ts` dan `types/spatialResult.ts`).
+- **Pemisahan Hook SRP `useAnnotationMapPicker.ts` & `useAnnotationModalForm.ts`**:
+  - `src/modules/module-03/hooks/useAnnotationMapPicker.ts` (~260 baris): Dikhususkan untuk siklus hidup peta Leaflet dan plugin Geoman murni (`map.on("click")`, `pm:create`, kursor crosshair, sinkronisasi layer pratinjau sementara, dan pembatalan/penyelesaian window events).
+  - `src/modules/module-03/hooks/useAnnotationModalForm.ts`: Mengekstrak controller form dialog modal (state teks catatan, tipe geometri, koordinat titik/garis/poligon, parsing format manual baris koordinat WGS84, validasi numerik, dan penanganan submit asinkron).
+  - Mengupdate dialog `organisms/dialogs/AnnotationModal.tsx` untuk mengimpor `useAnnotationModalForm` dari berkas hook barunya.
+- **Penggunaan Ulang `<OrthoBoundingBoxInputs />` pada Tab Impor**:
+  - `src/modules/module-03/molecules/ortho/OrthoBoundingBoxInputs.tsx`: Ditambahkan dukungan props error opsional (`westError`, `southError`, `eastError`, `northError`), opsi `hideHeader`, dan slot `children` fleksibel.
+  - `src/modules/module-03/molecules/import/ImportOptionATab.tsx` dan `src/modules/module-03/molecules/import/ImportOptionBTab.tsx`: Direfaktor menggunakan `<OrthoBoundingBoxInputs />`, mengeliminasi lebih dari 280 baris duplikasi form input WGS84 manual di kedua tab impor.
+- **Dekomposisi `organisms/AoiToolbar.tsx` (486 baris $\rightarrow$ 102 baris)**:
+  - **`hooks/useAoiModalWorkflow.ts`**: Mengekstrak seluruh controller alur kerja modal AOI (state form, interaksi Geoman/Leaflet drawing, vertex modify lifecycle, dan handlers async save/delete/focus/close) ke custom hook murni.
+  - **`organisms/AoiListSection.tsx`**: Mengekstrak rendering sub-seksi daftar AOI tersimpan, spinner status muat, kartu state kosong (empty state), dan iterasi kartu `<AoiCardItem>`.
+  - **`molecules/aoi/AoiInteractiveBanner.tsx`**: Mengekstrak banner interaktif dark slate saat pengguna sedang menggambar poligon baru atau menggeser titik sudut poligon.
+  - **`hooks/useSavedAois.ts`**: Mengekstrak state fetch awal AOI dan pendengar event bus window `aoi:saved` serta `aoi:deleted`.
+  - Merampingkan `AoiToolbar.tsx` menjadi orkestrator super-ringkas (102 baris, jauh di bawah batas < 200 baris) dengan tanggung jawab tunggal (SRP).
+- **Deduplikasi Markup Kartu Leaflet Popup & Sanitasi XSS di `lib/popupHtml.ts`**:
+  - Mengekstrak helper pembungkus kartu container `wrapPopupCard` (soft card Apple style 16px radius, borderless, bayangan halus).
+  - Mengekstrak helper styling modular `renderPopupHeader` (pill badge + indikator warna status), `renderPopupTitle`, `renderPopupDivider`, `renderPopupTable`, dan `renderPopupTableRow`.
+  - Menstandarisasi seluruh 4 generator popup Leaflet (`buildPopupHtml`, `buildAoiPopupHtml`, `buildAnnotationPopupHtml`, `buildOrthoPopupHtml`) sehingga bebas dari duplikasi inline CSS dan string HTML repetitif.
+  - Memperketat keamanan dengan sanitasi `escapeHtml` menyeluruh pada nama AOI, ID AOI, tipe AOI, teks anotasi, dan ID anotasi guna mencegah potensi kerentanan Cross-Site Scripting (XSS).

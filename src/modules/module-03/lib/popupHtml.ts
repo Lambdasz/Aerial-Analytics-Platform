@@ -10,6 +10,103 @@ import { escapeHtml, isValidHexColor } from "./fieldValidation";
 import { resolveOrthoDisplayUrl } from "./leaflet/spatialLayerBuilder";
 
 /**
+ * Pembungkus kartu container umum untuk seluruh varian Leaflet popup di Modul 03.
+ * Mengikuti sistem desain Modern Soft Card (iOS 18 / Apple HIG Minimalist).
+ */
+export function wrapPopupCard(
+  contentHtml: string,
+  options: { minWidth?: number; maxWidth?: number } = {},
+): string {
+  const minWidth = options.minWidth ?? 280;
+  const maxWidth = options.maxWidth ?? 330;
+  return `
+    <div style="
+      background: #ffffff;
+      border-radius: 16px;
+      padding: 16px 18px;
+      min-width: ${minWidth}px;
+      max-width: ${maxWidth}px;
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
+      font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
+      border: none;
+    ">
+      ${contentHtml}
+    </div>
+  `;
+}
+
+/**
+ * Helper untuk merender baris header popup dengan badge pill dan indikator status / tag kanan.
+ */
+export function renderPopupHeader(
+  badgeText: string,
+  dotColor: string,
+  rightElementHtml: string = "",
+): string {
+  return `
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
+      <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: ${dotColor};"></span>
+        ${badgeText}
+      </span>
+      ${rightElementHtml}
+    </div>
+  `;
+}
+
+/**
+ * Helper untuk merender judul utama dan subtitle opsional (seperti ID atau kode unik).
+ */
+export function renderPopupTitle(titleHtml: string, subtitleHtml: string = ""): string {
+  const marginBottom = subtitleHtml ? "4px" : "10px";
+  return `
+    <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: ${marginBottom}; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
+      ${titleHtml}
+    </div>
+    ${subtitleHtml}
+  `;
+}
+
+/**
+ * Helper untuk garis pembatas halus (divider) antar seksi di dalam popup.
+ */
+export function renderPopupDivider(marginBottom: number = 8): string {
+  return `<div style="margin-bottom: ${marginBottom}px; border-bottom: 1px solid #f1f5f9;"></div>`;
+}
+
+/**
+ * Helper untuk merender tabel atribut dua kolom.
+ */
+export function renderPopupTable(rowsHtml: string): string {
+  return `
+    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+}
+
+/**
+ * Helper untuk merender satu baris tabel atribut (label + nilai).
+ */
+export function renderPopupTableRow(
+  label: string,
+  valueHtml: string,
+  isLast: boolean = false,
+  fontMonospace: boolean = false,
+): string {
+  const borderBottom = isLast ? "" : "border-bottom: 1px solid #f1f5f9;";
+  const monoStyle = fontMonospace ? "font-family: monospace;" : "";
+  return `
+    <tr style="${borderBottom}">
+      <td style="color: #64748b; font-weight: 500; padding: 6px 0; font-size: 12px;">${label}</td>
+      <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-size: 12px; ${monoStyle}">${valueHtml}</td>
+    </tr>
+  `;
+}
+
+/**
  * Membangun markup string HTML tabel atribut untuk popup hasil analisis spasial.
  *
  * Menerapkan resolusi field murni, pemformatan locale Indonesia, dan mitigasi XSS menyeluruh.
@@ -45,12 +142,7 @@ export function buildPopupHtml(
       const val = props[field.key];
       if (val === undefined || val === null || val === "") return "";
       const formattedVal = formatFieldValue(val, field.unit, field.kind);
-      return `
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0; font-size: 12px;">${escapeHtml(field.label)}</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; font-family: var(--font-sf-pro-text, sans-serif); padding: 6px 0; font-size: 12px;">${escapeHtml(formattedVal)}</td>
-      </tr>
-    `;
+      return renderPopupTableRow(escapeHtml(field.label), escapeHtml(formattedVal));
     })
     .filter(Boolean)
     .join("");
@@ -125,40 +217,19 @@ export function buildPopupHtml(
       </div>
     `;
 
-  return `
-    <div style="
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 16px 18px;
-      min-width: 270px;
-      max-width: 320px;
-      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
-      font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: none;
-    ">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: ${safeColor};"></span>
-          Hasil Analisis Spasial
-        </span>
-        <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">${safeSource}</span>
-      </div>
+  const header = renderPopupHeader(
+    "Hasil Analisis Spasial",
+    safeColor,
+    `<span style="font-size: 11px; color: #94a3b8; font-weight: 500;">${safeSource}</span>`,
+  );
+  const title = renderPopupTitle(safeLayerName);
+  const divider = renderPopupDivider(8);
+  const table = renderPopupTable(rows);
 
-      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
-        ${safeLayerName}
-      </div>
-
-      ${imageSection}
-      
-      <div style="margin-bottom: 8px; border-bottom: 1px solid #f1f5f9;"></div>
-      
-      <table style="width: 100%; border-collapse: collapse;">
-        <tbody>
-          ${rows}
-        </tbody>
-      </table>
-    </div>
-  `;
+  return wrapPopupCard(`${header}${title}${imageSection}${divider}${table}`, {
+    minWidth: 270,
+    maxWidth: 320,
+  });
 }
 
 export const buildSpatialResultPopupHtml = buildPopupHtml;
@@ -204,61 +275,31 @@ export function buildAoiPopupHtml(aoi: AoiFeature): string {
     // fallback
   }
 
-  return `
-    <div style="
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 16px 18px;
-      min-width: 280px;
-      max-width: 330px;
-      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
-      font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: none;
-    ">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: #0f172a;"></span>
-          Area of Interest (AOI)
-        </span>
-        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
-          ${typeName}
-        </span>
-      </div>
+  const safeName = escapeHtml(name);
+  const safeAoiId = escapeHtml(aoi_id);
+  const safeTypeName = escapeHtml(typeName);
 
-      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
-        ${name}
-      </div>
-
-      <div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">
-        ${aoi_id}
-      </div>
-      
-      <div style="margin-bottom: 10px; border-bottom: 1px solid #f1f5f9;"></div>
-      
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <tbody>
-          <tr style="border-bottom: 1px solid #f1f5f9;">
-            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Luas Area</td>
-            <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">
-              ${areaFormatted} m²${haFormatted}
-            </td>
-          </tr>
-          <tr style="border-bottom: 1px solid #f1f5f9;">
-            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Keliling</td>
-            <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">
-              ${perimeterFormatted} m
-            </td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Disimpan</td>
-            <td style="color: #64748b; font-weight: 500; text-align: right; padding: 6px 0; font-size: 11px;">
-              ${dateFormatted}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+  const header = renderPopupHeader(
+    "Area of Interest (AOI)",
+    "#0f172a",
+    `<span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">${safeTypeName}</span>`,
+  );
+  const title = renderPopupTitle(
+    safeName,
+    `<div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">${safeAoiId}</div>`,
+  );
+  const divider = renderPopupDivider(10);
+  const rows = `
+    ${renderPopupTableRow("Luas Area", `${areaFormatted} m²${haFormatted}`)}
+    ${renderPopupTableRow("Keliling", `${perimeterFormatted} m`)}
+    ${renderPopupTableRow("Disimpan", dateFormatted, true)}
   `;
+  const table = renderPopupTable(rows);
+
+  return wrapPopupCard(`${header}${title}${divider}${table}`, {
+    minWidth: 280,
+    maxWidth: 330,
+  });
 }
 
 /**
@@ -278,14 +319,8 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
     const latStr = typeof lat === "number" ? lat.toFixed(6) : String(lat);
     const lonStr = typeof lon === "number" ? lon.toFixed(6) : String(lon);
     detailRows = `
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Latitude</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${latStr}</td>
-      </tr>
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Longitude</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lonStr}</td>
-      </tr>
+      ${renderPopupTableRow("Latitude", latStr, false, true)}
+      ${renderPopupTableRow("Longitude", lonStr, false, true)}
     `;
   } else if (geomType === "LineString") {
     const coords = annotation.geometry.coordinates;
@@ -295,14 +330,8 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
         ? `${(lengthMeters / 1000).toFixed(2)} km`
         : `${lengthMeters.toLocaleString("id-ID", { maximumFractionDigits: 1 })} m`;
     detailRows = `
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Jumlah Titik</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">${coords.length} titik</td>
-      </tr>
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Panjang Garis</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lengthStr}</td>
-      </tr>
+      ${renderPopupTableRow("Jumlah Titik", `${coords.length} titik`)}
+      ${renderPopupTableRow("Panjang Garis", lengthStr, false, true)}
     `;
   } else if (geomType === "Polygon") {
     const ring = (annotation.geometry.coordinates[0] || []) as [number, number][];
@@ -312,14 +341,8 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
         ? `${(areaSqm / 10000).toFixed(2)} ha`
         : `${areaSqm.toLocaleString("id-ID", { maximumFractionDigits: 1 })} m²`;
     detailRows = `
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Jumlah Sudut</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">${ring.length} titik</td>
-      </tr>
-      <tr style="border-bottom: 1px solid #f1f5f9;">
-        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Estimasi Luas</td>
-        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${areaStr}</td>
-      </tr>
+      ${renderPopupTableRow("Jumlah Sudut", `${ring.length} titik`)}
+      ${renderPopupTableRow("Estimasi Luas", areaStr, false, true)}
     `;
   }
 
@@ -339,57 +362,29 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
     // fallback
   }
 
-  const safeText = (annotation.text || "Tanpa keterangan")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  const safeId = escapeHtml(annotation.id || annotation.annotation_id || "");
+  const safeText = escapeHtml(annotation.text || "Tanpa keterangan");
 
-  return `
-    <div style="
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 16px 18px;
-      min-width: 280px;
-      max-width: 320px;
-      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
-      font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: none;
-    ">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: #0f172a;"></span>
-          Anotasi Spasial
-        </span>
-        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
-          ${geomLabel}
-        </span>
-      </div>
-
-      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
-        ${safeText}
-      </div>
-
-      <div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">
-        ${annotation.id || annotation.annotation_id}
-      </div>
-      
-      <div style="margin-bottom: 10px; border-bottom: 1px solid #f1f5f9;"></div>
-      
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <tbody>
-          ${detailRows}
-          <tr>
-            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Dibuat</td>
-            <td style="color: #64748b; font-weight: 500; text-align: right; padding: 6px 0; font-size: 11px;">
-              ${dateFormatted}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+  const header = renderPopupHeader(
+    "Anotasi Spasial",
+    "#0f172a",
+    `<span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">${geomLabel}</span>`,
+  );
+  const title = renderPopupTitle(
+    safeText,
+    `<div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">${safeId}</div>`,
+  );
+  const divider = renderPopupDivider(10);
+  const rows = `
+    ${detailRows}
+    ${renderPopupTableRow("Dibuat", dateFormatted, true)}
   `;
+  const table = renderPopupTable(rows);
+
+  return wrapPopupCard(`${header}${title}${divider}${table}`, {
+    minWidth: 280,
+    maxWidth: 320,
+  });
 }
 
 /**
@@ -453,114 +448,81 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
     `
     : "";
 
-  return `
-    <div style="
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 16px 18px;
-      min-width: 280px;
-      max-width: 330px;
-      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
-      font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: none;
-    ">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: ${
-            isEnabled ? "#0f172a" : "#94a3b8"
-          };"></span>
-          Orthomosaic Drone
-        </span>
-        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
-          ${isEnabled ? "Aktif" : "Nonaktif"}
-        </span>
-      </div>
+  const header = renderPopupHeader(
+    "Orthomosaic Drone",
+    isEnabled ? "#0f172a" : "#94a3b8",
+    `<span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">${
+      isEnabled ? "Aktif" : "Nonaktif"
+    }</span>`,
+  );
+  const title = renderPopupTitle(safeFilename);
+  const rows = `
+    ${renderPopupTableRow("Ukuran Citra", dimensionsText)}
+    ${renderPopupTableRow("Format File", `${formatText} (${sizeText})`)}
+    ${renderPopupTableRow(
+      "Status Memori",
+      isEnabled ? "Gambar Dimuat (Canvas)" : "Hemat Memori (Outline)",
+      true,
+    )}
+  `;
+  const table = renderPopupTable(rows);
 
-      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
-        ${safeFilename}
-      </div>
-
-      ${imageSection}
-
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <tbody>
-          <tr style="border-bottom: 1px solid #f1f5f9;">
-            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Ukuran Citra</td>
-            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
-              ${dimensionsText}
-            </td>
-          </tr>
-          <tr style="border-bottom: 1px solid #f1f5f9;">
-            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Format File</td>
-            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
-              ${formatText} (${sizeText})
-            </td>
-          </tr>
-          <tr>
-            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Status Memori</td>
-            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
-              ${isEnabled ? "Gambar Dimuat (Canvas)" : "Hemat Memori (Outline)"}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      ${
-        img.display_dimensions &&
-        Math.max(img.display_dimensions[0], img.display_dimensions[1]) < 2048
-          ? `
+  const resolutionWarning =
+    img.display_dimensions && Math.max(img.display_dimensions[0], img.display_dimensions[1]) < 2048
+      ? `
         <div style="margin-top: 10px; font-size: 11px; color: #b45309; background: #fffbeb; border: 1px solid #fef3c7; padding: 6px 10px; border-radius: 8px; line-height: 1.4;">
           ⚠️ <strong>Resolusi Display Dibatasi (&lt; 2.048 px):</strong><br/>
           Ukuran display dioptimalkan ke ${img.display_dimensions[0]}×${img.display_dimensions[1]} px untuk menghemat memori. Detail pada zoom tinggi mungkin berkurang.
         </div>
       `
-          : ""
-      }
+      : "";
 
-      <!-- KONTROL TOGGLE ON/OFF -->
-      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-        <div style="display: flex; flex-direction: column;">
-          <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Tampilkan Citra</span>
-          <span style="font-size: 10px; color: #64748b;">
-            ${isEnabled ? "Matikan untuk hemat memori" : "Hidupkan untuk render citra"}
-          </span>
-        </div>
-        <button
-          type="button"
-          data-action="toggle-ortho"
-          data-id="${escapeHtml(imgKey)}"
-          style="
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: ${isEnabled ? "#0f172a" : "#f1f5f9"};
-            color: ${isEnabled ? "#ffffff" : "#64748b"};
-            border: none;
-            padding: 5px 14px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: pointer;
-            pointer-events: auto !important;
-            user-select: none;
-            box-shadow: none;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-          "
-        >
-          <span style="pointer-events: none;">${isEnabled ? "ON" : "OFF"}</span>
-        </button>
+  const toggleControl = `
+    <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <div style="display: flex; flex-direction: column;">
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Tampilkan Citra</span>
+        <span style="font-size: 10px; color: #64748b;">
+          ${isEnabled ? "Matikan untuk hemat memori" : "Hidupkan untuk render citra"}
+        </span>
       </div>
-
-      ${
-        !isEnabled
-          ? `
-        <div style="margin-top: 10px; font-size: 11px; color: #475569; background: #f8fafc; padding: 8px 12px; border-radius: 10px; line-height: 1.4;">
-          💡 <strong>Mode Hemat Memori Aktif:</strong><br/>
-          Gambar tidak dirender ke canvas. Arahkan kursor mouse ke area peta ini untuk melihat outline batas citra.
-        </div>
-      `
-          : ""
-      }
+      <button
+        type="button"
+        data-action="toggle-ortho"
+        data-id="${escapeHtml(imgKey)}"
+        style="
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: ${isEnabled ? "#0f172a" : "#f1f5f9"};
+          color: ${isEnabled ? "#ffffff" : "#64748b"};
+          border: none;
+          padding: 5px 14px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 600;
+          cursor: pointer;
+          pointer-events: auto !important;
+          user-select: none;
+          box-shadow: none;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        "
+      >
+        <span style="pointer-events: none;">${isEnabled ? "ON" : "OFF"}</span>
+      </button>
     </div>
   `;
+
+  const memoryModeNote = !isEnabled
+    ? `
+      <div style="margin-top: 10px; font-size: 11px; color: #475569; background: #f8fafc; padding: 8px 12px; border-radius: 10px; line-height: 1.4;">
+        💡 <strong>Mode Hemat Memori Aktif:</strong><br/>
+        Gambar tidak dirender ke canvas. Arahkan kursor mouse ke area peta ini untuk melihat outline batas citra.
+      </div>
+    `
+    : "";
+
+  return wrapPopupCard(
+    `${header}${title}${imageSection}${table}${resolutionWarning}${toggleControl}${memoryModeNote}`,
+    { minWidth: 280, maxWidth: 330 },
+  );
 }

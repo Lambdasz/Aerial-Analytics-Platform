@@ -32,3 +32,5 @@ export type SpatialGeometry =
       type: "LineString";
       coordinates: [number, number][];
     };
+
+export type AnnotationGeomType = "Point" | "LineString" | "Polygon";

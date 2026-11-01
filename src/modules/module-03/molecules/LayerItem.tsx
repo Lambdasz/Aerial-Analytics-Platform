@@ -1,6 +1,7 @@
 import React from "react";
-import { Button } from "@blueprintjs/core";
 import type { LayerState } from "../types/layer";
+import { TactileToggle } from "../atoms/TactileToggle";
+import { LayerOpacitySlider } from "./LayerOpacitySlider";
 
 export interface LayerItemProps {
   layer: LayerState;
@@ -74,84 +75,22 @@ export const LayerItem: React.FC<LayerItemProps> = ({
           </div>
         </div>
 
-        <Button
-          text={layer.is_visible ? "ON" : "OFF"}
-          small
-          minimal
-          style={{
-            borderRadius: "999px",
-            fontWeight: 600,
-            fontSize: "11px",
-            padding: "4px 12px",
-            background: layer.is_visible ? "#0f172a" : "#f1f5f9",
-            color: layer.is_visible ? "#ffffff" : "#64748b",
-            boxShadow: "none",
-          }}
-          onClick={() => {
+        <TactileToggle
+          isChecked={layer.is_visible}
+          onToggle={() => {
             onToggleVisibility(layer);
           }}
         />
       </div>
 
       {/* Opacity */}
-      <div
-        style={{
-          marginTop: "12px",
-          paddingTop: "10px",
-          borderTop: "1px solid #f1f5f9",
-          opacity: layer.is_visible ? 1 : 0.55,
-          transition: "opacity 0.2s ease",
+      <LayerOpacitySlider
+        opacity={layer.opacity}
+        isVisible={layer.is_visible}
+        onChange={(newOpacity) => {
+          onOpacityChange(layer, newOpacity);
         }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "6px",
-            fontSize: "11px",
-            color: "#64748b",
-          }}
-        >
-          <span style={{ fontWeight: 500 }}>Opacity</span>
-          <span
-            style={{
-              fontSize: "11px",
-              fontWeight: 600,
-              color: "#0f172a",
-              background: "#f1f5f9",
-              padding: "2px 6px",
-              borderRadius: "6px",
-            }}
-          >
-            {Math.round(layer.opacity * 100)}%
-          </span>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={layer.opacity}
-            onChange={(e) => {
-              onOpacityChange(layer, parseFloat(e.target.value));
-            }}
-            style={{
-              width: "100%",
-              height: "4px",
-              borderRadius: "999px",
-              background: `linear-gradient(to right, #0f172a ${layer.opacity * 100}%, #e2e8f0 ${layer.opacity * 100}%)`,
-              outline: "none",
-              cursor: "pointer",
-              appearance: "none",
-              WebkitAppearance: "none",
-              accentColor: "#0f172a",
-            }}
-          />
-        </div>
-      </div>
+      />
     </div>
   );
 };
