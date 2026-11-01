@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Alert,
   Button,
   Card,
   Elevation,
@@ -14,6 +15,7 @@ import {
   Callout,
   Dialog,
 } from "@blueprintjs/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { listProjects, type Project } from "../modules/module-01/projectCommands";
 import {
   getSessionsByProject,
@@ -27,6 +29,8 @@ import {
   setPluginStatus,
   checkPluginHealth,
   getPluginDetails,
+  installPlugin,
+  removePlugin,
   formatErrorMessage,
 } from "./pluginCommands";
 import { PluginExecutionModal, type PluginExecutionTarget } from "./PluginExecutionModal";
@@ -41,7 +45,11 @@ import "./PluginManager.css";
 export function PluginManager() {
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isInstalling, setIsInstalling] = useState<boolean>(false);
+  const [isRemoving, setIsRemoving] = useState<boolean>(false);
+  const [isConfirmRemoveOpen, setIsConfirmRemoveOpen] = useState<boolean>(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ENABLED" | "DISABLED">("ALL");
@@ -75,13 +83,15 @@ export function PluginManager() {
   const [isDetailsOpen, setIsDetailsOpen] = useState<boolean>(false);
 
   // 1. Fetch installed plugins on mount
-  const loadPlugins = useCallback(async () => {
+  const loadPlugins = useCallback(async (selectId?: string) => {
     setIsLoading(true);
     setErrorNotice(null);
     try {
       const data = await getInstalledPlugins();
       setPlugins(data);
-      if (data.length > 0) {
+      if (selectId) {
+        setSelectedPluginId(selectId);
+      } else if (data.length > 0) {
         setSelectedPluginId((prev) => prev ?? data[0].id);
       }
     } catch (err) {
@@ -203,7 +213,57 @@ export function PluginManager() {
     }
   };
 
-  // 4. View Plugin Details / Inspect schemas
+  // 4. Install Plugin from .zip archive via system dialog
+  const handleInstallPlugin = async () => {
+    setErrorNotice(null);
+    setSuccessNotice(null);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Plugin Archive", extensions: ["zip"] }],
+      });
+
+      if (!selected) return;
+
+      const archivePath = typeof selected === "string" ? selected : selected[0];
+      if (!archivePath) return;
+
+      setIsInstalling(true);
+      const installed = await installPlugin(archivePath);
+      setSuccessNotice(
+        `Plugin "${installed.name}" (v${installed.version}) installed successfully.`,
+      );
+      await loadPlugins(installed.id);
+    } catch (err) {
+      setErrorNotice(`Failed to install plugin: ${formatErrorMessage(err)}`);
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  // 5. Remove Plugin with confirmation
+  const handleConfirmRemove = async () => {
+    if (!selectedPlugin) return;
+    const pluginToRemove = selectedPlugin;
+    setIsConfirmRemoveOpen(false);
+    setIsRemoving(true);
+    setErrorNotice(null);
+    setSuccessNotice(null);
+    try {
+      await removePlugin(pluginToRemove.id);
+      setSuccessNotice(`Plugin "${pluginToRemove.name}" has been uninstalled.`);
+      await loadPlugins();
+    } catch (err) {
+      setErrorNotice(
+        `Failed to remove plugin "${pluginToRemove.name}": ${formatErrorMessage(err)}`,
+      );
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
+  // 6. View Plugin Details / Inspect schemas
   const handleInspectDetails = async (pluginId: string) => {
     setIsLoadingDetails(true);
     setIsDetailsOpen(true);
@@ -381,6 +441,13 @@ export function PluginManager() {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Button
+              icon="cloud-upload"
+              intent={Intent.PRIMARY}
+              text="Install Plugin"
+              onClick={() => void handleInstallPlugin()}
+              loading={isInstalling}
+            />
+            <Button
               icon="refresh"
               text="Reload Plugins"
               onClick={() => void loadPlugins()}
@@ -388,6 +455,15 @@ export function PluginManager() {
             />
           </div>
         </header>
+
+        {successNotice && (
+          <Callout intent={Intent.SUCCESS} title="Success" style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{successNotice}</span>
+              <Button small minimal icon="cross" onClick={() => setSuccessNotice(null)} />
+            </div>
+          </Callout>
+        )}
 
         {errorNotice && (
           <Callout intent={Intent.DANGER} title="Notice" style={{ marginBottom: 16 }}>
@@ -500,7 +576,18 @@ export function PluginManager() {
             icon="box"
             title="No Plugins Installed"
             description="No analytical plugins were found in the workspace plugins directory."
-            action={<Button icon="refresh" text="Scan Again" onClick={() => void loadPlugins()} />}
+            action={
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button
+                  icon="cloud-upload"
+                  intent={Intent.PRIMARY}
+                  text="Install Plugin"
+                  onClick={() => void handleInstallPlugin()}
+                  loading={isInstalling}
+                />
+                <Button icon="refresh" text="Scan Again" onClick={() => void loadPlugins()} />
+              </div>
+            }
           />
         ) : (
           <section className="manager-grid">
@@ -731,6 +818,18 @@ export function PluginManager() {
                   fill
                   style={{ marginTop: 8 }}
                 />
+
+                {selectedPlugin.source === "user" && (
+                  <Button
+                    intent={Intent.DANGER}
+                    icon="trash"
+                    text="Uninstall Plugin"
+                    onClick={() => setIsConfirmRemoveOpen(true)}
+                    loading={isRemoving}
+                    fill
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </aside>
             )}
           </section>
@@ -945,6 +1044,24 @@ export function PluginManager() {
             </div>
           </div>
         </Dialog>
+
+        {/* Confirm Remove Alert Dialog */}
+        <Alert
+          isOpen={isConfirmRemoveOpen}
+          cancelButtonText="Cancel"
+          confirmButtonText="Uninstall Plugin"
+          intent={Intent.DANGER}
+          icon="trash"
+          onCancel={() => setIsConfirmRemoveOpen(false)}
+          onConfirm={() => {
+            void handleConfirmRemove();
+          }}
+        >
+          <p>
+            Are you sure you want to permanently uninstall <strong>{selectedPlugin?.name}</strong>?
+            This action will remove the plugin package and its configuration.
+          </p>
+        </Alert>
       </section>
     </main>
   );
