@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792991238248",
+  "filename": "Balikpapan 1e",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792991238248/original.tif",
+  "size_bytes": 61095918,
+  "dimensions": [
+    20111,
+    13583
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792991238248/display.png",
+  "bounds": [
+    [
+      -1.2538140294876108,
+      116.85064763161965
+    ],
+    [
+      -1.2475290259746108,
+      116.85989316109465
+    ]
+  ],
+  "aspect_ratio": 1.4806007509386734,
+  "display_size_bytes": 9063596,
+  "display_dimensions": [
+    2560,
+    1729
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 2560x1729 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 3 (5028x3396) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:07:18.251575+00:00",
+  "is_corrupted": false
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/execution_result.v1.json",
+  "execution_id": "exec_m5_example",
+  "status": "success",
+  "execution_time_ms": 412,
+  "metrics": {
+    "total_pixels": 10544352,
+    "vegetation_pixels": 3812447,
+    "coverage_percentage": 36.16,
+    "vegetation_area_sqm": 384668.42,
+    "total_area_sqm": 1063834.66,
+    "classification": "medium",
+    "gsd_m": 0.3176,
+    "grid_cells": 16,
+    "plots_analyzed": 2,
+    "average_plot_coverage": 41.07,
+    "highest_plot_id": "A",
+    "lowest_plot_id": "B"
+  },
+  "artifacts": {
+    "coverage_zonation": {
+      "file_path": "/tmp/aerial-analytics/module5/exec_m5_example_coverage_zonation.geojson",
+      "format": "application/geo+json",
+      "bounds": [115.9712, 29.7573, 115.9784, 29.7646]
+    },
+    "plot_coverage": {
+      "file_path": "/tmp/aerial-analytics/module5/exec_m5_example_plot_coverage.geojson",
+      "format": "application/geo+json",
+      "bounds": [115.9712, 29.7573, 115.9784, 29.7646]
+    },
+    "vegetation_mask": {
+      "file_path": "/tmp/aerial-analytics/module5/exec_m5_example_vegetation_mask.png",
+      "format": "image/png",
+      "bounds": [115.9712, 29.7573, 115.9784, 29.7646]
+    }
+  },
+  "error": null
+}

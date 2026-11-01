@@ -4,4 +4,7 @@
 //! as described in the project brief.
 
 pub mod module_01;
+pub mod module_03;
+pub mod module_09;
 pub mod module_10;
+pub mod module_11;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navbar } from "@blueprintjs/core";
 
 import { Sidebar } from "./Sidebar";
@@ -17,17 +17,28 @@ export function AppShell() {
   const activeModule = findModule(activeModuleId);
   const ActivePage = activeModule.Page;
 
+  // Cross-module navigation: pages dispatch `open-module` with a module id.
+  useEffect(() => {
+    const handleOpenModule = (event: Event) => {
+      const detail = (event as CustomEvent<{ moduleId?: string }>).detail;
+      if (detail?.moduleId) setActiveModuleId(detail.moduleId);
+    };
+    window.addEventListener("open-module", handleOpenModule);
+    return () => window.removeEventListener("open-module", handleOpenModule);
+  }, []);
+
   return (
     <div className="app-shell">
-      <Navbar className="app-shell__navbar">
-        <Navbar.Group>
-          <Navbar.Heading>Aerial Analytics Platform</Navbar.Heading>
-        </Navbar.Group>
+      <Navbar className="app-shell_navbar">
+        <div className="app-shell_navbar-brand">
+          <span className="app-shell_navbar-bold">Aerial</span>
+          <span>Analytics Platform</span>
+        </div>
       </Navbar>
 
-      <div className="app-shell__body">
+      <div className="app-shell_body">
         <Sidebar activeModuleId={activeModuleId} onSelectModule={setActiveModuleId} />
-        <main className="app-shell__content">
+        <main className="app-shell_content">
           <ActivePage />
         </main>
       </div>

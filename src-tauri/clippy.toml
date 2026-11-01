@@ -1,0 +1,3 @@
+# clippy.toml
+# Allow unwrap() and expect() in test files to keep test code readable
+allow-unwrap-in-tests = true

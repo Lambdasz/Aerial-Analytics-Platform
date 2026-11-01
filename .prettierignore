@@ -3,3 +3,7 @@ dist
 dist-ssr
 src-tauri
 package-lock.json
+storage
+map_storage
+.venv*
+plugins/plugin_state.json

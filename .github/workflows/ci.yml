@@ -66,6 +66,27 @@ jobs:
       - name: Clippy
         run: npm run lint:rust
 
+      - name: Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  test-macos:
+    name: Tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build:
     name: Build (${{ matrix.os }})
     needs: [lint-js, lint-rust]
@@ -109,7 +130,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [lint-js, lint-rust, build]
+    needs: [lint-js, lint-rust, test-macos, build]
     runs-on: ubuntu-24.04
     steps:
       - name: Check job results

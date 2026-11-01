@@ -1,0 +1,226 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "total_pixels",
+      "label": "Total Pixels",
+      "type": "integer",
+      "unit": "px",
+      "description": "Pixels evaluated (whole image, or the AOI subset when supplied)."
+    },
+    {
+      "key": "vegetation_pixels",
+      "label": "Canopy Pixels",
+      "type": "integer",
+      "unit": "px",
+      "description": "Pixels isolated as active vegetation canopy."
+    },
+    {
+      "key": "vegetation_coverage_pct",
+      "label": "Canopy Coverage",
+      "type": "float",
+      "unit": "%",
+      "description": "Canopy pixels as a percentage of the evaluated area."
+    },
+    {
+      "key": "mean_vari",
+      "label": "Mean VARI",
+      "type": "float",
+      "unit": "",
+      "description": "Average Visible Atmospherically Resistant Index over canopy pixels (canopy vigour)."
+    },
+    {
+      "key": "mean_r",
+      "label": "Mean Red",
+      "type": "float",
+      "unit": "",
+      "description": "Mean red reflectance of canopy pixels (0–1)."
+    },
+    {
+      "key": "mean_g",
+      "label": "Mean Green",
+      "type": "float",
+      "unit": "",
+      "description": "Mean green reflectance of canopy pixels (0–1)."
+    },
+    {
+      "key": "mean_b",
+      "label": "Mean Blue",
+      "type": "float",
+      "unit": "",
+      "description": "Mean blue reflectance of canopy pixels (0–1)."
+    },
+    {
+      "key": "std_r",
+      "label": "Red Std Dev",
+      "type": "float",
+      "unit": "",
+      "description": "Standard deviation of red reflectance over canopy pixels."
+    },
+    {
+      "key": "std_g",
+      "label": "Green Std Dev",
+      "type": "float",
+      "unit": "",
+      "description": "Standard deviation of green reflectance over canopy pixels."
+    },
+    {
+      "key": "std_b",
+      "label": "Blue Std Dev",
+      "type": "float",
+      "unit": "",
+      "description": "Standard deviation of blue reflectance over canopy pixels."
+    },
+    {
+      "key": "mean_hue_deg",
+      "label": "Mean Hue",
+      "type": "float",
+      "unit": "°",
+      "description": "Average HSL hue angle of canopy pixels."
+    },
+    {
+      "key": "mean_saturation",
+      "label": "Mean Saturation",
+      "type": "float",
+      "unit": "",
+      "description": "Average HSL saturation of canopy pixels (0–1)."
+    },
+    {
+      "key": "vigorous_pct",
+      "label": "Vigorous Canopy",
+      "type": "float",
+      "unit": "%",
+      "description": "Share of canopy pixels in the vigorous class (VARI at or above the vigorous threshold)."
+    },
+    {
+      "key": "moderate_stress_pct",
+      "label": "Moderate Stress Canopy",
+      "type": "float",
+      "unit": "%",
+      "description": "Share of canopy pixels in the moderate stress class."
+    },
+    {
+      "key": "severe_stress_pct",
+      "label": "Severe Stress Canopy",
+      "type": "float",
+      "unit": "%",
+      "description": "Share of canopy pixels in the severe stress class."
+    },
+    {
+      "key": "dominant_condition",
+      "label": "Dominant Condition",
+      "type": "string",
+      "unit": "",
+      "description": "Condition class holding the largest share of canopy: vigorous, moderate_stress, severe_stress or none."
+    },
+    {
+      "key": "yellowing_pct",
+      "label": "Yellowing (Chlorosis)",
+      "type": "float",
+      "unit": "%",
+      "description": "Share of canopy pixels inside the chlorosis hue window with sufficient saturation."
+    },
+    {
+      "key": "browning_pct",
+      "label": "Browning (Necrosis)",
+      "type": "float",
+      "unit": "%",
+      "description": "Share of canopy pixels with high RBVI and red dominance (necrotic/dry foliage)."
+    },
+    {
+      "key": "grid_cells",
+      "label": "Zonation Cells",
+      "type": "integer",
+      "unit": "cells",
+      "description": "Number of cells in the condition zonation artifact."
+    },
+    {
+      "key": "plots_analyzed",
+      "label": "Plots Analysed",
+      "type": "integer",
+      "unit": "plots",
+      "description": "Number of plots evaluated from the plots parameter."
+    },
+    {
+      "key": "highest_plot_id",
+      "label": "Healthiest Plot",
+      "type": "string",
+      "unit": "",
+      "description": "Plot with the highest mean VARI."
+    },
+    {
+      "key": "lowest_plot_id",
+      "label": "Most Stressed Plot",
+      "type": "string",
+      "unit": "",
+      "description": "Plot with the lowest mean VARI."
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "condition_map",
+      "label": "Condition Class Map",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "optional": false,
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "RdYlGn"
+      }
+    },
+    {
+      "key": "yellowing_mask",
+      "label": "Yellowing Mask",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "YlOrBr"
+      }
+    },
+    {
+      "key": "browning_mask",
+      "label": "Browning Mask",
+      "type": "raster",
+      "format": "image/png",
+      "coordinate_system": "pixel",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "Reds"
+      }
+    },
+    {
+      "key": "condition_zonation",
+      "label": "Condition Zonation Grid",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "vector_overlay",
+        "default_opacity": 0.5,
+        "color_palette": "RdYlGn"
+      }
+    },
+    {
+      "key": "plot_condition",
+      "label": "Per-Plot Condition",
+      "type": "vector",
+      "format": "application/geo+json",
+      "coordinate_system": "crs",
+      "optional": true,
+      "layer_hint": {
+        "layer_type": "vector_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "RdYlGn"
+      }
+    }
+  ]
+}

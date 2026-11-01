@@ -1,0 +1,80 @@
+{
+  "layer_id": "result_line_001",
+  "layer_name": "Jalur distribusi kopdes",
+  "display_preference": {
+    "type": "line",
+    "color": "#E74C3C",
+    "icon": "",
+    "fields": [
+      {
+        "key": "path_id",
+        "label": "ID Jalur",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "type",
+        "label": "Jenis",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "length_m",
+        "label": "Panjang",
+        "unit": "m",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      }
+    ],
+    "image_url": "/map_storage/images/result_image/result_line_001_1792992617550.jpg"
+  },
+  "spatial_results": [
+    {
+      "source": "inspection_path",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            116.857,
+            -1.2205
+          ],
+          [
+            116.8578,
+            -1.2212
+          ],
+          [
+            116.8585,
+            -1.222
+          ],
+          [
+            116.8598,
+            -1.2218
+          ],
+          [
+            116.8605,
+            -1.2225
+          ],
+          [
+            116.8615,
+            -1.222
+          ],
+          [
+            116.8625,
+            -1.2222
+          ]
+        ]
+      },
+      "properties": {
+        "path_id": "P-01",
+        "type": "jalan_tanah",
+        "length_m": 450.5,
+        "image_url": "/map_storage/images/result_image/result_line_001_1792992617550.jpg"
+      },
+      "image_url": "/map_storage/images/result_image/result_line_001_1792992617550.jpg"
+    }
+  ],
+  "updated_at": "2026-10-26T05:30:17.550Z"
+}
