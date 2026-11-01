@@ -1,0 +1,10 @@
+{
+  "layer_id": "plots_all",
+  "layer_name": "Plots",
+  "category": "polygon",
+  "is_visible": true,
+  "opacity": 0.25,
+  "z_index": 10,
+  "source_type": "spatial_result",
+  "source_id": "plots_all"
+}

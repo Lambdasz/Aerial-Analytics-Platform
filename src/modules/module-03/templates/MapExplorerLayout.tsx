@@ -19,7 +19,7 @@ export interface MapExplorerLayoutProps {
  * Template tata letak Map Explorer.
  *
  * Murni mengatur layout positioning flex dan absolute:
- * - Panel kiri mengambang di atas peta (zIndex: 1000)
+ * - Panel kiri mengambang di atas peta (zIndex: 500)
  * - Area peta mengisi 100% lebar dan tinggi
  * - Widget thumbnail dan legenda diposisikan di atas peta
  */
@@ -45,7 +45,7 @@ export const MapExplorerLayout: React.FC<MapExplorerLayoutProps> = ({
           top: 0,
           left: 0,
           height: "100%",
-          zIndex: 1000,
+          zIndex: 500,
           pointerEvents: "none",
         }}
       >

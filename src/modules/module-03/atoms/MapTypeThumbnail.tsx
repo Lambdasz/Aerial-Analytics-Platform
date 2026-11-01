@@ -36,7 +36,7 @@ export const MapTypeThumbnail: React.FC<Props> = ({
         left: isSidebarCollapsed ? "24px" : "404px",
         transition:
           "left 0.3s cubic-bezier(0.4, 0.0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s",
-        zIndex: 1000,
+        zIndex: 500,
         width: "64px",
         height: "64px",
         borderRadius: "50%",
@@ -50,6 +50,7 @@ export const MapTypeThumbnail: React.FC<Props> = ({
         justifyContent: "center",
         cursor: "pointer",
         backgroundColor: "var(--color-control-gray)",
+        outline: "none",
       }}
       className="apple-button-hover"
     >

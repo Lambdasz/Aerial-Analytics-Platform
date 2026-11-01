@@ -84,6 +84,7 @@ export const MapLegend: React.FC<MapLegendProps> = ({ layers }) => {
         role="button"
         tabIndex={0}
         className="map-legend-button apple-button-hover"
+        style={{ outline: "none" }}
         onClick={() => setIsOpen(!isOpen)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {

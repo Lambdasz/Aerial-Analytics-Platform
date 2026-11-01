@@ -1,13 +1,5 @@
 import React, { useState } from "react";
-import {
-  Button,
-  Callout,
-  Classes,
-  Dialog,
-  FormGroup,
-  InputGroup,
-  NumericInput,
-} from "@blueprintjs/core";
+import { Button, Callout, Classes, Dialog, Icon } from "@blueprintjs/core";
 import type { StoredImageMetadata, UpdateOrthoImageParams } from "../types/storage";
 
 export interface CurrentMapBounds {
@@ -43,28 +35,24 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
 }) => {
   const initialBounds = image.bounds && image.bounds.length === 2 ? image.bounds : null;
   const [filename, setFilename] = useState(image.filename || "");
-  const [south, setSouth] = useState<number | undefined>(
-    initialBounds ? initialBounds[0][0] : undefined,
+  const [southStr, setSouthStr] = useState<string>(
+    initialBounds ? String(initialBounds[0][0]) : "",
   );
-  const [west, setWest] = useState<number | undefined>(
-    initialBounds ? initialBounds[0][1] : undefined,
+  const [westStr, setWestStr] = useState<string>(initialBounds ? String(initialBounds[0][1]) : "");
+  const [northStr, setNorthStr] = useState<string>(
+    initialBounds ? String(initialBounds[1][0]) : "",
   );
-  const [north, setNorth] = useState<number | undefined>(
-    initialBounds ? initialBounds[1][0] : undefined,
-  );
-  const [east, setEast] = useState<number | undefined>(
-    initialBounds ? initialBounds[1][1] : undefined,
-  );
+  const [eastStr, setEastStr] = useState<string>(initialBounds ? String(initialBounds[1][1]) : "");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleUseCurrentView = () => {
     if (!getCurrentMapBounds) return;
     const b = getCurrentMapBounds();
     if (!b) return;
-    setWest(b.west);
-    setSouth(b.south);
-    setEast(b.east);
-    setNorth(b.north);
+    setWestStr(String(b.west));
+    setSouthStr(String(b.south));
+    setEastStr(String(b.east));
+    setNorthStr(String(b.north));
     setErrorMessage(null);
   };
 
@@ -72,6 +60,16 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
     if (!filename.trim()) {
       return "Nama citra wajib diisi.";
     }
+    const parseNum = (s: string): number | undefined => {
+      const t = s.trim();
+      if (t === "") return undefined;
+      return Number(t);
+    };
+    const west = parseNum(westStr);
+    const south = parseNum(southStr);
+    const east = parseNum(eastStr);
+    const north = parseNum(northStr);
+
     if (
       west === undefined ||
       south === undefined ||
@@ -82,7 +80,7 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
       isNaN(east) ||
       isNaN(north)
     ) {
-      return "Seluruh 4 koordinat bounding box (West, South, East, North) wajib diisi.";
+      return "Seluruh 4 koordinat bounding box (West, South, East, North) wajib diisi angka valid.";
     }
     if (west < -180 || west > 180 || east < -180 || east > 180) {
       return "Bujur (West/East) harus berada dalam rentang [-180, 180].";
@@ -113,10 +111,10 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
     void onSave({
       id: image.id,
       filename: filename.trim(),
-      west,
-      south,
-      east,
-      north,
+      west: Number(westStr.trim()),
+      south: Number(southStr.trim()),
+      east: Number(eastStr.trim()),
+      north: Number(northStr.trim()),
     }).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
@@ -125,9 +123,9 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
 
   return (
     <form onSubmit={handleSubmit}>
-      <div className={Classes.DIALOG_BODY}>
+      <div className={Classes.DIALOG_BODY} style={{ padding: "16px 20px" }}>
         {errorMessage && (
-          <Callout intent="danger" style={{ marginBottom: "16px" }}>
+          <Callout intent="danger" style={{ marginBottom: "16px", borderRadius: "10px" }}>
             {errorMessage}
           </Callout>
         )}
@@ -135,39 +133,62 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
         {/* Field Statis / Immutable */}
         <div
           style={{
-            padding: "10px 12px",
-            background: "rgba(0, 0, 0, 0.03)",
-            borderRadius: "8px",
+            padding: "12px 14px",
+            background: "#f8fafc",
+            borderRadius: "12px",
             marginBottom: "16px",
             fontSize: "12px",
-            color: "var(--color-slate, #64748b)",
+            color: "#64748b",
             display: "flex",
             justifyContent: "space-between",
           }}
         >
           <div>
-            <strong>ID:</strong> {image.id}
+            <span style={{ color: "#64748b" }}>ID:</span>{" "}
+            <code style={{ fontSize: "11px", color: "#0f172a" }}>{image.id}</code>
           </div>
           <div>
-            <strong>Diimpor:</strong>{" "}
-            {image.imported_at ? new Date(image.imported_at).toLocaleString() : "-"}
+            <span style={{ color: "#64748b" }}>Diimpor:</span>{" "}
+            <strong style={{ color: "#0f172a" }}>
+              {image.imported_at ? new Date(image.imported_at).toLocaleString() : "-"}
+            </strong>
           </div>
         </div>
 
-        <FormGroup
-          label="Nama Tampilan Citra"
-          labelFor="ortho-filename"
-          labelInfo="(wajib)"
-          helperText="Nama identifikasi citra pada galeri dan daftar layer peta"
-        >
-          <InputGroup
+        <div>
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "#64748b",
+              marginBottom: "6px",
+            }}
+          >
+            Nama Tampilan Citra <span style={{ color: "#ef4444" }}>*</span>
+          </div>
+          <input
             id="ortho-filename"
+            type="text"
             placeholder="Contoh: Kariangau_Inspection_Area.jpg"
             value={filename}
             disabled={isSubmitting}
             onChange={(e) => setFilename(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "9px 12px",
+              fontSize: "13px",
+              background: "#f8fafc",
+              border: "none",
+              borderRadius: "10px",
+              outline: "none",
+              color: "#0f172a",
+              boxSizing: "border-box",
+            }}
           />
-        </FormGroup>
+          <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+            Nama identifikasi citra pada galeri dan daftar layer peta
+          </div>
+        </div>
 
         <div style={{ marginTop: "16px" }}>
           <div
@@ -178,19 +199,31 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
               marginBottom: "8px",
             }}
           >
-            <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--color-ink)" }}>
+            <div style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>
               Koordinat Bounding Box (WGS84)
             </div>
             {getCurrentMapBounds && (
-              <Button
-                small
-                minimal
-                icon="locate"
-                intent="primary"
-                text="Gunakan Area Peta Saat Ini"
+              <button
+                type="button"
                 disabled={isSubmitting}
                 onClick={handleUseCurrentView}
-              />
+                style={{
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  borderRadius: "999px",
+                  border: "none",
+                  background: "#f1f5f9",
+                  color: "#0f172a",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+              >
+                <Icon icon="locate" size={12} color="#0f172a" />
+                <span>Gunakan Area Peta Saat Ini</span>
+              </button>
             )}
           </div>
 
@@ -198,73 +231,170 @@ const EditOrthoForm: React.FC<EditOrthoFormProps> = ({
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
-              gap: "12px",
+              gap: "10px",
             }}
           >
-            <FormGroup label="West (Bujur Barat)" labelFor="bbox-west" labelInfo="[-180..180]">
-              <NumericInput
+            <div>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#64748b",
+                  marginBottom: "4px",
+                }}
+              >
+                West (Bujur Barat) [-180..180]
+              </div>
+              <input
                 id="bbox-west"
-                fill
-                stepSize={0.0001}
-                minorStepSize={0.00001}
-                majorStepSize={0.001}
-                value={west ?? ""}
+                type="text"
+                inputMode="decimal"
+                value={westStr}
                 disabled={isSubmitting}
-                onValueChange={(val) => setWest(isNaN(val) ? undefined : val)}
+                onChange={(e) => setWestStr(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  background: "#f8fafc",
+                  border: "none",
+                  borderRadius: "10px",
+                  outline: "none",
+                  color: "#0f172a",
+                  boxSizing: "border-box",
+                }}
               />
-            </FormGroup>
+            </div>
 
-            <FormGroup label="South (Lintang Selatan)" labelFor="bbox-south" labelInfo="[-90..90]">
-              <NumericInput
+            <div>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#64748b",
+                  marginBottom: "4px",
+                }}
+              >
+                South (Lintang Selatan) [-90..90]
+              </div>
+              <input
                 id="bbox-south"
-                fill
-                stepSize={0.0001}
-                minorStepSize={0.00001}
-                majorStepSize={0.001}
-                value={south ?? ""}
+                type="text"
+                inputMode="decimal"
+                value={southStr}
                 disabled={isSubmitting}
-                onValueChange={(val) => setSouth(isNaN(val) ? undefined : val)}
+                onChange={(e) => setSouthStr(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  background: "#f8fafc",
+                  border: "none",
+                  borderRadius: "10px",
+                  outline: "none",
+                  color: "#0f172a",
+                  boxSizing: "border-box",
+                }}
               />
-            </FormGroup>
+            </div>
 
-            <FormGroup label="East (Bujur Timur)" labelFor="bbox-east" labelInfo="[-180..180]">
-              <NumericInput
+            <div>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#64748b",
+                  marginBottom: "4px",
+                }}
+              >
+                East (Bujur Timur) [-180..180]
+              </div>
+              <input
                 id="bbox-east"
-                fill
-                stepSize={0.0001}
-                minorStepSize={0.00001}
-                majorStepSize={0.001}
-                value={east ?? ""}
+                type="text"
+                inputMode="decimal"
+                value={eastStr}
                 disabled={isSubmitting}
-                onValueChange={(val) => setEast(isNaN(val) ? undefined : val)}
+                onChange={(e) => setEastStr(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  background: "#f8fafc",
+                  border: "none",
+                  borderRadius: "10px",
+                  outline: "none",
+                  color: "#0f172a",
+                  boxSizing: "border-box",
+                }}
               />
-            </FormGroup>
+            </div>
 
-            <FormGroup label="North (Lintang Utara)" labelFor="bbox-north" labelInfo="[-90..90]">
-              <NumericInput
+            <div>
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#64748b",
+                  marginBottom: "4px",
+                }}
+              >
+                North (Lintang Utara) [-90..90]
+              </div>
+              <input
                 id="bbox-north"
-                fill
-                stepSize={0.0001}
-                minorStepSize={0.00001}
-                majorStepSize={0.001}
-                value={north ?? ""}
+                type="text"
+                inputMode="decimal"
+                value={northStr}
                 disabled={isSubmitting}
-                onValueChange={(val) => setNorth(isNaN(val) ? undefined : val)}
+                onChange={(e) => setNorthStr(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 12px",
+                  fontSize: "12px",
+                  background: "#f8fafc",
+                  border: "none",
+                  borderRadius: "10px",
+                  outline: "none",
+                  color: "#0f172a",
+                  boxSizing: "border-box",
+                }}
               />
-            </FormGroup>
+            </div>
           </div>
         </div>
       </div>
 
       <div className={Classes.DIALOG_FOOTER}>
         <div className={Classes.DIALOG_FOOTER_ACTIONS}>
-          <Button text="Batal" disabled={isSubmitting} onClick={onClose} />
           <Button
-            intent="primary"
+            text="Batal"
+            minimal
+            disabled={isSubmitting}
+            onClick={onClose}
+            style={{
+              borderRadius: "999px",
+              background: "#f1f5f9",
+              color: "#475569",
+              fontWeight: 600,
+              padding: "6px 16px",
+              boxShadow: "none",
+            }}
+          />
+          <Button
+            minimal
             type="submit"
             icon="saved"
             text="Simpan Perubahan"
             loading={isSubmitting}
+            style={{
+              borderRadius: "999px",
+              background: "#0f172a",
+              color: "#ffffff",
+              fontWeight: 600,
+              padding: "6px 18px",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.15)",
+            }}
           />
         </div>
       </div>
@@ -286,7 +416,7 @@ export const EditOrthoModal: React.FC<EditOrthoModalProps> = ({
       onClose={isSubmitting ? undefined : onClose}
       title="Edit Citra Orthomosaic"
       icon="edit"
-      style={{ width: "480px" }}
+      style={{ width: "480px", borderRadius: "16px" }}
     >
       {isOpen && image && (
         <EditOrthoForm

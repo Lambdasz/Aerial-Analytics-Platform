@@ -3,11 +3,10 @@ import { Icon } from "@blueprintjs/core";
 import type { SpatialResult } from "../types/map";
 import type { FieldDef } from "../types/spatialResult";
 import { formatFieldValue, resolveFeaturePhoto } from "../lib/fieldResolution";
-import { isValidHexColor } from "../lib/fieldValidation";
 
 export interface PopupPreviewCardProps {
   layerName: string;
-  displayColor: string;
+  displayColor?: string;
   layerImageUrl?: string | null;
   feature: SpatialResult | null;
   fields: FieldDef[];
@@ -16,13 +15,11 @@ export interface PopupPreviewCardProps {
 
 export const PopupPreviewCard: React.FC<PopupPreviewCardProps> = ({
   layerName,
-  displayColor,
   layerImageUrl,
   feature,
   fields,
   draftValues = {},
 }) => {
-  const safeColor = isValidHexColor(displayColor) ? displayColor : "#34c759";
   const props: Record<string, unknown> = {
     ...(feature?.properties || {}),
     ...draftValues,
@@ -43,63 +40,45 @@ export const PopupPreviewCard: React.FC<PopupPreviewCardProps> = ({
         background: "#ffffff",
         borderRadius: "16px",
         padding: "16px 18px",
-        boxShadow: "0 10px 30px rgba(0, 0, 0, 0.08)",
-        border: "1px solid #e2e8f0",
-        borderLeft: `5px solid ${safeColor}`,
+        boxShadow: "0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.03)",
+        border: "none",
         fontFamily: "var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif)",
         position: "relative",
       }}
     >
-      {/* Header */}
+      {/* Header Nama Layer & Sumber */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
-          marginBottom: "8px",
+          marginBottom: "12px",
+          gap: "8px",
         }}
       >
-        <span
+        <div
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "5px",
-            background: "rgba(52, 199, 89, 0.12)",
-            color: "#166534",
-            fontSize: "10px",
+            fontSize: "15px",
             fontWeight: 700,
-            padding: "3px 9px",
-            borderRadius: "999px",
-            textTransform: "uppercase",
-            letterSpacing: "0.6px",
+            color: "var(--color-ink, #0f172a)",
+            letterSpacing: "-0.2px",
+            lineHeight: 1.35,
+            wordBreak: "break-word",
           }}
         >
-          <span
-            style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: safeColor,
-            }}
-          />
-          Pratinjau Popup Peta
-        </span>
-        <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 500 }}>
+          {layerName || "Nama Layer"}
+        </div>
+        <span
+          style={{
+            fontSize: "11px",
+            color: "#94a3b8",
+            fontWeight: 500,
+            flexShrink: 0,
+            paddingTop: "2px",
+          }}
+        >
           {feature?.source || "manual"}
         </span>
-      </div>
-
-      <div
-        style={{
-          fontSize: "15px",
-          fontWeight: 700,
-          color: "var(--color-ink, #0f172a)",
-          marginBottom: "10px",
-          letterSpacing: "-0.2px",
-          lineHeight: 1.3,
-        }}
-      >
-        {layerName || "Nama Layer"}
       </div>
 
       {/* Foto Pratinjau */}

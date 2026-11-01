@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Callout, Icon, Tag, Tooltip, type IconName } from "@blueprintjs/core";
+import { Button, Icon, Tooltip } from "@blueprintjs/core";
 
 export type AnnotationGeomType = "Point" | "LineString" | "Polygon";
 
@@ -13,6 +13,7 @@ export interface AnnotationFormProps {
   isPickingLocation: boolean;
   hasGeometry: boolean;
   geometrySummary?: string;
+  isEditing?: boolean;
   isSubmitting?: boolean;
   error?: string | null;
   onTextChange: (text: string) => void;
@@ -24,6 +25,7 @@ export interface AnnotationFormProps {
   onTogglePickLocation: () => void;
   onClearGeometry: () => void;
   onSubmit: () => void;
+  onCancel?: () => void;
 }
 
 export const AnnotationForm: React.FC<AnnotationFormProps> = ({
@@ -36,6 +38,7 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
   isPickingLocation,
   hasGeometry,
   geometrySummary,
+  isEditing = false,
   isSubmitting = false,
   error,
   onTextChange,
@@ -47,118 +50,99 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
   onTogglePickLocation,
   onClearGeometry,
   onSubmit,
+  onCancel,
 }) => {
   return (
-    <div
-      style={{
-        marginTop: "20px",
-        paddingTop: "16px",
-        borderTop: "1px solid var(--color-hairline-silver)",
-      }}
-    >
+    <div>
       {/* Header Form */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: "12px",
+          marginBottom: "14px",
         }}
       >
         <span
           style={{
-            fontWeight: 600,
+            fontWeight: 700,
             fontSize: "14px",
-            color: "var(--color-ink)",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
+            color: "#0f172a",
           }}
         >
-          <Icon icon="map-marker" size={16} color="#f59e0b" />
-          Buat Anotasi Spasial
+          {isEditing ? "Edit Anotasi Spasial" : "Buat Anotasi Spasial"}
         </span>
-        {hasGeometry && (
-          <Tag minimal intent="success" round style={{ fontSize: "11px" }}>
-            {geomType === "Point"
-              ? "Titik Terpilih"
-              : geomType === "LineString"
-                ? "Garis Tergambar"
-                : "Poligon Tergambar"}
-          </Tag>
-        )}
       </div>
 
       {/* Catatan Anotasi */}
-      <div
-        style={{
-          marginBottom: "12px",
-          background: "var(--color-gallery-white)",
-          boxShadow: "var(--shadow-subtle)",
-          borderRadius: "12px",
-          padding: "8px 12px",
-          border: "1px solid #e2e8f0",
-        }}
-      >
+      <div style={{ marginBottom: "14px" }}>
         <div
           style={{
-            fontSize: "11px",
+            fontSize: "12px",
             fontWeight: 600,
-            color: "var(--color-slate)",
-            marginBottom: "4px",
-          }}
-        >
-          Catatan / Keterangan Lokasi <span style={{ fontWeight: 400 }}>(wajib)</span>
-        </div>
-        <textarea
-          placeholder="Tulis catatan (misal: Patok batas lahan, jalur kabel, area genangan air, dll)..."
-          value={annotationText}
-          onChange={(event) => onTextChange(event.target.value)}
-          disabled={isSubmitting}
-          style={{
-            width: "100%",
-            minHeight: "56px",
-            border: "none",
-            outline: "none",
-            background: "transparent",
-            color: "var(--color-ink)",
-            fontSize: "13px",
-            fontFamily: "var(--font-sf-pro-text)",
-            resize: "vertical",
-          }}
-        />
-      </div>
-
-      {/* Pilihan Bentuk Geometri: Titik vs Garis vs Poligon */}
-      <div style={{ marginBottom: "12px" }}>
-        <div
-          style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            color: "var(--color-slate)",
+            color: "#64748b",
             marginBottom: "6px",
           }}
         >
-          Bentuk Anotasi:
+          Catatan / Keterangan Lokasi <span style={{ color: "#ef4444" }}>*</span>
+        </div>
+        <div
+          style={{
+            background: "#f8fafc",
+            borderRadius: "10px",
+            padding: "10px 12px",
+            border: "none",
+          }}
+        >
+          <textarea
+            placeholder="Tulis catatan (misal: Patok batas lahan, jalur kabel, area genangan air, dll)..."
+            value={annotationText}
+            onChange={(event) => onTextChange(event.target.value)}
+            disabled={isSubmitting}
+            style={{
+              width: "100%",
+              minHeight: "56px",
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              color: "#0f172a",
+              fontSize: "13px",
+              fontFamily: "var(--font-sf-pro-text)",
+              resize: "vertical",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Pilihan Bentuk Geometri: Titik vs Garis vs Poligon */}
+      <div style={{ marginBottom: "14px" }}>
+        <div
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "#64748b",
+            marginBottom: "6px",
+          }}
+        >
+          Bentuk Anotasi
         </div>
         <div
           style={{
             display: "flex",
-            gap: "4px",
-            background: "var(--color-control-gray)",
+            gap: "3px",
+            background: "#f1f5f9",
             padding: "3px",
-            borderRadius: "10px",
+            borderRadius: "8px",
           }}
         >
           {(
             [
-              { id: "Point", label: "Titik", icon: "map-marker" },
-              { id: "LineString", label: "Garis", icon: "timeline-line-chart" },
-              { id: "Polygon", label: "Poligon", icon: "polygon-filter" },
+              { id: "Point", label: "Titik" },
+              { id: "LineString", label: "Garis" },
+              { id: "Polygon", label: "Poligon" },
             ] as const satisfies Array<{
               id: AnnotationGeomType;
               label: string;
-              icon: IconName;
             }>
           ).map((item) => {
             const isActive = geomType === item.id;
@@ -173,24 +157,20 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "5px",
-                  padding: "6px 8px",
-                  borderRadius: "8px",
+                  padding: "5px 4px",
+                  borderRadius: "6px",
                   border: "none",
-                  background: isActive ? "var(--color-gallery-white)" : "transparent",
-                  boxShadow: isActive ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
-                  color: isActive ? "var(--color-ink)" : "var(--color-slate)",
+                  outline: "none",
+                  background: isActive ? "#ffffff" : "transparent",
+                  boxShadow: isActive ? "0 1px 3px rgba(0, 0, 0, 0.08)" : "none",
+                  color: isActive ? "#0f172a" : "#64748b",
                   fontWeight: isActive ? 600 : 500,
-                  fontSize: "12px",
+                  fontSize: "11px",
                   cursor: isSubmitting || isPickingLocation ? "not-allowed" : "pointer",
                   transition: "all 0.15s ease",
+                  userSelect: "none",
                 }}
               >
-                <Icon
-                  icon={item.icon}
-                  size={13}
-                  color={isActive ? "#f59e0b" : "var(--color-slate)"}
-                />
                 {item.label}
               </button>
             );
@@ -199,25 +179,25 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
       </div>
 
       {/* Pilihan Metode: Gambar di Peta vs Input Manual */}
-      <div style={{ marginBottom: "12px" }}>
+      <div style={{ marginBottom: "14px" }}>
         <div
           style={{
-            fontSize: "11px",
+            fontSize: "12px",
             fontWeight: 600,
-            color: "var(--color-slate)",
+            color: "#64748b",
             marginBottom: "6px",
           }}
         >
-          Metode Penentuan:
+          Metode Penentuan
         </div>
 
         <div
           style={{
             display: "flex",
-            gap: "6px",
-            background: "var(--color-control-gray)",
+            gap: "3px",
+            background: "#f1f5f9",
             padding: "3px",
-            borderRadius: "10px",
+            borderRadius: "8px",
           }}
         >
           <button
@@ -230,19 +210,21 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
               alignItems: "center",
               justifyContent: "center",
               gap: "6px",
-              padding: "6px 10px",
-              borderRadius: "8px",
+              padding: "5px 4px",
+              borderRadius: "6px",
               border: "none",
-              background: coordMode === "map" ? "var(--color-gallery-white)" : "transparent",
-              boxShadow: coordMode === "map" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
-              color: coordMode === "map" ? "var(--color-ink)" : "var(--color-slate)",
+              outline: "none",
+              background: coordMode === "map" ? "#ffffff" : "transparent",
+              boxShadow: coordMode === "map" ? "0 1px 3px rgba(0, 0, 0, 0.08)" : "none",
+              color: coordMode === "map" ? "#0f172a" : "#64748b",
               fontWeight: coordMode === "map" ? 600 : 500,
-              fontSize: "12px",
+              fontSize: "11px",
               cursor: isSubmitting || isPickingLocation ? "not-allowed" : "pointer",
               transition: "all 0.15s ease",
+              userSelect: "none",
             }}
           >
-            <Icon icon="locate" size={13} color={coordMode === "map" ? "#f59e0b" : undefined} />
+            <Icon icon="locate" size={13} color={coordMode === "map" ? "#0f172a" : "#64748b"} />
             Gambar di Peta
           </button>
 
@@ -256,19 +238,21 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
               alignItems: "center",
               justifyContent: "center",
               gap: "6px",
-              padding: "6px 10px",
-              borderRadius: "8px",
+              padding: "5px 4px",
+              borderRadius: "6px",
               border: "none",
-              background: coordMode === "manual" ? "var(--color-gallery-white)" : "transparent",
-              boxShadow: coordMode === "manual" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
-              color: coordMode === "manual" ? "var(--color-ink)" : "var(--color-slate)",
+              outline: "none",
+              background: coordMode === "manual" ? "#ffffff" : "transparent",
+              boxShadow: coordMode === "manual" ? "0 1px 3px rgba(0, 0, 0, 0.08)" : "none",
+              color: coordMode === "manual" ? "#0f172a" : "#64748b",
               fontWeight: coordMode === "manual" ? 600 : 500,
-              fontSize: "12px",
+              fontSize: "11px",
               cursor: isSubmitting || isPickingLocation ? "not-allowed" : "pointer",
               transition: "all 0.15s ease",
+              userSelect: "none",
             }}
           >
-            <Icon icon="edit" size={13} color={coordMode === "manual" ? "#f59e0b" : undefined} />
+            <Icon icon="edit" size={13} color={coordMode === "manual" ? "#0f172a" : "#64748b"} />
             Input Manual
           </button>
         </div>
@@ -276,11 +260,11 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
 
       {/* Konten Mode: GAMBAR DI PETA */}
       {coordMode === "map" && (
-        <div style={{ marginBottom: "12px" }}>
+        <div style={{ marginBottom: "14px" }}>
           <div style={{ display: "flex", gap: "8px" }}>
             <Button
+              minimal
               icon={isPickingLocation ? "cross" : "locate"}
-              intent={isPickingLocation ? "warning" : hasGeometry ? "primary" : "primary"}
               text={
                 isPickingLocation
                   ? geomType === "Point"
@@ -305,43 +289,58 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
               disabled={isSubmitting}
               style={{
                 borderRadius: "10px",
+                background: isPickingLocation ? "#f1f5f9" : "#0f172a",
+                color: isPickingLocation ? "#0f172a" : "#ffffff",
                 fontWeight: 600,
-                padding: "8px 12px",
+                padding: "8px 14px",
                 fontSize: "12px",
+                boxShadow: "none",
               }}
             />
           </div>
 
           {isPickingLocation && (
-            <Callout
-              intent="warning"
-              icon="info-sign"
+            <div
               style={{
                 marginTop: "8px",
+                background: "#f8fafc",
+                borderRadius: "10px",
+                padding: "10px 12px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "8px",
                 fontSize: "12px",
-                padding: "8px 12px",
-                borderRadius: "8px",
+                color: "#475569",
+                lineHeight: 1.45,
               }}
             >
-              {geomType === "Point" && (
-                <span>
-                  Arahkan kursor dan <strong>klik pada titik di peta</strong> untuk menentukan
-                  posisi anotasi.
-                </span>
-              )}
-              {geomType === "LineString" && (
-                <span>
-                  Klik di peta untuk membuat titik garis. <strong>Klik dua kali</strong> pada titik
-                  terakhir untuk menyelesaikan garis.
-                </span>
-              )}
-              {geomType === "Polygon" && (
-                <span>
-                  Klik di peta untuk membuat titik poligon. <strong>Klik titik awal</strong> untuk
-                  menutup poligon.
-                </span>
-              )}
-            </Callout>
+              <Icon
+                icon="info-sign"
+                size={14}
+                color="#64748b"
+                style={{ marginTop: "2px", flexShrink: 0 }}
+              />
+              <div>
+                {geomType === "Point" && (
+                  <span>
+                    Arahkan kursor dan <strong>klik pada titik di peta</strong> untuk menentukan
+                    posisi anotasi.
+                  </span>
+                )}
+                {geomType === "LineString" && (
+                  <span>
+                    Klik di peta untuk membuat titik garis. <strong>Klik dua kali</strong> pada
+                    titik terakhir untuk menyelesaikan garis.
+                  </span>
+                )}
+                {geomType === "Polygon" && (
+                  <span>
+                    Klik di peta untuk membuat titik poligon. <strong>Klik titik awal</strong> untuk
+                    menutup poligon.
+                  </span>
+                )}
+              </div>
+            </div>
           )}
 
           {hasGeometry && !isPickingLocation && (
@@ -349,11 +348,11 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
               style={{
                 marginTop: "8px",
                 padding: "8px 12px",
-                background: "#fef3c7",
-                border: "1px solid #fde68a",
+                background: "#f0fdf4",
+                border: "none",
                 borderRadius: "10px",
                 fontSize: "12px",
-                color: "#92400e",
+                color: "#166534",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
@@ -362,14 +361,11 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
               <span>
                 {geomType === "Point" && (
                   <>
-                    📍 <strong>{latitude}</strong>, <strong>{longitude}</strong>
+                    Koordinat: <strong>{latitude}</strong>, <strong>{longitude}</strong>
                   </>
                 )}
                 {geomType !== "Point" && (
-                  <>
-                    {geomType === "LineString" ? "📏 " : "⬡ "}
-                    <strong>{geometrySummary || "Bentuk spasial siap disimpan"}</strong>
-                  </>
+                  <strong>{geometrySummary || "Bentuk spasial siap disimpan"}</strong>
                 )}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -377,12 +373,12 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
                   <Icon
                     icon="cross"
                     size={13}
-                    style={{ cursor: "pointer", color: "#b45309" }}
+                    style={{ cursor: "pointer", color: "#166534" }}
                     onClick={onClearGeometry}
                   />
                 </Tooltip>
                 <Tooltip content="Bentuk ini siap disimpan" placement="top">
-                  <Icon icon="tick-circle" color="#d97706" size={14} />
+                  <Icon icon="tick-circle" color="#16a34a" size={14} />
                 </Tooltip>
               </div>
             </div>
@@ -399,11 +395,9 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
                 <div
                   style={{
                     flex: 1,
-                    background: "var(--color-gallery-white)",
-                    boxShadow: "var(--shadow-subtle)",
+                    background: "#f8fafc",
                     borderRadius: "10px",
                     padding: "6px 10px",
-                    border: "1px solid #e2e8f0",
                   }}
                 >
                   <div
@@ -438,11 +432,9 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
                 <div
                   style={{
                     flex: 1,
-                    background: "var(--color-gallery-white)",
-                    boxShadow: "var(--shadow-subtle)",
+                    background: "#f8fafc",
                     borderRadius: "10px",
                     padding: "6px 10px",
-                    border: "1px solid #e2e8f0",
                   }}
                 >
                   <div
@@ -482,11 +474,9 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
             <div>
               <div
                 style={{
-                  background: "var(--color-gallery-white)",
-                  boxShadow: "var(--shadow-subtle)",
+                  background: "#f8fafc",
                   borderRadius: "10px",
                   padding: "8px 10px",
-                  border: "1px solid #e2e8f0",
                 }}
               >
                 <div
@@ -540,44 +530,71 @@ export const AnnotationForm: React.FC<AnnotationFormProps> = ({
         </div>
       )}
 
-      {/* Error Callout */}
+      {/* Error Message */}
       {error && (
-        <Callout
-          intent="danger"
-          icon="error"
+        <div
           style={{
             marginBottom: "12px",
+            background: "#fef2f2",
+            color: "#dc2626",
+            borderRadius: "10px",
+            padding: "10px 12px",
             fontSize: "12px",
-            padding: "8px 12px",
-            borderRadius: "8px",
+            fontWeight: 500,
           }}
         >
           {error}
-        </Callout>
+        </div>
       )}
 
-      {/* Tombol Simpan / Buat Annotation */}
-      <Button
-        icon="add"
-        text={isSubmitting ? "Menyimpan Anotasi..." : "Buat Annotation"}
-        fill
-        onClick={onSubmit}
-        loading={isSubmitting}
-        disabled={isSubmitting || !annotationText.trim() || !hasGeometry}
-        style={{
-          borderRadius: "999px",
-          background:
-            isSubmitting || !annotationText.trim() || !hasGeometry
-              ? "var(--color-control-gray)"
-              : "#f59e0b",
-          color:
-            isSubmitting || !annotationText.trim() || !hasGeometry ? "var(--color-slate)" : "#fff",
-          boxShadow: "none",
-          fontWeight: 600,
-          padding: "8px 16px",
-          transition: "all 0.2s ease",
-        }}
-      />
+      {/* Tombol Aksi Batal & Simpan Anotasi */}
+      <div style={{ display: "flex", gap: "8px", marginTop: "14px" }}>
+        {onCancel && (
+          <Button
+            minimal
+            text="Batal"
+            onClick={onCancel}
+            disabled={isSubmitting}
+            style={{
+              borderRadius: "10px",
+              background: "#f1f5f9",
+              color: "#475569",
+              fontWeight: 600,
+              padding: "8px 14px",
+              fontSize: "12px",
+              boxShadow: "none",
+            }}
+          />
+        )}
+        <Button
+          minimal
+          icon={isEditing ? "floppy-disk" : "add"}
+          text={
+            isSubmitting
+              ? isEditing
+                ? "Menyimpan Perubahan..."
+                : "Menyimpan Anotasi..."
+              : isEditing
+                ? "Simpan Perubahan"
+                : "Simpan Anotasi"
+          }
+          onClick={onSubmit}
+          loading={isSubmitting}
+          disabled={isSubmitting || !annotationText.trim() || !hasGeometry}
+          style={{
+            flex: 1,
+            borderRadius: "10px",
+            background:
+              isSubmitting || !annotationText.trim() || !hasGeometry ? "#f1f5f9" : "#0f172a",
+            color: isSubmitting || !annotationText.trim() || !hasGeometry ? "#94a3b8" : "#ffffff",
+            boxShadow: "none",
+            fontWeight: 600,
+            padding: "8px 14px",
+            fontSize: "12px",
+            transition: "all 0.2s ease",
+          }}
+        />
+      </div>
     </div>
   );
 };

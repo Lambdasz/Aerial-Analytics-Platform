@@ -1,6 +1,6 @@
 {
   "layer_id": "result_tree_001",
-  "layer_name": "Deteksi Pohon - Sektor A (sawit rame)",
+  "layer_name": "Deteksi Pohon - Sektor A (Sawit)",
   "display_preference": {
     "type": "point",
     "color": "#2ecc40",
@@ -104,5 +104,5 @@
       ]
     }
   ],
-  "updated_at": "2026-10-26T05:25:42.855Z"
+  "updated_at": "2026-10-31T10:02:50.532Z"
 }

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "plots_all",
+  "layer_name": "Plots",
+  "display_preference": {
+    "type": "polygon",
+    "color": "#0066cc",
+    "opacity": 0.25,
+    "fields": [
+      {
+        "key": "plot_name",
+        "label": "Plot",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "area_ha",
+        "label": "Area",
+        "unit": "ha",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "perimeter_m",
+        "label": "Perimeter",
+        "unit": "m",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      }
+    ]
+  },
+  "feature_count": 1,
+  "updated_at": "2026-10-31T15:39:01.801516+00:00"
+}

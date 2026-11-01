@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import * as L from "leaflet";
 import "../leaflet-setup";
-import { Button, NonIdealState, Tooltip, Tag, InputGroup } from "@blueprintjs/core";
+import { Button, NonIdealState, Tooltip, Tag, InputGroup, Icon } from "@blueprintjs/core";
 import type { LayerState, AnnotationFeature, SpatialGeometry } from "../types/layer";
 import type { DroneImageMetadata } from "../types/marker";
 import type { LayerPayload } from "../types/map";
@@ -9,7 +9,8 @@ import { getInitialMapLayers, getSavedSpatialResults } from "../services/api";
 import { useAnnotations } from "../hooks/useAnnotations";
 import { LayerCategoryFilter } from "../molecules/LayerCategoryFilter";
 import { LayerItem } from "../molecules/LayerItem";
-import { AnnotationSidebarForm } from "../molecules/AnnotationSidebarForm";
+import { AnnotationModal } from "../molecules/AnnotationModal";
+import type { AnnotationGeomType } from "../molecules/AnnotationForm";
 import { calculateLineLengthMeters, calculateGeodesicAreaMeters } from "../lib/geoJson";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -89,12 +90,15 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
 }) => {
   const [layers, setLayers] = useState<LayerState[]>(() => [buildFlightPhotosLayer()]);
   const [selectedCategory, setSelectedCategory] = useState("All");
-  const [isAddingAnnotation, setIsAddingAnnotation] = useState(false);
+  const [isAnnotationModalOpen, setIsAnnotationModalOpen] = useState(false);
+  const [editingAnnotation, setEditingAnnotation] = useState<AnnotationFeature | null>(null);
+  const [isPickingAnnotation, setIsPickingAnnotation] = useState(false);
+  const [pickingGeomType, setPickingGeomType] = useState<AnnotationGeomType>("Point");
   const [isPhotoListOpen, setIsPhotoListOpen] = useState(false);
   const [photoFilter, setPhotoFilter] = useState("");
 
   // Hook manajemen anotasi mandiri
-  const { annotations, addAnnotation, removeAnnotation } = useAnnotations();
+  const { annotations, addAnnotation, editAnnotation, removeAnnotation } = useAnnotations();
 
   // The Flight Photos entry is part of the initial state, but state
   // preserved across hot reload can predate it — derive the displayed/sent
@@ -461,8 +465,36 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
     await addAnnotation(args);
   };
 
+  const handleStartEditAnnotation = (annotation: AnnotationFeature) => {
+    setEditingAnnotation(annotation);
+    setIsAnnotationModalOpen(true);
+    if (map) {
+      handleFocusAnnotation(annotation);
+    }
+  };
+
+  const handleUpdateAnnotation = async (args: { text: string; geometry: SpatialGeometry }) => {
+    if (!editingAnnotation) return;
+    const targetId = editingAnnotation.id || editingAnnotation.annotation_id || "";
+    await editAnnotation({
+      ...editingAnnotation,
+      id: targetId,
+      annotation_id: targetId,
+      text: args.text,
+      geometry: args.geometry,
+    });
+    setEditingAnnotation(null);
+  };
+
   const handleDeleteAnnotation = async (id: string) => {
     if (!id) return;
+    if (
+      editingAnnotation &&
+      (editingAnnotation.id === id || editingAnnotation.annotation_id === id)
+    ) {
+      setIsAnnotationModalOpen(false);
+      setEditingAnnotation(null);
+    }
     await removeAnnotation(id);
   };
 
@@ -485,10 +517,25 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
     }
   };
 
-  const annotationFormRef = React.useRef<HTMLDivElement | null>(null);
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Header Info */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingBottom: "8px",
+          borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
+          marginBottom: "12px",
+        }}
+      >
+        <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Daftar Layer</span>
+        <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
+          {visibleLayers.length} Layer
+        </span>
+      </div>
+
       {/* Category Filter Pills */}
       <LayerCategoryFilter
         categories={categories}
@@ -655,11 +702,14 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           borderTop: "1px solid var(--color-hairline-silver)",
         }}
       >
+        {/* Header Seksi Anotasi */}
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            paddingBottom: "8px",
+            borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
             marginBottom: "12px",
           }}
         >
@@ -677,48 +727,91 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
               {annotations.length} catatan inspeksi di peta
             </div>
           </div>
-          <Button
-            small
-            intent={isAddingAnnotation ? "none" : "primary"}
-            icon={isAddingAnnotation ? "cross" : "plus"}
-            text={isAddingAnnotation ? "Tutup Form" : "Tambah Anotasi"}
-            onClick={() => {
-              const next = !isAddingAnnotation;
-              setIsAddingAnnotation(next);
-              if (next) {
-                setTimeout(() => {
-                  annotationFormRef.current?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "nearest",
-                  });
-                }, 80);
-              }
-            }}
-            style={{ borderRadius: "8px", fontWeight: 600 }}
-          />
         </div>
 
-        {/* Formulir Pembuatan Anotasi di Sidebar (Bukan Modal/Popup, Peta Tidak Terhalang) */}
-        {isAddingAnnotation && (
+        {/* Tombol Utama Catat Anotasi Spasial */}
+        <Button
+          fill
+          icon="plus"
+          text="Catat Anotasi Spasial"
+          onClick={() => {
+            setEditingAnnotation(null);
+            setIsAnnotationModalOpen(true);
+          }}
+          style={{
+            borderRadius: "12px",
+            background: "#0f172a",
+            color: "#ffffff",
+            fontWeight: 600,
+            fontSize: "13px",
+            padding: "10px 16px",
+            border: "none",
+            boxShadow: "0 2px 8px -1px rgba(15, 23, 42, 0.2)",
+            marginBottom: "14px",
+          }}
+        />
+
+        {/* Interactive Helper Banner saat Mode Menentukan Lokasi Anotasi di Peta */}
+        {isPickingAnnotation && (
           <div
-            ref={annotationFormRef}
             style={{
-              marginBottom: "16px",
-              padding: "12px",
-              background: "var(--color-gallery-white, #ffffff)",
-              borderRadius: "14px",
-              boxShadow: "var(--shadow-subtle)",
-              border: "1px solid #e2e8f0",
+              background: "#0f172a",
+              borderRadius: "12px",
+              padding: "12px 14px",
+              color: "#ffffff",
+              boxShadow: "0 4px 12px rgba(15, 23, 42, 0.25)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              marginBottom: "14px",
             }}
           >
-            <AnnotationSidebarForm
-              map={map || null}
-              onSaveAnnotation={async (data) => {
-                await handleSaveAnnotation(data);
-                setIsAddingAnnotation(false);
-              }}
-              onCancel={() => setIsAddingAnnotation(false)}
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Icon icon="locate" color="#38bdf8" size={16} />
+              <span style={{ fontSize: "12px", fontWeight: 600 }}>
+                Mode Menentukan Lokasi Anotasi
+              </span>
+            </div>
+            <p style={{ fontSize: "11px", color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
+              {pickingGeomType === "Point"
+                ? "Klik salah satu titik di atas kanvas peta untuk mencatat koordinat anotasi."
+                : pickingGeomType === "LineString"
+                  ? "Klik titik-titik di atas kanvas peta untuk menggambar garis anotasi."
+                  : "Klik titik-titik sudut di atas kanvas peta untuk menggambar poligon anotasi."}
+            </p>
+            <div style={{ display: "flex", gap: "6px", marginTop: "2px" }}>
+              <Button
+                small
+                text="Batal"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("annotation:cancel-picking"));
+                }}
+                style={{
+                  flex: 1,
+                  background: "#334155",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                }}
+              />
+              <Button
+                small
+                text="Selesai & Buka Form"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("annotation:finish-picking"));
+                }}
+                style={{
+                  flex: 1,
+                  background: "#38bdf8",
+                  color: "#0f172a",
+                  border: "none",
+                  fontWeight: 600,
+                  borderRadius: "6px",
+                  fontSize: "11px",
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -728,33 +821,39 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
             {annotations.map((annotation) => {
               const { geometry, annotation_id, id, text } = annotation;
               const targetId = id || annotation_id || "";
+              const isEditingThis =
+                isAnnotationModalOpen &&
+                editingAnnotation !== null &&
+                (editingAnnotation.id || editingAnnotation.annotation_id) === targetId;
               let metaText = "";
 
               if (geometry.type === "Point") {
                 const [lng, lat] = geometry.coordinates;
-                metaText = `📍 ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                metaText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
               } else if (geometry.type === "LineString") {
                 const len = calculateLineLengthMeters(geometry.coordinates);
                 const lenStr =
                   len >= 1000 ? `${(len / 1000).toFixed(2)} km` : `${len.toFixed(0)} m`;
-                metaText = `📏 ${geometry.coordinates.length} titik • ${lenStr}`;
+                metaText = `${geometry.coordinates.length} titik • ${lenStr}`;
               } else if (geometry.type === "Polygon") {
                 const ring = (geometry.coordinates[0] || []) as [number, number][];
                 const area = calculateGeodesicAreaMeters(ring);
                 const areaStr =
                   area >= 10000 ? `${(area / 10000).toFixed(2)} ha` : `${area.toFixed(0)} m²`;
-                metaText = `⬡ ${ring.length} sudut • ${areaStr}`;
+                metaText = `${ring.length} sudut • ${areaStr}`;
               }
 
               return (
                 <div
                   key={targetId}
                   style={{
-                    padding: "12px",
-                    background: "var(--color-gallery-white)",
-                    borderRadius: "12px",
-                    boxShadow: "var(--shadow-subtle)",
-                    border: "1px solid #e2e8f0",
+                    padding: "14px 16px",
+                    background: "#ffffff",
+                    borderRadius: "16px",
+                    boxShadow: isEditingThis
+                      ? "0 4px 20px -2px rgba(15, 23, 42, 0.12), 0 0 0 1.5px #0f172a"
+                      : "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
+                    border: "none",
                   }}
                 >
                   <div
@@ -774,14 +873,15 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                           marginBottom: "4px",
                         }}
                       >
-                        <Tag
-                          minimal
-                          round
+                        <span
                           style={{
+                            background: "#f1f5f9",
+                            color: "#475569",
                             fontSize: "10px",
-                            background: "rgba(245, 158, 11, 0.12)",
-                            color: "#b45309",
                             fontWeight: 600,
+                            padding: "2px 8px",
+                            borderRadius: "6px",
+                            display: "inline-block",
                           }}
                         >
                           {geometry.type === "Point"
@@ -789,7 +889,7 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                             : geometry.type === "LineString"
                               ? "Garis"
                               : "Poligon"}
-                        </Tag>
+                        </span>
                         <div
                           style={{
                             fontWeight: 600,
@@ -819,16 +919,30 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
                             minimal
                             small
                             icon="locate"
+                            style={{ color: "#64748b", borderRadius: "6px" }}
                             onClick={() => handleFocusAnnotation(annotation)}
                           />
                         </Tooltip>
                       )}
+                      <Tooltip content="Edit anotasi" placement="top">
+                        <Button
+                          minimal
+                          small
+                          icon="edit"
+                          style={{
+                            color: isEditingThis ? "#0f172a" : "#64748b",
+                            background: isEditingThis ? "#f1f5f9" : "transparent",
+                            borderRadius: "6px",
+                          }}
+                          onClick={() => handleStartEditAnnotation(annotation)}
+                        />
+                      </Tooltip>
                       <Tooltip content="Hapus anotasi" placement="top">
                         <Button
                           minimal
                           small
-                          intent="danger"
                           icon="trash"
+                          style={{ color: "#64748b", borderRadius: "6px" }}
                           onClick={() => void handleDeleteAnnotation(targetId)}
                         />
                       </Tooltip>
@@ -840,6 +954,28 @@ export const LayerManager: React.FC<LayerManagerProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modal Dialog Pembuatan & Edit Anotasi Spasial */}
+      <AnnotationModal
+        isOpen={isAnnotationModalOpen}
+        onClose={() => {
+          setIsAnnotationModalOpen(false);
+          setEditingAnnotation(null);
+        }}
+        map={map || null}
+        initialAnnotation={editingAnnotation}
+        onSaveAnnotation={async (data) => {
+          if (editingAnnotation) {
+            await handleUpdateAnnotation(data);
+          } else {
+            await handleSaveAnnotation(data);
+          }
+        }}
+        onDrawingStateChange={(isPicking, geomType) => {
+          setIsPickingAnnotation(isPicking);
+          setPickingGeomType(geomType);
+        }}
+      />
     </div>
   );
 };

@@ -46,9 +46,9 @@ export function buildPopupHtml(
       if (val === undefined || val === null || val === "") return "";
       const formattedVal = formatFieldValue(val, field.unit, field.kind);
       return `
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 7px 0; font-size: 12px;">${escapeHtml(field.label)}</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; font-family: var(--font-sf-pro-text, sans-serif); padding: 7px 0; font-size: 13px;">${escapeHtml(formattedVal)}</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0; font-size: 12px;">${escapeHtml(field.label)}</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; font-family: var(--font-sf-pro-text, sans-serif); padding: 6px 0; font-size: 12px;">${escapeHtml(formattedVal)}</td>
       </tr>
     `;
     })
@@ -127,31 +127,30 @@ export function buildPopupHtml(
 
   return `
     <div style="
-      background: var(--color-gallery-white, #ffffff);
+      background: #ffffff;
       border-radius: 16px;
       padding: 16px 18px;
       min-width: 270px;
       max-width: 320px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
       font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: 1px solid var(--color-hairline-silver, #e2e8f0);
-      border-left: 5px solid ${safeColor};
+      border: none;
     ">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(52, 199, 89, 0.12); color: #166534; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.6px;">
+        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
           <span style="width: 6px; height: 6px; border-radius: 50%; background: ${safeColor};"></span>
           Hasil Analisis Spasial
         </span>
         <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">${safeSource}</span>
       </div>
 
-      <div style="font-size: 15px; font-weight: 700; color: var(--color-ink, #0f172a); margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.3;">
+      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
         ${safeLayerName}
       </div>
 
       ${imageSection}
       
-      <div style="margin-bottom: 8px; border-bottom: 1px solid var(--color-hairline-silver, #e2e8f0);"></div>
+      <div style="margin-bottom: 8px; border-bottom: 1px solid #f1f5f9;"></div>
       
       <table style="width: 100%; border-collapse: collapse;">
         <tbody>
@@ -207,51 +206,51 @@ export function buildAoiPopupHtml(aoi: AoiFeature): string {
 
   return `
     <div style="
-      background: var(--color-gallery-white, #ffffff);
+      background: #ffffff;
       border-radius: 16px;
       padding: 16px 18px;
       min-width: 280px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      max-width: 330px;
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
       font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: 1px solid var(--color-hairline-silver, #e2e8f0);
-      border-left: 5px solid #007aff;
+      border: none;
     ">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(0, 122, 255, 0.12); color: #0056b3; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.6px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: #007aff;"></span>
+        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: #0f172a;"></span>
           Area of Interest (AOI)
         </span>
-        <span style="background: rgba(88, 86, 214, 0.1); color: #5856d6; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
+        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
           ${typeName}
         </span>
       </div>
 
-      <div style="font-size: 16px; font-weight: 700; color: var(--color-ink, #0f172a); margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.3;">
+      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
         ${name}
       </div>
 
-      <div style="font-size: 11px; color: #64748b; font-family: monospace; margin-bottom: 12px;">
+      <div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">
         ${aoi_id}
       </div>
       
-      <div style="margin-bottom: 10px; border-bottom: 1px solid var(--color-hairline-silver, #e2e8f0);"></div>
+      <div style="margin-bottom: 10px; border-bottom: 1px solid #f1f5f9;"></div>
       
       <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
         <tbody>
-          <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Luas Area</td>
-            <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Luas Area</td>
+            <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">
               ${areaFormatted} m²${haFormatted}
             </td>
           </tr>
-          <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Keliling</td>
-            <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Keliling</td>
+            <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">
               ${perimeterFormatted} m
             </td>
           </tr>
           <tr>
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Disimpan</td>
+            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Disimpan</td>
             <td style="color: #64748b; font-weight: 500; text-align: right; padding: 6px 0; font-size: 11px;">
               ${dateFormatted}
             </td>
@@ -279,13 +278,13 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
     const latStr = typeof lat === "number" ? lat.toFixed(6) : String(lat);
     const lonStr = typeof lon === "number" ? lon.toFixed(6) : String(lon);
     detailRows = `
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Latitude</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${latStr}</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Latitude</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${latStr}</td>
       </tr>
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Longitude</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lonStr}</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Longitude</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lonStr}</td>
       </tr>
     `;
   } else if (geomType === "LineString") {
@@ -296,13 +295,13 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
         ? `${(lengthMeters / 1000).toFixed(2)} km`
         : `${lengthMeters.toLocaleString("id-ID", { maximumFractionDigits: 1 })} m`;
     detailRows = `
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Jumlah Titik</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">${coords.length} titik</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Jumlah Titik</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">${coords.length} titik</td>
       </tr>
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Panjang Garis</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lengthStr}</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Panjang Garis</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${lengthStr}</td>
       </tr>
     `;
   } else if (geomType === "Polygon") {
@@ -313,13 +312,13 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
         ? `${(areaSqm / 10000).toFixed(2)} ha`
         : `${areaSqm.toLocaleString("id-ID", { maximumFractionDigits: 1 })} m²`;
     detailRows = `
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Jumlah Sudut</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">${ring.length} titik</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Jumlah Sudut</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0;">${ring.length} titik</td>
       </tr>
-      <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-        <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Estimasi Luas</td>
-        <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${areaStr}</td>
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Estimasi Luas</td>
+        <td style="color: #0f172a; font-weight: 600; text-align: right; padding: 6px 0; font-family: monospace;">${areaStr}</td>
       </tr>
     `;
   }
@@ -349,41 +348,40 @@ export function buildAnnotationPopupHtml(annotation: AnnotationFeature): string 
 
   return `
     <div style="
-      background: var(--color-gallery-white, #ffffff);
+      background: #ffffff;
       border-radius: 16px;
       padding: 16px 18px;
       min-width: 280px;
       max-width: 320px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
       font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: 1px solid var(--color-hairline-silver, #e2e8f0);
-      border-left: 5px solid #f59e0b;
+      border: none;
     ">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(245, 158, 11, 0.12); color: #b45309; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.6px;">
-          <span style="width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;"></span>
+        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: #0f172a;"></span>
           Anotasi Spasial
         </span>
-        <span style="background: rgba(245, 158, 11, 0.12); color: #b45309; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
+        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
           ${geomLabel}
         </span>
       </div>
 
-      <div style="font-size: 16px; font-weight: 700; color: var(--color-ink, #0f172a); margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
+      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 4px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
         ${safeText}
       </div>
 
-      <div style="font-size: 11px; color: #64748b; font-family: monospace; margin-bottom: 12px;">
+      <div style="font-size: 11px; color: #94a3b8; font-family: monospace; margin-bottom: 12px;">
         ${annotation.id || annotation.annotation_id}
       </div>
       
-      <div style="margin-bottom: 10px; border-bottom: 1px solid var(--color-hairline-silver, #e2e8f0);"></div>
+      <div style="margin-bottom: 10px; border-bottom: 1px solid #f1f5f9;"></div>
       
       <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
         <tbody>
           ${detailRows}
           <tr>
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Dibuat</td>
+            <td style="color: #64748b; font-weight: 500; padding: 6px 0;">Dibuat</td>
             <td style="color: #64748b; font-weight: 500; text-align: right; padding: 6px 0; font-size: 11px;">
               ${dateFormatted}
             </td>
@@ -457,37 +455,28 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
 
   return `
     <div style="
-      background: var(--color-gallery-white, #ffffff);
+      background: #ffffff;
       border-radius: 16px;
       padding: 16px 18px;
       min-width: 280px;
       max-width: 330px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.03);
       font-family: var(--font-sf-pro-text, -apple-system, BlinkMacSystemFont, sans-serif);
-      border: 1px solid var(--color-hairline-silver, #e2e8f0);
-      border-left: 5px solid ${isEnabled ? "#34c759" : "#007aff"};
+      border: none;
     ">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding-right: 22px;">
-        <span style="display: inline-flex; align-items: center; gap: 5px; background: ${
-          isEnabled ? "rgba(52, 199, 89, 0.12)" : "rgba(0, 122, 255, 0.12)"
-        }; color: ${
-          isEnabled ? "#15803d" : "#0056b3"
-        }; font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.6px;">
+        <span style="display: inline-flex; align-items: center; gap: 5px; background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.5px;">
           <span style="width: 6px; height: 6px; border-radius: 50%; background: ${
-            isEnabled ? "#34c759" : "#007aff"
+            isEnabled ? "#0f172a" : "#94a3b8"
           };"></span>
           Orthomosaic Drone
         </span>
-        <span style="background: ${
-          isEnabled ? "rgba(16, 185, 129, 0.1)" : "rgba(100, 116, 139, 0.12)"
-        }; color: ${
-          isEnabled ? "#059669" : "#475569"
-        }; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
-          ${isEnabled ? "ON • Ditampilkan" : "OFF • Hemat Memori"}
+        <span style="background: #f1f5f9; color: #475569; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 6px;">
+          ${isEnabled ? "Aktif" : "Nonaktif"}
         </span>
       </div>
 
-      <div style="font-size: 15px; font-weight: 700; color: var(--color-ink, #0f172a); margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
+      <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 10px; letter-spacing: -0.2px; line-height: 1.35; word-break: break-word;">
         ${safeFilename}
       </div>
 
@@ -495,24 +484,22 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
 
       <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
         <tbody>
-          <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Ukuran Citra</td>
-            <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Ukuran Citra</td>
+            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
               ${dimensionsText}
             </td>
           </tr>
-          <tr style="border-bottom: 1px solid rgba(0, 0, 0, 0.05);">
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Format File</td>
-            <td style="color: var(--color-ink, #0f172a); font-weight: 600; text-align: right; padding: 6px 0;">
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Format File</td>
+            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
               ${formatText} (${sizeText})
             </td>
           </tr>
           <tr>
-            <td style="color: var(--color-slate, #64748b); font-weight: 600; padding: 6px 0;">Status Memori</td>
-            <td style="color: ${
-              isEnabled ? "#059669" : "#2563eb"
-            }; font-weight: 600; text-align: right; padding: 6px 0; font-size: 11px;">
-              ${isEnabled ? "Gambar Dimuat (Canvas)" : "Hemat Memori (Hover Outline)"}
+            <td style="color: #64748b; font-weight: 500; font-size: 12px; padding: 6px 0;">Status Memori</td>
+            <td style="color: #0f172a; font-weight: 600; font-size: 12px; text-align: right; padding: 6px 0;">
+              ${isEnabled ? "Gambar Dimuat (Canvas)" : "Hemat Memori (Outline)"}
             </td>
           </tr>
         </tbody>
@@ -522,7 +509,7 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
         img.display_dimensions &&
         Math.max(img.display_dimensions[0], img.display_dimensions[1]) < 2048
           ? `
-        <div style="margin-top: 10px; font-size: 11px; color: #b45309; background: #fef3c7; border: 1px solid #fde68a; padding: 6px 10px; border-radius: 6px; line-height: 1.4;">
+        <div style="margin-top: 10px; font-size: 11px; color: #b45309; background: #fffbeb; border: 1px solid #fef3c7; padding: 6px 10px; border-radius: 8px; line-height: 1.4;">
           ⚠️ <strong>Resolusi Display Dibatasi (&lt; 2.048 px):</strong><br/>
           Ukuran display dioptimalkan ke ${img.display_dimensions[0]}×${img.display_dimensions[1]} px untuk menghemat memori. Detail pada zoom tinggi mungkin berkurang.
         </div>
@@ -531,9 +518,9 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
       }
 
       <!-- KONTROL TOGGLE ON/OFF -->
-      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-hairline-silver, #e2e8f0); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
         <div style="display: flex; flex-direction: column;">
-          <span style="font-size: 12px; font-weight: 700; color: var(--color-ink, #0f172a);">Tampilkan Citra</span>
+          <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Tampilkan Citra</span>
           <span style="font-size: 10px; color: #64748b;">
             ${isEnabled ? "Matikan untuk hemat memori" : "Hidupkan untuk render citra"}
           </span>
@@ -545,34 +532,31 @@ export function buildOrthoPopupHtml(img: StoredImageMetadata, isEnabled: boolean
           style="
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            background: ${isEnabled ? "#007aff" : "#f1f5f9"};
-            color: ${isEnabled ? "#ffffff" : "#334155"};
-            border: 1px solid ${isEnabled ? "#0062cc" : "#cbd5e1"};
-            padding: 6px 14px;
+            justify-content: center;
+            background: ${isEnabled ? "#0f172a" : "#f1f5f9"};
+            color: ${isEnabled ? "#ffffff" : "#64748b"};
+            border: none;
+            padding: 5px 14px;
             border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 600;
             cursor: pointer;
             pointer-events: auto !important;
             user-select: none;
-            box-shadow: ${isEnabled ? "0 2px 6px rgba(0, 122, 255, 0.3)" : "none"};
+            box-shadow: none;
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
           "
         >
-          <span style="width: 7px; height: 7px; border-radius: 50%; pointer-events: none; background: ${
-            isEnabled ? "#34c759" : "#94a3b8"
-          };"></span>
-          <span style="pointer-events: none;">${isEnabled ? "ON (Tampil)" : "OFF (Hemat)"}</span>
+          <span style="pointer-events: none;">${isEnabled ? "ON" : "OFF"}</span>
         </button>
       </div>
 
       ${
         !isEnabled
           ? `
-        <div style="margin-top: 10px; font-size: 10px; color: #0369a1; background: rgba(0, 122, 255, 0.08); padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(0, 122, 255, 0.35); line-height: 1.4;">
+        <div style="margin-top: 10px; font-size: 11px; color: #475569; background: #f8fafc; padding: 8px 12px; border-radius: 10px; line-height: 1.4;">
           💡 <strong>Mode Hemat Memori Aktif:</strong><br/>
-          Gambar tidak dirender ke canvas. Arahkan kursor mouse ke area peta ini untuk melihat outline garis biru.
+          Gambar tidak dirender ke canvas. Arahkan kursor mouse ke area peta ini untuk melihat outline batas citra.
         </div>
       `
           : ""

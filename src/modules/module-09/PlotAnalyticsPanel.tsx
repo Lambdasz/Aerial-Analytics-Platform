@@ -1,15 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Button,
-  Callout,
-  Checkbox,
-  Dialog,
-  HTMLSelect,
-  Intent,
-  NonIdealState,
-  Spinner,
-  Tag,
-} from "@blueprintjs/core";
+import { Button, Checkbox, Dialog, Icon, NonIdealState, Spinner } from "@blueprintjs/core";
 
 import { getSavedAois } from "../module-03/services/api";
 import type { AoiFeature } from "../module-03/types/aoi";
@@ -51,6 +41,14 @@ export function PlotAnalyticsPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => {
+      setNotice(null);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const [isAoiOpen, setIsAoiOpen] = useState(false);
   const [savedAois, setSavedAois] = useState<AoiFeature[]>([]);
@@ -190,50 +188,191 @@ export function PlotAnalyticsPanel() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        <Button small icon="selection" text="From AOI" onClick={() => void openAoiPicker()} fill />
+      {/* Unified Page Header */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingBottom: "8px",
+          borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
+          marginBottom: "2px",
+        }}
+      >
+        <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Analisis Plot</span>
+        <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
+          {plots.length} Plot
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 6 }}>
         <Button
+          minimal
+          small
+          icon="selection"
+          text="From AOI"
+          onClick={() => void openAoiPicker()}
+          style={{
+            flex: 1,
+            borderRadius: 10,
+            background: "#0f172a",
+            color: "#ffffff",
+            fontWeight: 600,
+            fontSize: 12,
+            padding: "6px 12px",
+            boxShadow: "none",
+            outline: "none",
+          }}
+        />
+        <Button
+          minimal
           small
           icon="chart"
-          intent={selectedPlots.length > 0 ? Intent.SUCCESS : Intent.NONE}
           text={`Analyse (${selectedPlots.length})`}
           disabled={selectedPlots.length === 0}
           onClick={() => setIsAnalyseOpen(true)}
+          style={{
+            borderRadius: 10,
+            background: selectedPlots.length > 0 ? "#2563eb" : "#f1f5f9",
+            color: selectedPlots.length > 0 ? "#ffffff" : "#94a3b8",
+            fontWeight: 600,
+            fontSize: 12,
+            padding: "6px 12px",
+            boxShadow: "none",
+            outline: "none",
+          }}
         />
         <Button
+          minimal
           small
           icon="map"
           text="On map"
           disabled={plots.length === 0}
           onClick={() => void showOnMap()}
+          style={{
+            borderRadius: 10,
+            background: "#ffffff",
+            color: plots.length === 0 ? "#94a3b8" : "#0f172a",
+            fontWeight: 600,
+            fontSize: 12,
+            padding: "6px 12px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            outline: "none",
+          }}
         />
       </div>
 
       {pendingAois.length > 0 && (
-        <Callout
-          intent={Intent.PRIMARY}
-          icon="info-sign"
-          title={`${pendingAois.length} saved AOI${pendingAois.length === 1 ? "" : "s"} not added as plot${
-            pendingAois.length === 1 ? "" : "s"
-          }`}
+        <div
+          style={{
+            background: "#eff6ff",
+            border: "1px solid #dbeafe",
+            borderRadius: 12,
+            padding: "10px 14px",
+            color: "#1e40af",
+            fontSize: 12,
+            fontWeight: 500,
+          }}
         >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontWeight: 600,
+              marginBottom: 4,
+            }}
+          >
+            <Icon icon="info-sign" size={14} color="#2563eb" />
+            <span>
+              {`${pendingAois.length} saved AOI${pendingAois.length === 1 ? "" : "s"} not added as plot${
+                pendingAois.length === 1 ? "" : "s"
+              }`}
+            </span>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-            <span style={{ flex: 1, fontSize: 12 }}>
+            <span style={{ flex: 1, fontSize: 11, color: "#3b82f6" }}>
               AOIs come from the AOI tab; add them here to analyse and rank them.
             </span>
             <Button
+              minimal
               small
-              intent={Intent.PRIMARY}
               text="Add all"
               loading={isImportingAois}
               onClick={() => void createFromAois(pendingAois)}
+              style={{
+                background: "#2563eb",
+                color: "#ffffff",
+                borderRadius: 8,
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "4px 10px",
+                outline: "none",
+              }}
             />
           </div>
-        </Callout>
+        </div>
       )}
 
-      {error && <Callout intent={Intent.DANGER}>{error}</Callout>}
-      {notice && <Callout intent={Intent.SUCCESS}>{notice}</Callout>}
+      {error && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+            borderRadius: 12,
+            padding: "8px 12px",
+            fontSize: 12,
+            fontWeight: 500,
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+            <Icon icon="error" size={14} color="#dc2626" />
+            <span>{error}</span>
+          </div>
+          <Button
+            minimal
+            small
+            icon="cross"
+            onClick={() => setError(null)}
+            style={{ color: "#991b1b", padding: 2, minWidth: 20, minHeight: 20, outline: "none" }}
+          />
+        </div>
+      )}
+
+      {notice && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            color: "#166534",
+            borderRadius: 12,
+            padding: "8px 12px",
+            fontSize: 12,
+            fontWeight: 500,
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+            <Icon icon="tick-circle" size={14} color="#16a34a" />
+            <span>{notice}</span>
+          </div>
+          <Button
+            minimal
+            small
+            icon="cross"
+            onClick={() => setNotice(null)}
+            style={{ color: "#166534", padding: 2, minWidth: 20, minHeight: 20, outline: "none" }}
+          />
+        </div>
+      )}
 
       {isLoading ? (
         <div style={{ padding: 24, textAlign: "center" }}>
@@ -254,13 +393,14 @@ export function PlotAnalyticsPanel() {
             <div
               key={plot.id}
               style={{
-                background: "var(--color-gallery-white)",
-                border: "1px solid var(--color-hairline-silver)",
-                borderRadius: 12,
-                padding: "8px 10px",
+                background: "var(--color-gallery-white, #ffffff)",
+                border: "none",
+                borderRadius: 16,
+                padding: "14px 16px",
+                boxShadow: "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Checkbox
                   checked={selected.has(plot.id)}
                   onChange={(event) => {
@@ -279,6 +419,7 @@ export function PlotAnalyticsPanel() {
                     style={{
                       fontSize: 13,
                       fontWeight: 600,
+                      color: "var(--color-ink, #182026)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -286,7 +427,7 @@ export function PlotAnalyticsPanel() {
                   >
                     {plot.name}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--color-slate)" }}>
+                  <div style={{ fontSize: 11, color: "var(--color-slate, #64748b)", marginTop: 2 }}>
                     {formatArea(plot.areaM2, plot.areaHa)} · {formatPerimeter(plot.perimeterM)}
                   </div>
                 </div>
@@ -294,7 +435,10 @@ export function PlotAnalyticsPanel() {
                   minimal
                   small
                   icon="trash"
-                  intent={Intent.DANGER}
+                  style={{
+                    color: "var(--color-slate, #64748b)",
+                    borderRadius: 6,
+                  }}
                   title="Delete plot"
                   onClick={() => void removePlot(plot)}
                 />
@@ -317,42 +461,59 @@ export function PlotAnalyticsPanel() {
       {indicatorKeys.length > 0 && (
         <div
           style={{
-            background: "var(--color-gallery-white)",
-            border: "1px solid var(--color-hairline-silver)",
-            borderRadius: 12,
-            padding: 10,
+            background: "#ffffff",
+            border: "none",
+            borderRadius: 16,
+            padding: "14px 16px",
+            boxShadow: "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
           }}
         >
-          <div style={{ fontSize: 11, color: "var(--color-slate)", marginBottom: 6 }}>RANKING</div>
-          <HTMLSelect
-            fill
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>
+            RANKING
+          </div>
+          <select
             value={activeKey}
             onChange={(event) => setComparedIndicator(event.currentTarget.value)}
-            options={indicatorKeys.map((key) => ({
-              label: key.replace(/_/g, " "),
-              value: key,
-            }))}
-          />
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              fontSize: 12,
+              borderRadius: 10,
+              border: "none",
+              background: "#f8fafc",
+              color: "#0f172a",
+              outline: "none",
+              cursor: "pointer",
+            }}
+          >
+            {indicatorKeys.map((key) => (
+              <option key={key} value={key}>
+                {key.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
             {ranking.map((entry, index) => (
               <div
                 key={entry.plot.id}
                 style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
               >
-                <Tag
-                  minimal
-                  round
-                  intent={
-                    index === 0
-                      ? Intent.SUCCESS
-                      : index === ranking.length - 1 && ranking.length > 1
-                        ? Intent.DANGER
-                        : Intent.NONE
-                  }
-                  style={{ minWidth: 22, textAlign: "center" }}
+                <span
+                  style={{
+                    minWidth: 22,
+                    height: 20,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: index === 0 ? "#0f172a" : "#f1f5f9",
+                    color: index === 0 ? "#ffffff" : "#64748b",
+                  }}
                 >
                   {index + 1}
-                </Tag>
+                </span>
                 <span
                   style={{
                     flex: 1,
@@ -377,48 +538,118 @@ export function PlotAnalyticsPanel() {
         isOpen={isAoiOpen}
         onClose={() => setIsAoiOpen(false)}
         title="Add plots from saved AOIs"
-        style={{ width: 480 }}
+        style={{ width: 480, borderRadius: 16, background: "#ffffff" }}
       >
-        <div className="bp6-dialog-body" style={{ maxHeight: 380, overflowY: "auto" }}>
+        <div
+          className="bp6-dialog-body"
+          style={{ maxHeight: 380, overflowY: "auto", padding: "16px 20px" }}
+        >
           {savedAois.length === 0 ? (
-            <Callout intent={Intent.NONE}>
+            <div
+              style={{
+                background: "#f8fafc",
+                borderRadius: 12,
+                padding: "14px 16px",
+                fontSize: 12,
+                color: "#64748b",
+              }}
+            >
               No AOIs saved yet. Draw an area in the AOI tab, save it, then return here.
-            </Callout>
+            </div>
           ) : (
-            savedAois.map((aoi) => (
-              <Checkbox
-                key={aoi.properties.aoi_id}
-                checked={checkedAois.has(aoi.properties.aoi_id)}
-                onChange={(event) => {
-                  const checked = event.currentTarget.checked;
-                  setCheckedAois((previous) => {
-                    const next = new Set(previous);
-                    if (checked) next.add(aoi.properties.aoi_id);
-                    else next.delete(aoi.properties.aoi_id);
-                    return next;
-                  });
-                }}
-                labelElement={
-                  <span>
-                    <strong>{aoi.properties.name}</strong>
-                    <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-slate)" }}>
-                      {aoi.properties.calculated_area_sq_m.toFixed(0)} m²
+            savedAois.map((aoi) => {
+              const isChecked = checkedAois.has(aoi.properties.aoi_id);
+              return (
+                <div
+                  key={aoi.properties.aoi_id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setCheckedAois((previous) => {
+                      const next = new Set(previous);
+                      if (isChecked) next.delete(aoi.properties.aoi_id);
+                      else next.add(aoi.properties.aoi_id);
+                      return next;
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setCheckedAois((previous) => {
+                        const next = new Set(previous);
+                        if (isChecked) next.delete(aoi.properties.aoi_id);
+                        else next.add(aoi.properties.aoi_id);
+                        return next;
+                      });
+                    }
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: isChecked ? "#f1f5f9" : "#f8fafc",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    marginBottom: 6,
+                    cursor: "pointer",
+                    transition: "background 0.15s ease",
+                    outline: "none",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Checkbox
+                      checked={isChecked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setCheckedAois((previous) => {
+                          const next = new Set(previous);
+                          if (checked) next.add(aoi.properties.aoi_id);
+                          else next.delete(aoi.properties.aoi_id);
+                          return next;
+                        });
+                      }}
+                      style={{ marginBottom: 0 }}
+                    />
+                    <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>
+                      {aoi.properties.name}
                     </span>
+                  </div>
+                  <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                    {aoi.properties.calculated_area_sq_m.toFixed(0)} m²
                   </span>
-                }
-              />
-            ))
+                </div>
+              );
+            })
           )}
         </div>
         <div className="bp6-dialog-footer">
           <div className="bp6-dialog-footer-actions">
-            <Button text="Cancel" onClick={() => setIsAoiOpen(false)} />
             <Button
-              intent={Intent.PRIMARY}
+              minimal
+              text="Cancel"
+              onClick={() => setIsAoiOpen(false)}
+              style={{
+                borderRadius: 10,
+                background: "#f1f5f9",
+                color: "#475569",
+                fontWeight: 600,
+                padding: "7px 14px",
+              }}
+            />
+            <Button
+              minimal
               text={`Add ${checkedAois.size}`}
               loading={isImportingAois}
               disabled={checkedAois.size === 0}
               onClick={() => void createFromAois()}
+              style={{
+                borderRadius: 10,
+                background: checkedAois.size === 0 ? "#f1f5f9" : "#0f172a",
+                color: checkedAois.size === 0 ? "#94a3b8" : "#ffffff",
+                fontWeight: 600,
+                padding: "7px 16px",
+              }}
             />
           </div>
         </div>

@@ -125,7 +125,7 @@ export const ImportProgressModal: React.FC<ImportProgressModalProps> = ({
       }}
       title="Proses Impor Citra Orthomosaic"
       icon="cloud-upload"
-      style={{ width: "480px" }}
+      style={{ width: "480px", borderRadius: "16px" }}
       canOutsideClickClose={isFinished}
     >
       <DialogBody>

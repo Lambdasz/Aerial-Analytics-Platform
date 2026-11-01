@@ -305,23 +305,20 @@ export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map, m
 
   return (
     <div className="gallery-sidebar">
+      {/* UNIFIED PAGE HEADER (OPSI A) */}
       <div
-        className="gallery-header"
-        style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingBottom: "8px",
+          borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
+          marginBottom: "12px",
+        }}
       >
         <div>
-          <div
-            style={{
-              fontSize: "14px",
-              fontWeight: 700,
-              color: "var(--color-ink)",
-              marginBottom: "3px",
-              letterSpacing: "-0.2px",
-            }}
-          >
-            Project Gallery
-          </div>
-          <div style={{ fontSize: "12px", color: "var(--color-slate)" }}>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Project Gallery</div>
+          <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
             {totalCount} Citra Tersimpan
           </div>
         </div>
@@ -330,9 +327,17 @@ export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map, m
           text="Impor"
           small
           minimal
-          intent="primary"
           onClick={() => setIsImportModalOpen(true)}
-          title="Impor citra JPG/PNG dengan koordinat WGS84"
+          style={{
+            borderRadius: "8px",
+            background: "#0f172a",
+            color: "#ffffff",
+            fontWeight: 600,
+            padding: "5px 12px",
+            fontSize: "11px",
+            boxShadow: "none",
+            outline: "none",
+          }}
         />
       </div>
 
@@ -390,20 +395,8 @@ export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map, m
             {(activeFilter === "all" || activeFilter === "ortho") && orthoImages.length > 0 && (
               <div className="gallery-section">
                 <div className="gallery-section-header">
-                  <div className="gallery-section-title">
-                    <span
-                      style={{
-                        width: "7px",
-                        height: "7px",
-                        borderRadius: "50%",
-                        background: "#34c759",
-                      }}
-                    />
-                    Foto Orthomosaic Drone
-                  </div>
-                  <span className="gallery-section-badge badge-ortho">
-                    {orthoImages.length} Citra Ortho (JPG/PNG)
-                  </span>
+                  <div className="gallery-section-title">Foto Orthomosaic Drone</div>
+                  <span className="gallery-section-badge">{orthoImages.length}</span>
                 </div>
 
                 {orthoImages.map((img) => {
@@ -431,19 +424,9 @@ export const ImageGallerySidebar: React.FC<ImageGallerySidebarProps> = ({ map, m
             {(activeFilter === "all" || activeFilter === "raster") && (
               <div className="gallery-section">
                 <div className="gallery-section-header">
-                  <div className="gallery-section-title">
-                    <span
-                      style={{
-                        width: "7px",
-                        height: "7px",
-                        borderRadius: "50%",
-                        background: "#007aff",
-                      }}
-                    />
-                    Foto Raster (Hasil Analisis)
-                  </div>
-                  <span className="gallery-section-badge badge-raster">
-                    {rasterImages.length + markers.length} File
+                  <div className="gallery-section-title">Foto Raster (Hasil Analisis)</div>
+                  <span className="gallery-section-badge">
+                    {rasterImages.length + markers.length}
                   </span>
                 </div>
 

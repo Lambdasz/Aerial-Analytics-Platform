@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Tag, Tooltip } from "@blueprintjs/core";
+import { Button, Tooltip } from "@blueprintjs/core";
 import type { SpatialResultSummary } from "../types/spatialResult";
 import { ResultPhoto } from "./ResultPhoto";
 
@@ -22,21 +22,6 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
 }) => {
   const isCorrupted = Boolean(item.is_corrupted);
 
-  const getGeomIntent = (geomType: string) => {
-    switch (geomType.toLowerCase()) {
-      case "polygon":
-        return "success";
-      case "point":
-        return "primary";
-      case "linestring":
-        return "warning";
-      case "imageoverlay":
-        return "none";
-      default:
-        return "none";
-    }
-  };
-
   return (
     <div
       className={`sp-result-card-item ${isSelected ? "selected" : ""}`}
@@ -44,17 +29,15 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "8px 10px",
-        marginBottom: "6px",
-        borderRadius: "6px",
-        backgroundColor: isSelected ? "rgba(19, 124, 189, 0.08)" : "#ffffff",
-        border: isSelected
-          ? "1px solid #106ba3"
-          : isCorrupted
-            ? "1px solid rgba(219, 55, 55, 0.4)"
-            : "1px solid rgba(16, 22, 26, 0.12)",
-        boxShadow: isSelected ? "0 0 0 1px #106ba3" : "0 1px 2px rgba(16, 22, 26, 0.04)",
-        transition: "all 0.15s ease",
+        padding: "14px 16px",
+        marginBottom: "12px",
+        borderRadius: "16px",
+        backgroundColor: "#ffffff",
+        border: "none",
+        boxShadow: isSelected
+          ? "0 8px 24px -4px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.04)"
+          : "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
+        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
         opacity: isProcessing ? 0.6 : 1,
       }}
     >
@@ -71,51 +54,60 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
         <div style={{ minWidth: 0 }}>
           <div
             style={{
-              fontSize: "13px",
+              fontSize: "14px",
               fontWeight: 600,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
-              color: isCorrupted ? "#db3737" : "var(--color-ink, #182026)",
+              color: isCorrupted ? "#ef4444" : "#0f172a",
               maxWidth: "180px",
+              marginBottom: "3px",
             }}
             title={item.layer_name}
           >
             {item.layer_name || item.id}
           </div>
 
-          <div style={{ display: "flex", gap: "4px", marginTop: "3px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
             {isCorrupted ? (
-              <Tag intent="danger" minimal style={{ fontSize: "10px" }}>
+              <span style={{ fontSize: "11px", color: "#ef4444", fontWeight: 500 }}>
                 Metadata rusak
-              </Tag>
+              </span>
             ) : (
               <>
-                <Tag intent={getGeomIntent(item.geom_type)} minimal style={{ fontSize: "10px" }}>
+                <span
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 500,
+                    color: "#64748b",
+                  }}
+                >
                   {item.geom_type === "Point"
                     ? "Titik"
                     : item.geom_type === "Polygon"
                       ? "Poligon"
                       : item.geom_type === "Line" || item.geom_type === "LineString"
                         ? "Garis"
-                        : item.geom_type === "Mixed"
-                          ? "Campuran"
-                          : item.geom_type === "ImageOverlay"
-                            ? "Overlay"
-                            : item.geom_type}
-                </Tag>
-                <Tag minimal style={{ fontSize: "10px" }}>
+                        : item.geom_type}
+                </span>
+                <span style={{ fontSize: "11px", color: "#cbd5e1" }}>•</span>
+                <span style={{ fontSize: "11px", color: "#94a3b8" }}>
                   {item.feature_count} fitur
-                </Tag>
+                </span>
                 {item.has_manual_edits && (
-                  <Tag
-                    intent="warning"
-                    minimal
-                    style={{ fontSize: "10px" }}
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      color: "#f59e0b",
+                      background: "rgba(245, 158, 11, 0.1)",
+                      padding: "1px 5px",
+                      borderRadius: "4px",
+                    }}
                     title="Memiliki atribut kustom atau nilai hasil edit manual"
                   >
                     Diedit
-                  </Tag>
+                  </span>
                 )}
               </>
             )}
@@ -124,13 +116,14 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
       </div>
 
       {/* Kanan: Tombol Aksi */}
-      <div style={{ display: "flex", gap: "2px", alignItems: "center", flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: "4px", alignItems: "center", flexShrink: 0 }}>
         <Tooltip content="Fokus ke Geometri di Peta">
           <Button
             icon="locate"
             minimal
             small
             disabled={isCorrupted || isProcessing}
+            style={{ borderRadius: "6px" }}
             onClick={() => onFocus(item)}
           />
         </Tooltip>
@@ -141,6 +134,7 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
             minimal
             small
             disabled={isCorrupted || isProcessing}
+            style={{ borderRadius: "6px" }}
             onClick={() => onEdit(item)}
           />
         </Tooltip>
@@ -150,8 +144,11 @@ export const SpResultCardItem: React.FC<SpResultCardItemProps> = ({
             icon="trash"
             minimal
             small
-            intent="danger"
             disabled={isProcessing}
+            style={{
+              borderRadius: "6px",
+              color: "var(--color-slate, #5c7080)",
+            }}
             onClick={() => onDelete(item)}
           />
         </Tooltip>

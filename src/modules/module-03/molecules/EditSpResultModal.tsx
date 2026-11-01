@@ -1,18 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  Dialog,
-  Button,
-  FormGroup,
-  InputGroup,
-  Classes,
-  Callout,
-  Tag,
-  Icon,
-  Tabs,
-  Tab,
-  HTMLSelect,
-  Spinner,
-} from "@blueprintjs/core";
+import { Dialog, Button, Classes, Callout, Tag, Icon, Spinner } from "@blueprintjs/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import type {
@@ -68,7 +55,9 @@ const EditSpResultForm: React.FC<EditSpResultFormProps> = ({
   onLoadDetail,
   isSubmitting = false,
 }) => {
-  const [selectedTab, setSelectedTab] = useState<string>("general");
+  const [selectedTab, setSelectedTab] = useState<"general" | "fields" | "values" | "preview">(
+    "general",
+  );
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(Boolean(onLoadDetail));
   const [layerDetail, setLayerDetail] = useState<LayerPayload | null>(null);
 
@@ -329,7 +318,10 @@ const EditSpResultForm: React.FC<EditSpResultFormProps> = ({
 
   return (
     <form onSubmit={handleSubmit}>
-      <div className={Classes.DIALOG_BODY} style={{ padding: "16px 20px" }}>
+      <div
+        className={Classes.DIALOG_BODY}
+        style={{ minHeight: "320px", maxHeight: "72vh", overflowY: "auto", padding: "16px 20px" }}
+      >
         {errorMessage && (
           <Callout intent="danger" style={{ marginBottom: "14px" }}>
             {errorMessage}
@@ -353,342 +345,623 @@ const EditSpResultForm: React.FC<EditSpResultFormProps> = ({
             </span>
           </div>
         ) : (
-          <Tabs
-            id="edit-sp-result-tabs"
-            selectedTabId={selectedTab}
-            onChange={(id) => setSelectedTab(id as string)}
-          >
+          <>
+            {/* Segmented Control Pill Bar */}
+            <div
+              style={{
+                display: "flex",
+                background: "#f1f5f9",
+                padding: "3px",
+                borderRadius: "8px",
+                gap: "3px",
+                marginBottom: "16px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedTab("general")}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  fontSize: "12px",
+                  fontWeight: selectedTab === "general" ? 600 : 500,
+                  color: selectedTab === "general" ? "#0f172a" : "#64748b",
+                  background: selectedTab === "general" ? "#ffffff" : "transparent",
+                  border: "none",
+                  outline: "none",
+                  borderRadius: "6px",
+                  boxShadow: selectedTab === "general" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                }}
+              >
+                Umum & Visual
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTab("fields")}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  fontSize: "12px",
+                  fontWeight: selectedTab === "fields" ? 600 : 500,
+                  color: selectedTab === "fields" ? "#0f172a" : "#64748b",
+                  background: selectedTab === "fields" ? "#ffffff" : "transparent",
+                  border: "none",
+                  outline: "none",
+                  borderRadius: "6px",
+                  boxShadow: selectedTab === "fields" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                }}
+              >
+                {`Skema Field (${draftFields.length})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTab("values")}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  fontSize: "12px",
+                  fontWeight: selectedTab === "values" ? 600 : 500,
+                  color: selectedTab === "values" ? "#0f172a" : "#64748b",
+                  background: selectedTab === "values" ? "#ffffff" : "transparent",
+                  border: "none",
+                  outline: "none",
+                  borderRadius: "6px",
+                  boxShadow: selectedTab === "values" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                }}
+              >
+                Nilai Atribut Fitur
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTab("preview")}
+                style={{
+                  flex: 1,
+                  padding: "8px 10px",
+                  fontSize: "12px",
+                  fontWeight: selectedTab === "preview" ? 600 : 500,
+                  color: selectedTab === "preview" ? "#0f172a" : "#64748b",
+                  background: selectedTab === "preview" ? "#ffffff" : "transparent",
+                  border: "none",
+                  outline: "none",
+                  borderRadius: "6px",
+                  boxShadow: selectedTab === "preview" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                }}
+              >
+                Pratinjau Popup
+              </button>
+            </div>
+
             {/* TAB 1: UMUM */}
-            <Tab
-              id="general"
-              title="Umum & Visual"
-              panel={
-                <div style={{ paddingTop: "12px" }}>
-                  {/* Ringkasan Metadata Immutable */}
+            {selectedTab === "general" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                {/* Ringkasan Metadata Immutable */}
+                <div
+                  style={{
+                    background: "#f8fafc",
+                    borderRadius: "12px",
+                    padding: "12px 16px",
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: "8px",
+                    fontSize: "12px",
+                  }}
+                >
+                  <div>
+                    <span style={{ color: "#64748b" }}>ID Layer:</span>{" "}
+                    <code style={{ fontSize: "11px", color: "#0f172a" }}>{item.id}</code>
+                  </div>
+                  <div>
+                    <span style={{ color: "#64748b" }}>Geometri:</span>{" "}
+                    <span
+                      style={{
+                        background: "#e2e8f0",
+                        color: "#334155",
+                        padding: "2px 8px",
+                        borderRadius: "6px",
+                        fontSize: "10px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {item.geom_type}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#64748b" }}>Jumlah Fitur:</span>{" "}
+                    <strong style={{ color: "#0f172a" }}>{item.feature_count} fitur</strong>
+                  </div>
+                </div>
+
+                {/* Nama Layer */}
+                <div>
                   <div
                     style={{
-                      background: "rgba(16, 22, 26, 0.04)",
-                      border: "1px solid rgba(16, 22, 26, 0.1)",
-                      borderRadius: "6px",
-                      padding: "10px 14px",
-                      marginBottom: "16px",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr 1fr",
-                      gap: "8px",
                       fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#64748b",
+                      marginBottom: "6px",
                     }}
                   >
-                    <div>
-                      <span style={{ color: "#64748b" }}>ID Layer:</span>{" "}
-                      <code style={{ fontSize: "11px" }}>{item.id}</code>
+                    Nama Hasil Analisis
+                  </div>
+                  <input
+                    id="layer-name-input"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Nama layer..."
+                    disabled={isSubmitting}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      fontSize: "13px",
+                      background: "#f8fafc",
+                      border: "none",
+                      borderRadius: "10px",
+                      outline: "none",
+                      color: "#0f172a",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                    Nama yang tampil pada sidebar dan judul popup
+                  </div>
+                </div>
+
+                {/* Dropdown Ikon (Hanya jika geometri Point) */}
+                {isPointGeom && (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        color: "#64748b",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      Ikon Titik Marker
                     </div>
-                    <div>
-                      <span style={{ color: "#64748b" }}>Geometri:</span>{" "}
-                      <Tag minimal round style={{ fontSize: "10px" }}>
-                        {item.geom_type}
-                      </Tag>
-                    </div>
-                    <div>
-                      <span style={{ color: "#64748b" }}>Jumlah Fitur:</span>{" "}
-                      <strong>{item.feature_count} fitur</strong>
+                    <select
+                      id="layer-icon-select"
+                      value={icon}
+                      onChange={(e) => setIcon(e.target.value)}
+                      disabled={isSubmitting}
+                      style={{
+                        width: "100%",
+                        padding: "9px 12px",
+                        fontSize: "13px",
+                        borderRadius: "10px",
+                        border: "none",
+                        background: "#f8fafc",
+                        color: "#0f172a",
+                        outline: "none",
+                        boxSizing: "border-box",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {iconOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                      Pilih visualisasi titik penanda pada peta Leaflet
                     </div>
                   </div>
+                )}
 
-                  {/* Nama Layer */}
-                  <FormGroup
-                    label="Nama Hasil Analisis"
-                    labelFor="layer-name-input"
-                    helperText="Nama yang tampil pada sidebar dan judul popup"
+                {/* Warna Tampilan */}
+                <div>
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#64748b",
+                      marginBottom: "6px",
+                    }}
                   >
-                    <InputGroup
-                      id="layer-name-input"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Nama layer..."
-                      disabled={isSubmitting}
+                    Warna Tampilan (HEX)
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <div
+                      style={{
+                        width: "34px",
+                        height: "34px",
+                        borderRadius: "8px",
+                        backgroundColor: isValidHexColor(displayColor) ? displayColor : "#e2e8f0",
+                        border: "none",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+                        flexShrink: 0,
+                      }}
                     />
-                  </FormGroup>
-
-                  {/* Dropdown Ikon (Hanya jika geometri Point) */}
-                  {isPointGeom && (
-                    <FormGroup
-                      label="Ikon Titik Marker"
-                      labelFor="layer-icon-select"
-                      helperText="Pilih visualisasi titik penanda pada peta Leaflet"
-                    >
-                      <HTMLSelect
-                        id="layer-icon-select"
-                        value={icon}
-                        onChange={(e) => setIcon(e.target.value)}
-                        fill
-                        disabled={isSubmitting}
-                      >
-                        {iconOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </HTMLSelect>
-                    </FormGroup>
-                  )}
-
-                  {/* Warna Tampilan */}
-                  <FormGroup
-                    label="Warna Tampilan (HEX)"
-                    labelFor="layer-color-input"
-                    helperText="Warna penanda titik, garis batas poligon, atau jalur inspeksi"
-                  >
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                      <div
-                        style={{
-                          width: "32px",
-                          height: "32px",
-                          borderRadius: "6px",
-                          backgroundColor: isValidHexColor(displayColor) ? displayColor : "#e2e8f0",
-                          border: "1px solid rgba(16, 22, 26, 0.2)",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <InputGroup
-                        id="layer-color-input"
-                        value={displayColor}
-                        onChange={(e) => setDisplayColor(e.target.value)}
-                        placeholder="#2ecc40"
-                        style={{ width: "120px" }}
-                        disabled={isSubmitting}
-                      />
-                      {/* Palet Preset */}
-                      <div style={{ display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                        {COLOR_PRESETS.map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setDisplayColor(c)}
-                            style={{
-                              width: "24px",
-                              height: "24px",
-                              borderRadius: "4px",
-                              backgroundColor: c,
-                              border:
-                                displayColor.toLowerCase() === c.toLowerCase()
-                                  ? "2px solid #000"
-                                  : "1px solid rgba(0,0,0,0.15)",
-                              cursor: "pointer",
-                              padding: 0,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  </FormGroup>
-
-                  {/* Pengaturan Foto Layer */}
-                  <FormGroup
-                    label="Foto Layer / Citra Utama"
-                    helperText="Foto representasi keseluruhan layer (tersimpan pada display_preference.image_url)"
-                  >
+                    <input
+                      id="layer-color-input"
+                      type="text"
+                      value={displayColor}
+                      onChange={(e) => setDisplayColor(e.target.value)}
+                      placeholder="#2ecc40"
+                      disabled={isSubmitting}
+                      style={{
+                        width: "110px",
+                        padding: "8px 12px",
+                        fontSize: "13px",
+                        background: "#f8fafc",
+                        border: "none",
+                        borderRadius: "10px",
+                        outline: "none",
+                        color: "#0f172a",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                    {/* Palet Preset */}
                     <div
                       style={{
                         display: "flex",
+                        gap: "6px",
+                        flexWrap: "wrap",
                         alignItems: "center",
-                        gap: "14px",
-                        padding: "12px",
-                        borderRadius: "8px",
-                        border: "1px solid rgba(16, 22, 26, 0.15)",
-                        background: "rgba(16, 22, 26, 0.02)",
                       }}
                     >
-                      <div style={{ flexShrink: 0 }}>
-                        {imageAction === "delete" ? (
-                          <div
-                            style={{
-                              width: 72,
-                              height: 56,
-                              borderRadius: 6,
-                              background: "rgba(143, 153, 168, 0.12)",
-                              border: "1px dashed rgba(143, 153, 168, 0.3)",
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              color: "#8a9ba8",
-                            }}
-                          >
-                            <Icon icon="media" size={20} />
-                            <span style={{ fontSize: 10, marginTop: 2, fontWeight: 500 }}>
-                              No Image
-                            </span>
-                          </div>
-                        ) : (
-                          <ResultPhoto
-                            resultId={item.id}
-                            imageUrl={previewUrl}
-                            size="medium"
-                            alt="Foto Layer"
-                          />
+                      {COLOR_PRESETS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setDisplayColor(c)}
+                          style={{
+                            width: "24px",
+                            height: "24px",
+                            borderRadius: "6px",
+                            backgroundColor: c,
+                            border:
+                              displayColor.toLowerCase() === c.toLowerCase()
+                                ? "2px solid #0f172a"
+                                : "none",
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                    Warna penanda titik, garis batas poligon, atau jalur inspeksi
+                  </div>
+                </div>
+
+                {/* Pengaturan Foto Layer */}
+                <div>
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#64748b",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Foto Layer / Citra Utama
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "14px",
+                      padding: "14px",
+                      borderRadius: "12px",
+                      background: "#f8fafc",
+                    }}
+                  >
+                    <div style={{ flexShrink: 0 }}>
+                      {imageAction === "delete" ? (
+                        <div
+                          style={{
+                            width: 72,
+                            height: 56,
+                            borderRadius: 8,
+                            background: "#f1f5f9",
+                            border: "1px dashed #cbd5e1",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            color: "#94a3b8",
+                          }}
+                        >
+                          <Icon icon="media" size={20} />
+                          <span style={{ fontSize: 10, marginTop: 2, fontWeight: 500 }}>
+                            No Image
+                          </span>
+                        </div>
+                      ) : (
+                        <ResultPhoto
+                          resultId={item.id}
+                          imageUrl={previewUrl}
+                          size="medium"
+                          alt="Foto Layer"
+                        />
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <div style={{ fontSize: "12px" }}>
+                        {imageAction === "delete" && (
+                          <Tag intent="danger" minimal style={{ fontSize: "11px" }}>
+                            Foto layer akan dihapus (No Image)
+                          </Tag>
+                        )}
+                        {imageAction === "replace" && (
+                          <Tag intent="success" minimal style={{ fontSize: "11px" }}>
+                            Foto baru: {selectedFileName}
+                          </Tag>
+                        )}
+                        {imageAction === "keep" && (
+                          <span style={{ color: "#64748b" }}>
+                            {previewUrl ? "Foto layer aktif terpasang" : "Belum ada foto layer"}
+                          </span>
                         )}
                       </div>
 
-                      <div
-                        style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}
-                      >
-                        <div style={{ fontSize: "12px" }}>
-                          {imageAction === "delete" && (
-                            <Tag intent="danger" minimal style={{ fontSize: "11px" }}>
-                              Foto layer akan dihapus (No Image)
-                            </Tag>
-                          )}
-                          {imageAction === "replace" && (
-                            <Tag intent="success" minimal style={{ fontSize: "11px" }}>
-                              Foto baru: {selectedFileName}
-                            </Tag>
-                          )}
-                          {imageAction === "keep" && (
-                            <span style={{ color: "#64748b" }}>
-                              {previewUrl ? "Foto layer aktif terpasang" : "Belum ada foto layer"}
-                            </span>
-                          )}
-                        </div>
-
-                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <Button
+                          icon="upload"
+                          small
+                          minimal
+                          text={previewUrl ? "Ganti Foto" : "Unggah Foto"}
+                          onClick={() => {
+                            void handleSelectFile();
+                          }}
+                          disabled={isSubmitting}
+                          style={{
+                            background: "#ffffff",
+                            color: "#0f172a",
+                            borderRadius: "999px",
+                            padding: "4px 12px",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                            fontWeight: 600,
+                          }}
+                        />
+                        {previewUrl && imageAction !== "delete" && (
                           <Button
-                            icon="upload"
+                            icon="trash"
                             small
-                            text={previewUrl ? "Ganti Foto" : "Unggah Foto"}
-                            onClick={() => {
-                              void handleSelectFile();
-                            }}
+                            minimal
+                            text="Hapus Foto"
+                            onClick={handleDeletePhoto}
                             disabled={isSubmitting}
+                            style={{
+                              background: "#f1f5f9",
+                              color: "#475569",
+                              borderRadius: "999px",
+                              padding: "4px 12px",
+                              fontWeight: 600,
+                            }}
                           />
-                          {previewUrl && imageAction !== "delete" && (
-                            <Button
-                              icon="trash"
-                              small
-                              intent="danger"
-                              minimal
-                              text="Hapus Foto"
-                              onClick={handleDeletePhoto}
-                              disabled={isSubmitting}
-                            />
-                          )}
-                          {imageAction !== "keep" && (
-                            <Button
-                              icon="undo"
-                              small
-                              minimal
-                              text="Batal Ubah"
-                              onClick={handleResetPhoto}
-                              disabled={isSubmitting}
-                            />
-                          )}
-                        </div>
+                        )}
+                        {imageAction !== "keep" && (
+                          <Button
+                            icon="undo"
+                            small
+                            minimal
+                            text="Batal Ubah"
+                            onClick={handleResetPhoto}
+                            disabled={isSubmitting}
+                            style={{
+                              background: "#f1f5f9",
+                              color: "#475569",
+                              borderRadius: "999px",
+                              padding: "4px 12px",
+                              fontWeight: 600,
+                            }}
+                          />
+                        )}
                       </div>
-
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        style={{ display: "none" }}
-                        onChange={handleFileInputChange}
-                      />
                     </div>
-                  </FormGroup>
-                </div>
-              }
-            />
 
-            {/* TAB 2: FIELD & ATRIBUT */}
-            <Tab
-              id="fields"
-              title={`Field & Atribut (${draftFields.length})`}
-              panel={
-                <div
-                  style={{
-                    paddingTop: "12px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "24px",
-                  }}
-                >
-                  {/* Seksi 1: Tabel Kelola Field */}
-                  <FieldManagerTable
-                    fields={draftFields}
-                    onChange={setDraftFields}
-                    onDeleteCustomField={handleDeleteCustomField}
-                    onAddField={handleAddField}
-                  />
-
-                  {/* Seksi 2: Editor Nilai per Fitur */}
-                  {layerDetail && layerDetail.spatial_results.length > 0 && (
-                    <FeatureValuesEditor
-                      features={layerDetail.spatial_results}
-                      fields={draftFields}
-                      selectedIndex={selectedFeatureIndex}
-                      onSelectIndex={setSelectedFeatureIndex}
-                      draftSets={draftSets}
-                      onUpdateValue={handleUpdatePropertyValue}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      style={{ display: "none" }}
+                      onChange={handleFileInputChange}
                     />
-                  )}
-
-                  {/* Seksi 3: Pratinjau Tampilan Popup Peta */}
-                  <div
-                    style={{
-                      borderTop: "1px solid #e2e8f0",
-                      paddingTop: "16px",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "100%",
-                        maxWidth: "340px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "8px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          color: "#475569",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px",
-                        }}
-                      >
-                        <Icon icon="eye-open" size={14} color="#64748b" />
-                        <span>Pratinjau Tampilan Popup Peta</span>
-                      </div>
-                      <PopupPreviewCard
-                        layerName={name.trim() || item.layer_name}
-                        displayColor={displayColor}
-                        layerImageUrl={imageAction === "delete" ? null : previewUrl}
-                        feature={selectedFeature}
-                        fields={draftFields}
-                        draftValues={draftSets.get(selectedFeatureIndex)}
-                      />
-                    </div>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                    Foto representasi keseluruhan layer (tersimpan pada
+                    display_preference.image_url)
                   </div>
                 </div>
-              }
-            />
-          </Tabs>
+              </div>
+            )}
+
+            {/* TAB 2: SKEMA FIELD */}
+            {selectedTab === "fields" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                }}
+              >
+                <FieldManagerTable
+                  fields={draftFields}
+                  onChange={setDraftFields}
+                  onDeleteCustomField={handleDeleteCustomField}
+                  onAddField={handleAddField}
+                />
+              </div>
+            )}
+
+            {/* TAB 3: NILAI ATRIBUT FITUR */}
+            {selectedTab === "values" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "20px",
+                }}
+              >
+                {layerDetail && layerDetail.spatial_results.length > 0 ? (
+                  <FeatureValuesEditor
+                    features={layerDetail.spatial_results}
+                    fields={draftFields}
+                    selectedIndex={selectedFeatureIndex}
+                    onSelectIndex={setSelectedFeatureIndex}
+                    draftSets={draftSets}
+                    onUpdateValue={handleUpdatePropertyValue}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "40px 20px",
+                      color: "#64748b",
+                      fontSize: "13px",
+                      background: "#f8fafc",
+                      borderRadius: "12px",
+                    }}
+                  >
+                    Tidak ada fitur spasial untuk diedit.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 4: PRATINJAU POPUP */}
+            {selectedTab === "preview" && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "16px",
+                  padding: "8px 0 16px 0",
+                }}
+              >
+                {layerDetail && layerDetail.spatial_results.length > 1 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      background: "#f8fafc",
+                      padding: "6px 14px",
+                      borderRadius: "999px",
+                      border: "1px solid #f1f5f9",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      disabled={selectedFeatureIndex === 0}
+                      onClick={() => setSelectedFeatureIndex((prev) => Math.max(0, prev - 1))}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: selectedFeatureIndex === 0 ? "not-allowed" : "pointer",
+                        opacity: selectedFeatureIndex === 0 ? 0.3 : 1,
+                        padding: "2px 4px",
+                        display: "flex",
+                        alignItems: "center",
+                        outline: "none",
+                      }}
+                    >
+                      <Icon icon="chevron-left" size={14} color="#0f172a" />
+                    </button>
+                    <span style={{ fontSize: "11px", fontWeight: 600, color: "#334155" }}>
+                      Fitur #{selectedFeatureIndex + 1} dari {layerDetail.spatial_results.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={selectedFeatureIndex >= layerDetail.spatial_results.length - 1}
+                      onClick={() =>
+                        setSelectedFeatureIndex((prev) =>
+                          Math.min(layerDetail.spatial_results.length - 1, prev + 1),
+                        )
+                      }
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor:
+                          selectedFeatureIndex >= layerDetail.spatial_results.length - 1
+                            ? "not-allowed"
+                            : "pointer",
+                        opacity:
+                          selectedFeatureIndex >= layerDetail.spatial_results.length - 1 ? 0.3 : 1,
+                        padding: "2px 4px",
+                        display: "flex",
+                        alignItems: "center",
+                        outline: "none",
+                      }}
+                    >
+                      <Icon icon="chevron-right" size={14} color="#0f172a" />
+                    </button>
+                  </div>
+                )}
+
+                <div style={{ width: "100%", maxWidth: "340px" }}>
+                  <PopupPreviewCard
+                    layerName={name.trim() || item.layer_name}
+                    displayColor={displayColor}
+                    layerImageUrl={imageAction === "delete" ? null : previewUrl}
+                    feature={selectedFeature}
+                    fields={draftFields}
+                    draftValues={draftSets.get(selectedFeatureIndex)}
+                  />
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* Footer All-or-Nothing */}
       <div className={Classes.DIALOG_FOOTER}>
         <div className={Classes.DIALOG_FOOTER_ACTIONS}>
-          <Button text="Batal" onClick={handleRequestClose} disabled={isSubmitting} />
           <Button
+            text="Batal"
+            minimal
+            onClick={handleRequestClose}
+            disabled={isSubmitting}
+            style={{
+              borderRadius: "999px",
+              background: "#f1f5f9",
+              color: "#475569",
+              fontWeight: 600,
+              padding: "6px 16px",
+              boxShadow: "none",
+            }}
+          />
+          <Button
+            minimal
             text={isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
-            intent="primary"
             type="submit"
             loading={isSubmitting}
             disabled={!isDirty || isSubmitting || isLoadingDetail}
+            style={{
+              borderRadius: "999px",
+              background: !isDirty || isSubmitting || isLoadingDetail ? "#f1f5f9" : "#0f172a",
+              color: !isDirty || isSubmitting || isLoadingDetail ? "#94a3b8" : "#ffffff",
+              fontWeight: 600,
+              padding: "6px 18px",
+              boxShadow:
+                !isDirty || isSubmitting || isLoadingDetail
+                  ? "none"
+                  : "0 2px 8px rgba(15,23,42,0.15)",
+            }}
           />
         </div>
       </div>
@@ -698,7 +971,7 @@ const EditSpResultForm: React.FC<EditSpResultFormProps> = ({
         isOpen={showCloseConfirm}
         onClose={() => setShowCloseConfirm(false)}
         title="Perubahan Belum Disimpan"
-        style={{ width: "380px" }}
+        style={{ width: "380px", borderRadius: "16px" }}
       >
         <div style={{ padding: "16px 20px" }}>
           <p style={{ fontSize: "13px", lineHeight: "1.5" }}>
@@ -712,10 +985,26 @@ const EditSpResultForm: React.FC<EditSpResultFormProps> = ({
               marginTop: "16px",
             }}
           >
-            <Button text="Lanjut Mengedit" onClick={() => setShowCloseConfirm(false)} />
+            <Button
+              text="Lanjut Mengedit"
+              minimal
+              style={{
+                borderRadius: "8px",
+                background: "#f1f5f9",
+                color: "#475569",
+                fontWeight: 600,
+              }}
+              onClick={() => setShowCloseConfirm(false)}
+            />
             <Button
               text="Tutup & Buang Perubahan"
-              intent="danger"
+              minimal
+              style={{
+                borderRadius: "8px",
+                background: "#ef4444",
+                color: "#ffffff",
+                fontWeight: 600,
+              }}
               onClick={() => {
                 setShowCloseConfirm(false);
                 onClose();
@@ -743,7 +1032,7 @@ export const EditSpResultModal: React.FC<EditSpResultModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title={`Edit Layer Hasil Analisis: ${item.layer_name || item.id}`}
-      style={{ width: "640px", maxWidth: "95vw" }}
+      style={{ width: "720px", maxWidth: "94vw", borderRadius: "16px" }}
     >
       <EditSpResultForm
         key={item.id}

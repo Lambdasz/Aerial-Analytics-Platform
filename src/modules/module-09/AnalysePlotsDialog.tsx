@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Button,
-  Callout,
-  Dialog,
-  HTMLSelect,
-  Intent,
-  ProgressBar,
-  Spinner,
-} from "@blueprintjs/core";
+import { Button, Callout, Dialog, Intent, ProgressBar, Spinner } from "@blueprintjs/core";
 
 import { getInstalledPlugins } from "../../component_plugin_manager/pluginCommands";
 import {
@@ -225,88 +217,182 @@ export function AnalysePlotsDialog({
         onClose();
       }}
       title={`Analyse ${plots.length} plot${plots.length === 1 ? "" : "s"}`}
-      style={{ width: 560 }}
+      style={{ width: 560, borderRadius: "16px" }}
       canEscapeKeyClose={!isRunning}
     >
-      <div className="bp6-dialog-body" style={{ maxHeight: 520, overflowY: "auto" }}>
+      <div
+        className="bp6-dialog-body"
+        style={{ padding: "16px 20px", maxHeight: 520, overflowY: "auto" }}
+      >
         {isLoading ? (
           <div style={{ textAlign: "center", padding: 24 }}>
             <Spinner size={28} />
           </div>
         ) : (
           <>
-            <div className="bp6-label">Plugin</div>
-            <HTMLSelect
-              fill
-              value={pluginId}
-              onChange={(event) => setPluginId(event.currentTarget.value)}
-              placeholder={plugins.length === 0 ? "No enabled plugins" : "Select a plugin"}
-              options={plugins.map((plugin) => ({
-                label: `${plugin.name} (${plugin.runtime_type})`,
-                value: plugin.id,
-              }))}
-            />
-
-            <div className="bp6-label" style={{ marginTop: 12 }}>
-              Project
+            <div>
+              <div
+                style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "6px" }}
+              >
+                Plugin
+              </div>
+              <select
+                value={pluginId}
+                onChange={(event) => setPluginId(event.currentTarget.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  fontSize: "13px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "#f8fafc",
+                  color: "#0f172a",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  cursor: "pointer",
+                }}
+              >
+                {plugins.length === 0 ? (
+                  <option value="" disabled>
+                    No enabled plugins
+                  </option>
+                ) : (
+                  plugins.map((plugin) => (
+                    <option key={plugin.id} value={plugin.id}>
+                      {plugin.name} ({plugin.runtime_type})
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
-            <HTMLSelect
-              fill
-              value={projectId}
-              onChange={(event) => setProjectId(event.currentTarget.value)}
-              options={projects.map((project) => ({
-                label: project.name,
-                value: project.id,
-              }))}
-            />
 
-            <div className="bp6-label" style={{ marginTop: 12 }}>
-              Session
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "6px" }}
+              >
+                Project
+              </div>
+              <select
+                value={projectId}
+                onChange={(event) => setProjectId(event.currentTarget.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  fontSize: "13px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "#f8fafc",
+                  color: "#0f172a",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  cursor: "pointer",
+                }}
+              >
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
             </div>
-            <HTMLSelect
-              fill
-              value={sessionId}
-              disabled={sessions.length === 0}
-              placeholder="No sessions in this project"
-              onChange={(event) => setSessionId(event.currentTarget.value)}
-              options={sessions.map((session) => ({
-                label: `${session.name} (${session.dateStart?.slice(0, 10) || "no date"})`,
-                value: session.id,
-              }))}
-            />
 
-            <div className="bp6-label" style={{ marginTop: 12 }}>
-              Image ({images.length} available)
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "6px" }}
+              >
+                Session
+              </div>
+              <select
+                value={sessionId}
+                disabled={sessions.length === 0}
+                onChange={(event) => setSessionId(event.currentTarget.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  fontSize: "13px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "#f8fafc",
+                  color: "#0f172a",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  cursor: sessions.length === 0 ? "not-allowed" : "pointer",
+                  opacity: sessions.length === 0 ? 0.6 : 1,
+                }}
+              >
+                {sessions.length === 0 ? (
+                  <option value="" disabled>
+                    No sessions in this project
+                  </option>
+                ) : (
+                  sessions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.name} ({session.dateStart?.slice(0, 10) || "no date"})
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
-            <HTMLSelect
-              fill
-              value={imageId}
-              disabled={images.length === 0}
-              placeholder="No analysis-ready image"
-              onChange={(event) => setImageId(event.currentTarget.value)}
-              options={images.map((image) => ({
-                label: image.filePath.split(/[/\\]/).pop() ?? image.filePath,
-                value: image.id,
-              }))}
-            />
+
+            <div style={{ marginTop: 14 }}>
+              <div
+                style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", marginBottom: "6px" }}
+              >
+                Image ({images.length} available)
+              </div>
+              <select
+                value={imageId}
+                disabled={images.length === 0}
+                onChange={(event) => setImageId(event.currentTarget.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  fontSize: "13px",
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "#f8fafc",
+                  color: "#0f172a",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  cursor: images.length === 0 ? "not-allowed" : "pointer",
+                  opacity: images.length === 0 ? 0.6 : 1,
+                }}
+              >
+                {images.length === 0 ? (
+                  <option value="" disabled>
+                    No analysis-ready image
+                  </option>
+                ) : (
+                  images.map((image) => (
+                    <option key={image.id} value={image.id}>
+                      {image.filePath.split(/[/\\]/).pop() ?? image.filePath}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
 
             {isRunning && (
               <div style={{ marginTop: 16 }}>
                 <ProgressBar value={percent / 100} intent={Intent.PRIMARY} animate={false} />
-                <div style={{ marginTop: 6, fontSize: 12, color: "var(--color-slate)" }}>
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   {done}/{plots.length} plots · {currentPlot ?? "starting"}
                 </div>
               </div>
             )}
 
             {finished && errors.length === 0 && (
-              <Callout intent={Intent.SUCCESS} style={{ marginTop: 16 }}>
+              <Callout intent={Intent.SUCCESS} style={{ marginTop: 16, borderRadius: "10px" }}>
                 Indicators stored for {done} plot{done === 1 ? "" : "s"}.
               </Callout>
             )}
 
             {errors.length > 0 && (
-              <Callout intent={Intent.WARNING} title="Some plots failed" style={{ marginTop: 16 }}>
+              <Callout
+                intent={Intent.WARNING}
+                title="Some plots failed"
+                style={{ marginTop: 16, borderRadius: "10px" }}
+              >
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {errors.map((entry) => (
                     <li key={entry}>{entry}</li>
@@ -315,9 +401,7 @@ export function AnalysePlotsDialog({
               </Callout>
             )}
 
-            <p
-              style={{ marginTop: 16, marginBottom: 0, fontSize: 11, color: "var(--color-slate)" }}
-            >
+            <p style={{ marginTop: 16, marginBottom: 0, fontSize: 11, color: "#64748b" }}>
               The plugin runs once per selected plot with the plot boundary as its area of interest.
               Existing indicator values for the same plugin are replaced.
             </p>
@@ -328,16 +412,49 @@ export function AnalysePlotsDialog({
       <div className="bp6-dialog-footer">
         <div className="bp6-dialog-footer-actions">
           {isRunning ? (
-            <Button intent={Intent.DANGER} text="Stop" onClick={() => void cancel()} />
+            <Button
+              intent={Intent.DANGER}
+              text="Stop"
+              minimal
+              onClick={() => void cancel()}
+              style={{
+                borderRadius: "999px",
+                background: "#ef4444",
+                color: "#ffffff",
+                fontWeight: 600,
+                padding: "6px 16px",
+                boxShadow: "none",
+              }}
+            />
           ) : (
             <>
-              <Button text="Close" onClick={onClose} />
               <Button
-                intent={Intent.PRIMARY}
+                text="Close"
+                minimal
+                onClick={onClose}
+                style={{
+                  borderRadius: "999px",
+                  background: "#f1f5f9",
+                  color: "#475569",
+                  fontWeight: 600,
+                  padding: "6px 16px",
+                  boxShadow: "none",
+                }}
+              />
+              <Button
+                minimal
                 icon="play"
                 text={finished ? "Run again" : "Run analysis"}
                 disabled={!canRun}
                 onClick={() => void run()}
+                style={{
+                  borderRadius: "999px",
+                  background: !canRun ? "#f1f5f9" : "#0f172a",
+                  color: !canRun ? "#94a3b8" : "#ffffff",
+                  fontWeight: 600,
+                  padding: "6px 18px",
+                  boxShadow: !canRun ? "none" : "0 2px 8px rgba(15,23,42,0.15)",
+                }}
               />
             </>
           )}

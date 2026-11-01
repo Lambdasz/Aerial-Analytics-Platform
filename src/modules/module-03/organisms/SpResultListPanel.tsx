@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import * as L from "leaflet";
-import { InputGroup, Button, ButtonGroup, Spinner, NonIdealState } from "@blueprintjs/core";
+import { Button, Icon, Spinner, NonIdealState } from "@blueprintjs/core";
 import type {
   DeleteSpatialResultSummary,
   SpatialResultSummary,
@@ -280,7 +280,7 @@ export const SpResultListPanel: React.FC<SpResultListPanelProps> = ({ map }) => 
           justifyContent: "space-between",
           alignItems: "center",
           paddingBottom: "8px",
-          borderBottom: "1px solid rgba(16, 22, 26, 0.1)",
+          borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
         }}
       >
         <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-ink, #182026)" }}>
@@ -289,11 +289,8 @@ export const SpResultListPanel: React.FC<SpResultListPanelProps> = ({ map }) => 
         <span
           style={{
             fontSize: "11px",
-            background: "rgba(46, 204, 64, 0.15)",
-            color: "#2ecc40",
-            padding: "2px 8px",
-            borderRadius: "10px",
-            fontWeight: 600,
+            color: "var(--color-slate, #64748b)",
+            fontWeight: 500,
           }}
         >
           {items.length} Tersimpan
@@ -301,46 +298,86 @@ export const SpResultListPanel: React.FC<SpResultListPanelProps> = ({ map }) => 
       </div>
 
       {/* Search Input */}
-      <InputGroup
-        leftIcon="search"
-        placeholder="Cari layer analisis..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        rightElement={
-          searchQuery ? (
-            <Button icon="cross" minimal onClick={() => setSearchQuery("")} />
-          ) : undefined
-        }
-        small
-      />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          background: "#ffffff",
+          borderRadius: "12px",
+          padding: "8px 12px",
+          boxShadow: "0 2px 10px -2px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03)",
+        }}
+      >
+        <Icon icon="search" size={14} color="#94a3b8" />
+        <input
+          type="text"
+          placeholder="Cari layer analisis..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            width: "100%",
+            fontSize: "13px",
+            color: "#0f172a",
+          }}
+        />
+        {searchQuery ? (
+          <Button
+            icon="cross"
+            minimal
+            small
+            style={{ color: "#94a3b8" }}
+            onClick={() => setSearchQuery("")}
+          />
+        ) : null}
+      </div>
 
       {/* Filter Kategori Tipe Geometri */}
-      <ButtonGroup fill style={{ marginBottom: "4px" }}>
-        <Button
-          text="Semua"
-          active={typeFilter === "all"}
-          onClick={() => setTypeFilter("all")}
-          small
-        />
-        <Button
-          text="Polygon"
-          active={typeFilter === "polygon"}
-          onClick={() => setTypeFilter("polygon")}
-          small
-        />
-        <Button
-          text="Point"
-          active={typeFilter === "point"}
-          onClick={() => setTypeFilter("point")}
-          small
-        />
-        <Button
-          text="Line"
-          active={typeFilter === "linestring"}
-          onClick={() => setTypeFilter("linestring")}
-          small
-        />
-      </ButtonGroup>
+      <div
+        style={{
+          display: "flex",
+          gap: "3px",
+          background: "#f1f5f9",
+          padding: "3px",
+          borderRadius: "8px",
+          marginBottom: "12px",
+        }}
+      >
+        {[
+          { id: "all", label: "Semua" },
+          { id: "polygon", label: "Polygon" },
+          { id: "point", label: "Point" },
+          { id: "linestring", label: "Line" },
+        ].map((btn) => (
+          <button
+            key={btn.id}
+            type="button"
+            onClick={() => setTypeFilter(btn.id)}
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "5px 4px",
+              borderRadius: "6px",
+              fontSize: "11px",
+              fontWeight: typeFilter === btn.id ? 600 : 500,
+              color: typeFilter === btn.id ? "#0f172a" : "#64748b",
+              background: typeFilter === btn.id ? "#ffffff" : "transparent",
+              boxShadow: typeFilter === btn.id ? "0 1px 3px rgba(0, 0, 0, 0.08)" : "none",
+              border: "none",
+              outline: "none",
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+              whiteSpace: "nowrap",
+              userSelect: "none",
+            }}
+          >
+            {btn.label}
+          </button>
+        ))}
+      </div>
 
       {/* List Konten */}
       <div style={{ flex: 1, overflowY: "auto" }}>

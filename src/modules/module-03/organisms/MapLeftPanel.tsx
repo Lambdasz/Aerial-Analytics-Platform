@@ -60,7 +60,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
         display: "flex",
         flexDirection: "column",
         transition: "width 0.3s cubic-bezier(0.4, 0.0, 0.2, 1)",
-        zIndex: 1000,
+        zIndex: 500,
       }}
     >
       {/* SEARCH BAR (SELALU MUNCUL, FLOATING OVER MAP JIKA COLLAPSED) */}
@@ -70,7 +70,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
           top: "15px",
           left: "15px",
           width: "350px", // Tetap 350px walau panel 0px
-          zIndex: 1001,
+          zIndex: 501,
           pointerEvents: "auto",
         }}
       >
@@ -82,8 +82,8 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
         style={{
           width: "380px",
           height: "100%",
-          background: "var(--color-gallery-white)",
-          borderRight: "1px solid var(--color-hairline-silver)",
+          background: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
+          borderRight: "1px solid rgba(0, 0, 0, 0.06)",
           display: "flex",
           flexDirection: "column",
           paddingTop: "70px" /* Spacer untuk Search Bar */,
@@ -91,7 +91,7 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
           pointerEvents: isCollapsed ? "none" : "auto",
           transition: "opacity 0.2s",
           visibility: isCollapsed ? "hidden" : "visible",
-          boxShadow: isCollapsed ? "none" : "var(--shadow-subtle)",
+          boxShadow: isCollapsed ? "none" : "4px 0 24px -4px rgba(0, 0, 0, 0.05)",
           overflow: "hidden",
           fontFamily: "var(--font-sf-pro-text)",
         }}
@@ -99,18 +99,18 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
         <div
           style={{
             padding: "0 15px",
-            borderBottom: "1px solid var(--color-hairline-silver)",
-            background: "var(--color-gallery-white)",
+            background: "transparent",
           }}
         >
           <div
             style={{
               display: "flex",
-              gap: "6px",
-              background: "var(--color-control-gray)",
+              gap: "4px",
+              background: "rgba(241, 245, 249, 0.8)",
               padding: "4px",
-              borderRadius: "12px",
-              margin: "12px 0",
+              borderRadius: "999px",
+              margin: "10px 0 14px 0",
+              border: "1px solid rgba(226, 232, 240, 0.8)",
             }}
           >
             {[
@@ -135,15 +135,20 @@ export const MapLeftPanel: React.FC<MapLeftPanelProps> = ({
                   flex: 1,
                   textAlign: "center",
                   padding: "6px 8px",
-                  borderRadius: "8px",
+                  borderRadius: "999px",
                   fontSize: "12px",
                   fontWeight: activeTab === tab.id ? 600 : 500,
-                  color: activeTab === tab.id ? "var(--color-ink)" : "var(--color-slate)",
-                  background: activeTab === tab.id ? "var(--color-gallery-white)" : "transparent",
-                  boxShadow: activeTab === tab.id ? "0 2px 4px rgba(0,0,0,0.1)" : "none",
+                  color: activeTab === tab.id ? "#0f172a" : "#64748b",
+                  background: activeTab === tab.id ? "#ffffff" : "transparent",
+                  boxShadow:
+                    activeTab === tab.id
+                      ? "0 2px 8px -1px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04)"
+                      : "none",
                   cursor: "pointer",
                   transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
                   whiteSpace: "nowrap",
+                  outline: "none",
+                  userSelect: "none",
                 }}
               >
                 {tab.label}

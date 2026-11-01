@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import * as L from "leaflet";
-import { Card, Icon, Spinner, Tag } from "@blueprintjs/core";
+import { Button, Icon, Spinner } from "@blueprintjs/core";
 import { useAOI } from "../hooks/useAOI";
 import { getSavedAois, deleteSavedAoi, saveAoi as saveAoiToStorage } from "../services/api";
 import type { AoiFeature } from "../types/aoi";
-import { AoiCreateForm } from "../molecules/AoiCreateForm";
 import { AoiCardItem } from "../molecules/AoiCardItem";
+import { AoiModal } from "../molecules/AoiModal";
 
 function generateAoiId(): string {
   return "aoi-" + Date.now();
@@ -17,7 +17,6 @@ export interface AoiToolbarProps {
 
 export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
   const {
-    aoi,
     draftPolygon,
     isDrawing,
     isSaving,
@@ -28,22 +27,20 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
     saveAoi,
   } = useAOI();
 
-  // State form pembuatan / edit bentuk
+  // State Modal Dialog
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingAoi, setEditingAoi] = useState<AoiFeature | null>(null);
+
+  // State Form
   const [aoiId, setAoiId] = useState(generateAoiId);
   const [aoiName, setAoiName] = useState("Area Demo");
   const [aoiType, setAoiType] = useState("Area Analisis");
-  const [editingAoiId, setEditingAoiId] = useState<string | null>(null);
+  const [isModifyingPolygon, setIsModifyingPolygon] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // State daftar AOI tersimpan
   const [savedAois, setSavedAois] = useState<AoiFeature[]>([]);
   const [isLoadingAois, setIsLoadingAois] = useState(true);
-
-  // State inline edit metadata (nama & tipe)
-  const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
-  const [inlineName, setInlineName] = useState("");
-  const [inlineType, setInlineType] = useState("");
-  const [isSavingInline, setIsSavingInline] = useState(false);
 
   // ── Muat daftar AOI & dengarkan perubahan ───────────────────────────
   useEffect(() => {
@@ -93,29 +90,118 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
     };
   }, []);
 
-  // ── Handlers Pembuatan & Edit Poligon ────────────────────────────────
-  const handleDraw = () => {
+  // ── Otomatis buka kembali modal saat poligon selesai digambar ────────
+  const prevIsDrawing = useRef(isDrawing);
+  useEffect(() => {
+    if (prevIsDrawing.current && !isDrawing && draftPolygon) {
+      setIsModalOpen(true);
+    }
+    prevIsDrawing.current = isDrawing;
+  }, [isDrawing, draftPolygon]);
+
+  // ── Handlers Pembuatan & Edit AOI ────────────────────────────────────
+  const handleOpenCreateModal = () => {
     setError(null);
-    setEditingAoiId(null);
+    if (map && isDrawing) stopDrawing(map);
+    if (isModifyingPolygon) clearAoi();
+
+    setEditingAoi(null);
+    setIsModifyingPolygon(false);
+    setAoiId(generateAoiId());
+    setAoiName("Area Demo");
+    setAoiType("Area Analisis");
+    setIsModalOpen(true);
+  };
+
+  const handleStartEdit = (targetAoi: AoiFeature) => {
+    setError(null);
+    if (map && isDrawing) stopDrawing(map);
+    if (isModifyingPolygon) clearAoi();
+
+    setEditingAoi(targetAoi);
+    setIsModifyingPolygon(false);
+    setAoiId(targetAoi.properties.aoi_id);
+    setAoiName(targetAoi.properties.name);
+    setAoiType(targetAoi.properties.aoi_type || "");
+    setIsModalOpen(true);
+    handleFocusAoi(targetAoi);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    if (!editingAoi) {
+      clearAoi();
+    }
+    setError(null);
+  };
+
+  const handleStartDrawOnMap = () => {
+    setIsModalOpen(false);
+    setError(null);
     if (map) startDrawing(map);
   };
 
-  const handleCancel = () => {
+  const handleCancelDrawing = () => {
     if (map) stopDrawing(map);
     clearAoi();
-    setEditingAoiId(null);
-    setAoiId(generateAoiId());
-    setAoiName("Area Demo");
+  };
+
+  const handleStartModifyPolygon = () => {
+    if (!map || !editingAoi) return;
+    setIsModalOpen(false);
     setError(null);
+    setIsModifyingPolygon(true);
+    loadAoiForEditing(editingAoi, map);
+  };
+
+  const handleFinishModifyPolygon = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleCancelModifyPolygon = () => {
+    clearAoi();
+    setIsModifyingPolygon(false);
+    window.dispatchEvent(new CustomEvent("aoi:editing-stopped"));
   };
 
   const handleSave = async () => {
+    if (!aoiName.trim()) {
+      setError("Nama area tidak boleh kosong");
+      return;
+    }
     setError(null);
+
     try {
-      await saveAoi(aoiId.trim(), aoiName.trim(), aoiType.trim());
-      setEditingAoiId(null);
-      setAoiId(generateAoiId());
-      setAoiName("Area Demo");
+      if (editingAoi) {
+        // Mode Edit
+        if (isModifyingPolygon && draftPolygon) {
+          await saveAoi(editingAoi.properties.aoi_id, aoiName.trim(), aoiType.trim());
+        } else {
+          const updated: AoiFeature = {
+            ...editingAoi,
+            properties: {
+              ...editingAoi.properties,
+              name: aoiName.trim(),
+              aoi_type: aoiType.trim() || undefined,
+            },
+          };
+          await saveAoiToStorage(updated);
+          window.dispatchEvent(new CustomEvent("aoi:saved", { detail: updated }));
+        }
+        setIsModalOpen(false);
+        setEditingAoi(null);
+        setIsModifyingPolygon(false);
+        setAoiId(generateAoiId());
+        setAoiName("Area Demo");
+        setAoiType("Area Analisis");
+      } else {
+        // Mode Buat Baru
+        await saveAoi(aoiId.trim(), aoiName.trim(), aoiType.trim());
+        setIsModalOpen(false);
+        setAoiId(generateAoiId());
+        setAoiName("Area Demo");
+        setAoiType("Area Analisis");
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
@@ -127,7 +213,7 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
     }
   };
 
-  // ── Handlers Manajemen AOI (Fokus, Edit, Hapus) ──────────────────────
+  // ── Handlers Manajemen AOI (Fokus & Hapus) ───────────────────────────
   const handleFocusAoi = (targetAoi: AoiFeature) => {
     if (!map) return;
     const ring = targetAoi.geometry.coordinates[0];
@@ -135,55 +221,6 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
     const latlngs = ring.map(([lng, lat]) => [lat, lng] as [number, number]);
     const bounds = L.latLngBounds(latlngs);
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18, animate: true, duration: 1.2 });
-  };
-
-  const handleStartPolygonEdit = (targetAoi: AoiFeature) => {
-    if (!map) return;
-    setError(null);
-    setEditingAoiId(targetAoi.properties.aoi_id);
-    setAoiId(targetAoi.properties.aoi_id);
-    setAoiName(targetAoi.properties.name);
-    setAoiType(targetAoi.properties.aoi_type || "");
-    loadAoiForEditing(targetAoi, map);
-  };
-
-  const handleStartInlineEdit = (targetAoi: AoiFeature) => {
-    setInlineEditingId(targetAoi.properties.aoi_id);
-    setInlineName(targetAoi.properties.name);
-    setInlineType(targetAoi.properties.aoi_type || "");
-    setError(null);
-  };
-
-  const handleSaveInlineEdit = async (targetAoi: AoiFeature) => {
-    if (!inlineName.trim()) {
-      setError("Nama area tidak boleh kosong");
-      return;
-    }
-    setIsSavingInline(true);
-    try {
-      const updated: AoiFeature = {
-        ...targetAoi,
-        properties: {
-          ...targetAoi.properties,
-          name: inlineName.trim(),
-          aoi_type: inlineType.trim() || undefined,
-        },
-      };
-      await saveAoiToStorage(updated);
-      window.dispatchEvent(new CustomEvent("aoi:saved", { detail: updated }));
-      setInlineEditingId(null);
-    } catch (err: unknown) {
-      console.error("Gagal memperbarui data AOI:", err);
-      setError(`Gagal memperbarui AOI: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setIsSavingInline(false);
-    }
-  };
-
-  const handleCancelInlineEdit = () => {
-    setInlineEditingId(null);
-    setInlineName("");
-    setInlineType("");
   };
 
   const handleDeleteAoi = async (targetAoi: AoiFeature) => {
@@ -198,11 +235,8 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
           detail: { aoiId: targetAoi.properties.aoi_id },
         }),
       );
-      if (editingAoiId === targetAoi.properties.aoi_id) {
-        clearAoi();
-        setEditingAoiId(null);
-        setAoiId(generateAoiId());
-        setAoiName("Area Demo");
+      if (editingAoi?.properties.aoi_id === targetAoi.properties.aoi_id) {
+        handleCloseModal();
       }
     } catch (err: unknown) {
       console.error("Gagal menghapus AOI:", err);
@@ -210,65 +244,181 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
     }
   };
 
-  const isSaveDisabled =
-    isSaving || isDrawing || !draftPolygon || aoiId.trim() === "" || aoiName.trim() === "";
-  const isCancelDisabled = !isDrawing && !draftPolygon && !editingAoiId;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      <AoiCreateForm
-        aoiId={aoiId}
-        setAoiId={setAoiId}
-        aoiName={aoiName}
-        setAoiName={setAoiName}
-        aoiType={aoiType}
-        setAoiType={setAoiType}
-        editingAoiId={editingAoiId}
-        isDrawing={isDrawing}
-        isSaving={isSaving}
-        isSaveDisabled={isSaveDisabled}
-        isCancelDisabled={isCancelDisabled}
-        error={error}
-        lastSavedAoi={aoi}
-        onDraw={handleDraw}
-        onCancel={handleCancel}
-        onSave={() => void handleSave()}
-      />
-
-      <Card
-        elevation={0}
+      {/* Unified Page Header */}
+      <div
         style={{
-          padding: "16px",
-          background: "var(--color-gallery-white)",
-          boxShadow: "var(--shadow-subtle)",
-          borderRadius: "14px",
-          border: "1px solid #e2e8f0",
-          color: "var(--color-ink)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingBottom: "8px",
+          borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
         }}
       >
+        <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>
+          Area of Interest (AOI)
+        </span>
+        <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
+          {savedAois.length} Tersimpan
+        </span>
+      </div>
+
+      {/* Tombol Utama Buat Batas Area (Membuka Modal) */}
+      <Button
+        minimal
+        icon="add"
+        text="Buat Batas Area (AOI)"
+        onClick={handleOpenCreateModal}
+        style={{
+          width: "100%",
+          padding: "10px 16px",
+          fontSize: "13px",
+          fontWeight: 600,
+          background: "#0f172a",
+          color: "#ffffff",
+          borderRadius: "12px",
+          boxShadow: "0 2px 8px rgba(15, 23, 42, 0.12)",
+          outline: "none",
+        }}
+      />
+
+      {/* Banner Pemandu Interaktif saat Menggambar Baru di Peta */}
+      {isDrawing && (
+        <div
+          style={{
+            background: "#0f172a",
+            color: "#ffffff",
+            padding: "14px 16px",
+            borderRadius: "14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            boxShadow: "0 4px 16px rgba(15, 23, 42, 0.2)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            <Icon icon="locate" color="#38bdf8" size={16} />
+            <span>Sedang Menggambar di Peta...</span>
+          </div>
+          <p style={{ fontSize: "11px", color: "#cbd5e1", margin: 0, lineHeight: 1.4 }}>
+            Klik titik-titik sudut area di atas peta. Klik titik awal untuk menutup poligon.
+          </p>
+          <Button
+            minimal
+            small
+            text="Batal Gambar"
+            icon="cross"
+            onClick={handleCancelDrawing}
+            style={{
+              background: "rgba(255, 255, 255, 0.15)",
+              color: "#ffffff",
+              borderRadius: "8px",
+              fontSize: "11px",
+              fontWeight: 600,
+              outline: "none",
+            }}
+          />
+        </div>
+      )}
+
+      {/* Banner Pemandu Interaktif saat Menggeser Verteks Poligon di Peta */}
+      {isModifyingPolygon && (
+        <div
+          style={{
+            background: "#0f172a",
+            color: "#ffffff",
+            padding: "14px 16px",
+            borderRadius: "14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+            boxShadow: "0 4px 16px rgba(15, 23, 42, 0.2)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              fontSize: "13px",
+              fontWeight: 600,
+            }}
+          >
+            <Icon icon="polygon-filter" color="#f59e0b" size={16} />
+            <span>Ubah Bentuk Poligon di Peta</span>
+          </div>
+          <p style={{ fontSize: "11px", color: "#cbd5e1", margin: 0, lineHeight: 1.4 }}>
+            Geser titik-titik sudut poligon di atas peta untuk menyesuaikan batas area.
+          </p>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Button
+              minimal
+              small
+              text="Batal"
+              icon="cross"
+              onClick={handleCancelModifyPolygon}
+              style={{
+                background: "rgba(255, 255, 255, 0.15)",
+                color: "#ffffff",
+                borderRadius: "8px",
+                fontSize: "11px",
+                fontWeight: 600,
+                outline: "none",
+              }}
+            />
+            <Button
+              minimal
+              small
+              text="Selesai & Buka Form"
+              icon="tick"
+              onClick={handleFinishModifyPolygon}
+              style={{
+                background: "#38bdf8",
+                color: "#0f172a",
+                fontWeight: 700,
+                borderRadius: "8px",
+                fontSize: "11px",
+                flex: 1,
+                outline: "none",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Seksi Daftar AOI */}
+      <div>
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: "14px",
+            paddingBottom: "8px",
+            borderBottom: "1px solid rgba(16, 22, 26, 0.08)",
+            marginBottom: "12px",
           }}
         >
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#334155" }}>
+            Daftar Area Tersimpan
+          </span>
           <span
             style={{
-              fontWeight: 600,
-              fontSize: "14px",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
+              color: "#64748b",
+              fontSize: "11px",
+              fontWeight: 500,
             }}
           >
-            <Icon icon="layers" size={16} color="var(--color-apple-blue)" />
-            Daftar AOI di Peta
-          </span>
-          <Tag round minimal intent="primary">
             {savedAois.length} Area
-          </Tag>
+          </span>
         </div>
 
         {isLoadingAois && (
@@ -281,17 +431,18 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
           <div
             style={{
               textAlign: "center",
-              padding: "20px 10px",
-              color: "var(--color-slate)",
+              padding: "24px 16px",
+              color: "var(--color-slate, #64748b)",
               fontSize: "13px",
-              background: "#f8fafc",
-              borderRadius: "10px",
+              background: "#ffffff",
+              borderRadius: "16px",
+              boxShadow: "0 2px 12px -2px rgba(0, 0, 0, 0.05)",
             }}
           >
             <Icon icon="draw" size={24} color="#94a3b8" style={{ marginBottom: 6 }} />
-            <div>Belum ada AOI di peta</div>
+            <div style={{ fontWeight: 600, color: "#0f172a" }}>Belum ada AOI di peta</div>
             <div style={{ fontSize: "11px", marginTop: 4, color: "#94a3b8" }}>
-              Gunakan tombol <strong>Draw AOI</strong> di atas untuk membuat area baru.
+              Gunakan tombol <strong>Buat Batas Area (AOI)</strong> di atas untuk membuat area baru.
             </div>
           </div>
         )}
@@ -301,27 +452,33 @@ export const AoiToolbar: React.FC<AoiToolbarProps> = ({ map }) => {
             <AoiCardItem
               key={item.properties.aoi_id}
               item={item}
-              isInline={inlineEditingId === item.properties.aoi_id}
-              isEditingThisPolygon={editingAoiId === item.properties.aoi_id}
-              inlineName={inlineName}
-              setInlineName={setInlineName}
-              inlineType={inlineType}
-              setInlineType={setInlineType}
-              isSavingInline={isSavingInline}
-              isSaving={isSaving}
-              isSaveDisabled={isSaveDisabled}
-              onSaveInlineEdit={() => void handleSaveInlineEdit(item)}
-              onCancelInlineEdit={handleCancelInlineEdit}
+              isEditing={isModalOpen && editingAoi?.properties.aoi_id === item.properties.aoi_id}
               onFocus={handleFocusAoi}
-              onStartInlineEdit={handleStartInlineEdit}
-              onStartPolygonEdit={handleStartPolygonEdit}
+              onEdit={handleStartEdit}
               onDelete={() => void handleDeleteAoi(item)}
-              onCancelDrawing={handleCancel}
-              onSaveDrawing={() => void handleSave()}
             />
           ))}
         </div>
-      </Card>
+      </div>
+
+      {/* Modal Dialog Buat & Edit AOI */}
+      <AoiModal
+        isOpen={isModalOpen}
+        isEditing={editingAoi !== null}
+        aoiId={aoiId}
+        aoiName={aoiName}
+        setAoiName={setAoiName}
+        aoiType={aoiType}
+        setAoiType={setAoiType}
+        draftPolygon={draftPolygon}
+        editingAoi={editingAoi}
+        isSaving={isSaving}
+        error={error}
+        onClose={handleCloseModal}
+        onStartDrawOnMap={handleStartDrawOnMap}
+        onStartModifyPolygon={handleStartModifyPolygon}
+        onSave={() => void handleSave()}
+      />
     </div>
   );
 };

@@ -242,3 +242,51 @@
   min-width: 0;
   min-height: 220px;
 }
+
+/* Blueprint Dialog / Overlay Portal global z-index above all map sidebars and floating controls */
+.bp5-portal,
+.bp6-portal,
+.bp5-overlay,
+.bp6-overlay {
+  z-index: 2500 !important;
+}
+
+/* Suppress intrusive browser default blue focus ring on interactive buttons and role="button" elements */
+[role="button"]:focus,
+[role="button"]:focus-visible,
+button:focus,
+button:focus-visible {
+  outline: none;
+}
+
+/* Range Slider Styling */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0f172a;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0f172a;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
