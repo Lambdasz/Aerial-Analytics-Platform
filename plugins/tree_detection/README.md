@@ -9,9 +9,11 @@ menghitung jumlah dan kepadatan pohon.
 - **Runtime:** Python ≥ 3.10
 - **Kontrak antar-modul:** [CONTRACT.md](CONTRACT.md) (baca ini kalau kamu dari Modul 2, 3, 9, 10, atau 11)
 
-> **Status:** dua detector nyata terdaftar. `opencv_watershed` (default) memakai pengolahan citra
-> klasik dan langsung jalan tanpa bobot model. `deeplabv3plus` sudah terpasang di registry, tetapi
-> baru bisa dipakai kalau checkpoint hasil pelatihan, torch, dan segmentation-models-pytorch tersedia.
+> **Status:** tiga detector nyata terdaftar. `opencv_watershed` (default) memakai pengolahan citra
+> klasik dan langsung jalan tanpa bobot model. `deepforest` adalah model deteksi tajuk yang sudah
+> dilatih dan bisa dipakai tanpa pelatihan sendiri; fine-tuning-nya ada di [training/](training/README.md).
+> `deeplabv3plus` sudah terpasang di registry, tetapi baru bisa dipakai kalau checkpoint hasil
+> pelatihan, torch, dan segmentation-models-pytorch tersedia.
 > `stub` tetap ada dan hasilnya diberi status `warning` supaya tidak disangka hasil nyata.
 
 ## Struktur
@@ -41,6 +43,7 @@ plugins/tree_detection/
 │   ├── output.py            # Fitur 8: build_plugin_output → execution_result
 │   ├── pipeline.py          # Payload → fitur-fitur di atas
 │   └── integration.py       # Konektor M9/M10: ringkasan per plot, pembanding dua run
+├── training/                # Ambil UAV-VisLoc, label, fine-tuning deepforest (tidak dipasang platform)
 └── tests/                   # Unit test & end-to-end test (unittest)
 ```
 
@@ -81,11 +84,18 @@ Ganti `target.image_path` dengan gambar asli untuk mencoba alur sukses.
 | `detector`         | Butuh                                                                    | Kapan dipakai                                           |
 | :----------------- | :----------------------------------------------------------------------- | :------------------------------------------------------ |
 | `opencv_watershed` | numpy, opencv-python-headless                                            | default; citra RGB biasa, hasil sama untuk input sama   |
+| `deepforest`       | deepforest (membawa torch); checkpoint `.pt` opsional                    | deteksi tajuk deep learning tanpa pelatihan sendiri     |
 | `deeplabv3plus`    | torch, segmentation-models-pytorch, checkpoint `.pth` dari hasil latihan | setelah bobot tersedia; encoder ResNet101 atau Xception |
 | `stub`             | -                                                                        | menguji pipeline tanpa deteksi                          |
 
-`--healthcheck` melaporkan torch dan segmentation-models-pytorch sebagai `optional_dependencies`:
-kalau keduanya hilang plugin tetap sehat, karena detector default tidak memakainya.
+`--healthcheck` melaporkan torch, deepforest, dan segmentation-models-pytorch sebagai
+`optional_dependencies`: kalau semuanya hilang plugin tetap sehat, karena detector default tidak
+memakainya.
+
+`deepforest` memakai foto yang diperkecil ke 10 cm/px (resolusi latih modelnya) berdasarkan
+`gsd_cm`. Isi `gsd_cm` dengan benar: pada foto UAV-VisLoc penerbangan 01 (sekitar 5 cm/px), tanpa
+penyekalaan kotaknya hanya menutup setengah tajuk. Pada CPU, satu foto 4000×2650 px butuh sekitar
+40 detik.
 
 ## Test
 
@@ -94,8 +104,9 @@ cd plugins/tree_detection
 python -m unittest discover -s tests -v
 ```
 
-50 test: 20 untuk delapan fitur dan alur payload, 21 untuk detector `opencv_watershed` dan
-`deeplabv3plus` di atas citra sintetis, 9 untuk konektor M9/M10.
+71 test: 20 untuk delapan fitur dan alur payload, 21 untuk detector `opencv_watershed` dan
+`deeplabv3plus` di atas citra sintetis, 9 untuk detector `deepforest` (tanpa model), 12 untuk alat
+pelatihan di `training/`, dan 9 untuk konektor M9/M10.
 
 Test mencakup kedelapan fitur, termasuk kasus batas dari spesifikasi: tidak ada deteksi
 (`0`, bukan error), threshold di luar 0–1 (ditolak Pydantic), luas 0 (`ZeroAreaError`),

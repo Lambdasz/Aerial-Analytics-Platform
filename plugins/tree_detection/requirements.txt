@@ -9,9 +9,13 @@ pydantic>=2,<3
 numpy>=1.26
 opencv-python-headless>=4.8
 
-# Only needed by the optional 'deeplabv3plus' detector (treedet/detectors.py). The
+# Only needed by the optional deep-learning detectors (treedet/detectors.py). The
 # default detector never imports them, so they stay commented out: torch alone is
 # about 2 GB and the platform installs this file before the plugin can run.
-# Enable both (and a trained checkpoint) to use that model:
+#
+# 'deepforest' (released weights work without training; brings torch with it):
+# deepforest>=2.1,<3
+#
+# 'deeplabv3plus' (also needs a trained checkpoint):
 # segmentation-models-pytorch>=0.3
 # torch>=2.0

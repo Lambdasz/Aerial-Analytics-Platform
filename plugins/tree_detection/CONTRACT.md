@@ -1,8 +1,8 @@
 # Kontrak Modul 7: Tree Detection & Counting
 
 > Untuk: tim Modul 2 (Plugin Manager), 3 (Map Explorer), 9 (Area & Plot), 10 (Temporal), dan 11 (Dashboard).
-> Status: **v0.4.0**. Dua detector nyata terdaftar (`opencv_watershed` sebagai default dan
-> `deeplabv3plus`). Bagian [Perlu disepakati](#6-perlu-disepakati) masih menunggu jawaban tim
+> Status: **v0.5.0**. Tiga detector nyata terdaftar (`opencv_watershed` sebagai default,
+> `deepforest`, dan `deeplabv3plus`). Bagian [Perlu disepakati](#6-perlu-disepakati) masih menunggu jawaban tim
 > terkait. Nama field di dokumen ini sama persis dengan yang dipakai kode.
 
 Dokumen ini menjelaskan apa yang Modul 7 **terima** dan **hasilkan**. Modul lain tidak perlu
@@ -53,21 +53,25 @@ Mengikuti `schemas/execution_payload.schema.json`. Field yang dipakai Modul 7:
 
 **Parameter** (`parameters.json`, dirender Modul 2 sebagai form):
 
-| `name`                  | Tipe        | Default            | Keterangan                                             |
-| :---------------------- | :---------- | :----------------- | :----------------------------------------------------- |
-| `confidence_threshold`  | number 0–1  | `0.5`              | deteksi di bawah nilai ini dibuang                     |
-| `density_unit`          | select      | `per_ha`           | `per_ha` atau `per_m2`                                 |
-| `detector`              | select      | `opencv_watershed` | `opencv_watershed`, `deeplabv3plus`, atau `stub`       |
-| `model_path`            | string      | `""`               | checkpoint `.pth`; wajib untuk `deeplabv3plus`         |
-| `backbone`              | select      | `resnet101`        | `resnet101` atau `xception`; harus sama dengan latihan |
-| `probability_threshold` | number 0–1  | `0.5`              | piksel dianggap tajuk di atas nilai ini (DeepLabV3+)   |
-| `iou_threshold`         | number 0–1  | `0.5`              | batas tumpang tindih untuk deduplikasi antar-tile      |
-| `tile_size`             | number (px) | `1024`             | ukuran tile inferensi                                  |
-| `gsd_cm`                | number      | `3.0`              | cadangan kalau metadata tidak punya `gsd_m`            |
+| `name`                  | Tipe        | Default            | Keterangan                                                |
+| :---------------------- | :---------- | :----------------- | :-------------------------------------------------------- |
+| `confidence_threshold`  | number 0–1  | `0.5`              | deteksi di bawah nilai ini dibuang                        |
+| `density_unit`          | select      | `per_ha`           | `per_ha` atau `per_m2`                                    |
+| `detector`              | select      | `opencv_watershed` | `opencv_watershed`, `deepforest`, `deeplabv3plus`, `stub` |
+| `model_path`            | string      | `""`               | wajib untuk `deeplabv3plus`; opsional untuk `deepforest`  |
+| `backbone`              | select      | `resnet101`        | `resnet101` atau `xception`; harus sama dengan latihan    |
+| `probability_threshold` | number 0–1  | `0.5`              | piksel dianggap tajuk di atas nilai ini (DeepLabV3+)      |
+| `iou_threshold`         | number 0–1  | `0.5`              | batas tumpang tindih untuk deduplikasi antar-tile         |
+| `tile_size`             | number (px) | `1024`             | ukuran tile inferensi                                     |
+| `gsd_cm`                | number      | `3.0`              | cadangan kalau metadata tidak punya `gsd_m`               |
 
 `opencv_watershed` tidak membaca `model_path`, `backbone`, atau `probability_threshold`. Detector
 `deeplabv3plus` menolak berjalan tanpa checkpoint, bukan mengembalikan 0 pohon, supaya hasil kosong
 tidak tertukar dengan kebun yang memang kosong.
+
+`deepforest` memakai model rilis kalau `model_path` kosong, atau checkpoint hasil
+`training/train_deepforest.py` kalau diisi. Detector ini memperkecil foto sebesar `gsd_cm / 10`
+agar sesuai resolusi latih model, dan selalu memakai patch 400 px (tidak membaca `tile_size`).
 
 ## 3. Output
 
@@ -153,7 +157,7 @@ Sesuai model `PluginOutput` di laporan progres Modul 7 (`treedet/models.py`):
   },
   "geojson": "<string berisi tree_points di atas>",
   "metadata": {
-    "plugin_version": "0.4.0",
+    "plugin_version": "0.5.0",
     "model_name": "deeplabv3plus",
     "model_version": null,
     "executed_at": "2026-09-21T09:15:00+00:00",
@@ -225,6 +229,7 @@ Perbedaan dari laporan progres, beserta alasannya:
 
 | Versi | Tanggal    | Perubahan                                                                                                        |
 | :---- | :--------- | :--------------------------------------------------------------------------------------------------------------- |
+| 0.5.0 | 2026-11-01 | Detector `deepforest` (model rilis atau checkpoint fine-tuning lewat `model_path`)                               |
 | 0.4.0 | 2026-10-21 | Konektor M9/M10 (`plot_summaries`, `compare_plot_summaries`, `tree_points_of`); metrik dan artefak tidak berubah |
 | 0.3.0 | 2026-10-21 | Detector `deeplabv3plus` dengan `model_path`, `backbone`, `probability_threshold`                                |
 | 0.2.0 | 2026-10-18 | `opencv_watershed` menjadi detector default; `manifest.json` naik ke 0.2.0                                       |

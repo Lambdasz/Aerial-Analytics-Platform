@@ -57,13 +57,13 @@ def check_dependencies() -> Tuple[bool, Dict[str, str]]:
 
 
 def check_optional_dependencies() -> Dict[str, str]:
-    """Modules only the 'deeplabv3plus' detector needs.
+    """Modules only the deep-learning detectors need ('deepforest', 'deeplabv3plus').
 
-    Reported but never fatal: the other detectors run without them, so a machine
-    without torch is still healthy until someone selects that model.
+    Reported but never fatal: the default detector runs without them, so a machine
+    without torch is still healthy until someone selects one of those models.
     """
     statuses: Dict[str, str] = {}
-    for module_name in ("torch", "segmentation_models_pytorch"):
+    for module_name in ("torch", "deepforest", "segmentation_models_pytorch"):
         try:
             importlib.import_module(module_name)
             statuses[module_name] = "available"

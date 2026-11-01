@@ -5,26 +5,32 @@ It returns crowns in pixel coordinates with a confidence; ids, de-duplication,
 filtering and georeferencing are done by the rest of the pipeline, so a new model
 only has to implement this one function and be added to ``DETECTORS``.
 
-Two backends are registered:
+Three backends are registered:
 
 - ``opencv_watershed`` (default) - classical image processing, no GPU and no weights.
+- ``deepforest`` - a RetinaNet pre-trained on RGB tree crowns. It needs the deepforest
+  package (and with it torch), but no training of our own; a fine-tuned checkpoint
+  can replace the released weights through ``model_path``.
 - ``deeplabv3plus`` - the DeepLabV3+ segmentation model agreed with Module 8, with
   either a ResNet101 or an Xception encoder. It needs torch,
   segmentation-models-pytorch and a checkpoint produced by training, so it stays an
   option until such a checkpoint exists.
 
 ``model_config`` keys read here: ``gsd_cm`` (ground sampling distance, needed to
-size the crown filters) and ``tile_size``. The DeepLabV3+ backend also reads
-``model_path``, ``backbone`` and ``probability_threshold``.
+size the crown filters) and ``tile_size``. DeepForest also reads ``model_path``; the
+DeepLabV3+ backend reads ``model_path``, ``backbone`` and ``probability_threshold``.
 
 numpy and opencv are imported inside the detector, not at module level, so that
 ``import treedet`` keeps working on a machine where they are not installed yet and
 ``--healthcheck`` can report them as missing instead of crashing.
 """
 
+import contextlib
 import importlib
 import os
-from collections.abc import Callable, Iterator, Mapping, Sequence
+import sys
+import warnings
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from .errors import PluginExecutionError
@@ -408,10 +414,125 @@ def deeplabv3plus_detector(image_path: str, model_config: Mapping[str, Any]) -> 
     )
 
 
+# ---------------------------------------------------------------------------
+# DeepForest crown detection (registry name: deepforest)
+#
+# A RetinaNet already trained on RGB tree crowns (weecology/deepforest-tree). It
+# returns one box and a score per crown, which is what Module 7 reports, so no mask
+# has to be split into crowns afterwards, and it works before any training of our
+# own. Fine-tuning needs boxes only (see training/train_deepforest.py), which are
+# far quicker to label than the per-pixel masks DeepLabV3+ learns from.
+# ---------------------------------------------------------------------------
+
+DEEPFOREST_PRETRAINED = "weecology/deepforest-tree"
+DEEPFOREST_GSD_CM = 10.0  # resolution of the imagery the released model was trained on
+DEEPFOREST_PATCH_PX = 400  # patch size the released model was trained on
+DEEPFOREST_SCALE_LIMITS = (0.1, 4.0)
+
+# (x_min, y_min, x_max, y_max, score) in the pixels of the image given to the model.
+ScoredBox = tuple[float, float, float, float, float]
+BoxPredictor = Callable[[Any], Iterable[ScoredBox]]
+
+
+def deepforest_scale(gsd_cm: float) -> float:
+    """Resize factor that brings a photo to the resolution DeepForest was trained on.
+
+    A crown has to cover about as many pixels as in training: on a 5 cm/px drone
+    photo the released model draws boxes around half a crown, and on the same photo
+    halved it fits the whole crown (checked on UAV-VisLoc flight 01).
+    """
+    low, high = DEEPFOREST_SCALE_LIMITS
+    return min(high, max(low, gsd_cm / DEEPFOREST_GSD_CM))
+
+
+def _rescaled_boxes(rows: Iterable[ScoredBox], scale: float) -> tuple[RawBox, ...]:
+    """Model boxes, found on the resized photo, in the pixels of the original photo."""
+    return tuple(
+        (
+            BBox(
+                x_min=x_min / scale, y_min=y_min / scale, x_max=x_max / scale, y_max=y_max / scale
+            ),
+            round(min(1.0, max(0.0, score)), CONFIDENCE_DECIMALS),
+        )
+        for x_min, y_min, x_max, y_max, score in rows
+        if x_max > x_min and y_max > y_min
+    )
+
+
+def _deepforest_predictor(model_path: str) -> BoxPredictor:
+    """Load the released model, or a fine-tuned checkpoint, and return the predictor.
+
+    deepforest pulls in torch, so like the DeepLabV3+ packages it is optional and
+    imported here. The released weights are downloaded from Hugging Face on first use
+    and cached by huggingface_hub afterwards.
+    """
+    install_hint = "install it with 'pip install deepforest'"
+    _require("torch", install_hint)
+    deepforest_main = _require("deepforest.main", install_hint)
+
+    try:
+        if model_path:
+            # The checkpoint remembers the training CSVs; they do not exist on this machine.
+            unset_data = {"train": {"csv_file": None}, "validation": {"csv_file": None}}
+            model = deepforest_main.deepforest.load_from_checkpoint(
+                model_path, map_location="cpu", config_args=unset_data
+            )
+        else:
+            model = deepforest_main.deepforest()
+            model.load_model(DEEPFOREST_PRETRAINED)
+    except (OSError, RuntimeError, KeyError, ValueError) as exc:
+        source = model_path or DEEPFOREST_PRETRAINED
+        raise PluginExecutionError(f"Cannot load the DeepForest model {source}: {exc}") from exc
+    model.create_trainer(enable_progress_bar=False)
+
+    def predict(rgb: Any) -> Iterable[ScoredBox]:
+        # stdout belongs to the PROGRESS protocol; deepforest prints its own notes there.
+        with contextlib.redirect_stdout(sys.stderr), warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # "no root_dir" notes, not problems
+            frame = model.predict_tile(
+                image=rgb.astype("float32"), patch_size=DEEPFOREST_PATCH_PX, patch_overlap=0.25
+            )
+        if frame is None:
+            return ()
+        return frame[["xmin", "ymin", "xmax", "ymax", "score"]].itertuples(index=False, name=None)
+
+    return predict
+
+
+def deepforest_detector(image_path: str, model_config: Mapping[str, Any]) -> Sequence[RawBox]:
+    """DeepForest crown boxes, on the photo resized to the model's training resolution.
+
+    ``model_path`` is optional here: empty means the released model, a path means a
+    checkpoint saved by ``training/train_deepforest.py``. ``tile_size`` is not read,
+    because the model is run on the 400 px patches it was trained on.
+
+    Raises ``PluginExecutionError`` when the checkpoint or the image is missing, the
+    model cannot be loaded, or deepforest is not installed.
+    """
+    raw_path = str(model_config.get("model_path") or "").strip()
+    model_path = os.path.abspath(raw_path) if raw_path else ""
+    if model_path and not os.path.isfile(model_path):
+        raise PluginExecutionError(f"DeepForest checkpoint not found: {model_path}")
+
+    np = _require("numpy")
+    cv2 = _require("cv2")
+    bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise PluginExecutionError(f"Cannot read image: {image_path}")
+
+    scale = deepforest_scale(float(model_config.get("gsd_cm") or DEFAULT_GSD_CM))
+    if scale != 1.0:
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        bgr = cv2.resize(bgr, None, fx=scale, fy=scale, interpolation=interpolation)
+    rgb = np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+    return _rescaled_boxes(_deepforest_predictor(model_path)(rgb), scale)
+
+
 # A new model is one function with this signature, registered here and in the
 # "detector" options of parameters.json.
 DETECTORS: Mapping[str, Detector] = {
     "opencv_watershed": opencv_watershed_detector,
+    "deepforest": deepforest_detector,
     "deeplabv3plus": deeplabv3plus_detector,
     "stub": stub_detector,
 }

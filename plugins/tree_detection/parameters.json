@@ -23,16 +23,16 @@
       "name": "detector",
       "label": "Detection Model",
       "type": "select",
-      "options": ["opencv_watershed", "deeplabv3plus", "stub"],
+      "options": ["opencv_watershed", "deepforest", "deeplabv3plus", "stub"],
       "default": "opencv_watershed",
-      "description": "Detection backend. 'opencv_watershed' is the built-in classical crown detector (Excess Green, Otsu, distance-transform peaks) and needs no weights. 'deeplabv3plus' is the agreed deep-learning model and needs model_path, torch and segmentation-models-pytorch. 'stub' returns no detections and only exercises the pipeline."
+      "description": "Detection backend. 'opencv_watershed' is the built-in classical crown detector (Excess Green, Otsu, distance-transform peaks) and needs no weights. 'deepforest' is a pre-trained tree-crown detector (RetinaNet) that works without training of our own and needs the deepforest package. 'deeplabv3plus' is the agreed deep-learning model and needs model_path, torch and segmentation-models-pytorch. 'stub' returns no detections and only exercises the pipeline."
     },
     {
       "name": "model_path",
-      "label": "DeepLabV3+ Checkpoint (.pth)",
+      "label": "Model Checkpoint",
       "type": "string",
       "default": "",
-      "description": "Absolute path to the trained DeepLabV3+ weights. Required by 'deeplabv3plus'; ignored by the other detectors."
+      "description": "Absolute path to trained weights. Required by 'deeplabv3plus' (.pth). Optional for 'deepforest': empty uses the released model, a path uses a checkpoint from training/train_deepforest.py. Ignored by the other detectors."
     },
     {
       "name": "backbone",
@@ -70,7 +70,7 @@
       "min": 256,
       "max": 4096,
       "step": 128,
-      "description": "Size of the square tiles the image is split into before inference."
+      "description": "Size of the square tiles the image is split into before inference. 'deepforest' always uses the 400 px patches it was trained on."
     },
     {
       "name": "gsd_cm",
@@ -80,7 +80,7 @@
       "min": 0.1,
       "max": 100.0,
       "step": 0.1,
-      "description": "Used only when the image metadata has no gsd_m value."
+      "description": "Used only when the image metadata has no gsd_m value. 'deepforest' also resizes the photo by gsd_cm / 10 to match its training resolution."
     }
   ]
 }
