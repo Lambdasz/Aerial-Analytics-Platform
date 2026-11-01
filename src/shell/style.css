@@ -290,3 +290,15 @@ input[type="range"]::-moz-range-thumb {
 input[type="range"]::-moz-range-thumb:hover {
   transform: scale(1.15);
 }
+
+/* Modul 03: Penanganan Pointer Events pada Poligon AOI & Anotasi */
+.aoi-polygon-path,
+.annotation-polygon-path {
+  pointer-events: stroke !important;
+  cursor: pointer;
+}
+
+.aoi-polygon-path:hover,
+.annotation-polygon-path:hover {
+  cursor: pointer;
+}

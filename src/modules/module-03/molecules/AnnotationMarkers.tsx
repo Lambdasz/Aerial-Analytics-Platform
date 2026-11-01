@@ -102,8 +102,9 @@ export const AnnotationMarkers: React.FC<AnnotationMarkersProps> = ({
                 color: "#f59e0b",
                 fillColor: "#f59e0b",
                 fillOpacity: 0.22,
-                weight: 2.5,
+                weight: 3.5,
                 dashArray: "5, 5",
+                className: "annotation-polygon-path",
               }}
             >
               <Popup maxWidth={320} className="aoi-custom-popup">

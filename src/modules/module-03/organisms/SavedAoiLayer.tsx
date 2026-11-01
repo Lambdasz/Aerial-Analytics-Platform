@@ -3,7 +3,7 @@ import { useMap } from "react-leaflet";
 import * as L from "leaflet";
 import { getSavedAois } from "../services/api";
 import { buildAoiPopupHtml } from "../lib/popupHtml";
-import { estimatePolygonArea } from "../lib/geoJson";
+import { estimatePolygonArea, isPointInPolygon } from "../lib/geoJson";
 import { useMapZoom } from "../hooks/useMapZoom";
 import { MIN_POLYGON_FEATURE_ZOOM } from "../config/mapConfig";
 import type { AoiFeature } from "../types/aoi";
@@ -29,8 +29,9 @@ const getAoiArea = (aoi: AoiFeature): number => {
  * Jika ada AOI bertumpuk (nested), area terluas ditaruh di bawah dan area dalam yang
  * lebih kecil otomatis berada di layer paling atas.
  *
- * Menyembunyikan seluruh poligon AOI saat zoom < minZoom (default 15) untuk menjaga
- * overview peta tetap bersih.
+ * Mengimplementasikan `pointer-events: stroke` dengan delegasi klik peta agar citra
+ * ortomosaik di bawahnya tetap dapat diklik secara tembus (*click-through*), sementara
+ * garis tepi AOI dan area fill di luar ortomosaik tetap interaktif.
  */
 export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
   onAoisLoaded,
@@ -41,6 +42,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
   const isVisible = currentZoom >= minZoom;
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const aoisMapRef = useRef<Map<string, AoiFeature>>(new Map());
+  const polygonLayersRef = useRef<Map<string, L.Polygon>>(new Map());
 
   // Sinkronisasi visibilitas layer group AOI saat level zoom berubah
   useEffect(() => {
@@ -67,6 +69,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
     }
     layerGroupRef.current = group;
     const aoisMap = aoisMapRef.current;
+    const polygonLayers = polygonLayersRef.current;
 
     let editingAoiId: string | null = null;
 
@@ -74,6 +77,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
     // sehingga area dalam (inner area) otomatis berada di layer paling atas
     const renderSortedAois = () => {
       group.clearLayers();
+      polygonLayers.clear();
       const aois = Array.from(aoisMap.values());
 
       // Urutkan area terbesar di bawah (dibuat duluan), area terkecil di atas
@@ -93,15 +97,16 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
         const polygon = L.polygon(rings, {
           pane: "aoiPane",
           color: "#007aff",
-          weight: 2.5,
+          weight: 3.5,
           dashArray: "6, 6",
           fillColor: "#007aff",
           fillOpacity: 0.16,
+          className: "aoi-polygon-path",
         });
 
         polygon.on("mouseover", () => {
           polygon.setStyle({
-            weight: 3.5,
+            weight: 4.5,
             fillOpacity: 0.28,
             dashArray: "",
           });
@@ -109,7 +114,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
 
         polygon.on("mouseout", () => {
           polygon.setStyle({
-            weight: 2.5,
+            weight: 3.5,
             fillOpacity: 0.16,
             dashArray: "6, 6",
           });
@@ -121,6 +126,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
         });
 
         polygon.addTo(group);
+        polygonLayers.set(aoi.properties.aoi_id, polygon);
       });
     };
 
@@ -130,15 +136,70 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
     getSavedAois()
       .then((savedList) => {
         if (cancelled) return;
-        savedList.forEach((aoi) => {
+        const list = Array.isArray(savedList)
+          ? savedList
+          : ((savedList as unknown as { aois?: AoiFeature[] })?.aois ?? []);
+        list.forEach((aoi) => {
           aoisMap.set(aoi.properties.aoi_id, aoi);
         });
         renderSortedAois();
-        onAoisLoaded?.(savedList);
+        onAoisLoaded?.(list);
       })
       .catch((err) => {
         console.warn("[SavedAoiLayer] Belum dapat memuat saved AOIs:", err);
       });
+
+    // Delegasi handler klik peta untuk area fill AOI di luar batas ortomosaik
+    const handleMapClick = (e: L.LeafletMouseEvent) => {
+      // 1. Abaikan jika event klik sudah dihentikan atau dicegah oleh layer lain
+      if (e.originalEvent.defaultPrevented) return;
+      if ((e.originalEvent as unknown as { _stopped?: boolean })._stopped) return;
+      if ((e.originalEvent as unknown as { _handledByAnnotation?: boolean })._handledByAnnotation) {
+        return;
+      }
+
+      // 2. PENTING: Periksa apakah klik mengenai elemen citra ortomosaik atau popup aktif
+      if (typeof document !== "undefined") {
+        const elements = document.elementsFromPoint(
+          e.originalEvent.clientX,
+          e.originalEvent.clientY,
+        );
+        const hitOrthoOrPopup = elements.some(
+          (el) =>
+            el.classList.contains("ortho-image-overlay") ||
+            el.classList.contains("ortho-outline-rect") ||
+            el.closest(".leaflet-popup") !== null,
+        );
+        if (hitOrthoOrPopup) {
+          return;
+        }
+      }
+
+      // 3. Konversi koordinat klik [lat, lng] ke format GeoJSON [lng, lat]
+      const clickPoint: [number, number] = [e.latlng.lng, e.latlng.lat];
+
+      // 4. Cari AOI dari area terkecil ke terbesar (prioritaskan area dalam jika nested)
+      const aois = Array.from(aoisMap.values()).sort((a, b) => getAoiArea(a) - getAoiArea(b));
+
+      for (const aoi of aois) {
+        if (editingAoiId && aoi.properties.aoi_id === editingAoiId) continue;
+
+        if (isPointInPolygon(clickPoint, aoi.geometry.coordinates)) {
+          const polyLayer = polygonLayers.get(aoi.properties.aoi_id);
+          if (polyLayer) {
+            polyLayer.openPopup(e.latlng);
+          } else {
+            L.popup({ maxWidth: 320, className: "aoi-custom-popup" })
+              .setLatLng(e.latlng)
+              .setContent(buildAoiPopupHtml(aoi))
+              .openOn(map);
+          }
+          break;
+        }
+      }
+    };
+
+    map.on("click", handleMapClick);
 
     // Event listener saat ada AOI baru yang berhasil disimpan
     const handleAoiSaved = (event: Event) => {
@@ -154,6 +215,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
       const customEvent = event as CustomEvent<{ aoiId: string }>;
       if (customEvent.detail?.aoiId) {
         aoisMap.delete(customEvent.detail.aoiId);
+        polygonLayers.delete(customEvent.detail.aoiId);
         renderSortedAois();
       }
     };
@@ -182,6 +244,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
 
     return () => {
       cancelled = true;
+      map.off("click", handleMapClick);
       window.removeEventListener("aoi:saved", handleAoiSaved);
       window.removeEventListener("aoi:deleted", handleAoiDeleted);
       window.removeEventListener("aoi:editing-started", handleEditingStarted);
@@ -191,6 +254,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
       }
       layerGroupRef.current = null;
       aoisMap.clear();
+      polygonLayers.clear();
     };
   }, [map, minZoom, onAoisLoaded]);
 

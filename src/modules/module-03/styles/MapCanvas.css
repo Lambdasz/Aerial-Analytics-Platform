@@ -24,3 +24,16 @@
   border-radius: 4px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
+
+/* Modul 03: Penanganan Pointer Events pada Poligon AOI & Anotasi */
+/* Membiarkan garis tepi (stroke) menangkap event, sementara area fill transparan tembus ke ortomosaik */
+.aoi-polygon-path,
+.annotation-polygon-path {
+  pointer-events: stroke !important;
+  cursor: pointer;
+}
+
+.aoi-polygon-path:hover,
+.annotation-polygon-path:hover {
+  cursor: pointer;
+}
