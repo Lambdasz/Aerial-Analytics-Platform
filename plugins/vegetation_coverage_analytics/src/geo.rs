@@ -119,6 +119,15 @@ pub fn metadata_number(metadata: &Value, key: &str) -> Option<f64> {
     metadata[key].as_f64()
 }
 
+/// Helper to extract numeric values from JSON parameters. Pure.
+pub fn number_param(parameters: &Value, key: &str) -> Option<f64> {
+    match &parameters[key] {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
 /// GSD from parameters first, then metadata (focal length, then assumed HFOV). Pure.
 pub fn resolve_gsd(
     parameters: &Value,
@@ -126,7 +135,7 @@ pub fn resolve_gsd(
     width: usize,
     height: usize,
 ) -> Option<f64> {
-    if let Some(gsd) = crate::pipeline::number_param(parameters, "gsd_m").filter(|g| *g > 0.0) {
+    if let Some(gsd) = number_param(parameters, "gsd_m").filter(|g| *g > 0.0) {
         return Some(gsd);
     }
     let altitude = metadata_number(metadata, "relative_altitude")

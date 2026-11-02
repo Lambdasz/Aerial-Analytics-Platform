@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::coverage::{area_metrics, calculate_coverage, classify_coverage};
-use crate::geo::{aoi_ring, parse_bounds_override, resolve_bounds, resolve_gsd};
+use crate::geo::{aoi_ring, number_param, parse_bounds_override, resolve_bounds, resolve_gsd};
 use crate::indices::{default_threshold, mask_from_rgb};
 use crate::plots::{
     calculate_plot_coverage, compare_plots, parse_plots, plots_geojson, polygon_pixel_mask,
@@ -132,14 +132,6 @@ pub fn healthcheck_info() -> Value {
         "runtime": "rust",
         "dependencies": { "image": "available", "serde_json": "available" },
     })
-}
-
-pub fn number_param(parameters: &Value, key: &str) -> Option<f64> {
-    match &parameters[key] {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    }
 }
 
 pub fn resolve_threshold(parameters: &Value, method: &str) -> f64 {
