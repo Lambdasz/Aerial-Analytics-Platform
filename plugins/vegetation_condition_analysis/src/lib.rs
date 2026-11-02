@@ -979,7 +979,7 @@ fn bounds_from_aoi(payload: &Value) -> Option<[f64; 4]> {
     (values.len() == 4).then(|| [values[0], values[1], values[2], values[3]])
 }
 
-/// Bounds from explicit override, else AOI, else GPS + assumed GSD.
+/// Bounds from explicit override, else GPS + assumed GSD, else AOI.
 fn resolve_bounds(
     payload: &Value,
     parameters: &Value,
@@ -989,17 +989,20 @@ fn resolve_bounds(
     if let Some(bounds) = parse_bounds_override(parameters) {
         return Some(bounds);
     }
-    if let Some(bounds) = bounds_from_aoi(payload) {
-        return Some(bounds);
-    }
     let metadata = &payload["target"]["metadata"];
     let altitude = metadata["relative_altitude"]
         .as_f64()
-        .or_else(|| metadata["altitude"].as_f64())?;
-    let gsd = gsd_from_hfov(altitude, ASSUMED_HFOV_DEG, width)?;
-    let lat = metadata["gps"]["lat"].as_f64()?;
-    let lon = metadata["gps"]["lon"].as_f64()?;
-    bounds_from_gps(lat, lon, gsd, width, height)
+        .or_else(|| metadata["altitude"].as_f64());
+    let lat = metadata["gps"]["lat"].as_f64();
+    let lon = metadata["gps"]["lon"].as_f64();
+    if let (Some(alt), Some(lat), Some(lon)) = (altitude, lat, lon) {
+        if let Some(gsd) = gsd_from_hfov(alt, ASSUMED_HFOV_DEG, width) {
+            if let Some(bounds) = bounds_from_gps(lat, lon, gsd, width, height) {
+                return Some(bounds);
+            }
+        }
+    }
+    bounds_from_aoi(payload)
 }
 
 /// One plot request parsed from the `plots` parameter.

@@ -148,7 +148,7 @@ export function AnalysePlotsDialog({
     for (;;) {
       if (abortRef.current) return "failed";
       const status = (await getJobStatus(jobId)) as JobStatusPayload;
-      const state = status?.state ?? "";
+      const state = (status?.state ?? "").toLowerCase();
       if (state === "completed") return "completed";
       if (state === "failed" || state === "aborted") return "failed";
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));

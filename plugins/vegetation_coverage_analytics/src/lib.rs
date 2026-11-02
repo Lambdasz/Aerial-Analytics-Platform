@@ -788,7 +788,7 @@ fn parse_bounds_override(parameters: &Value) -> Option<[f64; 4]> {
     Some([values[0], values[1], values[2], values[3]])
 }
 
-/// Bounds from the explicit override, else AOI, else GPS + GSD.
+/// Bounds from the explicit override, else GPS + GSD, else AOI.
 fn resolve_bounds(
     payload: &Value,
     parameters: &Value,
@@ -800,13 +800,13 @@ fn resolve_bounds(
     if let Some(bounds) = parse_bounds_override(parameters) {
         return Some(bounds);
     }
-    if let Some(bounds) = bounds_from_aoi(payload) {
-        return Some(bounds);
-    }
     let gps = &metadata["gps"];
-    let lat = gps["lat"].as_f64()?;
-    let lon = gps["lon"].as_f64()?;
-    bounds_from_gps(lat, lon, gsd_m?, width, height)
+    if let (Some(lat), Some(lon), Some(gsd)) = (gps["lat"].as_f64(), gps["lon"].as_f64(), gsd_m) {
+        if let Some(bounds) = bounds_from_gps(lat, lon, gsd, width, height) {
+            return Some(bounds);
+        }
+    }
+    bounds_from_aoi(payload)
 }
 
 /// One plot description parsed from the `plots` parameter.
@@ -940,7 +940,9 @@ fn analyze(payload: &Value, output_path: &Path, start: Instant) -> Result<Value>
     // Areas must follow the extent actually used: with an explicit bounds
     // override the pixel scale comes from that rectangle, not from altitude.
     let area_gsd = bounds
-        .filter(|_| parse_bounds_override(parameters).is_some())
+        .filter(|_| {
+            parse_bounds_override(parameters).is_some() || metadata["gps"]["lat"].as_f64().is_none()
+        })
         .and_then(|b| {
             let center_lat = (b[1] + b[3]) / 2.0;
             let width_m = (b[2] - b[0]) * METERS_PER_DEGREE_LAT * center_lat.to_radians().cos();
@@ -1345,6 +1347,27 @@ mod tests {
         assert_eq!(features.len(), 4);
         assert_eq!(features[0]["geometry"]["type"], "Polygon");
         assert_eq!(features[0]["properties"]["coverage_percentage"], 100.0);
+    }
+
+    #[test]
+    fn resolve_bounds_prefers_gps_over_aoi() {
+        let payload = json!({
+            "aoi": {
+                "type": "geojson_polygon",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[10.0, 10.0], [10.0, 11.0], [11.0, 11.0], [11.0, 10.0], [10.0, 10.0]]]
+                }
+            }
+        });
+        let parameters = json!({});
+        let metadata = json!({
+            "gps": { "lat": 0.0, "lon": 0.0 }
+        });
+        let bounds = resolve_bounds(&payload, &parameters, &metadata, Some(1.0), 100, 50).unwrap();
+        // Bounds should be centered on GPS (0, 0), not AOI (10..11)
+        assert!(bounds[0] < 0.0 && bounds[2] > 0.0);
+        assert!(bounds[1] < 0.0 && bounds[3] > 0.0);
     }
 
     #[test]
