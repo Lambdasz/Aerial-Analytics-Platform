@@ -194,7 +194,7 @@
 //! | Priority | Modules | Rationale |
 //! |----------|---------|-----------|
 //! | **Critical** | 1, 2, 3 | The application does not run without these. |
-//! | **High** | 4 + 5 + 6 (single plugin), 7, 8 | Proves the plugin architecture — without them the demo is just a map. Implementation details still subject to paper review. |
+//! | **High** | 4, 5, 6 (three Rust plugins), 7, 8 | Proves the plugin architecture — without them the demo is just a map. Implementation details still subject to paper review. |
 //! | **Medium** | 9, 10 | Simplify plugin usage and analysis; the app works without them, but with more friction. |
 //! | **Low** | 11 | Only fully functional once all other modules are complete. |
 //!
@@ -205,15 +205,70 @@
 //! Core system for organising aerial imagery, projects, acquisition sessions,
 //! and associated metadata (EXIF, XMP DJI).
 //!
-//! - `models` — shared image metadata types ([`models::ImageMetadata`], [`models::ImageFormat`]).
-//! - `modules::module_01` — image metadata extraction API
-//!   (`modules::module_01::extract_metadata`).
-//! - `commands::session` — flight session command stubs.
+//! ```text
+//! Project
+//! ├── Session 1
+//! │   ├── Image 1
+//! │   ├── Image 2
+//! │   ├── ...
+//! │   └── Image n
+//! └── Session 2
+//!     ├── Image 1
+//!     ├── Image 2
+//!     ├── ...
+//!     └── Image n
+//! ```
+//!
+//! - `models::image` — shared image types ([`models::ImageMetadata`], [`models::ImageFormat`],
+//!   plus the import request/report types).
+//! - `modules::module_01::metadata_extractor` — EXIF/XMP DJI metadata extraction
+//!   (`extract_metadata`): camera/GPS tags, acquisition timestamp, pixel
+//!   dimensions, format sniffing, completeness checks, and the plugin
+//!   pre-flight projection.
+//! - `modules::module_01::dng_preview` — the JPEG a DNG already stores
+//!   (`read_dng_preview`), so a browser can display a DNG with no raw decoder.
+//! - `modules::module_01::image_importer` — RGB import planning (`import_images`):
+//!   per-file classification, filesystem-aware name-conflict detection
+//!   (report or auto-suffix), project-scope duplicate detection, and
+//!   incomplete-metadata flags.
+//! - `modules::module_01::import_io` — copy-on-import I/O (`run_import`,
+//!   `analysis_input`): copies accepted images into `<library_root>`, reads
+//!   metadata from the copy, writes the row(s), links JPG/DNG stem pairs, and
+//!   removes copies when their session is deleted or a startup sweep finds
+//!   them orphaned. Folder imports recursively scan nested subdirectories up
+//!   to 6 levels deep (skipping hidden folders and symlinked directories while
+//!   supporting symlinked image files).
+//! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
+//!   `session`/`image` schema, including the crash-safe `image` table migration.
+//! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
+//!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
+//!   1280px long edge when the source is larger — never upscaled, since that
+//!   would smooth away the edges the Laplacian measures and score a small
+//!   source as falsely blurry, so a source already below the cap (a DNG's
+//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
+//!   decoded directly, DNG from its stored preview. `blur_score` is computed
+//!   per image during `import_io::run_import`; `is_blurry` is then
+//!   re-derived for every scored image in the session in one pass
+//!   (`flight_session::reclassify_session_blur`, called once per import run)
+//!   from the session's mean/stddev z-score, falling back to an absolute
+//!   hard floor only while the session has too few scored images for a
+//!   baseline — not frozen per image at insert time, so the flag depends
+//!   only on the
+//!   session's current score set, not on import order or batch boundaries.
+//! - `commands::session` — flight session Tauri commands.
+//! - `commands::import` — copy-on-import commands (`import_images`,
+//!   `get_analysis_input`) and the `import-progress` event.
+//! - `commands::image_preview` — serves a `.jpg`/`.jpeg`/`.dng` as a
+//!   base64-encoded JPEG preview over IPC.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
+//! | `import_images` | Copy picked JPG/DNG files into the app library and record them in a session |
+//! | `get_analysis_input` | Return the image a plugin may analyse (JPEG, or a DNG's same-stem JPEG) |
+//! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
+//! | `thumbnail_image` | Return a small cached thumbnail of an aerial image (its EXIF thumbnail when present, otherwise a 160 px resize) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
 //! | `get_sessions_by_project` | List sessions for a project |
@@ -222,6 +277,31 @@
 //! | `assign_image_to_session` | Associate an image with a session |
 //! | `recalculate_session_date_range` | Recompute a session's date range from its images |
 //! | `delete_session` | Delete a session |
+//! | `delete_image` | Delete one image and move its library copy to the trash (requires `confirm`) |
+//! | `move_image_to_session` | Move one image (row and file) into another session of the same project |
+//! | `copy_image_to_session` | Copy one image (row and file) into another session of the same project |
+//! | `get_image_metadata` | Read EXIF and XMP from a stored image's file (exposure and DJI tags the row does not keep) |
+//!
+//! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
+//! import planning, copy-on-import I/O and the schema migration are
+//! implemented and unit tested. `import_images` copies picked images into the
+//! app-owned library (`<app-data-dir>/library`, override `AAP_LIBRARY_ROOT`)
+//! and stores the copy's absolute path, so the source folder may later be
+//! moved or deleted. `get_analysis_input` resolves the row a plugin may
+//! analyse; a DNG with no same-stem JPEG is imported but reported as not
+//! analysis-ready, because Module 1 does not decode raw pixels.
+//! `read_dng` is the crate's entry point for reading a DNG and
+//! `read_dng_preview` for reading its stored JPEG preview, so no module has
+//! to reach into Module 1's TIFF parser; no other module calls them yet.
+//! The `preview_image` command serves those previews over IPC.
+//! Blur detection (M1-29) is also implemented: every imported image gets a
+//! `blur_score`/`is_blurry` pair persisted alongside it, computed and
+//! classified at import time (no new command — it is not yet exposed over
+//! IPC beyond the `Image` record's own fields). Known, deliberate
+//! limitations: DNGs are scored from their camera-processed preview, not
+//! raw sensor data; no sensor-noise pre-filtering is applied; scoring is
+//! sequential, not parallelised. Surfacing quality flags in the UI (M1-32)
+//! is a separate, not-yet-implemented task.
 //!
 //! ---
 //!
@@ -237,16 +317,22 @@
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
+//! | `install_plugin` | Safe extraction and installation of plugin from `.zip` archive |
+//! | `remove_plugin` | Permanent uninstallation of user-installed plugin and state cleanup |
+//! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
+//! | `update_plugin_config` | Update and persist user custom parameters overrides |
+//! | `get_installed_plugins` | Return summary list of all registered plugins |
+//! | `get_plugin_details` | Retrieve full contract schemas for a specific plugin |
+//! | `query_compatible_plugins` | Filter enabled plugins compatible with target imagery or AOI |
+//! | `check_plugin_health` | Execute fast pre-flight dependency healthcheck |
 //! | `start_plugin_job` | Launch an async plugin subprocess |
 //! | `abort_plugin_job` | Kill a running plugin subprocess |
 //! | `get_job_status` | Poll the lifecycle state of a job |
 //! | `get_job_result` | Retrieve the full result of a completed job |
 //!
-//! **Status**: Models, error types, payload assembly, and result handling are
-//! implemented. Registry discovery, lifecycle management, and async execution
-//! are designed but contain `todo!()` stubs.
+//! **Status**: Core plugin manager domains fully implemented: registry discovery,
+//! safe zip installation with Zip-Slip protection, lifecycle state persistence,
+//! health checks, and async isolated subprocess execution.
 //!
 //! ---
 //!
@@ -255,76 +341,121 @@
 //! Interactive geospatial environment for exploring aerial images, drawing
 //! areas of interest, managing layers, and performing spatial measurements.
 //!
-//! - `map_controller` — backend controller for map operations; see the
-//!   [`map_controller`] module docs for
+//! - `modules::module_03` — full Module 3 backend: AOI, annotations,
+//!   geometry/measurement, layers, ortho source management, photos, and
+//!   spatial results. See the [`modules::module_03`] module docs for
 //!   responsibilities, key functions, data contracts, and the full I/O
 //!   reference.
+//! - `map_controller` — facade re-export of `modules::module_03` for
+//!   backward-compatible call sites.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `get_project_image_markers` | Generate pseudo-random drone image markers for the map explorer |
-//! | `validate_and_create_payload` | Pre-flight check and write `payload.json` |
-//! | `process_execution_result` | Parse `result.json` and record run history |
-//! | `get_dummy_spatial_layers` | Load dummy spatial layers (dev/testing only) |
+//! | `measure_distance` / `measure_area` / `measure_perimeter` | Geometry & spatial measurement |
+//! | `create_aoi_cmd` / `save_aoi` / `get_saved_aois` / `delete_saved_aoi` | AOI lifecycle |
+//! | `get_saved_layers` | Layer management |
+//! | `create_annotation_cmd` / `get_saved_annotations` / `update_annotation_cmd` / `delete_annotation_cmd` | Annotation CRUD |
+//! | `save_spatial_result` / `get_saved_spatial_results` / `delete_saved_spatial_result` | Spatial result integration |
+//! | `list_ortho_images` / `import_ortho_image` / `start_import_ortho_job` / `delete_ortho_image` | Ortho image management |
+//! | `get_photos` / `import_photo` | Geotagged photo markers |
+//! | `get_storage_root_path` | Storage root resolution |
 //!
-//! **Status**: Implemented. Map core, image markers, geometry/AOI, layer
-//! management, annotation, and spatial result integration are complete. Dummy
-//! spatial layers available for frontend development in parallel with
-//! Modul 4/7/8.
+//! **Status**: Fully implemented. AOI, annotations, geometry, layers, ortho
+//! images, photos, and spatial results are complete with disk-backed
+//! persistence under `map_storage/`.
 //!
 //! ---
 //!
 //! ## Module 4 — RGB Vegetation Detection Plugin
 //!
-//! Plugin for identifying vegetation from standard RGB aerial imagery using
-//! indices such as ExG, ExR, or VARI. Generates vegetation masks and
-//! statistics.
+//! Identifies vegetation in standard RGB aerial imagery with the ExG, ExR or
+//! VARI index, producing a binary mask, a tinted overlay, and coverage/colour
+//! statistics. Footprints fall back to an assumed 60° HFOV when the image has
+//! no focal length, so artefacts are georeferenced.
 //!
 //! ### Plugin Contract
 //!
-//! Uses the Module 2 plugin template architecture (`plugins/template/`).
-//! No Rust backend code — the platform side is entirely Module 2.
-//!
 //! | Item | Value |
 //! |------|-------|
-//! | Architecture | Module 2 plugin template (`plugins/template/`) |
+//! | Architecture | Rust binary plugin (`plugins/rgb-vegetation-detection/`) |
 //! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
-//! | Entrypoint | `plugins/rgb-vegetation-detection/main.py` — `def main() -> None` (Python) |
-//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
-//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
-//! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, result file on disk |
 //!
-//! Entrypoint (`main.py`, Python):
+//! Entrypoint:
 //!
-//! ```python
-//! def main() -> None:
-//!     # --healthcheck
-//!     # --input <execution_payload.json> --output <execution_result.json>
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
 //! ```
 //!
-//! **Status**: Python plugin skeleton at `plugins/rgb-vegetation-detection/`
-//! (simulated detection). No Rust backend code.
+//! **Status**: Implemented (`rgb-vegetation-detection`). ExG/ExR/VARI with
+//! configurable threshold, mask + overlay artefacts, 7 unit tests. The build
+//! step copying `target/release/main` to `bin/` is documented in the plugin
+//! README.
 //!
 //! ---
 //!
 //! ## Module 5 — Vegetation Coverage Analytics
 //!
-//! Quantifies vegetation coverage using outputs from Module 4. Calculates
-//! coverage percentages, classifies areas (low / medium / high), and supports
-//! plot-based and multi-plot comparison.
+//! Quantifies vegetation coverage from a canopy mask: coverage percentage and
+//! vegetated area (needs a GSD), low/medium/high classification, an N×N
+//! zonation layer, and per-plot coverage with average/highest/lowest ranking.
 //!
-//! **Status**: Not yet implemented.
+//! ### Plugin Contract
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Rust binary plugin (`plugins/vegetation_coverage_analytics/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, artefacts on disk |
+//!
+//! Entrypoint:
+//!
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
+//! ```
+//!
+//! **Status**: Implemented (`vegetation-coverage-analytics`): mask source
+//! `auto` (ExG/ExR/VARI) or `file` (Module 4 mask), zonation GeoJSON, plot
+//! comparison, 16 unit tests. Artefacts carry WGS 84 bounds for the map.
 //!
 //! ---
 //!
 //! ## Module 6 — RGB Vegetation Condition Analysis
 //!
-//! Analyses visible vegetation conditions using RGB colour information:
-//! greenness intensity, yellowing, browning, and condition zonation.
+//! Assesses visible vegetation condition from RGB imagery: VARI green
+//! intensity, canopy RGB/HSL statistics, vigorous/moderate/severe condition
+//! classes, chlorosis (yellowing) and necrosis (browning) shares, condition
+//! zonation, and per-plot comparison.
 //!
-//! **Status**: Not yet implemented.
+//! ### Plugin Contract
+//!
+//! | Item | Value |
+//! |------|-------|
+//! | Architecture | Rust binary plugin (`plugins/vegetation_condition_analysis/`) |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
+//! | Entrypoint | `bin/main` built from `src/main.rs` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via the Module 2 supervisor |
+//! | Progress | completion line on stdout, artefacts on disk |
+//!
+//! Entrypoint:
+//!
+//! ```rust,ignore
+//! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
+//! ```
+//!
+//! **Status**: Implemented (`vegetation-condition-analysis`), ported from the
+//! Module 6 research implementation: canopy isolation, VARI, colour statistics,
+//! condition classes, yellowing/necrosis masks (tinted RGBA), zonation and plot
+//! summaries, 14 unit tests.
 //!
 //! ---
 //!
@@ -398,74 +529,149 @@
 //!
 //! ## Module 9 — Area & Plot Analytics
 //!
-//! Spatial analytical system for defining plots and summarising analytical
-//! results within them. Aggregates per-plot statistics for the dashboard.
+//! Stores named plot boundaries and summarises analysis results within them:
+//! plot definition (draw on the map, import GeoJSON, or promote a Map Explorer
+//! AOI), geodesic area/perimeter, per-plot analysis, plot statistics,
+//! comparison, ranking and summaries.
 //!
-//! - `plot` — GeoJSON plot import and validation (`plot::parse_plots`).
-//! - `plot_api` — cross-module API for plot definition, per-plot analysis,
-//!   and statistics ([`plot_api::define_plot`], [`plot_api::analyze_plot`],
-//!   [`plot_api::get_plot_statistics`]).
+//! - `modules::module_09::plots` — plot table, GeoJSON polygon validation and
+//!   geodesic metrics ([`modules::module_09::plots::insert_plot`]).
+//! - `modules::module_09::indicators` — latest indicator value per
+//!   (plot, plugin, indicator) ([`modules::module_09::indicators::save_indicators`]).
+//! - `plot` / `plot_api` — the original GeoJSON importer (`plot::parse_plots`)
+//!   and a legacy cross-module contract whose stubs are superseded by
+//!   `modules::module_09`.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `import_plots` | Parse a GeoJSON file into plot boundaries |
+//! | `create_plot` / `list_plots` / `get_plot_by_id` / `rename_plot` / `delete_plot` | Plot CRUD with area and perimeter computed on write |
+//! | `import_plots_into_project` | Import a GeoJSON file of plots into a project |
+//! | `import_plots` | Parse a GeoJSON file without storing it (legacy) |
+//! | `save_plot_indicators` / `list_plot_indicators` | Persist and read per-plot plugin metrics |
+//! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer |
 //!
-//! **Status**: GeoJSON parser fully implemented with unit tests. Plot API
-//! functions are `todo!()` stubs.
+//! **Status**: Implemented. The Module 09 page and a **Plots** tab inside the
+//! Module 3 sidebar share the same commands; runs execute a plugin once per
+//! plot with the boundary as AOI, and indicator values feed the ranking view.
 //!
 //! ---
 //!
 //! ## Module 10 — Simple Temporal Change Analysis
 //!
-//! Compares RGB aerial observations captured at different times. Calculates
-//! changes in vegetation coverage, land-cover transitions, and tree-count
-//! deltas between observation periods.
+//! Compares two observation dates: before/after imagery, vegetation coverage
+//! change, change magnitude, and the regions where vegetation appeared or
+//! disappeared. Plugin measurements are reused instead of recomputed — the
+//! coverage and masks published by Modules 4-6 win, with the built-in ExG rule
+//! only as a fallback.
 //!
-//! - `modules::module_10` — cross-module data contracts for change area
-//!   detection and temporal results (`modules::module_10::functions`).
+//! - `modules::module_10::analysis` — pure 10.1-10.7 functions (periods,
+//!   before/after, coverage change, land-cover and tree-count comparisons,
+//!   magnitudes, significant areas).
+//! - `modules::module_10::coverage` — ExG coverage from an image file.
+//! - `modules::module_10::spatial_change` — mask diff, resampling, connected
+//!   change regions and GeoJSON ([`modules::module_10::spatial_change::build_report`]).
+//! - `modules::module_10::comparisons` — `temporal_comparison` history table.
+//! - `modules::module_10::visualization` — 10.8 summary lines and payload.
+//! - `plugin_manager::result_store` — `plugin_image_result` table written when a
+//!   run is published, read here for coverage and masks.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
-//! | `compare_sessions` | Run a comparison between two sessions' analysis results (vegetation coverage, land-cover, tree count) and produce a temporal result |
-//! | `get_change_summary` | Return the latest computed temporal summary for a project, for Module 11 to consume |
+//! | `get_observation_periods` | Group a session's images per acquisition date (10.1) |
+//! | `get_vegetation_change` | Compare the two latest periods of one session (10.2 + 10.3) |
+//! | `compare_sessions` | Compare two sessions of a project, store the result (10.2 + 10.3) |
+//! | `detect_change_areas` | Spatial gain/loss regions between two sessions, published as a layer (10.7) |
+//! | `get_change_summary` | Stored comparisons for a project (dashboard input) |
+//! | `export_comparison_json` | Write a stored comparison to `map_storage/exports/` |
+//! | `get_land_cover_changes` / `get_tree_count_changes` | Per-location comparisons supplied by Modules 3/4/7 |
+//! | `get_change_magnitudes` / `get_significant_change_areas` | Magnitude and thresholded areas per location (10.6 / 10.7) |
 //!
-//! **Status**: Cross-module contract types (`ChangeArea`, temporal result
-//! structs) and constructors implemented with unit tests. No command exists
-//! yet to actually run a comparison or expose a result — `compare_sessions`
-//! and `get_change_summary` are `todo!()` stubs so Module 10 has a minimal
-//! contract, matching the Module 9 (`plot_api`) pattern.
+//! **Status**: 10.1-10.3 and 10.7 implemented; 10.4/10.5 exist as pure
+//! per-location functions awaiting producers (tree detection is still a
+//! placeholder detector, land-cover needs trained weights). Spatial detection
+//! uses nearest-neighbour alignment and axis-aligned boxes, documented as a
+//! limitation — it needs two dates with GPS and altitude to produce output.
 //!
 //! ---
 //!
 //! ## Module 11 — Aerial Analytics Dashboard & Reporting
 //!
-//! Integrated interface for summarising and communicating results: project
-//! dashboards, plot comparison, temporal summaries, chart generation, report
-//! export, and GIS data export.
+//! Read-only presentation layer: it summarises what Modules 1, 4-6, 9 and 10
+//! stored and never recomputes analysis.
 //!
-//! **Status**: Not yet implemented.
+//! - `modules::module_11::dashboard` — project dashboard aggregates (sessions,
+//!   images, plots and area, indicator aggregates, plugin usage, latest
+//!   comparison) and flattened plugin result rows for the explorer
+//!   ([`modules::module_11::dashboard::build_project_dashboard`]).
+//! - `modules::module_11::exports` — plot indicator CSV, plots GeoJSON and a
+//!   JSON dashboard snapshot written under `map_storage/exports/`.
+//! - `modules::module_11::report` — self-contained printable HTML report
+//!   ([`modules::module_11::report::write_report`]).
+//! - `reporting` — compatibility layer for the original contract; its two
+//!   commands delegate to the implementation above.
+//!
+//! ### Tauri Commands
+//!
+//! | Command | Description |
+//! |---------|-------------|
+//! | `get_project_dashboard` | Project summary, indicator aggregates, plugin usage, latest comparison |
+//! | `list_dashboard_plugin_results` | Flattened plugin metrics for the result explorer |
+//! | `export_dashboard_plot_csv` | Plot indicators as CSV |
+//! | `export_dashboard_plots_geojson` | Plots as GeoJSON |
+//! | `export_dashboard_json` | Dashboard plus explorer rows as JSON |
+//! | `generate_dashboard_report` | Printable HTML report for a project |
+//! | `generate_report` / `export_data` | Original reporting contract, delegating to the commands above (XLSX rejected) |
+//!
+//! **Status**: Implemented. The Module 11 page shows summary cards, indicator
+//! and plugin charts, an interactive result explorer with image preview and a
+//! link into the map gallery, and the export/report actions. Figures are empty
+//! when the underlying modules have no data (e.g. a project with a single
+//! observation date produces no temporal comparison).
 
 mod commands;
 pub mod map_controller;
-mod modules;
+pub mod modules;
 mod plot;
-mod plugin_manager;
-
-use crate::map_controller::sp_measurement::spatial_rs::dummy::get_dummy_spatial_layers;
+pub mod plugin_manager;
+mod reporting;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
-use std::sync::Arc;
+use plugin_manager::registry::PluginRegistry;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
 use tokio::sync::RwLock;
 
 /// Shared application state injected into every Tauri command via `.manage()`.
+#[derive(Clone)]
 pub struct AppState {
+    /// Discovered and installed analytical plugins (Role 2 — registry.rs).
+    pub plugins: Arc<RwLock<PluginRegistry>>,
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
+    /// Optional path to plugin_state.json for state persistence.
+    pub state_path: Option<std::path::PathBuf>,
+    /// SQLite connection shared across commands that need persistence
+    /// (currently: Flight Session Management, Module 1.4).
+    ///
+    /// Persisted at `<app-data-dir>/aerial.db` (overridable via `AAP_DB_PATH`).
+    /// Moved from the temporary working-directory placeholder (`./aerial.db`)
+    /// to an absolute OS-standard path so library cleanup sweeps and data
+    /// access remain stable regardless of the process launch directory.
+    pub db: Arc<Mutex<rusqlite::Connection>>,
+    /// App-owned root of imported images, decided once at startup.
+    ///
+    /// Imported files are **copied** below it, so a stored image survives the
+    /// user moving or deleting the folder it came from. Override with the
+    /// `AAP_LIBRARY_ROOT` environment variable; otherwise this is
+    /// `<app-data-dir>/library`. See
+    /// [`modules::module_01::import_io::session_images_dir`] for the layout.
+    pub library_root: Arc<PathBuf>,
 }
 
 // Learn more about Tauri commands at
@@ -485,43 +691,632 @@ async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
 }
 
 pub mod models;
-
 pub mod plot_api;
+
+/// Discovers and registers plugins from a specified directory, restoring persisted state if present.
+pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
+    let mut registry = PluginRegistry::new();
+    if let Ok(bundles) = plugin_manager::registry::discover_plugins(dir) {
+        for bundle in bundles {
+            registry.register(bundle);
+        }
+    }
+
+    let state_file = dir.join("plugin_state.json");
+    if let Ok(store) = plugin_manager::lifecycle::load_plugin_state(&state_file) {
+        plugin_manager::lifecycle::apply_state_to_registry(&mut registry, &store);
+    }
+
+    registry
+}
+
+/// Bootstraps discovery across candidate directory locations at application startup.
+pub fn init_plugin_registry() -> PluginRegistry {
+    let candidate_dirs = [
+        std::path::PathBuf::from("plugins"),
+        std::path::PathBuf::from("../plugins"),
+        std::path::PathBuf::from("../../plugins"),
+    ];
+
+    for dir in &candidate_dirs {
+        if dir.is_dir() {
+            return init_plugin_registry_from_dir(dir);
+        }
+    }
+
+    PluginRegistry::new()
+}
+
+/// Makes `path` absolute without requiring it to exist yet.
+fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .map_err(|err| format!("cannot determine the current working directory: {err}"))
+    }
+}
+
+/// Where the app's SQLite database lives this start, as a decision the
+/// caller still acts on (creating parents, copying a legacy file, opening).
+#[derive(Debug)]
+enum DbLocation {
+    /// `AAP_DB_PATH` was set — an absolute path. It wins over everything.
+    Override(PathBuf),
+    /// `<app-data-dir>/aerial.db` exists: it stays the database. A legacy
+    /// working-directory file (if any) is older state and is ignored.
+    Resident(PathBuf),
+    /// Fresh install target; no database file anywhere yet.
+    Fresh(PathBuf),
+    /// The target does not exist but the working directory still holds the
+    /// pre-M1-placeholder `./aerial.db`: copy it (never move it) so the
+    /// session history survives the migration to the app-data directory.
+    Adopted {
+        /// Where the database will live from now on.
+        target: PathBuf,
+        /// The legacy file the user data is copied from.
+        legacy: PathBuf,
+    },
+}
+
+/// Decides the database location, keeping the copy policy behind a pure fn.
+///
+/// Rules, in order: an explicit `AAP_DB_PATH` env override wins; then an
+/// existing database at the app-data location wins; then a legacy
+/// `./aerial.db` in the working directory is adopted by copying; otherwise
+/// the app-data location starts fresh. On [`DbLocation::Adopted`] both paths
+/// are returned so the caller can log and copy explicitly.
+fn plan_db_location(
+    cwd: &std::path::Path,
+    app_data: &std::path::Path,
+    env: Option<PathBuf>,
+) -> DbLocation {
+    if let Some(override_path) = env {
+        return DbLocation::Override(override_path);
+    }
+    let target = app_data.join("aerial.db");
+    let legacy = cwd.join("aerial.db");
+    if target.is_file() {
+        return DbLocation::Resident(target);
+    }
+    if legacy.is_file() {
+        return DbLocation::Adopted { target, legacy };
+    }
+    DbLocation::Fresh(target)
+}
+
+/// Copies a legacy database from the working directory into the app-data
+/// target, creating the target's parent directory if it does not exist yet.
+///
+/// Returns `true` if the copy succeeded, `false` otherwise.
+fn adopt_legacy_db(target: &std::path::Path, legacy: &std::path::Path) -> bool {
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                eprintln!(
+                    "warning: could not create the app-data directory for 'aerial.db': {err}"
+                );
+                return false;
+            }
+        }
+    }
+    // Copy, never move: if the copy fails mid-way, the user
+    // must be able to retry by hand. Logs carry names only.
+    match std::fs::copy(legacy, target) {
+        Ok(_) => {
+            eprintln!(
+                "info: copied the legacy database 'aerial.db' found in the working directory into the app-data directory"
+            );
+            true
+        }
+        Err(err) => {
+            eprintln!(
+                "warning: could not copy the legacy database 'aerial.db'; starting with an empty database in the app-data directory: {err}"
+            );
+            false
+        }
+    }
+}
+
+/// One background library sweep: read the database, then clean the library.
+///
+/// Extracted from the startup closure so the e2e tests can exercise the exact
+/// same path. `min_age` is [`modules::module_01::import_io::ORPHAN_MIN_AGE`]
+/// in production and `Duration::ZERO` in tests; `0` in the count means the
+/// sweep was skipped (no image rows) and nothing was trashed.
+pub(crate) fn run_library_sweep(
+    db: &std::sync::Mutex<rusqlite::Connection>,
+    root: &std::path::Path,
+    min_age: std::time::Duration,
+) -> usize {
+    use modules::module_01::{flight_session, import_io};
+    let (referenced, known_scopes) = match db.lock() {
+        Ok(conn) => {
+            let paths = match flight_session::all_image_paths(&conn) {
+                Ok(paths) => paths,
+                Err(err) => {
+                    eprintln!("warning: skipped the library sweep: {err}");
+                    return 0;
+                }
+            };
+            let scopes = match flight_session::known_session_scopes(&conn) {
+                Ok(scopes) => scopes,
+                Err(err) => {
+                    eprintln!("warning: skipped the library sweep: {err}");
+                    return 0;
+                }
+            };
+            (paths, scopes)
+        }
+        Err(err) => {
+            eprintln!("warning: skipped the library sweep: {err}");
+            return 0;
+        }
+    };
+    import_io::cleanup_orphaned_copies_older_than(&referenced, &known_scopes, root, min_age)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
-            jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+        .setup(move |app| {
+            // Penguncian single instance aplikasi pada map_storage/.app.lock
+            match map_controller::ortho_source::instance_lock::acquire_global_instance_lock() {
+                Ok(()) => {
+                    // Hanya instansi primer pemegang kunci yang boleh menjalankan pembersihan startup & rekonsiliasi
+                    if let Err(e) = map_controller::ortho_source::job_manager::cleanup_stale_import_jobs() {
+                        eprintln!("[WARN] cleanup_stale_import_jobs error: {}", e);
+                    }
+                    if let Err(e) = map_controller::ortho_source::store::reconcile_storage_layers() {
+                        eprintln!("[WARN] reconcile_storage_layers error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    // Instansi sekunder: TIDAK BOLEH menjalankan cleanup atau rekonsiliasi agar tidak mengganggu instansi primer
+                    eprintln!(
+                        "[WARN] Instansi aplikasi lain terdeteksi aktif ({:?}). Mode sekunder: melewati cleanup_stale_import_jobs dan reconcile_storage_layers.",
+                        e
+                    );
+                }
+            }
+            // Resolved here, not in the command, so every import in this
+            // process writes below the same root. There is no silent cwd
+            // fallback: an import that later cannot be found again is worse
+            // than a startup error naming the real problem.
+            let app_data = app
+                .path()
+                .app_data_dir()
+                .map_err(|err| format!("cannot resolve the app-data directory: {err}"))?;
+            // Absolute, never `aerial.db` in whatever directory the process
+            // was started from. A relative database plus a sweep that deletes
+            // unreferenced files is how the library gets wiped.
+            let cwd = std::env::current_dir()
+                .map_err(|err| format!("cannot determine the current working directory: {err}"))?;
+            let db_path = match plan_db_location(
+                &cwd,
+                &app_data,
+                std::env::var_os("AAP_DB_PATH").map(PathBuf::from),
+            ) {
+                DbLocation::Override(path) => path,
+                DbLocation::Resident(path) => path,
+                DbLocation::Fresh(path) => path,
+                DbLocation::Adopted { target, legacy } => {
+                    adopt_legacy_db(&target, &legacy);
+                    target
+                }
+            };
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|err| format!("cannot create '{}': {err}", parent.display()))?;
+                }
+            }
+            let db_conn = rusqlite::Connection::open(&db_path)
+                .map_err(|err| format!("failed to open '{}': {err}", db_path.display()))?;
+            // A schema that cannot be initialised must not stop the desktop
+            // app from opening: Modules 2-11 do not need it.
+            if let Err(err) = modules::module_01::init_schema(&db_conn) {
+                eprintln!("warning: could not initialize the session/image schema: {err}");
+            }
+            if let Err(err) = modules::module_09::migrate_plot_schema(&db_conn) {
+                eprintln!("warning: could not initialize the plot schema: {err}");
+            }
+            if let Err(err) = modules::module_09::indicators::migrate_indicator_schema(&db_conn) {
+                eprintln!("warning: could not initialize the plot indicator schema: {err}");
+            }
+            if let Err(err) =
+                modules::module_10::comparisons::migrate_comparison_schema(&db_conn)
+            {
+                eprintln!("warning: could not initialize the temporal comparison schema: {err}");
+            }
+            if let Err(err) =
+                plugin_manager::result_store::migrate_result_schema(&db_conn)
+            {
+                eprintln!("warning: could not initialize the plugin result schema: {err}");
+            }
+            let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
+                Some(value) => absolute_path(PathBuf::from(value))?,
+                None => app_data.join("library"),
+            };
+            let db = Arc::new(Mutex::new(db_conn));
+            let library_root = Arc::new(library_root);
+            let sweep_db = Arc::clone(&db);
+            let sweep_root = Arc::clone(&library_root);
+
+            let state_path = plugin_manager::lifecycle::default_state_path();
+            let registry = init_plugin_registry();
+
+            app.manage(AppState {
+                plugins: Arc::new(RwLock::new(registry)),
+                jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+                state_path: Some(state_path),
+                db,
+                library_root,
+            });
+            // Off the startup path, and the database lock is dropped before
+            // the walk: a large library must not delay launch or stall
+            // session commands. The sweep only touches the app's own
+            // `projects/.../images` layout for sessions that exist in SQLite,
+            // moves orphans to `.trash/` instead of deleting them, and skips
+            // itself when the database has no image rows.
+            std::thread::spawn(move || {
+                let trashed = run_library_sweep(
+                    &sweep_db,
+                    &sweep_root,
+                    modules::module_01::import_io::ORPHAN_MIN_AGE,
+                );
+                if trashed > 0 {
+                    eprintln!("info: moved {trashed} orphaned image copies to .trash");
+                }
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-            // Role 3 — Data Bridge
-            plugin_manager::commands::validate_and_create_payload,
-            plugin_manager::commands::process_execution_result,
             // Role 1 — Subprocess Supervisor & Isolation Engineer
             plugin_manager::executor::start_plugin_job,
             plugin_manager::executor::abort_plugin_job,
             plugin_manager::executor::get_job_status,
             plugin_manager::executor::get_job_result,
+            // Role 2 — Plugin Lifecycle & Package Manager (Discovery & Registry)
+            plugin_manager::registry::get_installed_plugins,
+            plugin_manager::registry::get_plugin_details,
+            plugin_manager::registry::query_compatible_plugins,
+            plugin_manager::registry::check_plugin_health,
+            plugin_manager::lifecycle::set_plugin_status,
+            plugin_manager::lifecycle::install_plugin,
+            plugin_manager::lifecycle::remove_plugin,
+            plugin_manager::lifecycle::update_plugin_config,
             // Plot import
             import_plots,
-            get_dummy_spatial_layers,
+            // Module 3 — Geometry & Measurement
+            map_controller::geometry::commands::measure_distance,
+            map_controller::geometry::commands::measure_area,
+            map_controller::geometry::commands::measure_perimeter,
+            // Module 3 — AOI
+            map_controller::aoi::commands::create_aoi_cmd,
+            map_controller::aoi::commands::save_new_aoi_cmd,
+            map_controller::aoi::commands::save_aoi,
+            map_controller::aoi::commands::get_saved_aois,
+            map_controller::aoi::commands::delete_saved_aoi,
+            // Module 3 — Layer Management
+            map_controller::layers::commands::get_saved_layers,
+            // Module 3 — Annotation
+            map_controller::annotations::commands::create_annotation_cmd,
+            map_controller::annotations::commands::get_saved_annotations,
+            map_controller::annotations::commands::get_annotation_by_id,
+            map_controller::annotations::commands::update_annotation_cmd,
+            map_controller::annotations::commands::delete_annotation_cmd,
+            // Module 3 — Spatial Results
+            map_controller::sp_result::commands::save_spatial_result,
+            commands::publish::publish_plugin_run,
+            commands::plots::create_plot,
+            commands::plots::list_plots,
+            commands::plots::get_plot_by_id,
+            commands::plots::rename_plot,
+            commands::plots::delete_plot,
+            commands::plots::import_plots_into_project,
+            commands::plots::save_plot_indicators,
+            commands::plots::list_plot_indicators,
+            commands::plots::publish_plots_layer,
+            commands::dashboard::get_project_dashboard,
+            commands::dashboard::list_dashboard_plugin_results,
+            commands::dashboard::export_dashboard_plot_csv,
+            commands::dashboard::export_dashboard_plots_geojson,
+            commands::dashboard::export_dashboard_json,
+            commands::dashboard::generate_dashboard_report,
+            reporting::commands::generate_report,
+            reporting::commands::export_data,
+            map_controller::sp_result::commands::get_saved_spatial_results,
+            map_controller::sp_result::commands::get_saved_spatial_results_summary,
+            map_controller::sp_result::commands::get_saved_spatial_result,
+            map_controller::sp_result::commands::update_saved_spatial_result,
+            map_controller::sp_result::commands::count_spatial_result_dependents,
+            map_controller::sp_result::commands::delete_saved_spatial_result,
+            map_controller::sp_result::commands::check_spatial_result_manual_edits,
+            // Module 3 — Ortho & Raster Images
+            map_controller::ortho_source::commands::list_ortho_images,
+            map_controller::ortho_source::commands::get_ortho_image,
+            map_controller::ortho_source::commands::update_ortho_image,
+            map_controller::ortho_source::commands::get_ortho_cascade_summary,
+            map_controller::ortho_source::commands::delete_ortho_image,
+            map_controller::ortho_source::commands::save_image_from_path,
+            map_controller::ortho_source::commands::get_saved_images,
+            map_controller::ortho_source::commands::delete_saved_image,
+            map_controller::ortho_source::commands::import_ortho_image,
+            map_controller::ortho_source::commands::start_import_ortho_job,
+            map_controller::ortho_source::commands::cancel_import_job,
+            map_controller::ortho_source::commands::get_import_job_status,
+            map_controller::ortho_source::commands::get_instance_status,
+            map_controller::ortho_source::commands::inspect_geotiff_header,
+            // Module 3 — Photos
+            map_controller::photos::commands::get_photos,
+            map_controller::photos::commands::import_photo,
+            // Module 3 — Storage Root
+            map_controller::storage_commands::get_storage_root_path,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,
             commands::session::get_sessions_by_project,
             commands::session::update_session_name,
             commands::session::update_session_status,
+            commands::session::get_images_by_session,
+            commands::session::get_image_metadata,
             commands::session::assign_image_to_session,
             commands::session::recalculate_session_date_range,
             commands::session::delete_session,
+            commands::session::delete_image,
+            commands::session::move_image_to_session,
+            commands::session::copy_image_to_session,
+            // Image import & preview
+            commands::import::import_images,
+            commands::import::get_analysis_input,
+            commands::image_preview::preview_image,
+            commands::image_preview::thumbnail_image,
+            // Project management
+            commands::project::create_project,
+            commands::project::get_project,
+            commands::project::list_projects,
+            commands::project::update_project,
+            commands::project::delete_project,
+            commands::project::count_images_by_project,
             // Temporal change analysis (Module 10)
+            modules::module_10::commands::get_observation_periods,
+            modules::module_10::commands::get_vegetation_change,
+            modules::module_10::commands::get_land_cover_changes,
+            modules::module_10::commands::get_tree_count_changes,
+            modules::module_10::commands::get_change_magnitudes,
+            modules::module_10::commands::get_significant_change_areas,
             modules::module_10::commands::compare_sessions,
             modules::module_10::commands::get_change_summary,
+            modules::module_10::commands::export_comparison_json,
+            modules::module_10::commands::detect_change_areas,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::{adopt_legacy_db, plan_db_location, DbLocation};
+
+    #[test]
+    fn test_init_plugin_registry_from_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        assert_eq!(registry.get_summaries().len(), 1);
+        assert_eq!(registry.get_summaries()[0].id, "my-test-plugin");
+    }
+
+    #[test]
+    fn test_init_plugin_registry_discovers_builtin_plugins() {
+        let registry = init_plugin_registry();
+        // Repository has plugins/ directory with real plugins
+        assert!(
+            registry.plugins.contains_key("rgb-vegetation-detection"),
+            "Built-in plugins should be discovered on startup"
+        );
+    }
+
+    #[test]
+    fn test_init_plugin_registry_from_dir_restores_persisted_enabled_and_health_state() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_dir = temp_dir.path().join("my-test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+
+        std::fs::write(
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(
+            plugin_dir.join("parameters.json"),
+            r#"{"parameters": [{"name": "p1", "label": "P1", "type": "number", "default": 1}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
+
+        // Write persisted plugin state where my-test-plugin is disabled and unhealthy
+        let state_json = r#"{
+            "schema_version": 1,
+            "updated_at": "2026-10-20T10:00:00Z",
+            "plugins": {
+                "my-test-plugin": {
+                    "version": "1.0.0",
+                    "source": "builtin",
+                    "enabled": false,
+                    "installed_at": "2026-10-20T09:00:00Z",
+                    "last_healthcheck": {
+                        "status": "unhealthy",
+                        "checked_at": "2026-10-20T09:30:00Z",
+                        "message": "Missing dependencies"
+                    },
+                    "custom_parameters": {},
+                    "stats": {
+                        "execution_count": 0,
+                        "last_executed_at": null
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(temp_dir.path().join("plugin_state.json"), state_json).unwrap();
+
+        let registry = init_plugin_registry_from_dir(temp_dir.path());
+        let details = registry
+            .get_details("my-test-plugin")
+            .expect("plugin should be registered");
+        assert!(
+            !details.enabled,
+            "Persisted enabled: false must be restored on startup"
+        );
+
+        let summaries = registry.get_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert!(!summaries[0].enabled);
+        assert_eq!(summaries[0].health_status, "unhealthy");
+    }
+
+    /// The team decision review called for a test-backed copy policy: an
+    /// existing `./aerial.db` must survive the move to the app-data
+    /// directory, and the app-data file must never be clobbered.
+    #[test]
+    fn legacy_db_is_copied_when_target_missing() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        std::fs::write(cwd.join("aerial.db"), b"history").expect("legacy db");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Adopted { target, legacy } => {
+                assert_eq!(target, app_data.join("aerial.db"));
+                assert_eq!(legacy, cwd.join("aerial.db"));
+                assert!(adopt_legacy_db(&target, &legacy));
+                assert_eq!(std::fs::read(&target).expect("read target"), b"history");
+            }
+            other => panic!("expected an adopted legacy database, got {other:?}"),
+        }
+    }
+
+    /// On a first launch, the app-data directory does not exist on disk yet.
+    /// `adopt_legacy_db` must ensure the parent directory is created before
+    /// copying so the legacy history is not lost.
+    #[test]
+    fn legacy_db_is_adopted_when_app_data_does_not_exist_beforehand() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::write(cwd.join("aerial.db"), b"history").expect("legacy db");
+
+        assert!(!app_data.exists(), "app_data dir must not exist beforehand");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Adopted { target, legacy } => {
+                assert_eq!(target, app_data.join("aerial.db"));
+                assert_eq!(legacy, cwd.join("aerial.db"));
+                assert!(adopt_legacy_db(&target, &legacy));
+                assert!(target.is_file(), "target database was copied successfully");
+                assert_eq!(std::fs::read(&target).expect("read target"), b"history");
+                assert_eq!(
+                    std::fs::read(&legacy).expect("legacy file preserved"),
+                    b"history"
+                );
+            }
+            other => panic!("expected an adopted legacy database, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn existing_target_is_never_overwritten() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        std::fs::write(cwd.join("aerial.db"), b"legacy").expect("legacy db");
+        std::fs::write(app_data.join("aerial.db"), b"current").expect("resident db");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Resident(path) => assert_eq!(path, app_data.join("aerial.db")),
+            other => panic!("expected the resident database to win, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(cwd.join("aerial.db")).expect("legacy untouched"),
+            b"legacy"
+        );
+        assert_eq!(
+            std::fs::read(app_data.join("aerial.db")).expect("resident untouched"),
+            b"current"
+        );
+    }
+
+    #[test]
+    fn env_override_wins() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+        let custom = root.path().join("custom").join("main.db");
+        std::fs::write(cwd.join("aerial.db"), b"legacy").expect("legacy db");
+        std::fs::write(app_data.join("aerial.db"), b"resident").expect("resident db");
+
+        match plan_db_location(&cwd, &app_data, Some(custom.clone())) {
+            DbLocation::Override(path) => assert_eq!(path, custom),
+            other => panic!("expected the env override to win, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fresh_install_is_the_app_data_location() {
+        let root = tempfile::tempdir().expect("root");
+        let cwd = root.path().join("cwd");
+        let app_data = root.path().join("app-data");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(&app_data).expect("app data");
+
+        match plan_db_location(&cwd, &app_data, None) {
+            DbLocation::Fresh(path) => assert_eq!(path, app_data.join("aerial.db")),
+            other => panic!("expected a fresh install, got {other:?}"),
+        }
+    }
 }

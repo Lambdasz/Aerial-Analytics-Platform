@@ -4,6 +4,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021-CE422B?logo=rust&logoColor=white)](https://rust-lang.org/)
+[![rusqlite](https://img.shields.io/badge/rusqlite-0.32-003B57?logo=sqlite&logoColor=white)](https://github.com/rusqlite/rusqlite)
 [![Blueprint](https://img.shields.io/badge/Blueprint.js-6-2d72d2?style=flat&logo=blueprint&logoColor=white)](https://blueprintjs.com/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
@@ -28,6 +29,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
     * [3. Development](#3-development)
   * [Dealing with Dependencies](#dealing-with-dependencies)
   * [Available Scripts](#available-scripts)
+    * [Generating Rust Documentation](#generating-rust-documentation)
   * [Continuous Integration](#continuous-integration)
   * [Project Structure](#project-structure)
   * [Contributing](#contributing)
@@ -40,6 +42,7 @@ The Aerial Analytics Platform is designed to process and analyze RGB aerial imag
 
 - **Frontend Language**: [TypeScript 6](https://www.typescriptlang.org/)
 - **Backend Language**: [Rust](https://rust-lang.org/)
+- **Database**: [SQLite](https://sqlite.org/) via [rusqlite 0.32](https://github.com/rusqlite/rusqlite) (bundled)
 - **UI Framework**: [React 19](https://react.dev/)
 - **UI Component Library**: [Blueprint.js](https://blueprintjs.com/)
 - **Map**: [Leaflet](https://leafletjs.com/) / [react-leaflet](https://react-leaflet.js.org/)
@@ -199,14 +202,33 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── config.yml
 │   │   └── feature_request.yml
 │   ├── pull_request_template.md
-│       └── workflows/
-│           └── ci.yml                # CI pipeline: lint + format + cross-platform build
+│   └── workflows/
+│       └── ci.yml                # CI pipeline: lint + format + cross-platform build
+├── docs/                         # Project documentation
+│   ├── examples/                 # Canonical JSON/GeoJSON fixtures for cross-module contracts
+│   ├── modules/                  # Comprehensive module architectural documentation
+│   │   └── module_3/             # Module 3 (Map Explorer) dual-language docs (EN & ID)
+│   ├── Proyek.md                 # Full project brief (11 modules)
+│   ├── README_modul3.md          # Module 3 (Map Explorer) design doc
+│   └── README_UMUM.md            # General README (alternate version)
+├── CONTRIBUTING.md               # Contribution guidelines
+├── eslint.config.js              # JavaScript/TypeScript linting rules
+├── index.html                    # HTML entry point for the web app
+├── LICENSE.md                    # MIT License
+├── package.json                  # Node.js dependencies and scripts
+├── package-lock.json             # Locked versions of npm dependencies
 ├── plugins/                      # Analytical plugins (Module 2: Extension System)
-│   ├── mock/                     # Python mock plugin (rgb-vegetation-exg)
 │   ├── mock_rust/                # Native Rust mock plugin (tree-canopy-density)
-│   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Python)
+│   ├── rgb-vegetation-detection/ # Vegetation detection plugin (Rust binary)
 │   ├── rgb-landcover-classification/  # Land-cover classification plugin (Python)
+│   ├── vegetation_coverage_analytics/ # Vegetation coverage + zonation plugin (Rust)
+│   ├── vegetation_condition_analysis/ # Vegetation condition plugin (Rust)
+│   ├── tree_detection/           # Tree detection plugin (placeholder detector)
 │   └── template/                 # Canonical starter template for new plugins
+├── public/                       # Static assets served directly
+│   ├── tauri.svg
+│   └── vite.svg
+├── README.md                     # Project documentation
 ├── schemas/                      # JSON Schema definitions for plugin contracts
 │   ├── plugin.schema.json        # Plugin manifest schema
 │   ├── execution_payload.schema.json
@@ -214,6 +236,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── inputs.schema.json
 │   ├── outputs.schema.json
 │   └── parameters.schema.json
+├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── main.tsx                  # Application entry point
 │   ├── App.tsx                   # Root React component → AppShell
@@ -225,6 +248,9 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── module-01/            # Image & Project Manager page
 │   │   ├── module-02/            # Plugin System page
 │   │   ├── module-03/            # Map Explorer page
+│   │   ├── module-09/            # Area & Plot Analytics page (+ Plots tab panel)
+│   │   ├── module-10/            # Temporal Change Analysis page
+│   │   ├── module-11/            # Dashboard & Reporting page
 │   │   └── ...
 │   ├── map/                      # Leaflet map explorer, AOI drawing, layer management
 │   │   ├── components/
@@ -254,16 +280,22 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       ├── lib.rs                # run(): registers commands + Tauri plugins
 │       ├── commands/             # #[tauri::command] fns — thin, no business logic
 │       │   ├── session.rs        # Flight session CRUD commands
+│       │   ├── import.rs         # Image import
+│       │   ├── project.rs        # Project CRUD
+│       │   ├── publish.rs        # Publish plugin runs to the map
+│       │   ├── plots.rs          # Plot CRUD, indicators, plot layer
+│       │   ├── dashboard.rs      # Module 11 dashboard + exports
 │       │   └── mod.rs
 │       ├── models/               # Serde structs/enums shared with the frontend
-│       │   ├── metadata.rs       # Image metadata types
 │       │   ├── session.rs        # Flight session types
-│       │   ├── image_import.rs   # Image import types
+│       │   ├── image.rs          # Image import and image metadata types
 │       │   └── mod.rs
 │       ├── services/             # Domain logic — pure functions where practical
 │       ├── modules/
-│       │   ├── module_01/        # Image metadata extraction
-│       │   └── module_10/        # Temporal change contracts
+│       │   ├── module_01/        # Image metadata extraction, sessions, schema
+│       │   ├── module_09/        # Plots + per-plot indicators
+│       │   ├── module_10/        # Temporal change analysis
+│       │   └── module_11/        # Dashboard aggregation, exports, HTML report
 │       ├── plugin_manager/       # Plugin discovery, lifecycle, execution, error isolation
 │       │   ├── commands.rs       # Plugin Tauri IPC commands
 │       │   ├── executor.rs       # Async subprocess supervision
@@ -275,7 +307,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │       │   ├── error.rs          # Plugin error types
 │       │   └── DOCS/             # Detailed plugin system design docs
 │       ├── map_controller/       # Map data provider and AOI storage
-│       ├── reporting/            # Reporting module
+│       ├── reporting/            # Module 11 compatibility layer (delegates to modules/module_11)
 │       ├── plot.rs               # GeoJSON plot import and validation
 │       └── plot_api.rs           # Cross-module plot analysis API
 ├── test-data/                    # Test data files

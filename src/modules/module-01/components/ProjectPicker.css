@@ -1,0 +1,485 @@
+/* Project picker: header pill, 340px popover, and the "Pilih proyek" and "Proyek baru" dialogs.
+   All classes use the m1-pp- prefix. Font family is intentionally not set here. */
+
+/* Tokens are declared on both the inline picker and the portaled dialogs (rendered in body). */
+.m1-pp,
+.m1-dialog-portal {
+  --m1-pp-primary: #1d4ed8;
+  --m1-pp-tint: #e6edff;
+  --m1-pp-text: #111827;
+  --m1-pp-muted: #5b6472;
+  --m1-pp-border: #e3e7ee;
+  --m1-pp-border-strong: #d5dbe5;
+  --m1-pp-danger: #b91c1c;
+  --m1-pp-danger-tint: #fee2e2;
+  --m1-pp-surface: #ffffff;
+}
+
+.m1-pp {
+  position: relative;
+  display: inline-block;
+  color: var(--m1-pp-text);
+}
+
+.m1-pp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Header pill trigger */
+.m1-pp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 14px 0 6px;
+  border: 1px solid var(--m1-pp-border-strong);
+  border-radius: 999px;
+  background: var(--m1-pp-surface);
+  color: var(--m1-pp-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m1-pp-pill:hover {
+  background: #f8faff;
+}
+
+.m1-pp-pill:focus-visible,
+.m1-pp-popover__item:focus-visible,
+.m1-pp-btn:focus-visible,
+.m1-pp-tab:focus-visible,
+.m1-pp-icon-btn:focus-visible,
+.m1-pp-name:focus-visible,
+.m1-pp-sort:focus-visible,
+.m1-pp-input:focus-visible {
+  outline: 3px solid rgba(29, 78, 216, 0.35);
+  outline-offset: 2px;
+}
+
+.m1-pp-pill__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--m1-pp-tint);
+  color: var(--m1-pp-primary);
+}
+
+.m1-pp-pill__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+/* Popover */
+.m1-pp-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  left: auto;
+  z-index: 40;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  border: 1px solid var(--m1-pp-border);
+  border-radius: 16px;
+  background: var(--m1-pp-surface);
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.14);
+}
+
+.m1-pp-popover__heading {
+  margin: 4px 8px 8px;
+  color: var(--m1-pp-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.m1-pp-popover__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.m1-pp-popover__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--m1-pp-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.m1-pp-popover__item:hover {
+  background: #f4f6fa;
+}
+
+.m1-pp-popover__item--selected {
+  background: var(--m1-pp-tint);
+}
+
+.m1-pp-popover__item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.m1-pp-popover__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.m1-pp-popover__meta {
+  color: var(--m1-pp-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.m1-pp-popover__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--m1-pp-border);
+}
+
+.m1-pp-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--m1-pp-primary);
+  color: #ffffff;
+}
+
+.m1-pp-state {
+  margin: 12px 8px;
+  color: var(--m1-pp-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Buttons */
+.m1-pp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m1-pp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.m1-pp-btn--sm {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.m1-pp-btn--primary {
+  background: var(--m1-pp-primary);
+  color: #ffffff;
+}
+
+.m1-pp-btn--primary:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.m1-pp-btn--outline {
+  border-color: var(--m1-pp-border-strong);
+  background: var(--m1-pp-surface);
+  color: var(--m1-pp-text);
+}
+
+.m1-pp-btn--outline:hover:not(:disabled) {
+  background: #f4f6fa;
+}
+
+.m1-pp-btn--ghost {
+  background: transparent;
+  color: var(--m1-pp-primary);
+}
+
+.m1-pp-btn--ghost:hover:not(:disabled) {
+  background: var(--m1-pp-tint);
+}
+
+.m1-pp-btn--danger {
+  background: var(--m1-pp-danger);
+  color: #ffffff;
+}
+
+.m1-pp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--m1-pp-muted);
+  cursor: pointer;
+}
+
+.m1-pp-icon-btn:hover {
+  background: #f4f6fa;
+  color: var(--m1-pp-text);
+}
+
+.m1-pp-icon-btn--danger:hover {
+  background: var(--m1-pp-danger-tint);
+  color: var(--m1-pp-danger);
+}
+
+.m1-pp-star--on {
+  color: #b45309;
+}
+
+/* Dialogs (Blueprint Dialog, portaled). Global dialog chrome lives in Module01Page.css. */
+.m1-dialog-portal .bp6-dialog.m1-pp-dialog--wide {
+  width: 840px !important;
+}
+
+.m1-dialog-portal .m1-pp-table-wrap {
+  flex: none;
+  max-height: 50vh;
+}
+
+.m1-pp-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--m1-pp-border-strong);
+  border-radius: 999px;
+  background: var(--m1-pp-surface);
+  color: var(--m1-pp-text);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.m1-pp-input::placeholder {
+  color: #8a93a3;
+}
+
+.m1-pp-input:disabled {
+  background: #f4f6fa;
+}
+
+.m1-pp-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.m1-pp-toolbar__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.m1-pp-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--m1-pp-border);
+  border-radius: 999px;
+  background: #f4f6fa;
+}
+
+.m1-pp-tab {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--m1-pp-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m1-pp-tab--active {
+  background: var(--m1-pp-surface);
+  color: var(--m1-pp-primary);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
+}
+
+.m1-pp-table-wrap {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--m1-pp-border);
+  border-radius: 12px;
+}
+
+.m1-pp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.m1-pp-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 12px;
+  background: #f8faff;
+  color: var(--m1-pp-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 1px solid var(--m1-pp-border);
+}
+
+.m1-pp-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--m1-pp-border);
+  vertical-align: middle;
+}
+
+.m1-pp-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.m1-pp-table__star {
+  width: 56px;
+  text-align: center;
+}
+
+.m1-pp-table tbody tr:hover {
+  background: #fafbfd;
+}
+
+.m1-pp-row--selected {
+  background: var(--m1-pp-tint);
+}
+
+.m1-pp-sort {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.m1-pp-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--m1-pp-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.m1-pp-name__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.m1-pp-name__id {
+  color: var(--m1-pp-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.m1-pp-date {
+  color: var(--m1-pp-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.m1-pp-actions {
+  width: 56px;
+  text-align: right;
+}
+
+.m1-pp-table .m1-pp-actions {
+  position: relative;
+}
+
+@media (max-width: 480px) {
+  .m1-pp-pill__label {
+    max-width: 160px;
+  }
+
+  .m1-pp-table__star,
+  .m1-pp-actions {
+    width: 44px;
+  }
+
+  .m1-pp-table .m1-pp-date {
+    display: none;
+  }
+}
+
+/* Disabled buttons: flat grey, matching the rest of Module 1 */
+.m1-pp-btn:disabled,
+.m1-pp-btn--primary:disabled,
+.m1-pp-btn--outline:disabled,
+.m1-pp-btn--danger:disabled {
+  opacity: 1;
+  background: #edf0f5;
+  border-color: #dde2ea;
+  box-shadow: inset 0 0 0 1px #dde2ea;
+  color: #8a93a3;
+  cursor: not-allowed;
+}

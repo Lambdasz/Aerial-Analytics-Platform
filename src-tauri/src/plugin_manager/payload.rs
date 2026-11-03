@@ -1,23 +1,61 @@
-//! Execution payload assembly and pre-flight validation.
+//! Backward-compatibility shim for execution payload assembly and pre-flight validation.
 //!
-//! Before a plugin subprocess is spawned, the frontend sends an
-//! [`ExecutionPayload`] together with the plugin's [`InputsRequirement`].
-//! The [`preflight_check`] function verifies that the image satisfies the
-//! plugin's constraints (GPS availability, allowed formats), and
-//! [`assemble_payload`] writes the validated payload to `payload.json` on disk.
+//! This module is maintained as a compatibility bridge for Module 1 (Image Import & Session Management).
+//! Canonical execution payloads and targets are defined in [`crate::plugin_manager::models`]
+//! and executed via [`crate::plugin_manager::executor`].
 
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Source image properties and metadata for pre-flight checking and execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Retained as a compatibility contract for Module 1 (`commands::import`, `modules::module_01`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageMetadata {
     pub path: String,
     pub has_gps: bool,
     pub width: u32,
     pub height: u32,
     pub format: String,
+}
+
+impl From<&ImageMetadata> for crate::plugin_manager::models::ExecutionTarget {
+    fn from(meta: &ImageMetadata) -> Self {
+        let mime_type = match meta.format.to_lowercase().as_str() {
+            "jpeg" | "jpg" => "image/jpeg",
+            "png" => "image/png",
+            "tif" | "tiff" | "dng" => "image/tiff",
+            _ => "application/octet-stream",
+        };
+
+        let mut metadata_map = serde_json::Map::new();
+        if meta.width > 0 && meta.height > 0 {
+            metadata_map.insert(
+                "resolution".to_string(),
+                serde_json::json!([meta.width, meta.height]),
+            );
+        }
+
+        let metadata_val = if metadata_map.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(metadata_map))
+        };
+
+        Self {
+            granularity: "single_image".to_string(),
+            image_path: meta.path.clone(),
+            mime_type: mime_type.to_string(),
+            metadata: metadata_val,
+        }
+    }
+}
+
+impl From<ImageMetadata> for crate::plugin_manager::models::ExecutionTarget {
+    fn from(meta: ImageMetadata) -> Self {
+        crate::plugin_manager::models::ExecutionTarget::from(&meta)
+    }
 }
 
 /// Area of Interest (AOI) geospatial geometry definition (RFC 7946 GeoJSON).

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "mask_source",
+      "label": "Vegetation Mask Source",
+      "type": "select",
+      "options": ["auto", "file"],
+      "default": "auto",
+      "description": "'auto' derives the mask from the input image with an RGB vegetation index; 'file' reads the mask_path produced by the Module 4 plugin."
+    },
+    {
+      "name": "mask_path",
+      "label": "Vegetation Mask File",
+      "type": "string",
+      "default": "",
+      "description": "Absolute path to a Module 4 vegetation mask PNG (white = vegetation). Required when mask_source is 'file'."
+    },
+    {
+      "name": "method",
+      "label": "Vegetation Index Method",
+      "type": "select",
+      "options": ["ExG", "ExR", "VARI"],
+      "default": "ExG",
+      "description": "Index used to derive the mask when mask_source is 'auto'."
+    },
+    {
+      "name": "threshold_value",
+      "label": "Detection Threshold",
+      "type": "number",
+      "default": 0.1,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Pixels with an index above this value count as vegetation (auto mask only). Suggested starts: ExG 0.10, ExR 0.00, VARI 0.03."
+    },
+    {
+      "name": "gsd_m",
+      "label": "Ground Sample Distance",
+      "type": "number",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 10.0,
+      "step": 0.001,
+      "description": "Metres per pixel. 0 derives it from the image metadata (altitude and focal length); without either, area metrics are omitted."
+    },
+    {
+      "name": "grid_size",
+      "label": "Zonation Grid Size",
+      "type": "number",
+      "default": 4,
+      "min": 1,
+      "max": 32,
+      "step": 1,
+      "description": "Zonation divides the mask into grid_size x grid_size cells and reports coverage per cell."
+    },
+    {
+      "name": "low_threshold",
+      "label": "Low Coverage Limit",
+      "type": "number",
+      "default": 20.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "description": "Coverage percentage at or below this value is classified as 'low'."
+    },
+    {
+      "name": "medium_threshold",
+      "label": "Medium Coverage Limit",
+      "type": "number",
+      "default": 50.0,
+      "min": 0.0,
+      "max": 100.0,
+      "step": 1.0,
+      "description": "Coverage percentage at or below this value (but above the low limit) is 'medium'; anything higher is 'high'."
+    },
+    {
+      "name": "plots",
+      "label": "Plots (JSON)",
+      "type": "string",
+      "default": "",
+      "description": "Optional JSON array of plots for per-plot coverage, e.g. [{\"plot_id\":\"A\",\"polygon\":[[lon,lat],...]}]. Polygon coordinates are WGS84 lon/lat rings."
+    }
+  ]
+}

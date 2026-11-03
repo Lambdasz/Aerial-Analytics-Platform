@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "ortho_1792991095943",
+  "filename": "Balikpapan k3",
+  "category": "ortho",
+  "extension": "tif",
+  "file_path": "/map_storage/images/ortho_1792991095943/original.tif",
+  "size_bytes": 53171695,
+  "dimensions": [
+    13695,
+    15903
+  ],
+  "thumbnail_url": "/map_storage/images/ortho_1792991095943/display.png",
+  "bounds": [
+    [
+      -1.1922709389421202,
+      116.87604270835423
+    ],
+    [
+      -1.1834345960221202,
+      116.88360289615424
+    ]
+  ],
+  "aspect_ratio": 0.8611582720241464,
+  "display_size_bytes": 9488662,
+  "display_dimensions": [
+    1984,
+    2304
+  ],
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 1984x2304 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 2 (6848x7952) digunakan untuk akselerasi dekompresi display."
+  ],
+  "imported_at": "2026-10-26T05:04:55.948014400+00:00",
+  "updated_at": "2026-10-26T05:05:52.219285300+00:00",
+  "is_corrupted": false
+}
