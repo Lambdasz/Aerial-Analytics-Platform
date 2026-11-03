@@ -140,7 +140,14 @@ export function PlotMapEditor({
       zoom={DEFAULT_MAP_VIEW.zoom}
       minZoom={3}
       maxZoom={21}
-      style={{ flex: 1, width: "100%", height: "100%", minHeight: 320, borderRadius: 14 }}
+      style={{
+        flex: 1,
+        width: "100%",
+        height: "100%",
+        minHeight: 320,
+        borderRadius: 14,
+        zIndex: 0,
+      }}
       zoomControl
       ref={setMap}
     >
