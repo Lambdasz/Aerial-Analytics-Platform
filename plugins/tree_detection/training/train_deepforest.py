@@ -1,26 +1,24 @@
-"""Beri label dan fine-tuning detector 'deepforest' pada foto drone (mis. UAV-VisLoc).
+"""Label and fine-tune the 'deepforest' detector on drone photos (e.g. UAV-VisLoc).
 
-UAV-VisLoc tidak punya label pohon, jadi pelatihan terdiri dari dua langkah dengan
-koreksi manusia di antaranya:
+UAV-VisLoc has no tree labels, so training is two steps with a human in between:
 
-1. ``prelabel`` memotong tiap foto menjadi tile 400 px pada resolusi latih model, lalu
-   menulis kotak hasil model rilis di samping tiap tile sebagai Pascal VOC XML. Buka
-   foldernya di LabelImg (atau impor ke CVAT / Label Studio sebagai Pascal VOC), lalu
-   perbaiki kotaknya: hapus yang salah, tambahkan tajuk yang terlewat, sesuaikan sisanya.
-2. ``train`` membaca XML yang sudah dikoreksi, memasukkan semua tile dari satu foto ke
-   split yang sama (supaya validasi tidak melihat tetangga tile latih), melakukan
-   fine-tuning dari bobot rilis, lalu mencetak precision/recall validasi sebelum dan
-   sesudahnya.
+1. ``prelabel`` cuts each photo into 400 px tiles at the model's training resolution
+   and writes the released model's boxes next to every tile as Pascal VOC XML. Open
+   the folder in LabelImg (or import it into CVAT / Label Studio as Pascal VOC),
+   then fix the boxes: delete wrong ones, add missed crowns, resize the rest.
+2. ``train`` reads the corrected XML, keeps every tile of one photo in the same split
+   (so validation never sees a neighbour of a training tile), fine-tunes from the
+   released weights, and prints validation precision/recall before and after.
 
-Checkpoint yang dihasilkan diisikan ke parameter ``model_path`` plugin dengan
+The checkpoint it writes goes into the plugin's ``model_path`` parameter with
 ``detector = deepforest``.
 
-Cara pakai::
+Usage::
 
-    python training/train_deepforest.py prelabel --images <foto> --labels <tile> --gsd-cm 5
-    python training/train_deepforest.py train --labels <tile> --out <deepforest-visloc.pt>
+    python training/train_deepforest.py prelabel --images <photos> --labels <tiles> --gsd-cm 5
+    python training/train_deepforest.py train --labels <tiles> --out <deepforest-visloc.pt>
 
-Butuh ``pip install -r training/requirements.txt``.
+Needs ``pip install -r training/requirements.txt``.
 """
 
 import argparse
@@ -163,15 +161,12 @@ def prelabel(
     scale = deepforest_scale(gsd_cm)
     size = DEEPFOREST_PATCH_PX
     photos = _photos(images)
-    print(
-        f"{len(photos)} foto, diperkecil x{scale:.2f}, {tiles_per_photo} tile per foto",
-        flush=True,
-    )
+    print(f"{len(photos)} photos, resize x{scale:.2f}, {tiles_per_photo} tiles each", flush=True)
 
     for path in photos:
         bgr = cv2.imread(path, cv2.IMREAD_COLOR)
         if bgr is None:
-            print(f"  dilewati (tidak terbaca): {path}", flush=True)
+            print(f"  skipped (unreadable): {path}", flush=True)
             continue
         bgr = cv2.resize(bgr, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -194,7 +189,7 @@ def prelabel(
             with open(os.path.join(labels, name + ".xml"), "w", encoding="utf-8") as handle:
                 handle.write(voc_xml(name + ".jpg", size, boxes))
         print(f"  {stem}", flush=True)
-    print(f"Sekarang koreksi kotak di {labels} (Pascal VOC), lalu jalankan 'train'.", flush=True)
+    print(f"Now correct the boxes in {labels} (Pascal VOC), then run 'train'.", flush=True)
 
 
 def write_splits(labels: str, val_fraction: float) -> tuple[str, str]:
@@ -208,7 +203,7 @@ def write_splits(labels: str, val_fraction: float) -> tuple[str, str]:
         target = val if is_validation(photo_of(file_name), val_fraction) else train
         target.extend(csv_rows(file_name, boxes))
     if len(train) == 1 or len(val) == 1:
-        raise SystemExit(f"Butuh tile berlabel dari beberapa foto di {labels} untuk kedua split")
+        raise SystemExit(f"Need labelled tiles from several photos in {labels} for both splits")
 
     paths = os.path.join(labels, "train.csv"), os.path.join(labels, "val.csv")
     for path, rows in zip(paths, (train, val)):
@@ -240,35 +235,31 @@ def train(
     model.load_model(DEEPFOREST_PRETRAINED)
     model.create_trainer()
 
-    print(f"model rilis:       {_scores(model.trainer.validate(model))}", flush=True)
+    print(f"released model: {_scores(model.trainer.validate(model))}", flush=True)
     model.trainer.fit(model)
-    print(f"hasil fine-tuning: {_scores(model.trainer.validate(model))}", flush=True)
+    print(f"fine-tuned:     {_scores(model.trainer.validate(model))}", flush=True)
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     model.save_model(out)
-    print(f"Tersimpan di {out}; pakai sebagai model_path dengan detector 'deepforest'.", flush=True)
+    print(f"Saved {out}; use it as model_path with detector 'deepforest'.", flush=True)
 
 
 def main(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
-    pre = commands.add_parser("prelabel", help="tile + kotak model rilis untuk dikoreksi")
+    pre = commands.add_parser("prelabel", help="tiles + released-model boxes to correct")
     pre.add_argument(
-        "--images", required=True, help="folder foto drone (dicari rekursif)"
+        "--images", required=True, help="folder of drone photos (searched recursively)"
     )
-    pre.add_argument("--labels", required=True, help="folder tujuan tile dan VOC XML")
-    pre.add_argument("--gsd-cm", type=float, required=True, help="resolusi foto dalam cm/px")
+    pre.add_argument("--labels", required=True, help="output folder for tiles and VOC XML")
+    pre.add_argument("--gsd-cm", type=float, required=True, help="photo resolution in cm/px")
     pre.add_argument("--tiles-per-photo", type=int, default=4)
     pre.add_argument("--min-score", type=float, default=0.3)
 
-    fit = commands.add_parser("train", help="fine-tuning dengan label yang sudah dikoreksi")
-    fit.add_argument(
-        "--labels", required=True, help="folder berisi tile dan VOC XML yang sudah dikoreksi"
-    )
-    fit.add_argument(
-        "--out", required=True, help="checkpoint yang ditulis, mis. deepforest-visloc.pt"
-    )
+    fit = commands.add_parser("train", help="fine-tune on corrected labels")
+    fit.add_argument("--labels", required=True, help="folder with tiles and corrected VOC XML")
+    fit.add_argument("--out", required=True, help="checkpoint to write, e.g. deepforest-visloc.pt")
     fit.add_argument("--epochs", type=int, default=10)
     fit.add_argument("--lr", type=float, default=0.001)
     fit.add_argument("--batch-size", type=int, default=4)

@@ -1,19 +1,19 @@
-"""Unduh sebagian dataset UAV-VisLoc langsung dari share Nextcloud tim.
+"""Download a sample of UAV-VisLoc straight from the team's Nextcloud share.
 
-Dataset lengkapnya sekitar 22 GB, padahal plugin hanya butuh foto drone untuk diberi label
-dan dipakai fine-tuning, dan beberapa ratus foto sudah cukup. Share dibaca lewat endpoint
-WebDAV publik yang disediakan Nextcloud untuk setiap link share, jadi hanya file yang
-dipilih di sini yang diunduh; peta satelit (``satelliteXX.tif``) dilewati.
+The full dataset is about 22 GB, but the plugin only needs drone photos to label and
+fine-tune on, and a few hundred of them are enough. The share is read through the
+public WebDAV endpoint Nextcloud exposes for every share link, so only the files
+picked here are downloaded; satellite maps (``satelliteXX.tif``) are skipped.
 
-UAV-VisLoc adalah dataset lokalisasi visual: isinya foto drone, CSV penerbangan, dan peta
-satelit, tetapi tanpa label pohon. Label dibuat belakangan dengan ``train_deepforest.py
-prelabel`` lalu dikoreksi di alat anotasi.
+UAV-VisLoc is a visual localization dataset: it has drone photos, flight CSVs and
+satellite maps, but no tree labels. Labels are made later with ``train_deepforest.py
+prelabel`` and a correction pass in an annotation tool.
 
-Cara pakai (hanya pustaka standar Python)::
+Usage (Python standard library only)::
 
     python training/fetch_visloc.py --out %USERPROFILE%/datasets/uav-visloc --per-flight 20
 
-Jalankan lagi untuk melanjutkan: file yang sudah ada dengan ukuran yang benar dilewati.
+Run it again to resume: files that already exist with the right size are skipped.
 """
 
 import argparse
@@ -121,7 +121,7 @@ def fetch(share: Share, flights: Iterable[str], per_flight: int, out_dir: str) -
     for flight in flights:
         files = flight_files(share, flight, per_flight)
         megabytes = sum(f.size for f in files) / 1e6
-        print(f"[{flight}] {len(files)} file, {megabytes:.0f} MB", flush=True)
+        print(f"[{flight}] {len(files)} files, {megabytes:.0f} MB", flush=True)
         for remote in files:
             if download(share, remote, out_dir):
                 print(f"  {remote.path}", flush=True)
@@ -129,11 +129,11 @@ def fetch(share: Share, flights: Iterable[str], per_flight: int, out_dir: str) -
 
 def main(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--out", required=True, help="folder tujuan, taruh di luar repo")
+    parser.add_argument("--out", required=True, help="output folder, keep it outside the repo")
     parser.add_argument("--share-url", default=DEFAULT_SHARE_URL)
     parser.add_argument("--flights", nargs="+", default=list(FLIGHTS), choices=FLIGHTS)
     parser.add_argument(
-        "--per-flight", type=int, default=20, help="foto drone per penerbangan (0 = semua)"
+        "--per-flight", type=int, default=20, help="drone photos per flight (0 = all of them)"
     )
     args = parser.parse_args(argv)
 

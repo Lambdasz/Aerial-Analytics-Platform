@@ -1,21 +1,21 @@
-# Dependensi Python untuk plugin Deteksi & Penghitungan Pohon (Modul 7).
-# Jaga daftar ini tetap minimal: file ini dipasang Modul 2 sebelum plugin bisa jalan.
+# Python dependencies for the Tree Detection & Counting plugin (Module 7).
+# Keep this list minimal: it is installed by Module 2 before the plugin can run.
 
-# Kontrak data dan validasi (treedet/models.py, treedet/pipeline.py).
+# Data contracts and validation (treedet/models.py, treedet/pipeline.py).
 pydantic>=2,<3
 
-# Detector default 'opencv_watershed' (treedet/detectors.py).
-# Versi headless sudah cukup: plugin tidak pernah membuka jendela.
+# Default detector 'opencv_watershed' (treedet/detectors.py).
+# The headless build is enough: the plugin never opens a window.
 numpy>=1.26
 opencv-python-headless>=4.8
 
-# Hanya dibutuhkan detector deep learning opsional (treedet/detectors.py). Detector
-# default tidak pernah mengimpornya, jadi dibiarkan sebagai komentar: torch saja sekitar
-# 2 GB dan platform memasang file ini sebelum plugin bisa jalan.
+# Only needed by the optional deep-learning detectors (treedet/detectors.py). The
+# default detector never imports them, so they stay commented out: torch alone is
+# about 2 GB and the platform installs this file before the plugin can run.
 #
-# 'deepforest' (bobot rilis bisa dipakai tanpa pelatihan; ikut membawa torch):
+# 'deepforest' (released weights work without training; brings torch with it):
 # deepforest>=2.1,<3
 #
-# 'deeplabv3plus' (juga butuh checkpoint hasil pelatihan):
+# 'deeplabv3plus' (also needs a trained checkpoint):
 # segmentation-models-pytorch>=0.3
 # torch>=2.0
