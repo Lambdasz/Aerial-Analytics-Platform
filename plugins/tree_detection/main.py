@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Entrypoint for the Tree Detection & Counting plugin (Module 7).
+Entrypoint plugin Deteksi & Penghitungan Pohon (Modul 7).
 
-Implements the platform CLI contract from plugins/template:
+Mengikuti kontrak CLI platform dari plugins/template:
   python main.py --healthcheck
   python main.py --input <execution_payload.json> --output <execution_result.json>
 
-This file is the impure shell (files, clock, exit codes). The analysis itself
-lives in the pure functions of the ``treedet`` package.
+File ini adalah lapisan luar yang tidak murni (file, jam, exit code). Analisisnya
+sendiri ada di fungsi-fungsi murni paket ``treedet``.
 """
 
 import argparse
@@ -169,10 +169,10 @@ def run_analysis(input_path: str, output_path: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Tree Detection & Counting plugin (Module 7)")
-    parser.add_argument("--healthcheck", action="store_true", help="Check environment and exit")
-    parser.add_argument("--input", type=str, help="Path to execution_payload.json")
-    parser.add_argument("--output", type=str, help="Path to write execution_result.json")
+    parser = argparse.ArgumentParser(description="Plugin Deteksi & Penghitungan Pohon (Modul 7)")
+    parser.add_argument("--healthcheck", action="store_true", help="Periksa lingkungan lalu keluar")
+    parser.add_argument("--input", type=str, help="Path ke execution_payload.json")
+    parser.add_argument("--output", type=str, help="Path tujuan execution_result.json")
     args = parser.parse_args()
 
     if args.healthcheck:

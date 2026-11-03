@@ -1,4 +1,4 @@
-# Tree Detection & Counting (Modul 7)
+# Deteksi & Penghitungan Pohon (Modul 7)
 
 Plugin analitik Aerial Analytics Platform untuk mendeteksi tajuk pohon dari citra drone RGB,
 menyaring hasilnya berdasarkan confidence, memetakan tiap pohon ke koordinat WGS84, lalu
@@ -44,10 +44,10 @@ plugins/tree_detection/
 │   ├── pipeline.py          # Payload → fitur-fitur di atas
 │   └── integration.py       # Konektor M9/M10: ringkasan per plot, pembanding dua run
 ├── training/                # Ambil UAV-VisLoc, label, fine-tuning deepforest (tidak dipasang platform)
-└── tests/                   # Unit test & end-to-end test (unittest)
+└── tests/                   # Pengujian unit & end-to-end (unittest)
 ```
 
-## Setup
+## Persiapan
 
 Jalankan dari root repo:
 
@@ -97,18 +97,18 @@ memakainya.
 penyekalaan kotaknya hanya menutup setengah tajuk. Pada CPU, satu foto 4000×2650 px butuh sekitar
 40 detik.
 
-## Test
+## Pengujian
 
 ```bash
 cd plugins/tree_detection
 python -m unittest discover -s tests -v
 ```
 
-71 test: 20 untuk delapan fitur dan alur payload, 21 untuk detector `opencv_watershed` dan
+71 pengujian: 20 untuk delapan fitur dan alur payload, 21 untuk detector `opencv_watershed` dan
 `deeplabv3plus` di atas citra sintetis, 9 untuk detector `deepforest` (tanpa model), 12 untuk alat
 pelatihan di `training/`, dan 9 untuk konektor M9/M10.
 
-Test mencakup kedelapan fitur, termasuk kasus batas dari spesifikasi: tidak ada deteksi
+Pengujian mencakup kedelapan fitur, termasuk kasus batas dari spesifikasi: tidak ada deteksi
 (`0`, bukan error), threshold di luar 0–1 (ditolak Pydantic), luas 0 (`ZeroAreaError`),
 GeoJSON tidak valid (`InvalidGeometryError`), gambar hilang (`PluginExecutionError`), dan
 format tidak didukung (`UnsupportedFormatError`).
@@ -128,7 +128,7 @@ check-jsonschema --schemafile schemas/execution_result.schema.json  plugins/tree
 
 ## Desain (pemrograman fungsional)
 
-- **Pure core, impure shell.** Semua fungsi di `treedet/` bersifat murni: input yang sama
+- **Inti murni, lapisan luar tidak murni (_pure core, impure shell_).** Semua fungsi di `treedet/` bersifat murni: input yang sama
   selalu menghasilkan output yang sama, tanpa I/O. Satu-satunya pengecualian adalah
   `detect_trees`, karena detector harus membaca gambar. Baca/tulis file, jam, dan exit
   code hanya ada di `main.py`.

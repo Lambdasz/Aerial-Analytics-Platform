@@ -1,8 +1,8 @@
-# Training tools for the 'deepforest' detector (training/train_deepforest.py).
-# Not installed by the platform: only the plugin's own requirements.txt is.
-# fetch_visloc.py needs nothing beyond the Python standard library.
+# Alat pelatihan untuk detector 'deepforest' (training/train_deepforest.py).
+# Tidak dipasang platform: yang dipasang hanya requirements.txt milik plugin.
+# fetch_visloc.py tidak butuh apa pun selain pustaka standar Python.
 #
-# For a CUDA build of torch, install it first from https://pytorch.org, then this file.
+# Untuk torch versi CUDA, pasang dulu dari https://pytorch.org, baru file ini.
 
 -r ../requirements.txt
 deepforest>=2.1,<3

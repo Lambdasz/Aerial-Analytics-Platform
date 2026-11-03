@@ -14,12 +14,12 @@ sebelum bisa dilatih.
 | :---------------- | :---------------------------------------------------- | :----------------------------------------------------------------------- |
 | Tanpa pelatihan   | bisa, bobot rilis sudah dilatih untuk tajuk pohon RGB | tidak, butuh checkpoint hasil latihan sendiri                            |
 | Label yang dibuat | kotak per tajuk (cepat, bisa mulai dari hasil model)  | mask per piksel (lambat, harus digambar dari nol)                        |
-| Output            | kotak + skor per pohon, sesuai kontrak Modul 7        | mask kanopi, masih harus dipecah jadi pohon (tajuk yang menempel gabung) |
+| Keluaran          | kotak + skor per pohon, sesuai kontrak Modul 7        | mask kanopi, masih harus dipecah jadi pohon (tajuk yang menempel gabung) |
 
 Detector `deeplabv3plus` tetap ada di registry, untuk dipakai bersama Modul 8 kalau tim
 punya mask berlabel.
 
-## Setup
+## Persiapan
 
 Dari root repo, dengan venv di **luar** repo (lihat README plugin):
 
@@ -78,7 +78,7 @@ format Pascal VOC), atau impor sebagai Pascal VOC di CVAT / Label Studio. Lalu:
 Sekitar 150–300 tile yang sudah dikoreksi cukup untuk fine-tuning awal. Akurasi model
 dibatasi oleh kualitas tahap ini.
 
-## 4. Fine-tuning
+## 4. Fine-tuning (penyetelan lanjut)
 
 ```powershell
 python plugins\tree_detection\training\train_deepforest.py train `

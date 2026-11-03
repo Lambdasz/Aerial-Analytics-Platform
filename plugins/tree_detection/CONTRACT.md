@@ -1,4 +1,4 @@
-# Kontrak Modul 7: Tree Detection & Counting
+# Kontrak Modul 7: Deteksi & Penghitungan Pohon (Tree Detection & Counting)
 
 > Untuk: tim Modul 2 (Plugin Manager), 3 (Map Explorer), 9 (Area & Plot), 10 (Temporal), dan 11 (Dashboard).
 > Status: **v0.5.0**. Tiga detector nyata terdaftar (`opencv_watershed` sebagai default,
@@ -81,7 +81,7 @@ agar sesuai resolusi latih model, dan selalu memakai patch 400 px (tidak membaca
 
 **Metrik** (`metrics`):
 
-| Key                      | Tipe    | Arti                                                                         |
+| Kunci                    | Tipe    | Arti                                                                         |
 | :----------------------- | :------ | :--------------------------------------------------------------------------- |
 | `tree_count`             | integer | jumlah pohon setelah filter confidence, **di dalam AOI** kalau AOI diberikan |
 | `avg_confidence`         | float   | rata-rata confidence pohon yang dihitung (0–1)                               |
@@ -93,7 +93,7 @@ agar sesuai resolusi latih model, dan selalu memakai patch 400 px (tidak membaca
 
 **Artefak** (`artifacts`):
 
-| Key             | Format                 | Isi                                      |
+| Kunci           | Format                 | Isi                                      |
 | :-------------- | :--------------------- | :--------------------------------------- |
 | `tree_points`   | `application/geo+json` | titik tiap pohon (lihat 3.2)             |
 | `plugin_output` | `application/json`     | hasil lengkap `PluginOutput` (lihat 3.3) |
@@ -122,7 +122,7 @@ Satu `Feature` per pohon yang dihitung. Koordinat `[longitude, latitude]` dalam 
 ```
 
 - `detection_id` berformat `{image_id}-{model_name}-{nomor 4 digit}`. Deteksi yang ditambahkan
-  manual lewat Detection Review diawali `manual-`.
+  manual lewat Tinjauan Deteksi (Detection Review) diawali `manual-`.
 - `area_m2` adalah perkiraan luas kotak tajuk (`luas bbox piksel × gsd_m²`).
 - `bbox_px` = `[x_min, y_min, x_max, y_max]` dalam piksel gambar asli, dipakai untuk menggambar kotak
   di atas foto.
@@ -187,19 +187,19 @@ Status `PluginOutput` dipetakan ke skema resmi: `success → success`, `partial 
 Untuk sesama pengembang Python atau penguji, paket `treedet` mengekspor fungsi-fungsi dari laporan
 progres Modul 7. Semuanya murni, kecuali `detect_trees`.
 
-| Fitur                   | Fungsi                                                                                     |
-| :---------------------- | :----------------------------------------------------------------------------------------- |
-| 1 Tree Detection        | `detect_trees(input_data, model_config) -> DetectionOutput`                                |
-| 2 Tree Counting         | `count_trees(detections, image_id, counted_at) -> CountOutput`                             |
-| 3 Confidence Filtering  | `filter_by_confidence(detections, threshold) -> FilteredOutput`                            |
-| 4 Tree Location Mapping | `map_tree_locations(detections, image_metadata) -> LocationOutput`                         |
-| 5 Area-Based Counting   | `count_trees_in_area(tree_points, plot_boundary) -> AreaCountOutput`                       |
-| 6 Tree Density          | `calculate_tree_density(tree_count, area_m2, unit="per_ha") -> DensityOutput`              |
-| 7 Detection Review      | `apply_review(detections, corrections) -> ReviewOutput`                                    |
-| 8 Plugin Output         | `build_plugin_output(detections, count, density, locations, run_metadata) -> PluginOutput` |
-| Konektor M9             | `plot_summaries(tree_points, plot_boundaries, unit="per_ha") -> tuple[dict, ...]`          |
-| Konektor M10            | `compare_plot_summaries(before, after) -> tuple[dict, ...]`                                |
-| Pembaca artefak         | `tree_points_of(tree_points_geojson) -> tuple[GeoCoordinate, ...]`                         |
+| Fitur                                           | Fungsi                                                                                     |
+| :---------------------------------------------- | :----------------------------------------------------------------------------------------- |
+| 1 Deteksi Pohon (Tree Detection)                | `detect_trees(input_data, model_config) -> DetectionOutput`                                |
+| 2 Penghitungan Pohon (Tree Counting)            | `count_trees(detections, image_id, counted_at) -> CountOutput`                             |
+| 3 Penyaringan Confidence (Confidence Filtering) | `filter_by_confidence(detections, threshold) -> FilteredOutput`                            |
+| 4 Pemetaan Lokasi Pohon (Tree Location Mapping) | `map_tree_locations(detections, image_metadata) -> LocationOutput`                         |
+| 5 Penghitungan per Area (Area-Based Counting)   | `count_trees_in_area(tree_points, plot_boundary) -> AreaCountOutput`                       |
+| 6 Kepadatan Pohon (Tree Density)                | `calculate_tree_density(tree_count, area_m2, unit="per_ha") -> DensityOutput`              |
+| 7 Tinjauan Deteksi (Detection Review)           | `apply_review(detections, corrections) -> ReviewOutput`                                    |
+| 8 Keluaran Plugin (Plugin Output)               | `build_plugin_output(detections, count, density, locations, run_metadata) -> PluginOutput` |
+| Konektor M9                                     | `plot_summaries(tree_points, plot_boundaries, unit="per_ha") -> tuple[dict, ...]`          |
+| Konektor M10                                    | `compare_plot_summaries(before, after) -> tuple[dict, ...]`                                |
+| Pembaca artefak                                 | `tree_points_of(tree_points_geojson) -> tuple[GeoCoordinate, ...]`                         |
 
 Perbedaan dari laporan progres, beserta alasannya:
 
@@ -220,7 +220,7 @@ Perbedaan dari laporan progres, beserta alasannya:
 | :-: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------- | :----------------------------------------------------------------------------------------------------------------------------------- |
 |  1  | Apakah M1 bisa mengisi `gsd_m`, `rotation_deg`, dan `image_id` di `target.metadata`? GSD bisa dihitung dari ketinggian relatif + focal length + ukuran sensor; rotasi dari `gimbal_yaw_degree` | M1, M2    | ya, dengan nama field persis seperti tabel input                                                                                     |
 |  2  | Hitung per plot: agregasi titik di M9, atau M2 menjalankan Modul 7 per plot?                                                                                                                   | M2, M9    | agregasi di M9 (satu eksekusi untuk semua plot)                                                                                      |
-|  3  | Detection Review butuh tempat menyimpan koreksi user dan cara mengirimnya ke plugin. Ini perlu Tauri command baru di core                                                                      | M2        | M2 menambah command simpan koreksi; Modul 7 menerima path file koreksi lewat parameter                                               |
+|  3  | Tinjauan Deteksi butuh tempat menyimpan koreksi user dan cara mengirimnya ke plugin. Ini perlu Tauri command baru di core                                                                      | M2        | M2 menambah command simpan koreksi; Modul 7 menerima path file koreksi lewat parameter                                               |
 |  4  | Siapa yang mengubah GeoJSON ke format `spatial_results` M3?                                                                                                                                    | M3        | M3 (plugin tetap mengeluarkan GeoJSON standar)                                                                                       |
 |  5  | Model deteksi yang dipakai (klasik OpenCV atau deep learning seperti DeepLabV3+)?                                                                                                              | dosen/tim | diputuskan DeepLabV3+ dengan encoder ResNet101 atau Xception; `opencv_watershed` tetap default sampai checkpoint hasil pelatihan ada |
 |  6  | Plugin ditaruh di repo ini (`plugins/tree_detection/`) atau repo terpisah? `CONTRIBUTING.md` menyebut plugin analitik ada di repo terpisah                                                     | tim       | sementara di repo ini, mengikuti `plugins/mock`                                                                                      |
