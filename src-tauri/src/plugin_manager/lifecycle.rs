@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};
-use super::models::{PluginStateStore, PluginSummaryDto};
+use super::models::{InputsSpec, PluginManifest, PluginStateStore, PluginSummaryDto};
 
 // ---------------------------------------------------------------------------
 // 1. TAURI IPC COMMANDS (pub — registered in lib.rs invoke_handler)
@@ -81,18 +81,59 @@ pub async fn set_plugin_status(
         .map_err(Into::into)
 }
 
+/// Pure: Updates or inserts a plugin status toggle in the state store.
+///
+/// **Pure function** — deterministic in-memory mutation of `PluginStateStore` with zero I/O.
+pub(crate) fn update_state_store_for_status(
+    store: &mut super::models::PluginStateStore,
+    plugin_id: &str,
+    enabled: bool,
+    version: &str,
+    source: super::models::PluginSource,
+    now_iso: &str,
+) {
+    store.updated_at = now_iso.to_string();
+    let record = store
+        .plugins
+        .entry(plugin_id.to_string())
+        .or_insert_with(|| super::models::PluginStateRecord {
+            version: version.to_string(),
+            source,
+            enabled,
+            installed_at: now_iso.to_string(),
+            last_healthcheck: None,
+            custom_parameters: serde_json::json!({}),
+            stats: Default::default(),
+        });
+    record.enabled = enabled;
+}
+
 /// Internal helper for toggling plugin status and flushing changes to plugin_state.json.
+///
+/// Acts as the **Imperative Shell** around registry synchronization and atomic disk persistence,
+/// delegating the deterministic state record updates to pure function `update_state_store_for_status`.
 pub(crate) async fn set_plugin_status_internal(
     plugin_id: &str,
     enabled: bool,
     app_state: &crate::AppState,
 ) -> Result<(), PluginError> {
     let mut registry = app_state.plugins.write().await;
-    let prev_enabled = registry
-        .plugins
-        .get(plugin_id)
-        .map(|b| b.enabled)
-        .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+    let (prev_enabled, version, source) = {
+        let bundle = registry
+            .plugins
+            .get(plugin_id)
+            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+        let src = if bundle.source == "user" {
+            super::models::PluginSource::User
+        } else {
+            super::models::PluginSource::Builtin
+        };
+        (
+            bundle.enabled,
+            bundle.manifest.metadata.version.clone(),
+            src,
+        )
+    };
 
     registry.set_status(plugin_id, enabled)?;
 
@@ -101,30 +142,9 @@ pub(crate) async fn set_plugin_status_internal(
         .clone()
         .unwrap_or_else(default_state_path);
     let mut store = load_plugin_state(&state_path).unwrap_or_default();
-    store.updated_at = chrono::Utc::now().to_rfc3339();
+    let now_iso = chrono::Utc::now().to_rfc3339();
 
-    let record = store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| {
-            let bundle = registry.plugins.get(plugin_id);
-            super::models::PluginStateRecord {
-                version: bundle
-                    .map(|b| b.manifest.metadata.version.clone())
-                    .unwrap_or_else(|| "1.0.0".to_string()),
-                source: if bundle.map(|b| b.source.as_str()) == Some("user") {
-                    super::models::PluginSource::User
-                } else {
-                    super::models::PluginSource::Builtin
-                },
-                enabled,
-                installed_at: chrono::Utc::now().to_rfc3339(),
-                last_healthcheck: None,
-                custom_parameters: serde_json::json!({}),
-                stats: Default::default(),
-            }
-        });
-    record.enabled = enabled;
+    update_state_store_for_status(&mut store, plugin_id, enabled, &version, source, &now_iso);
 
     if let Err(err) = save_plugin_state(&state_path, &store) {
         let _ = registry.set_status(plugin_id, prev_enabled);
@@ -157,6 +177,7 @@ pub(crate) fn apply_state_to_registry(
             if let Some(ref hc) = record.last_healthcheck {
                 bundle.health_status = hc.status.clone();
             }
+            bundle.custom_parameters = record.custom_parameters.clone();
         }
     }
 }
@@ -193,7 +214,141 @@ pub async fn update_plugin_config(
         .map_err(Into::into)
 }
 
+/// Pure: Resolves the plugin root directory from staging inspection results.
+///
+/// **Pre-condition**: `has_root_manifest` indicates whether manifest.json exists directly in staging root.
+/// `candidates` contains subdirectories that contain a manifest.json.
+/// **Post-condition**: Returns the resolved plugin root or an error if missing or ambiguous.
+pub(crate) fn resolve_staged_plugin_root(
+    staging_root: &Path,
+    has_root_manifest: bool,
+    candidates: Vec<PathBuf>,
+) -> Result<PathBuf, PluginError> {
+    if has_root_manifest {
+        return Ok(staging_root.to_path_buf());
+    }
+    if candidates.is_empty() {
+        return Err(PluginError::ManifestInvalid {
+            path: "manifest.json".to_string(),
+            message: "manifest.json not found in archive root or subdirectory".to_string(),
+        });
+    }
+    if candidates.len() > 1 {
+        return Err(PluginError::ManifestInvalid {
+            path: "manifest.json".to_string(),
+            message: format!(
+                "Ambiguous archive: multiple plugin directories with manifest.json found ({})",
+                candidates.len()
+            ),
+        });
+    }
+    Ok(candidates.into_iter().next().unwrap())
+}
+
+/// Pure: Validates whether a plugin can be installed based on ID format, active job statuses, and existing source.
+///
+/// **Pre-condition**: None.
+/// **Post-condition**: Returns Ok(()) if the plugin installation is safe and permitted,
+/// or Err(PluginError) if the ID is invalid, a job is running for this plugin, or it attempts to overwrite a builtin.
+pub(crate) fn validate_installation_preconditions(
+    plugin_id: &str,
+    is_job_active: bool,
+    existing_registry_source: Option<&str>,
+    existing_state_source: Option<&super::models::PluginSource>,
+) -> Result<(), PluginError> {
+    if !is_valid_plugin_id(plugin_id) {
+        return Err(PluginError::SecurityViolation(format!(
+            "Invalid plugin id '{}': must match ^[a-z0-9-_]+$",
+            plugin_id
+        )));
+    }
+
+    if is_job_active {
+        return Err(PluginError::ExecutionError(format!(
+            "Cannot overwrite plugin '{}' because it is currently executing a job",
+            plugin_id
+        )));
+    }
+
+    if let Some("builtin") = existing_registry_source {
+        return Err(PluginError::SecurityViolation(format!(
+            "Cannot overwrite builtin plugin '{}'",
+            plugin_id
+        )));
+    }
+
+    if let Some(super::models::PluginSource::Builtin) = existing_state_source {
+        return Err(PluginError::SecurityViolation(format!(
+            "Cannot overwrite builtin plugin '{}'",
+            plugin_id
+        )));
+    }
+
+    Ok(())
+}
+
+/// Pure: Assembles a user-installed `PluginBundle` from validated components.
+///
+/// **Pure function** — deterministic, zero I/O, zero side effects.
+pub(crate) fn assemble_user_plugin_bundle(
+    target_dir: PathBuf,
+    manifest: PluginManifest,
+    inputs_spec: InputsSpec,
+    inputs_raw: serde_json::Value,
+    parameters_raw: serde_json::Value,
+    outputs_raw: serde_json::Value,
+) -> super::models::PluginBundle {
+    super::models::PluginBundle {
+        install_path: target_dir,
+        manifest,
+        inputs_spec,
+        inputs_raw,
+        parameters_raw,
+        outputs_raw,
+        enabled: true,
+        source: "user".to_string(),
+        health_status: "unknown".to_string(),
+        custom_parameters: serde_json::json!({}),
+    }
+}
+
+/// Pure: Updates or inserts a user plugin state record in the state store.
+///
+/// **Pure function** — modifies the in-memory data structure deterministically without touching disk.
+pub(crate) fn update_state_store_for_install(
+    store: &mut super::models::PluginStateStore,
+    plugin_id: &str,
+    version: &str,
+    now_iso: &str,
+) {
+    store.updated_at = now_iso.to_string();
+    let record = store
+        .plugins
+        .entry(plugin_id.to_string())
+        .or_insert_with(|| super::models::PluginStateRecord {
+            version: version.to_string(),
+            source: super::models::PluginSource::User,
+            enabled: true,
+            installed_at: now_iso.to_string(),
+            last_healthcheck: None,
+            custom_parameters: serde_json::json!({}),
+            stats: Default::default(),
+        });
+    record.version = version.to_string();
+    record.source = super::models::PluginSource::User;
+    record.enabled = true;
+}
+
 /// Internal helper for installing a plugin from a .zip archive.
+///
+/// Acts as the **Imperative Shell** around archive extraction, staging filesystem I/O,
+/// directory moves, and persistence, delegating validation and data assembly to pure functions:
+/// - `resolve_staged_plugin_root`
+/// - `super::registry::parse_and_validate_manifest`
+/// - `validate_installation_preconditions`
+/// - `super::registry::validate_subcontracts`
+/// - `assemble_user_plugin_bundle`
+/// - `update_state_store_for_install`
 pub(crate) async fn install_plugin_internal(
     archive_path: &Path,
     app_state: &crate::AppState,
@@ -229,10 +384,9 @@ pub(crate) async fn install_plugin_internal(
 
     // Step 2: Locate plugin root (root or single top-level directory containing manifest.json)
     let staging_path = temp_dir.path();
-    let plugin_source_dir = if staging_path.join("manifest.json").is_file() {
-        staging_path.to_path_buf()
-    } else {
-        let mut candidates = Vec::new();
+    let has_root_manifest = staging_path.join("manifest.json").is_file();
+    let mut candidates = Vec::new();
+    if !has_root_manifest {
         if let Ok(entries) = std::fs::read_dir(staging_path) {
             for entry in entries.flatten() {
                 let p = entry.path();
@@ -241,23 +395,9 @@ pub(crate) async fn install_plugin_internal(
                 }
             }
         }
-        if candidates.is_empty() {
-            return Err(PluginError::ManifestInvalid {
-                path: "manifest.json".to_string(),
-                message: "manifest.json not found in archive root or subdirectory".to_string(),
-            });
-        }
-        if candidates.len() > 1 {
-            return Err(PluginError::ManifestInvalid {
-                path: "manifest.json".to_string(),
-                message: format!(
-                    "Ambiguous archive: multiple plugin directories with manifest.json found ({})",
-                    candidates.len()
-                ),
-            });
-        }
-        candidates.remove(0)
-    };
+    }
+    let plugin_source_dir =
+        resolve_staged_plugin_root(staging_path, has_root_manifest, candidates)?;
 
     // Step 3: Parse and validate manifest
     let manifest_str =
@@ -271,51 +411,32 @@ pub(crate) async fn install_plugin_internal(
     let plugin_id = &manifest.metadata.id;
 
     // Step 4: Verify metadata.id is valid, does not overwrite builtin, and is not currently executing a job
-    if !is_valid_plugin_id(plugin_id) {
-        return Err(PluginError::SecurityViolation(format!(
-            "Invalid plugin id '{}': must match ^[a-z0-9-_]+$",
-            plugin_id
-        )));
-    }
-
-    {
+    let is_job_active = {
         let tracker = app_state.jobs.read().await;
-        for job in tracker.jobs.values() {
-            if job.plugin_id == *plugin_id
+        tracker.jobs.values().any(|job| {
+            job.plugin_id == *plugin_id
                 && matches!(
                     job.status,
                     super::executor::JobStatusDto::Queued
                         | super::executor::JobStatusDto::Running { .. }
                 )
-            {
-                return Err(PluginError::ExecutionError(format!(
-                    "Cannot overwrite plugin '{}' because it is currently executing a job",
-                    plugin_id
-                )));
-            }
-        }
-    }
+        })
+    };
 
-    {
+    let existing_reg_source = {
         let registry = app_state.plugins.read().await;
-        if let Some(existing) = registry.plugins.get(plugin_id) {
-            if existing.source == "builtin" {
-                return Err(PluginError::SecurityViolation(format!(
-                    "Cannot overwrite builtin plugin '{}'",
-                    plugin_id
-                )));
-            }
-        }
-    }
+        registry.plugins.get(plugin_id).map(|b| b.source.clone())
+    };
+
     let mut store = load_plugin_state(&state_path).unwrap_or_default();
-    if let Some(rec) = store.plugins.get(plugin_id) {
-        if rec.source == super::models::PluginSource::Builtin {
-            return Err(PluginError::SecurityViolation(format!(
-                "Cannot overwrite builtin plugin '{}'",
-                plugin_id
-            )));
-        }
-    }
+    let existing_state_source = store.plugins.get(plugin_id).map(|r| r.source.clone());
+
+    validate_installation_preconditions(
+        plugin_id,
+        is_job_active,
+        existing_reg_source.as_deref(),
+        existing_state_source.as_ref(),
+    )?;
 
     // Step 5: Validate sub-contracts (parameters.json, inputs.json, outputs.json)
     let (parameters_raw, inputs_spec, outputs_raw) =
@@ -345,18 +466,15 @@ pub(crate) async fn install_plugin_internal(
         move_dir_all(&plugin_source_dir, &target_dir)?;
     }
 
-    // Step 7: In-memory registration
-    let bundle = super::models::PluginBundle {
-        install_path: target_dir.clone(),
-        manifest: manifest.clone(),
+    // Step 7: In-memory registration using pure bundle assembler
+    let bundle = assemble_user_plugin_bundle(
+        target_dir.clone(),
+        manifest.clone(),
         inputs_spec,
         inputs_raw,
         parameters_raw,
         outputs_raw,
-        enabled: true,
-        source: "user".to_string(),
-        health_status: "unknown".to_string(),
-    };
+    );
     let summary = bundle.to_summary();
 
     let mut registry = app_state.plugins.write().await;
@@ -364,21 +482,8 @@ pub(crate) async fn install_plugin_internal(
     drop(registry);
 
     // Step 8: Update and atomically persist plugin_state.json
-    store.updated_at = chrono::Utc::now().to_rfc3339();
-    let record = store.plugins.entry(plugin_id.clone()).or_insert_with(|| {
-        super::models::PluginStateRecord {
-            version: manifest.metadata.version.clone(),
-            source: super::models::PluginSource::User,
-            enabled: true,
-            installed_at: chrono::Utc::now().to_rfc3339(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: Default::default(),
-        }
-    });
-    record.version = manifest.metadata.version.clone();
-    record.source = super::models::PluginSource::User;
-    record.enabled = true;
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    update_state_store_for_install(&mut store, plugin_id, &manifest.metadata.version, &now_iso);
 
     if let Err(err) = save_plugin_state(&state_path, &store) {
         // Rollback filesystem commit and in-memory registration on persistence failure
@@ -634,8 +739,14 @@ pub(crate) async fn update_plugin_config_internal(
             stats: Default::default(),
         });
 
-    record.custom_parameters = custom_params;
+    record.custom_parameters = custom_params.clone();
     save_plugin_state(&state_path, &store)?;
+
+    drop(registry);
+    let mut registry_mut = app_state.plugins.write().await;
+    if let Some(bundle_mut) = registry_mut.plugins.get_mut(plugin_id) {
+        bundle_mut.custom_parameters = custom_params;
+    }
 
     Ok(())
 }
@@ -946,6 +1057,7 @@ mod tests {
             enabled: true,
             source: "builtin".to_string(),
             health_status: "unknown".to_string(),
+            custom_parameters: serde_json::json!({}),
         };
         registry.register(bundle);
 
@@ -1221,6 +1333,7 @@ mod tests {
                 enabled: true,
                 source: "builtin".to_string(),
                 health_status: "unknown".to_string(),
+                custom_parameters: serde_json::json!({}),
             };
             reg.register(bundle);
         }
@@ -1325,6 +1438,7 @@ mod tests {
                 enabled: true,
                 source: "builtin".to_string(),
                 health_status: "unknown".to_string(),
+                custom_parameters: serde_json::json!({}),
             };
             reg.register(bundle);
         }
@@ -1387,6 +1501,7 @@ mod tests {
                 enabled: true,
                 source: "user".to_string(),
                 health_status: "unknown".to_string(),
+                custom_parameters: serde_json::json!({}),
             };
             reg.register(bundle);
         }
@@ -1492,6 +1607,7 @@ mod tests {
                 enabled: true,
                 source: "user".to_string(),
                 health_status: "unknown".to_string(),
+                custom_parameters: serde_json::json!({}),
             };
             reg.register(bundle);
         }
@@ -1511,6 +1627,17 @@ mod tests {
         let rec = store.plugins.get("config-plugin").unwrap();
         assert_eq!(rec.custom_parameters["threshold"], 0.85);
         assert_eq!(rec.custom_parameters["mode"], "ACCURATE");
+
+        // Check in-memory bundle updated as well
+        let reg = app_state.plugins.read().await;
+        let in_memory = reg.plugins.get("config-plugin").unwrap();
+        assert_eq!(in_memory.custom_parameters["threshold"], 0.85);
+        assert_eq!(in_memory.custom_parameters["mode"], "ACCURATE");
+
+        // Also check get_details reflects custom_parameters
+        let details = reg.get_details("config-plugin").unwrap();
+        assert_eq!(details.custom_parameters["threshold"], 0.85);
+        assert_eq!(details.custom_parameters["mode"], "ACCURATE");
     }
 
     #[tokio::test]
@@ -1594,6 +1721,7 @@ mod tests {
                 enabled: true,
                 source: "user".to_string(),
                 health_status: "unknown".to_string(),
+                custom_parameters: serde_json::json!({}),
             };
             reg.register(bundle);
         }
@@ -1801,5 +1929,179 @@ mod tests {
             !reg.plugins.contains_key("rollback-plugin"),
             "Registry must not retain plugin on state save failure"
         );
+    }
+
+    #[test]
+    fn test_resolve_staged_plugin_root_pure() {
+        let root = PathBuf::from("/staging");
+
+        // 1. Root manifest exists
+        let res = resolve_staged_plugin_root(&root, true, vec![]);
+        assert_eq!(res.unwrap(), root);
+
+        // 2. Single subdirectory candidate
+        let sub = PathBuf::from("/staging/my-plugin");
+        let res = resolve_staged_plugin_root(&root, false, vec![sub.clone()]);
+        assert_eq!(res.unwrap(), sub);
+
+        // 3. No candidates
+        let res = resolve_staged_plugin_root(&root, false, vec![]);
+        assert!(matches!(res, Err(PluginError::ManifestInvalid { .. })));
+
+        // 4. Ambiguous candidates (>1)
+        let sub2 = PathBuf::from("/staging/other-plugin");
+        let res = resolve_staged_plugin_root(&root, false, vec![sub, sub2]);
+        assert!(matches!(res, Err(PluginError::ManifestInvalid { .. })));
+    }
+
+    #[test]
+    fn test_validate_installation_preconditions_pure() {
+        // 1. Invalid ID
+        let res = validate_installation_preconditions("INVALID_ID", false, None, None);
+        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
+
+        // 2. Active job running
+        let res = validate_installation_preconditions("valid-id", true, None, None);
+        assert!(matches!(res, Err(PluginError::ExecutionError(_))));
+
+        // 3. Cannot overwrite builtin in registry
+        let res = validate_installation_preconditions("valid-id", false, Some("builtin"), None);
+        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
+
+        // 4. Cannot overwrite builtin in state store
+        let res = validate_installation_preconditions(
+            "valid-id",
+            false,
+            None,
+            Some(&PluginSource::Builtin),
+        );
+        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
+
+        // 5. Valid installation (new user plugin or user plugin overwrite)
+        let res = validate_installation_preconditions(
+            "valid-id",
+            false,
+            Some("user"),
+            Some(&PluginSource::User),
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_update_state_store_for_install_pure() {
+        let mut store = PluginStateStore::default();
+        let now_iso = "2026-11-02T12:00:00Z";
+
+        update_state_store_for_install(&mut store, "my-plugin", "1.2.3", now_iso);
+
+        assert_eq!(store.updated_at, now_iso);
+        let record = store.plugins.get("my-plugin").expect("record must exist");
+        assert_eq!(record.version, "1.2.3");
+        assert_eq!(record.source, PluginSource::User);
+        assert!(record.enabled);
+        assert_eq!(record.installed_at, now_iso);
+    }
+
+    #[test]
+    fn test_update_state_store_for_status_insert_new_record_pure() {
+        let mut store = PluginStateStore::default();
+        let now_iso = "2026-11-03T01:00:00Z";
+
+        update_state_store_for_status(
+            &mut store,
+            "new-plugin",
+            false,
+            "2.0.0",
+            PluginSource::Builtin,
+            now_iso,
+        );
+
+        assert_eq!(store.updated_at, now_iso);
+        let record = store.plugins.get("new-plugin").expect("record must exist");
+        assert_eq!(record.version, "2.0.0");
+        assert_eq!(record.source, PluginSource::Builtin);
+        assert!(!record.enabled);
+        assert_eq!(record.installed_at, now_iso);
+    }
+
+    #[test]
+    fn test_update_state_store_for_status_update_existing_record_pure() {
+        let mut store = PluginStateStore::default();
+        let initial_iso = "2026-11-01T00:00:00Z";
+        update_state_store_for_install(&mut store, "toggle-plugin", "1.0.0", initial_iso);
+        assert!(store.plugins.get("toggle-plugin").unwrap().enabled);
+
+        let update_iso = "2026-11-03T01:30:00Z";
+        update_state_store_for_status(
+            &mut store,
+            "toggle-plugin",
+            false,
+            "1.0.0",
+            PluginSource::User,
+            update_iso,
+        );
+
+        assert_eq!(store.updated_at, update_iso);
+        let record = store
+            .plugins
+            .get("toggle-plugin")
+            .expect("record must exist");
+        assert_eq!(record.version, "1.0.0");
+        assert_eq!(record.source, PluginSource::User);
+        assert!(!record.enabled);
+        assert_eq!(record.installed_at, initial_iso);
+    }
+
+    #[test]
+    fn test_assemble_user_plugin_bundle_pure() {
+        let manifest = PluginManifest {
+            schema: None,
+            manifest_version: 1,
+            metadata: crate::plugin_manager::models::PluginMetadata {
+                id: "user-test".to_string(),
+                name: "User Test".to_string(),
+                version: "1.0.0".to_string(),
+                author: None,
+                license: None,
+                description: "Test".to_string(),
+                category: None,
+                tags: vec![],
+                min_core_version: None,
+            },
+            runtime: crate::plugin_manager::models::PluginRuntime {
+                runtime_type: "python".to_string(),
+                entrypoint: "main.py".to_string(),
+                min_python_version: None,
+                dependencies_file: None,
+                healthcheck_flag: None,
+            },
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
+            execution: None,
+        };
+
+        let inputs_spec = InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec!["image/jpeg".to_string()],
+            requires_metadata: vec![],
+            optional_metadata: vec![],
+            supports_aoi: false,
+            aoi_format: None,
+        };
+
+        let bundle = assemble_user_plugin_bundle(
+            PathBuf::from("/plugins/user-test"),
+            manifest,
+            inputs_spec,
+            serde_json::json!({}),
+            serde_json::json!({"parameters": []}),
+            serde_json::json!({}),
+        );
+
+        assert_eq!(bundle.manifest.metadata.id, "user-test");
+        assert_eq!(bundle.source, "user");
+        assert!(bundle.enabled);
+        assert_eq!(bundle.install_path, PathBuf::from("/plugins/user-test"));
     }
 }
