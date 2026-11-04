@@ -360,6 +360,9 @@ export function Module09Page() {
             borderRadius: 14,
             overflow: "hidden",
             background: "var(--color-paper-frost, #fafafc)",
+            position: "relative",
+            zIndex: 0,
+            isolation: "isolate",
           }}
         >
           <PlotMapEditor

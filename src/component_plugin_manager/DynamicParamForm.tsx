@@ -53,7 +53,9 @@ export const RenderDynamicInput: React.FC<RenderDynamicInputProps> = ({
           }
           min={param.min}
           max={param.max}
-          stepSize={param.step ?? 0.05}
+          stepSize={param.step ?? 0.01}
+          minorStepSize={0.000001}
+          clampValueOnBlur={false}
           intent={intent}
           onValueChange={(val, valStr) => {
             const trimmed = valStr.trim();

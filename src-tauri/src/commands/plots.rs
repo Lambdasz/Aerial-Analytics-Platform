@@ -310,3 +310,18 @@ pub fn publish_plots_layer(
     let _ = app.emit("spatial_result:saved", &saved);
     Ok(saved)
 }
+
+/// Runs a plugin over selected plots using a georeferenced raster orthomosaic.
+///
+/// Clips the orthomosaic per plot and tiles large AOIs into 1024x1024 slices to prevent OOM,
+/// runs the plugin subprocess sequentially per slice, aggregates the metrics,
+/// and stores the indicators into `plot_indicator`.
+#[tauri::command]
+pub async fn analyse_plots_from_ortho(
+    app: tauri::AppHandle,
+    state: State<'_, crate::AppState>,
+    payload: crate::modules::module_09::ortho_analysis::AnalysePlotsOrthoPayload,
+) -> Result<crate::modules::module_09::ortho_analysis::PlotAnalysisOutcome, CommandError> {
+    crate::modules::module_09::ortho_analysis::analyse_plots_from_ortho_impl(&app, &state, payload)
+        .await
+}

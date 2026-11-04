@@ -263,6 +263,8 @@ pub struct PluginBundle {
     pub enabled: bool,
     pub source: String,
     pub health_status: String,
+    #[serde(default)]
+    pub custom_parameters: serde_json::Value,
 }
 
 impl PluginBundle {
@@ -334,6 +336,8 @@ pub struct PluginDetailsDto {
     pub outputs: serde_json::Value,
     pub install_path: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub custom_parameters: serde_json::Value,
 }
 
 /// Diagnostic health status response emitted by plugin entrypoint pre-flight checks.
