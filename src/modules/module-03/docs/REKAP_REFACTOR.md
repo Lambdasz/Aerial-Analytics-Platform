@@ -263,3 +263,76 @@ Refactoring komprehensif pada Modul 03 ini berhasil menuntaskan _technical debt_
 - **Defek Layering Leaflet** diselesaikan secara elegan melalui integrasi CSS selektif dan algoritma Ray-Casting murni, memberikan pengalaman pengguna yang responsif, intuitif, dan presisi tinggi.
 
 Codebase Modul 03 kini berada dalam kondisi stabil, bersih (_clean code_), mudah dipahami dalam proses telaah akademis/pengujian dosen, dan siap menjadi fondasi yang kokoh untuk integrasi modul-modul analitik berikutnya (Modul 04 hingga Modul 08).
+
+---
+
+## 8. Visualisasi Arsitektur Sistem (End-to-End Pipeline)
+
+Diagram berikut memetakan keterkaitan arsitektur dari lapisan antarmuka React/Leaflet, kontrak IPC Tauri (DTO & Envelope Pattern), pemrosesan geometri dan pipeline citra di backend Rust, hingga persistensi data atomik di penyimpanan lokal:
+
+```mermaid
+flowchart TD
+    %% FRONTEND LAYER
+    subgraph Frontend["Frontend Client (React 19 / TypeScript)"]
+        UI_Aoi["AoiToolbar / AoiModal\n(Draw & Preview AOI)"]
+        UI_Ortho["ImportImageModal\n(Dual Mode A & B)"]
+        UI_Leaflet["MapCanvas & Panes\n(aoiPane, orthoPane, overlayPane)"]
+        UI_HitTest["Ray-Casting Algorithm\n(isPointInPolygon in geoJson.ts)"]
+        UI_Services["services/api.ts\n(Tauri Invoke Wrappers)"]
+    end
+
+    %% IPC BOUNDARY
+    subgraph IPC["Tauri IPC Boundary (DTO & Envelope Contract)"]
+        CMD_Geo["measure_distance / measure_area / measure_perimeter"]
+        CMD_Aoi["create_aoi_cmd / save_new_aoi_cmd / get_saved_aois"]
+        CMD_Ortho["execute_import_option_a / execute_import_option_b"]
+    end
+
+    %% BACKEND CORE (RUST)
+    subgraph BackendRust["Backend Rust (module_03 Core)"]
+        subgraph PureGeo["Pure Geometry & Projections (Zero Side-Effect)"]
+            GEO_Haversine["haversine.rs\n(calculate_distance)"]
+            GEO_Excess["spherical_excess.rs\n(calculate_area, calculate_perimeter)"]
+            GEO_Proj["projection.rs\n(WGS84, EPSG:3857, UTM 1-60)"]
+            GEO_Val["validation.rs\n(validate_coordinate, validate_polygon)"]
+        end
+
+        subgraph PipelineEngine["Orthomosaic Pipeline Engine"]
+            PIPE_OrchA["orchestrator_a.rs\n(Option A: JPG/PNG + World/Sidecar/Manual)"]
+            PIPE_OrchB["orchestrator_b.rs\n(Option B: GeoTIFF + Internal Tags)"]
+            PIPE_Stream["resampling.rs & StreamingResampler\n(IDCT scale, Row-by-Row PNG, Box Filter)"]
+            PIPE_Adaptive["encoding.rs\n(Adaptive Display Loop <= 5-10MB)"]
+            PIPE_RAII["StagingGuard (RAII)\n& Cancellation Checks"]
+        end
+    end
+
+    %% STORAGE & PERSISTENCE
+    subgraph StorageLayer["Atomic Persistence Layer"]
+        DISK_Staging["Temporary Staging\n(.staging/<job_id>/)"]
+        DISK_Atomic["write_atomic() & fs::rename()\n(Atomic Commit)"]
+        DISK_Final["Final Storage\n(map_storage/images/<id>/ &\nmap_storage/layers/<id>.json)"]
+    end
+
+    %% INTERACTIONS
+    UI_Aoi -->|"Form Draft / Edit"| UI_Services
+    UI_Ortho -->|"Submit Import Job"| UI_Services
+    UI_Leaflet -.->|"Selective Click Delegated"| UI_HitTest
+    UI_HitTest -->|"Open Selected AOI Popup"| UI_Leaflet
+
+    UI_Services -->|"Invoke DTO Request"| IPC
+
+    CMD_Geo -->|"Call Pure Math"| PureGeo
+    CMD_Aoi -->|"Validate & Compute"| PureGeo
+    CMD_Aoi -->|"Atomic Save"| DISK_Atomic
+
+    CMD_Ortho -->|"Spawn Async Pipeline"| PipelineEngine
+    PIPE_OrchA --> PIPE_RAII
+    PIPE_OrchB --> PIPE_RAII
+    PIPE_RAII --> PIPE_Stream
+    PIPE_Stream --> PIPE_Adaptive
+    PIPE_Adaptive --> DISK_Staging
+    DISK_Staging -->|"Point of No Return"| DISK_Atomic
+    DISK_Atomic --> DISK_Final
+
+    DISK_Final -.->|"Loaded by MapExplorer"| UI_Leaflet
+```
