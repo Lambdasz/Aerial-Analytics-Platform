@@ -70,3 +70,8 @@ map_storage_backup/
 
 # Python virtualenvs (plugin runtimes)
 **/.venv/
+
+#neon opencode
+task.md
+opencode.json
+.neon-opencode
