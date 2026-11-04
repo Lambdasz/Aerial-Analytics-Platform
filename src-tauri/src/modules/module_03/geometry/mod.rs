@@ -1,26 +1,42 @@
-//! Modul geometri murni dan pengukuran spasial.
+//! Berkas ini adalah modul agregator dan re-export untuk submodul Geometri & Pengukuran Spasial.
+//!
+//! Submodul yang terdaftar:
+//! - `geometry_ipc_cmd`: Endpoint Tauri Command untuk pengukuran jarak, luas, dan perimeter.
+//! - `geometry_ipc_struct`: Struct DTO Request/Response untuk IPC pengukuran geometri.
+//! - `geometry_validation_logic`: Validasi murni koordinat geografis dan cincin GeoJSON.
+//! - `geospatial_projection_logic`: Algoritma murni reproyeksi koordinat (WGS84, EPSG:3857, UTM).
+//! - `haversine_distance_logic`: Formula trigonometri murni jarak lingkaran besar Haversine.
+//! - `spherical_excess_logic`: Formula matematika murni luas poligon bola dan keliling.
 
-pub mod commands;
-pub mod dto;
-pub mod haversine;
-pub mod projection;
-pub mod spherical_excess;
-pub mod validation;
+pub mod geometry_ipc_cmd;
+pub mod geometry_ipc_struct;
+pub mod geometry_validation_logic;
+pub mod geospatial_projection_logic;
+pub mod haversine_distance_logic;
+pub mod spherical_excess_logic;
 
-pub use commands::*;
-pub use dto::*;
-pub use haversine::*;
-pub use projection::*;
-pub use spherical_excess::*;
-pub use validation::*;
+pub use geometry_ipc_cmd::*;
+pub use geometry_ipc_struct::*;
+pub use geometry_validation_logic::*;
+pub use geospatial_projection_logic::*;
+pub use haversine_distance_logic::*;
+pub use spherical_excess_logic::*;
 
 pub use crate::modules::module_03::error::MapControllerError as GeometryError;
 
 // Re-export untuk kompatibilitas doctest dan kode eksisting
-pub use crate::modules::module_03::aoi::builder::create_aoi;
-pub use crate::modules::module_03::types::aoi_type::{
+pub use crate::modules::module_03::aoi::aoi_builder_logic::create_aoi;
+pub use crate::modules::module_03::aoi::aoi_entity_struct::{
     AoiFeature, AoiGeometry, AoiProperties, Coordinate, Polygon,
 };
+
+// Alias kompatibilitas internal
+pub use geometry_ipc_cmd as commands;
+pub use geometry_ipc_struct as dto;
+pub use geometry_validation_logic as validation;
+pub use geospatial_projection_logic as projection;
+pub use haversine_distance_logic as haversine;
+pub use spherical_excess_logic as spherical_excess;
 
 #[cfg(test)]
 mod tests {

@@ -1056,7 +1056,7 @@ pub fn run() {
             map_controller::photos::commands::get_photos,
             map_controller::photos::commands::import_photo,
             // Module 3 — Storage Root
-            map_controller::storage_commands::get_storage_root_path,
+            map_controller::ortho_source::commands::get_storage_root_path,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,
