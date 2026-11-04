@@ -1,0 +1,107 @@
+schema_version: 1
+updated_at: 2026-11-04T23:54:04.054678192+00:00
+plugins:
+  rgb-vegetation-detection:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T00:25:46.850138585+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:30.545758432+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  tree-detection-counting:
+    version: 0.1.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T00:10:52.166368646+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:30.467688248+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  tree-canopy-density:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T00:25:39.034091630+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:31.910814797+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  vegetation-condition-analysis:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T05:58:59.047708606+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:30.475734780+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  rgb-landcover-classification:
+    version: 0.1.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T04:38:18.078580143+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:31.905122853+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  test-update-health:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-11-04T23:54:04.054688773+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-11-04T23:54:04.054690747+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  template-analysis-plugin:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T00:25:51.965746702+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:31.985121501+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null
+  vegetation-coverage-analytics:
+    version: 1.0.0
+    source: builtin
+    enabled: true
+    installed_at: 2026-10-29T04:50:31.946634066+00:00
+    last_healthcheck:
+      status: healthy
+      checked_at: 2026-10-29T11:12:30.523811616+00:00
+      message: null
+    custom_parameters: {}
+    stats:
+      execution_count: 0
+      last_executed_at: null

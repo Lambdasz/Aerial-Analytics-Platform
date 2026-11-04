@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
+import yaml
+
 from treedet.detection import detect_trees
 from treedet.errors import PluginExecutionError, UnsupportedFormatError
 from treedet.models import BBox, DetectionInput
@@ -27,8 +29,8 @@ def fake_detector(image_path, model_config):
 
 class PipelineTest(unittest.TestCase):
     def setUp(self) -> None:
-        with open(os.path.join(PLUGIN_DIR, "execution_payload.json"), encoding="utf-8") as f:
-            self.payload = json.load(f)
+        with open(os.path.join(PLUGIN_DIR, "execution_payload.yaml"), encoding="utf-8") as f:
+            self.payload = yaml.safe_load(f)
         self.tmp = tempfile.TemporaryDirectory()
         self.image = os.path.join(self.tmp.name, "DJI_0042.JPG")
         with open(self.image, "wb") as f:

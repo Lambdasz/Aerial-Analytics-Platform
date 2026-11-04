@@ -2,7 +2,7 @@
 //!
 //! Cara pakai:
 //!     main --healthcheck
-//!     main --input payload.json --output hasil.json
+//!     main --input payload.yaml --output hasil.yaml
 
 use std::process::ExitCode;
 
@@ -13,7 +13,7 @@ Module 4 - RGB Vegetation Detection Plugin
 
 Usage:
     main --healthcheck                          Cek plugin siap jalan
-    main --input <payload.json> --output <result.json>
+    main --input <payload.yaml> --output <result.yaml>
                                                 Mode plugin";
 
 /// Nilai argumen setelah flag tertentu.
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--healthcheck") {
-        println!("{}", healthcheck_info());
+        println!("{}", serde_yaml::to_string(&healthcheck_info()).unwrap());
         return ExitCode::SUCCESS;
     }
 

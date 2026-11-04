@@ -6,7 +6,7 @@
 //!
 //! Usage:
 //!     main --healthcheck
-//!     main --input payload.json --output result.json
+//!     main --input payload.yaml --output result.yaml
 
 use image::{DynamicImage, RgbaImage};
 use serde_json::{json, Map, Value};
@@ -635,9 +635,9 @@ pub fn write_mask_png(mask: &BinaryMask, path: &str) -> Result<()> {
         .map_err(|e| PluginError::Io(e.to_string()))
 }
 
-/// Writes pretty JSON to disk. I/O edge.
-pub fn write_json_file(path: &Path, value: &Value) -> Result<()> {
-    let text = serde_json::to_string_pretty(value).map_err(|e| PluginError::Io(e.to_string()))?;
+/// Writes pretty YAML to disk. I/O edge.
+pub fn write_value_file(path: &Path, value: &Value) -> Result<()> {
+    let text = serde_yaml::to_string(&value).map_err(|e| PluginError::Io(e.to_string()))?;
     fs::write(path, text).map_err(|e| PluginError::Io(e.to_string()))
 }
 
@@ -645,7 +645,7 @@ pub fn write_json_file(path: &Path, value: &Value) -> Result<()> {
 
 /// Manifest identity for the healthcheck payload.
 pub fn load_manifest_metadata() -> (String, String) {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.json");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.yaml");
     let fallback = (
         "vegetation-coverage-analytics".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
@@ -653,7 +653,7 @@ pub fn load_manifest_metadata() -> (String, String) {
     let Ok(text) = fs::read_to_string(manifest) else {
         return fallback;
     };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
         return fallback;
     };
     (
@@ -1140,7 +1140,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
     let payload = fs::read_to_string(input_path)
         .map_err(|e| PluginError::Io(e.to_string()))
         .and_then(|s| {
-            serde_json::from_str::<Value>(&s).map_err(|e| PluginError::Value(e.to_string()))
+            serde_yaml::from_str::<Value>(&s).map_err(|e| PluginError::Value(e.to_string()))
         });
 
     let outcome = payload

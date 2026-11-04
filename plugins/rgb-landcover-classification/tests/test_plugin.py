@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import yaml
 import subprocess
 import sys
 import tempfile
@@ -63,7 +64,7 @@ def make_scene(seed: int = 0):
 def validate(instance, schema_name):
     if SCHEMA_DIR and jsonschema:
         with open(os.path.join(SCHEMA_DIR, schema_name), encoding="utf-8") as fh:
-            jsonschema.Draft7Validator(json.load(fh)).validate(instance)
+            jsonschema.Draft7Validator(yaml.safe_load(fh)).validate(instance)
 
 
 class PluginTestBase(unittest.TestCase):
@@ -91,16 +92,16 @@ class PluginTestBase(unittest.TestCase):
         out_dir = os.path.join(self.tmp, name)
         os.makedirs(out_dir, exist_ok=True)
         payload = dict(payload, output_dir=out_dir)
-        inp, outp = os.path.join(out_dir, "payload.json"), os.path.join(out_dir, "result.json")
+        inp, outp = os.path.join(out_dir, "payload.yaml"), os.path.join(out_dir, "result.yaml")
         with open(inp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
+            yaml.dump(payload, fh)
         if validate_payload:
-            validate(payload, "execution_payload.schema.json")
+            validate(payload, "execution_payload.schema.yaml")
         proc = subprocess.run([sys.executable, os.path.join(plugin_dir, "main.py"), "--input", inp, "--output", outp],
                               capture_output=True, text=True, timeout=300)
         with open(outp, encoding="utf-8") as fh:
-            result = json.load(fh)
-        validate(result, "execution_result.schema.json")
+            result = yaml.safe_load(fh)
+        validate(result, "execution_result.schema.yaml")
         return proc, result
 
     def payload(self, image, mime="image/jpeg", **extra):
@@ -143,9 +144,9 @@ class TestEndToEnd(PluginTestBase):
         self.assertNotIn("bounds", res["artifacts"]["mask_raster"])
         for art in res["artifacts"].values():
             self.assertTrue(os.path.isfile(art["file_path"]), art)
-        # metrik harus persis sama dengan yang dideklarasikan di outputs.json
-        with open(os.path.join(ROOT, "outputs.json"), encoding="utf-8") as fh:
-            declared = json.load(fh)
+        # metrik harus persis sama dengan yang dideklarasikan di outputs.yaml
+        with open(os.path.join(ROOT, "outputs.yaml"), encoding="utf-8") as fh:
+            declared = yaml.safe_load(fh)
         self.assertEqual(set(m), {x["key"] for x in declared["metrics"]})
         rgba = np.asarray(Image.open(res["artifacts"]["mask_raster"]["file_path"]))
         self.assertEqual(rgba.shape, (SIZE, SIZE, 4))
