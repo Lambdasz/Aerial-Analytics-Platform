@@ -75,3 +75,4 @@ map_storage_backup/
 task.md
 opencode.json
 .neon-opencode
+*.pt

@@ -1,5 +1,6 @@
 //! Modul atomic untuk citra ortomosaik dan raster JPG/PNG.
 
+pub mod clipper;
 pub mod commands;
 pub mod constants;
 pub mod exif_reader;
@@ -15,6 +16,7 @@ pub mod streaming_resampler;
 pub mod types;
 pub mod world_file_reader;
 
+pub use clipper::*;
 pub use commands::*;
 pub use constants::*;
 pub use exif_reader::*;

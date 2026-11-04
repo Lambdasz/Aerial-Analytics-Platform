@@ -73,6 +73,7 @@ export interface PluginDetailsDto {
   outputs: Record<string, unknown>;
   install_path: string;
   enabled: boolean;
+  custom_parameters?: Record<string, unknown>;
 }
 
 export interface HealthStatusDto {

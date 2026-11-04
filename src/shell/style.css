@@ -10,6 +10,8 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  background-color: #eceef0;
+  color: #1b1f27;
 }
 
 .app-shell .app-shell_navbar {
@@ -17,10 +19,10 @@
   height: 64px;
   box-sizing: border-box;
   padding: 0 33px;
-  background-color: #1c2026;
-  color: #e5e9f9;
+  background-color: #f1f2f4;
+  color: #1b1f27;
   box-shadow: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 0;
   font-family: "Poppins", sans-serif;
 }
 
@@ -46,36 +48,59 @@
 /* Sidebar */
 
 .app-shell_sidebar {
-  flex: 0 0 290px;
-  width: 290px;
+  flex: 0 0 260px;
+  width: 260px;
+  box-sizing: border-box;
+  padding: 0 16px;
   overflow-y: auto;
-  background-color: #252a31;
-  color: #e5e9f9;
+  background-color: #f8f8f9;
+  color: #1b1f27;
+  border-right: 1px solid rgba(17, 20, 24, 0.06);
   font-family: "DM Sans", sans-serif;
 }
 
 .app-shell_brand {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.25em;
-  height: 130px;
+  gap: 12px;
+  height: 96px;
   box-sizing: border-box;
-  padding-top: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0 8px;
   font-family: "Poppins", sans-serif;
-  font-size: 26px;
+  font-size: 20px;
   font-weight: 400;
   line-height: 1;
+}
+
+.app-shell_brand-text {
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
 }
 
 .app-shell_brand-bold {
   font-weight: 600;
 }
 
+.app-shell_logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #1b1f27;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
 .app-shell_menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin: 0;
-  padding: 28px 0 0;
+  padding: 8px 0 0;
   list-style: none;
 }
 
@@ -85,20 +110,25 @@
   align-items: center;
   gap: 12px;
   width: 100%;
-  height: 56px;
-  padding: 0 0 0 33px;
+  height: 46px;
+  padding: 0 14px;
   border: 0;
+  border-radius: 10px;
   background: transparent;
-  color: inherit;
+  color: #8a919c;
   font-family: inherit;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .app-shell_item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(17, 20, 24, 0.04);
+  color: #1b1f27;
 }
 
 .app-shell_item:focus,
@@ -106,28 +136,27 @@
   outline: none;
 }
 
-.app-shell_item--active {
-  font-weight: 700;
-  background-color: #33445a59;
+.app-shell_item:focus-visible {
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.35);
 }
 
-.app-shell_item--active::after {
-  content: "";
-  position: absolute;
-  top: 10px;
-  right: 0;
-  width: 5px;
-  height: 36px;
-  border-radius: 2px;
-  background: #2279ea;
-  z-index: 1000;
+.app-shell_item--active,
+.app-shell_item--active:hover {
+  font-weight: 700;
+  background-color: #e2edff;
+  color: #1f6feb;
 }
 
 .app-shell_icon {
   display: inline-flex;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  /* placeholder outline icon; follows the text color */
+  border: 1.6px solid currentColor;
+  border-radius: 6px;
+  opacity: 0.8;
 }
 
 /* Content */
@@ -140,7 +169,8 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  padding: 20px 24px 48px;
+  padding: 24px 28px 48px;
+  background-color: #f1f2f4;
 }
 
 .app-shell_content > * {
@@ -191,9 +221,10 @@
   flex-direction: column;
   min-width: 0;
   min-height: 300px;
-  border: 1px solid rgba(17, 20, 24, 0.15);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 14px;
   background: #ffffff;
+  box-shadow: 0 4px 16px rgba(17, 20, 24, 0.05);
 }
 
 .example_card-header {
@@ -202,8 +233,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 4px 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(17, 20, 24, 0.1);
+  padding: 16px 20px 8px;
+  border-bottom: 0;
 }
 
 .example_card-title {
@@ -213,10 +244,10 @@
 
 .example_card-path {
   max-width: 100%;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #f6f7f9;
-  color: #5f6b7c;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #6b7482;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -225,7 +256,7 @@
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 12px;
+  padding: 12px 16px 16px;
 }
 
 @media (min-width: 1100px) {

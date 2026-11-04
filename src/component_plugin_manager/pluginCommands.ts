@@ -47,6 +47,10 @@ export async function getInstalledPlugins(): Promise<PluginSummary[]> {
   return invoke<PluginSummary[]>("get_installed_plugins");
 }
 
+export async function reloadPlugins(): Promise<PluginSummary[]> {
+  return invoke<PluginSummary[]>("reload_plugins");
+}
+
 export async function getPluginDetails(pluginId: string): Promise<PluginDetailsDto> {
   return invoke<PluginDetailsDto>("get_plugin_details", { pluginId });
 }
