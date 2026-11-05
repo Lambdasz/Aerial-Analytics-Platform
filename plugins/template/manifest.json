@@ -1,0 +1,33 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/plugin.v1.json",
+  "manifest_version": 1,
+  "metadata": {
+    "id": "template-analysis-plugin",
+    "name": "Template Analysis Plugin",
+    "version": "1.0.0",
+    "author": "PBL Team 2026",
+    "license": "MIT",
+    "description": "Canonical starter template for analytical plugins in the Aerial Analytics Platform.",
+    "category": "vegetation",
+    "tags": ["rgb", "vegetation", "indices"],
+    "min_core_version": "0.1.0"
+  },
+  "runtime": {
+    "type": "python",
+    "min_python_version": "3.10",
+    "entrypoint": "main.py",
+    "dependencies_file": "requirements.txt",
+    "healthcheck_flag": "--healthcheck"
+  },
+  "parameters": "parameters.json",
+  "inputs": "inputs.json",
+  "outputs": "outputs.json",
+  "execution": {
+    "timeout_seconds": 120,
+    "concurrency": "sequential",
+    "gpu": {
+      "support": "none",
+      "driver": null
+    }
+  }
+}

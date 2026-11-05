@@ -21,12 +21,12 @@ and computes their density.
 
 ```text
 plugins/tree_detection/
-├── manifest.yaml            # Contract 1: plugin identity & runtime
-├── parameters.yaml          # Contract 2: user-adjustable parameters (Module 2 form)
-├── inputs.yaml              # Contract 3: required inputs (image formats, metadata, AOI)
-├── outputs.yaml             # Contract 4: produced metrics & artifacts
-├── execution_payload.yaml   # Fixture: sample payload from the host
-├── execution_result.yaml    # Fixture: sample result written by the plugin
+├── manifest.json            # Contract 1: plugin identity & runtime
+├── parameters.json          # Contract 2: user-adjustable parameters (Module 2 form)
+├── inputs.json              # Contract 3: required inputs (image formats, metadata, AOI)
+├── outputs.json             # Contract 4: produced metrics & artifacts
+├── execution_payload.json   # Fixture: sample payload from the host
+├── execution_result.json    # Fixture: sample result written by the plugin
 ├── main.py                  # CLI entrypoint (I/O layer)
 ├── requirements.txt
 ├── CONTRACT.md              # Module 7 contract document for other modules
@@ -72,10 +72,10 @@ On Linux/macOS: `python3.10 -m venv ~/.venvs/aerial-m7 && source ~/.venvs/aerial
 python plugins/tree_detection/main.py --healthcheck
 
 # Analysis
-python plugins/tree_detection/main.py --input <execution_payload.yaml> --output <result.yaml>
+python plugins/tree_detection/main.py --input <execution_payload.json> --output <result.json>
 ```
 
-The `execution_payload.yaml` in this folder holds a placeholder image path (`/absolute/path/...`),
+The `execution_payload.json` in this folder holds a placeholder image path (`/absolute/path/...`),
 so running it as-is yields `status: "failure"` with the message `Image not found`. That is on
 purpose and shows the plugin fails cleanly without crashing. Replace `target.image_path` with a
 real image to try the success path.
@@ -119,12 +119,12 @@ detections (`0`, not an error), a threshold outside 0–1 (rejected by Pydantic)
 From the repo root:
 
 ```bash
-check-jsonschema --schemafile schemas/plugin.schema.yaml            plugins/tree_detection/manifest.yaml
-check-jsonschema --schemafile schemas/parameters.schema.yaml        plugins/tree_detection/parameters.yaml
-check-jsonschema --schemafile schemas/inputs.schema.yaml            plugins/tree_detection/inputs.yaml
-check-jsonschema --schemafile schemas/outputs.schema.yaml           plugins/tree_detection/outputs.yaml
-check-jsonschema --schemafile schemas/execution_payload.schema.yaml plugins/tree_detection/execution_payload.yaml
-check-jsonschema --schemafile schemas/execution_result.schema.yaml  plugins/tree_detection/execution_result.yaml
+check-jsonschema --schemafile schemas/plugin.schema.json            plugins/tree_detection/manifest.json
+check-jsonschema --schemafile schemas/parameters.schema.json        plugins/tree_detection/parameters.json
+check-jsonschema --schemafile schemas/inputs.schema.json            plugins/tree_detection/inputs.json
+check-jsonschema --schemafile schemas/outputs.schema.json           plugins/tree_detection/outputs.json
+check-jsonschema --schemafile schemas/execution_payload.schema.json plugins/tree_detection/execution_payload.json
+check-jsonschema --schemafile schemas/execution_result.schema.json  plugins/tree_detection/execution_result.json
 ```
 
 ## Design (functional programming)
@@ -146,9 +146,9 @@ check-jsonschema --schemafile schemas/execution_result.schema.yaml  plugins/tree
 1. Write a `(image_path: str, model_config: Mapping) -> Sequence[tuple[BBox, float]]` function in
    `treedet/detectors.py`. It returns crown boxes in pixels together with a 0–1 confidence.
 2. Register it in `DETECTORS`, e.g. `"opencv_watershed": opencv_watershed_detector`.
-3. Add its name to the `options` of the `detector` parameter in `parameters.yaml`.
+3. Add its name to the `options` of the `detector` parameter in `parameters.json`.
 4. Add its packages to `requirements.txt` and to `check_dependencies()` in `main.py`.
-5. If it uses a GPU, adjust `execution.gpu` in `manifest.yaml`.
+5. If it uses a GPU, adjust `execution.gpu` in `manifest.json`.
 
 The detector handles tiling (the size is in `model_config["tile_size"]`) and inference.
 Cross-tile deduplication, confidence filtering, georeferencing, and counting are already handled

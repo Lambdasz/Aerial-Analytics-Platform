@@ -119,7 +119,7 @@ export function PluginManager() {
   /**
    * Re-runs every plugin healthcheck once the list is loaded.
    *
-   * The backend persists the last healthcheck in `plugin_state.yaml` and
+   * The backend persists the last healthcheck in `plugin_state.json` and
    * never re-evaluates at startup, so a stale "unhealthy" stays on screen
    * forever until someone clicks the button. Checking on load keeps the
    * summary honest and surfaces genuinely broken plugins immediately.

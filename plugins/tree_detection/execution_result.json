@@ -1,0 +1,25 @@
+{
+  "execution_id": "exec_20260921_m7_001",
+  "status": "success",
+  "execution_time_ms": 2310,
+  "metrics": {
+    "tree_count": 42,
+    "avg_confidence": 0.81,
+    "removed_low_confidence": 7,
+    "trees_outside_aoi": 5,
+    "analysis_area_m2": 83470.2,
+    "tree_density": 5.03,
+    "tree_density_unit": "per_ha"
+  },
+  "artifacts": {
+    "tree_points": {
+      "file_path": "/absolute/path/to/project/runs/exec_20260921_m7_001/exec_20260921_m7_001_tree_points.geojson",
+      "format": "application/geo+json"
+    },
+    "plugin_output": {
+      "file_path": "/absolute/path/to/project/runs/exec_20260921_m7_001/exec_20260921_m7_001_plugin_output.json",
+      "format": "application/json"
+    }
+  },
+  "error": null
+}

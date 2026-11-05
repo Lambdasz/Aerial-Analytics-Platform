@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-/// Analytical execution result parsed from `result.yaml` written by the plugin.
+/// Analytical execution result parsed from `result.json` written by the plugin.
 ///
 /// Retained as a compatibility contract for Module 9 (`plot_api.rs`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -95,16 +95,16 @@ pub struct RunHistoryEntry {
 }
 
 pub fn parse_execution_result(output_dir: &Path) -> Result<ExecutionResult, String> {
-    let result_file = output_dir.join("result.yaml");
+    let result_file = output_dir.join("result.json");
     if !result_file.exists() {
-        return Err("result.yaml not found in output directory.".to_string());
+        return Err("result.json not found in output directory.".to_string());
     }
 
     let content = fs::read_to_string(&result_file)
-        .map_err(|e| format!("Failed to read result.yaml: {}", e))?;
+        .map_err(|e| format!("Failed to read result.json: {}", e))?;
 
-    let result: ExecutionResult = serde_yaml::from_str(&content)
-        .map_err(|e| format!("result.yaml contains invalid YAML: {}", e))?;
+    let result: ExecutionResult = serde_json::from_str(&content)
+        .map_err(|e| format!("result.json contains invalid JSON: {}", e))?;
 
     if result.status == "error" {
         let msg = result
@@ -120,17 +120,17 @@ pub fn record_run_history(history_file_path: &Path, entry: RunHistoryEntry) -> R
     let mut history: Vec<RunHistoryEntry> = if history_file_path.exists() {
         let content = fs::read_to_string(history_file_path)
             .map_err(|e| format!("Failed to read run history: {}", e))?;
-        serde_yaml::from_str(&content).unwrap_or_else(|_| Vec::new())
+        serde_json::from_str(&content).unwrap_or_else(|_| Vec::new())
     } else {
         Vec::new()
     };
 
     history.push(entry);
 
-    let yaml_data = serde_yaml::to_string(&history)
-        .map_err(|e| format!("Failed to serialise run history YAML: {}", e))?;
+    let json_data = serde_json::to_string_pretty(&history)
+        .map_err(|e| format!("Failed to serialise run history JSON: {}", e))?;
 
-    fs::write(history_file_path, yaml_data)
+    fs::write(history_file_path, json_data)
         .map_err(|e| format!("Failed to write run history file: {}", e))?;
 
     Ok(())

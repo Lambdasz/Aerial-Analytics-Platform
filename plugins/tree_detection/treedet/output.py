@@ -13,7 +13,7 @@ from .models import (
     TreeDetection,
 )
 
-# PluginOutput.status -> execution_result.schema.yaml status
+# PluginOutput.status -> execution_result.schema.json status
 EXECUTION_STATUS = {"success": "success", "partial": "warning", "failed": "failure"}
 
 
@@ -57,13 +57,13 @@ def to_execution_result(
     execution_time_ms: int,
     artifact_paths: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Translate ``PluginOutput`` into the platform's ``execution_result.yaml`` shape.
+    """Translate ``PluginOutput`` into the platform's ``execution_result.json`` shape.
 
-    ``artifact_paths`` maps artifact keys from outputs.yaml to absolute file paths.
+    ``artifact_paths`` maps artifact keys from outputs.json to absolute file paths.
     """
     stats = output.statistics
     warnings = output.metadata.get("warnings") or []
-    formats = {"tree_points": "application/geo+json", "plugin_output": "application/yaml"}
+    formats = {"tree_points": "application/geo+json", "plugin_output": "application/json"}
     return {
         "execution_id": execution_id,
         "status": EXECUTION_STATUS[output.status],

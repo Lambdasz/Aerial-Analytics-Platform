@@ -2,8 +2,8 @@
 
 ``parse_payload`` and ``analyze`` are pure; ``main.py`` does the I/O around them:
 
-    payload.yaml --parse_payload--> RunRequest --detect_trees--> DetectionOutput
-                 --analyze--> PluginOutput --to_execution_result--> result.yaml
+    payload.json --parse_payload--> RunRequest --detect_trees--> DetectionOutput
+                 --analyze--> PluginOutput --to_execution_result--> result.json
 """
 
 import os
@@ -31,7 +31,7 @@ from .output import build_plugin_output
 
 
 class RunParameters(BaseModel):
-    """User parameters from parameters.yaml (unknown keys are ignored)."""
+    """User parameters from parameters.json (unknown keys are ignored)."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -98,7 +98,7 @@ def model_config_of(parameters: RunParameters) -> dict[str, Any]:
     """The ``model_config`` argument for ``detect_trees``.
 
     Every parameter a detector needs must be listed here: a parameter that exists in
-    parameters.yaml but not in this dict reaches the user's form and is then silently
+    parameters.json but not in this dict reaches the user's form and is then silently
     ignored, which looks like the model malfunctioning.
     """
     return {

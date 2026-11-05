@@ -78,10 +78,10 @@ export const PluginContractModal: React.FC<PluginContractModalProps> = ({
   const [showRawJson, setShowRawJson] = useState<boolean>(false);
 
   const groupOptions = [
-    { value: "metadata", label: "Metadata (manifest.yaml)" },
-    { value: "parameter", label: "Parameter (parameters.yaml)" },
-    { value: "input", label: "Input (inputs.yaml)" },
-    { value: "output", label: "Output (outputs.yaml)" },
+    { value: "metadata", label: "Metadata (manifest.json)" },
+    { value: "parameter", label: "Parameter (parameters.json)" },
+    { value: "input", label: "Input (inputs.json)" },
+    { value: "output", label: "Output (outputs.json)" },
   ];
 
   // Helper to extract parameters array safely
@@ -252,7 +252,7 @@ export const PluginContractModal: React.FC<PluginContractModalProps> = ({
         <NonIdealState
           icon="document"
           title="No Parameters Defined"
-          description="This plugin does not declare any configurable parameters in parameters.yaml."
+          description="This plugin does not declare any configurable parameters in parameters.json."
         />
       );
     }
@@ -434,7 +434,7 @@ export const PluginContractModal: React.FC<PluginContractModalProps> = ({
         <NonIdealState
           icon="document"
           title="No Outputs Defined"
-          description="This plugin does not declare any metrics or artifacts in outputs.yaml."
+          description="This plugin does not declare any metrics or artifacts in outputs.json."
         />
       );
     }

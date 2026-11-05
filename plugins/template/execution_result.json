@@ -1,0 +1,24 @@
+{
+  "execution_id": "exec_20260914_001",
+  "status": "success",
+  "execution_time_ms": 1420,
+
+  "metrics": {
+    "primary_metric": 68.45,
+    "count_metric": 128
+  },
+
+  "artifacts": {
+    "mask_raster": {
+      "file_path": "/absolute/path/to/cache/mask_dji_0042.png",
+      "format": "image/png",
+      "bounds": [116.8523, -1.246, 116.855, -1.2435]
+    },
+    "boundary_vector": {
+      "file_path": "/absolute/path/to/cache/detections_0042.geojson",
+      "format": "application/geo+json"
+    }
+  },
+
+  "error": null
+}

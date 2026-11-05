@@ -15,25 +15,25 @@ Module 2 as a **separate process**, following the `plugins/template` template:
 
 ```text
 python main.py --healthcheck                                  → exit 0 healthy / 1 unhealthy
-python main.py --input <payload.yaml> --output <result.yaml>  → exit 0 finished / 1 failed
+python main.py --input <payload.json> --output <result.json>  → exit 0 finished / 1 failed
 ```
 
-All data is exchanged through YAML files validated against the schemas in `schemas/`:
+All data is exchanged through JSON files validated against the schemas in `schemas/`:
 
 ```text
 M1 (image+metadata) ──┐
-M3 (AOI) ─────────────┼─► M2 builds execution_payload.yaml ─► Module 7 ─► execution_result.yaml
+M3 (AOI) ─────────────┼─► M2 builds execution_payload.json ─► Module 7 ─► execution_result.json
                       │                                               ├─► <id>_tree_points.geojson
                       │                                               └─► <id>_plugin_output.json
                       └──────────────────── M3 / M9 / M10 / M11 read the results through M2
 ```
 
 If the plugin fails (missing image, broken GeoJSON, and so on), it **still** writes
-`result.yaml` with `status: "failure"` and a message in `error`, then exits with code 1.
+`result.json` with `status: "failure"` and a message in `error`, then exits with code 1.
 
 ## 2. Input (from Modules 1, 2, and 3)
 
-Follows `schemas/execution_payload.schema.yaml`. Fields used by Module 7:
+Follows `schemas/execution_payload.schema.json`. Fields used by Module 7:
 
 | Payload field                         | Required | Source    | Used for                                                                 |
 | :------------------------------------ | :------: | :-------- | :----------------------------------------------------------------------- |
@@ -51,7 +51,7 @@ Follows `schemas/execution_payload.schema.yaml`. Fields used by Module 7:
 
 \* If `gsd_m` is missing, the `gsd_cm` parameter is used (default 3 cm/px).
 
-**Parameters** (`parameters.yaml`, rendered by Module 2 as a form):
+**Parameters** (`parameters.json`, rendered by Module 2 as a form):
 
 | `name`                  | Type        | Default            | Description                                               |
 | :---------------------- | :---------- | :----------------- | :-------------------------------------------------------- |
@@ -76,7 +76,7 @@ not read `tile_size`).
 
 ## 3. Output
 
-### 3.1 `execution_result.yaml` (read by Module 2, then passed on to other modules)
+### 3.1 `execution_result.json` (read by Module 2, then passed on to other modules)
 
 `status`: `success`, `warning` (finished but with notes, e.g. the `stub` detector), or `failure`.
 
@@ -177,11 +177,11 @@ Matches the `PluginOutput` model in the Module 7 progress report (`treedet/model
 
 | Module                | What it uses                                                                            | Notes                                                                                                                                                                                                                                                                                                                                        |
 | :-------------------- | :-------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **M2** Plugin Manager | The CLI in section 1; `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` | all pass `check-jsonschema` validation against `schemas/`                                                                                                                                                                                                                                                                                    |
+| **M2** Plugin Manager | The CLI in section 1; `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` | all pass `check-jsonschema` validation against `schemas/`                                                                                                                                                                                                                                                                                    |
 | **M3** Map Explorer   | the `tree_points` artifact                                                              | layer_hint `point_marker`. The M3 example in `docs/examples/spatial-result.example.json` uses the `spatial_results` format; M3 only needs to turn each `Feature` into `{source, geometry, properties}` with `source = "tree-detection-counting"`. `height_est_m` is **not** available because a single RGB image gives no height information |
 | **M9** Area & Plot    | `tree_points` or `plugin_output.detections[].center`                                    | count per plot with point-in-polygon against M9's `Plot.rings`, or call `plot_summaries` with the full plot list. Alternative: M2 runs Module 7 with `aoi` = one plot, and `tree_count` = the trees in that plot                                                                                                                             |
 | **M10** Temporal      | the `tree_count` metric from two executions (different dates)                           | compare only if `confidence_threshold`, `detector`, and the AOI are the same; `compare_plot_summaries` sums the differences per `plot_id`                                                                                                                                                                                                    |
-| **M11** Dashboard     | all `metrics` + `plugin_output.statistics`                                              | labels & units are available in `outputs.yaml`                                                                                                                                                                                                                                                                                               |
+| **M11** Dashboard     | all `metrics` + `plugin_output.statistics`                                              | labels & units are available in `outputs.json`                                                                                                                                                                                                                                                                                               |
 
 ## 5. Public functions inside the plugin
 
@@ -204,9 +204,9 @@ Module 7 progress report. All of them are pure, except `detect_trees`.
 
 Differences from the progress report, with the reasons:
 
-- `manifest.yaml` uses the official `schemas/plugin.schema.yaml` format. That schema rejects the
+- `manifest.json` uses the official `schemas/plugin.schema.json` format. That schema rejects the
   `input_schema`, `output_schema`, and `config` fields from the report's appendix, so their
-  contents moved to `inputs.yaml`, `outputs.yaml`, and `parameters.yaml`.
+  contents moved to `inputs.json`, `outputs.json`, and `parameters.json`.
 - `count_trees` takes `image_id` and `counted_at` as arguments. Without them, `image_id` cannot be
   known when there are no detections, and reading the clock inside the function makes it impure.
 - `TreeDetection.center` and `area_m2` are `null` before Feature 4 runs, because the detector only
@@ -233,5 +233,5 @@ Differences from the progress report, with the reasons:
 | 0.5.0   | 2026-11-01 | `deepforest` detector (released model or a fine-tuned checkpoint via `model_path`)                                |
 | 0.4.0   | 2026-10-21 | M9/M10 connectors (`plot_summaries`, `compare_plot_summaries`, `tree_points_of`); metrics and artifacts unchanged |
 | 0.3.0   | 2026-10-21 | `deeplabv3plus` detector with `model_path`, `backbone`, `probability_threshold`                                   |
-| 0.2.0   | 2026-10-18 | `opencv_watershed` becomes the default detector; `manifest.yaml` bumped to 0.2.0                                  |
+| 0.2.0   | 2026-10-18 | `opencv_watershed` becomes the default detector; `manifest.json` bumped to 0.2.0                                  |
 | 0.1.0   | 2026-09-21 | Initial draft: plugin skeleton, input/output contract, `stub` detector                                            |

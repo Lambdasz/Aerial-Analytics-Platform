@@ -1,0 +1,32 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "min_height",
+      "label": "Minimum Canopy Height",
+      "type": "number",
+      "default": 2.0,
+      "min": 0.5,
+      "max": 50.0,
+      "step": 0.5,
+      "description": "Minimum canopy threshold to distinguish trees from low shrubbery."
+    },
+    {
+      "name": "canopy_threshold",
+      "label": "Canopy Density Cutoff",
+      "type": "number",
+      "default": 0.4,
+      "min": 0.1,
+      "max": 0.9,
+      "step": 0.05,
+      "description": "Index cutoff threshold for canopy boundary classification."
+    },
+    {
+      "name": "export_polygons",
+      "label": "Export Vector Polygons",
+      "type": "boolean",
+      "default": true,
+      "description": "Generate GeoJSON vector boundaries around detected canopy clusters."
+    }
+  ]
+}

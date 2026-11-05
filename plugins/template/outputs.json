@@ -1,0 +1,47 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/outputs.v1.json",
+  "metrics": [
+    {
+      "key": "primary_metric",
+      "label": "Primary Coverage",
+      "type": "float",
+      "unit": "%",
+      "description": "Calculated coverage percentage over analyzed region."
+    },
+    {
+      "key": "count_metric",
+      "label": "Detected Count",
+      "type": "integer",
+      "unit": "items",
+      "description": "Total discrete entities detected."
+    }
+  ],
+  "artifacts": [
+    {
+      "key": "mask_raster",
+      "label": "Classification Raster Mask",
+      "type": "raster",
+      "format": "image/png",
+      "optional": false,
+      "coordinate_system": "pixel",
+      "layer_hint": {
+        "layer_type": "raster_overlay",
+        "default_opacity": 0.6,
+        "color_palette": "Greens"
+      }
+    },
+    {
+      "key": "boundary_vector",
+      "label": "Vector Detections / Boundaries",
+      "type": "vector",
+      "format": "application/geo+json",
+      "optional": true,
+      "coordinate_system": "crs",
+      "layer_hint": {
+        "layer_type": "polygon_boundary",
+        "stroke_color": "#2185d0",
+        "fill_opacity": 0.2
+      }
+    }
+  ]
+}

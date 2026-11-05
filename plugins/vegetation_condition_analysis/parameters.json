@@ -1,0 +1,137 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "mask_source",
+      "label": "Canopy Mask Source",
+      "type": "select",
+      "options": ["auto", "file"],
+      "default": "auto",
+      "description": "'auto' isolates canopy from the image with ExG thresholding; 'file' reads the mask_path produced by the Module 4 plugin."
+    },
+    {
+      "name": "mask_path",
+      "label": "Canopy Mask File",
+      "type": "string",
+      "default": "",
+      "description": "Absolute path to a vegetation mask PNG (white = canopy). Required when mask_source is 'file'; must match the image dimensions."
+    },
+    {
+      "name": "exg_threshold",
+      "label": "ExG Canopy Threshold",
+      "type": "number",
+      "default": 0.04,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Excess-green threshold for the automatic canopy mask."
+    },
+    {
+      "name": "min_brightness",
+      "label": "Minimum Brightness",
+      "type": "number",
+      "default": 0.08,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Luminance below this is treated as shadow, not canopy (auto mask only)."
+    },
+    {
+      "name": "max_brightness",
+      "label": "Maximum Brightness",
+      "type": "number",
+      "default": 0.95,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Luminance above this is treated as glare or cloud, not canopy (auto mask only)."
+    },
+    {
+      "name": "threshold_vigorous",
+      "label": "Vigorous VARI Threshold",
+      "type": "number",
+      "default": 0.25,
+      "min": -1.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Canopy pixels with VARI at or above this are classed vigorous."
+    },
+    {
+      "name": "threshold_moderate",
+      "label": "Moderate VARI Threshold",
+      "type": "number",
+      "default": 0.05,
+      "min": -1.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Canopy pixels at or above this (but below vigorous) are moderate stress; lower values are severe stress."
+    },
+    {
+      "name": "yellowing_hue_min",
+      "label": "Yellowing Hue Min",
+      "type": "number",
+      "default": 50.0,
+      "min": 0.0,
+      "max": 360.0,
+      "step": 1.0,
+      "description": "Lower bound of the HSL hue window that marks chlorosis."
+    },
+    {
+      "name": "yellowing_hue_max",
+      "label": "Yellowing Hue Max",
+      "type": "number",
+      "default": 75.0,
+      "min": 0.0,
+      "max": 360.0,
+      "step": 1.0,
+      "description": "Upper bound of the chlorosis hue window."
+    },
+    {
+      "name": "yellowing_sat_min",
+      "label": "Yellowing Saturation Min",
+      "type": "number",
+      "default": 0.2,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Minimum saturation for a yellow pixel to count as chlorotic."
+    },
+    {
+      "name": "browning_min_rbvi",
+      "label": "Browning RBVI Threshold",
+      "type": "number",
+      "default": 0.15,
+      "min": -1.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Minimum Red-Blue Vegetation Index for necrotic foliage."
+    },
+    {
+      "name": "browning_r_g_ratio",
+      "label": "Browning R/G Ratio",
+      "type": "number",
+      "default": 0.9,
+      "min": 0.0,
+      "max": 3.0,
+      "step": 0.05,
+      "description": "Red channel must exceed this multiple of green for browning."
+    },
+    {
+      "name": "grid_size",
+      "label": "Condition Grid Size",
+      "type": "number",
+      "default": 4,
+      "min": 1,
+      "max": 32,
+      "step": 1,
+      "description": "Zonation divides the image into grid_size × grid_size cells and reports condition per cell."
+    },
+    {
+      "name": "plots",
+      "label": "Plots (JSON)",
+      "type": "string",
+      "default": "",
+      "description": "Optional JSON array for per-plot condition, e.g. [{\"plot_id\":\"A\",\"polygon\":[[lon,lat],...]}]."
+    }
+  ]
+}

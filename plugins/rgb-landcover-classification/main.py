@@ -9,8 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 PLUGIN_DIR = Path(__file__).resolve().parent
 DEFAULT_CLASSES = [
     {"id": 1, "name": "vegetation", "color": "#2E7D32"},
@@ -24,7 +22,7 @@ SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png", "image/tiff"}
 
 
 def load_manifest() -> dict:
-    return yaml.safe_load((PLUGIN_DIR / "manifest.yaml").read_text(encoding="utf-8"))
+    return json.loads((PLUGIN_DIR / "manifest.json").read_text(encoding="utf-8"))
 
 
 def validate_parameters(raw: dict) -> dict:
@@ -70,7 +68,7 @@ def parse_classes(raw: str) -> list[dict]:
 
 def report_progress(job_id: str, percent: int, stage: str, stream=sys.stdout) -> None:
     event = {"job_id": job_id, "percent": max(0, min(100, int(percent))), "stage": stage}
-    print(f"PROGRESS:{yaml.dump(event, default_flow_style=True).strip()}", file=stream, flush=True)
+    print(f"PROGRESS:{json.dumps(event, separators=(',', ':'))}", file=stream, flush=True)
 
 
 def _point_in_polygon(x: float, y: float, polygon: list[list[float]]) -> bool:
@@ -187,7 +185,7 @@ def georeference_boundary(boundary: dict, georeference: dict, width: int, height
 
 def healthcheck() -> int:
     manifest = load_manifest()
-    model_spec = yaml.safe_load((PLUGIN_DIR / "model.yaml").read_text(encoding="utf-8"))
+    model_spec = json.loads((PLUGIN_DIR / "model.json").read_text(encoding="utf-8"))
     details = {"model_family": model_spec["family"], "supported_backbones": model_spec["supported_backbones"]}
     missing = []
     for module in ("torch", "torchvision", "PIL"):
@@ -204,13 +202,13 @@ def healthcheck() -> int:
         "details": details,
         "error": None if not missing else "Missing dependencies: " + ", ".join(missing),
     }
-    print(yaml.dump(info))
+    print(json.dumps(info))
     return 0 if not missing else 1
 
 
 def _write_failure(path: Path, execution_id: str, message: str) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.dump({"execution_id": execution_id, "status": "failure", "execution_time_ms": 0, "metrics": {}, "artifacts": {}, "error": message}), encoding="utf-8")
+    path.write_text(json.dumps({"execution_id": execution_id, "status": "failure", "execution_time_ms": 0, "metrics": {}, "artifacts": {}, "error": message}, indent=2), encoding="utf-8")
     print(message, file=sys.stderr)
     return 1
 
@@ -218,7 +216,7 @@ def _write_failure(path: Path, execution_id: str, message: str) -> int:
 def run(input_path: Path, output_path: Path) -> int:
     started = time.perf_counter()
     try:
-        payload = yaml.safe_load(input_path.read_text(encoding="utf-8"))
+        payload = json.loads(input_path.read_text(encoding="utf-8"))
         execution_id = str(payload.get("execution_id", "unknown"))
         report_progress(execution_id, 5, "validating_input")
         target = payload["target"]
@@ -289,8 +287,8 @@ def run(input_path: Path, output_path: Path) -> int:
             "classes": per_class,
             "metrics": metrics,
         }
-        stats_path = out_dir / "class_statistics.yaml"
-        stats_path.write_text(yaml.dump(stats), encoding="utf-8")
+        stats_path = out_dir / "class_statistics.json"
+        stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
         boundary = build_boundary_geojson(values, classes, analysis_mask)
         georeference = (metadata.get("georeference") or {})
         if georeference:
@@ -304,7 +302,7 @@ def run(input_path: Path, output_path: Path) -> int:
             mask_artifact["bounds"] = georeference["bounds"]
         boundary_artifact = {"file_path": str(boundary_path.resolve()), "format": "application/geo+json"}
         result = {"execution_id": execution_id, "status": "success", "execution_time_ms": elapsed, "metrics": metrics, "artifacts": {"mask_raster": mask_artifact, "boundary_vector": boundary_artifact, "class_statistics": {"file_path": str(stats_path.resolve()), "format": "application/json"}}, "error": None}
-        output_path.write_text(yaml.dump(result), encoding="utf-8")
+        output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return 0
     except Exception as exc:
         return _write_failure(output_path, locals().get("execution_id", "unknown"), f"{type(exc).__name__}: {exc}")

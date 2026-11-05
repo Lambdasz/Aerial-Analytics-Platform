@@ -1,0 +1,23 @@
+{
+  "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
+  "parameters": [
+    {
+      "name": "method",
+      "label": "Vegetation Index Method",
+      "type": "select",
+      "options": ["ExG", "ExR", "VARI"],
+      "default": "ExG",
+      "description": "Rumus index vegetasi yang dipakai untuk menghitung nilai index per-pixel."
+    },
+    {
+      "name": "threshold_value",
+      "label": "Detection Threshold",
+      "type": "number",
+      "default": 0.1,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.01,
+      "description": "Nilai batas index: pixel dengan index di atas nilai ini dianggap vegetasi. Rentang 0.0-1.0. Nilai awal yang disarankan per method: ExG 0.10, ExR 0.00, VARI 0.03."
+    }
+  ]
+}

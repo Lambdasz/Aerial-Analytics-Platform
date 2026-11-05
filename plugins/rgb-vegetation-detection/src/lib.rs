@@ -55,18 +55,18 @@ pub fn load_manifest_metadata() -> (String, String) {
     let candidates = [
         std::env::current_dir()
             .ok()
-            .map(|d| d.join("manifest.yaml")),
+            .map(|d| d.join("manifest.json")),
         std::env::current_exe()
             .ok()
-            .and_then(|e| e.parent().map(|p| p.join("manifest.yaml"))),
-        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.yaml")),
+            .and_then(|e| e.parent().map(|p| p.join("manifest.json"))),
+        Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.json")),
     ];
 
     let meta = candidates
         .into_iter()
         .flatten()
         .find_map(|p| fs::read_to_string(p).ok())
-        .and_then(|s| serde_yaml::from_str::<Value>(&s).ok())
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .map(|v| v["metadata"].clone())
         .unwrap_or(Value::Null);
 
@@ -509,9 +509,8 @@ fn failure_result(execution_id: &str, duration_ms: u64, error: &str) -> Value {
     })
 }
 
-/// Writes pretty YAML to disk. I/O edge for the `result.yaml` execution contract.
-fn write_value_file(path: &Path, value: &Value) -> Result<()> {
-    let text = serde_yaml::to_string(&value).map_err(|e| AnalysisError::Io(e.to_string()))?;
+fn write_json(path: &Path, value: &Value) -> Result<()> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| AnalysisError::Io(e.to_string()))?;
     fs::write(path, text).map_err(|e| AnalysisError::Io(e.to_string()))
 }
 
@@ -522,14 +521,14 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
 
     if !Path::new(input_path).exists() {
         let msg = format!("Input payload file not found: {input_path}");
-        let _ = write_value_file(out, &failure_result("unknown", 0, &msg));
+        let _ = write_json(out, &failure_result("unknown", 0, &msg));
         return 1;
     }
 
     let payload = fs::read_to_string(input_path)
         .map_err(|e| AnalysisError::Io(e.to_string()))
         .and_then(|s| {
-            serde_yaml::from_str::<Value>(&s).map_err(|e| AnalysisError::Value(e.to_string()))
+            serde_json::from_str::<Value>(&s).map_err(|e| AnalysisError::Value(e.to_string()))
         });
 
     let outcome = payload
@@ -538,7 +537,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
         .and_then(|p| analyze(p, out, start).map_err(|e| e.to_string()));
 
     match outcome {
-        Ok(result) => match write_value_file(out, &result) {
+        Ok(result) => match write_json(out, &result) {
             Ok(()) => {
                 println!(
                     "Analysis completed successfully in {}ms",
@@ -558,7 +557,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
                 .and_then(|p| p["execution_id"].as_str())
                 .unwrap_or("unknown");
             let duration_ms = start.elapsed().as_millis() as u64;
-            let _ = write_value_file(out, &failure_result(exec_id, duration_ms, &msg));
+            let _ = write_json(out, &failure_result(exec_id, duration_ms, &msg));
             eprintln!("Analysis failed: {msg}");
             1
         }

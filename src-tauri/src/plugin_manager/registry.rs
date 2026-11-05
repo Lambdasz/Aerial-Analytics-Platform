@@ -121,7 +121,7 @@ pub async fn get_installed_plugins(
 /// Rescans the plugins directory from disk and updates the in-memory registry.
 ///
 /// Discovers plugins on disk, validates their manifests and subcontracts,
-/// restores persisted status from `plugin_state.yaml`, and updates the shared registry.
+/// restores persisted status from `plugin_state.json`, and updates the shared registry.
 ///
 /// # Arguments
 /// * `state` - Injected Tauri application state containing the plugin registry.
@@ -217,7 +217,7 @@ pub(crate) async fn check_plugin_health_internal(
         }
     }
 
-    // Persist healthcheck status to plugin_state.yaml if state_path is configured or default exists
+    // Persist healthcheck status to plugin_state.json if state_path is configured or default exists
     let state_path_opt = app_state.state_path.clone().or_else(|| {
         let candidate = crate::plugin_manager::lifecycle::default_state_path();
         if candidate.exists() {
@@ -437,7 +437,7 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
             let stderr_str = String::from_utf8_lossy(&stderr_bytes);
 
             if status.success() {
-                if let Ok(json_val) = serde_yaml::from_str::<serde_json::Value>(&stdout_str) {
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str) {
                     let status_str = json_val
                         .get("status")
                         .and_then(|s| s.as_str())
@@ -465,7 +465,7 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
                 }
             } else {
                 let (error_msg, details) = if let Ok(json_val) =
-                    serde_yaml::from_str::<serde_json::Value>(&stderr_str)
+                    serde_json::from_str::<serde_json::Value>(&stderr_str)
                 {
                     let err = json_val
                         .get("error")
@@ -473,7 +473,7 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
                         .unwrap_or(&stderr_str)
                         .to_string();
                     (err, Some(json_val))
-                } else if let Ok(json_val) = serde_yaml::from_str::<serde_json::Value>(&stdout_str)
+                } else if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&stdout_str)
                 {
                     let err = json_val
                         .get("error")
@@ -547,20 +547,20 @@ fn is_safe_relative_path(p: &str) -> bool {
     })
 }
 
-/// Parses and strictly validates manifest YAML string against `plugin.schema.yaml`.
+/// Parses and strictly validates manifest JSON string against `plugin.schema.json`.
 ///
 /// **Pure function** — deterministic parse; zero mutation, zero side effects.
 #[allow(dead_code)]
 pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManifest, PluginError> {
     let manifest: PluginManifest =
-        serde_yaml::from_str(raw_json).map_err(|e| PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+        serde_json::from_str(raw_json).map_err(|e| PluginError::ManifestInvalid {
+            path: "manifest.json".to_string(),
             message: e.to_string(),
         })?;
 
     if manifest.manifest_version < 1 {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: "manifest_version must be >= 1".to_string(),
         });
     }
@@ -572,14 +572,14 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: format!("Plugin id '{}' must match ^[a-z0-9-_]+$", id),
         });
     }
 
     if manifest.metadata.name.trim().is_empty() {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: "metadata.name must not be empty".to_string(),
         });
     }
@@ -592,7 +592,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: format!(
                 "Version '{}' does not conform to semver (\\d+\\.\\d+\\.\\d+)",
                 version
@@ -614,7 +614,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     if let Some(ref cat) = manifest.metadata.category {
         if !VALID_CATEGORIES.contains(&cat.as_str()) {
             return Err(PluginError::ManifestInvalid {
-                path: "manifest.yaml".to_string(),
+                path: "manifest.json".to_string(),
                 message: format!(
                     "Invalid category '{}', must be one of: {:?}",
                     cat, VALID_CATEGORIES
@@ -626,7 +626,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     let rt = manifest.runtime.runtime_type.as_str();
     if rt != "python" && rt != "binary" && rt != "wasm" {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: format!(
                 "Unsupported runtime type '{}', must be 'python', 'binary', or 'wasm'",
                 rt
@@ -638,7 +638,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
         || !is_safe_relative_path(&manifest.runtime.entrypoint)
     {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: format!(
                 "runtime.entrypoint '{}' must be a safe non-empty relative path without parent traversal",
                 manifest.runtime.entrypoint
@@ -653,7 +653,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     ] {
         if path_str.trim().is_empty() || !is_safe_relative_path(path_str) {
             return Err(PluginError::ManifestInvalid {
-                path: "manifest.yaml".to_string(),
+                path: "manifest.json".to_string(),
                 message: format!(
                     "Subcontract '{}' path '{}' must be a safe non-empty relative path without parent traversal",
                     name, path_str
@@ -675,7 +675,7 @@ pub(crate) fn parse_and_validate_parameters(
     path_label: &str,
 ) -> Result<serde_json::Value, PluginError> {
     let params_val: serde_json::Value =
-        serde_yaml::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
             path: path_label.to_string(),
             message: format!("Failed to parse parameters JSON: {}", e),
         })?;
@@ -765,7 +765,7 @@ pub(crate) fn parse_and_validate_inputs(
     path_label: &str,
 ) -> Result<InputsSpec, PluginError> {
     let inputs_spec: InputsSpec =
-        serde_yaml::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
             path: path_label.to_string(),
             message: format!("Failed to parse inputs specification: {}", e),
         })?;
@@ -826,7 +826,7 @@ pub(crate) fn parse_and_validate_outputs(
     path_label: &str,
 ) -> Result<serde_json::Value, PluginError> {
     let outputs_val: serde_json::Value =
-        serde_yaml::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
             path: path_label.to_string(),
             message: format!("Failed to parse outputs JSON: {}", e),
         })?;
@@ -898,7 +898,7 @@ pub(crate) fn assemble_plugin_bundle(
     }
 }
 
-/// Reads and schema-validates the three sub-contracts (`parameters.yaml`, `inputs.yaml`, `outputs.yaml`).
+/// Reads and schema-validates the three sub-contracts (`parameters.json`, `inputs.json`, `outputs.json`).
 ///
 /// Acts as the **Imperative Shell** around the pure functions `parse_and_validate_parameters`,
 /// `parse_and_validate_inputs`, and `parse_and_validate_outputs`.
@@ -1002,7 +1002,7 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
             continue;
         }
 
-        let manifest_path = path.join("manifest.yaml");
+        let manifest_path = path.join("manifest.json");
         if !manifest_path.exists() {
             continue;
         }
@@ -1044,7 +1044,7 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
         let inputs_path = path.join(&manifest.inputs);
         let inputs_raw = std::fs::read_to_string(&inputs_path)
             .ok()
-            .and_then(|s| serde_yaml::from_str(&s).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
 
         bundles.push(assemble_plugin_bundle(
@@ -1296,9 +1296,9 @@ mod tests {
                     dependencies_file: None,
                     healthcheck_flag: None,
                 },
-                parameters: "parameters.yaml".to_string(),
-                inputs: "inputs.yaml".to_string(),
-                outputs: "outputs.yaml".to_string(),
+                parameters: "parameters.json".to_string(),
+                inputs: "inputs.json".to_string(),
+                outputs: "outputs.json".to_string(),
                 execution: Some(crate::plugin_manager::models::PluginExecutionConfig {
                     timeout_seconds: 60,
                     provides_output_dir_arg: true,
@@ -1399,7 +1399,7 @@ mod tests {
         let val = serde_json::to_value(&spec).expect("serialize InputsSpec");
         assert!(
             val.get("aoi_format").is_none(),
-            "None aoi_format must not be serialized as null (must be omitted according to inputs.schema.yaml)"
+            "None aoi_format must not be serialized as null (must be omitted according to inputs.schema.json)"
         );
     }
 
@@ -1485,9 +1485,9 @@ mod tests {
                 "type": "python",
                 "entrypoint": "main.py"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
 
         let manifest = parse_and_validate_manifest(raw).expect("manifest should be valid");
@@ -1517,9 +1517,9 @@ mod tests {
                 "type": "python",
                 "entrypoint": "main.py"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
 
         let err = parse_and_validate_manifest(raw).unwrap_err();
@@ -1540,9 +1540,9 @@ mod tests {
                 "type": "python",
                 "entrypoint": "main.py"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
 
         let err = parse_and_validate_manifest(raw).unwrap_err();
@@ -1563,9 +1563,9 @@ mod tests {
                 "type": "docker",
                 "entrypoint": "entrypoint.sh"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
 
         let err = parse_and_validate_manifest(raw).unwrap_err();
@@ -1578,18 +1578,18 @@ mod tests {
         let plugin_dir = temp_dir.path();
 
         std::fs::write(
-            plugin_dir.join("parameters.yaml"),
+            plugin_dir.join("parameters.json"),
             r#"{"parameters": [{"name": "thresh", "label": "Threshold", "type": "number", "default": 0.5}]}"#,
         ).unwrap();
 
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
 
         std::fs::write(
-            plugin_dir.join("outputs.yaml"),
+            plugin_dir.join("outputs.json"),
             r#"{"metrics": [], "artifacts": []}"#,
         )
         .unwrap();
@@ -1615,9 +1615,9 @@ mod tests {
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 
@@ -1634,9 +1634,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let plugin_dir = temp_dir.path();
 
-        // only create inputs.yaml, omitting parameters.yaml and outputs.yaml
+        // only create inputs.json, omitting parameters.json and outputs.json
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
@@ -1662,9 +1662,9 @@ mod tests {
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 
@@ -1677,15 +1677,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let plugin_dir = temp_dir.path();
 
-        std::fs::write(plugin_dir.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
 
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": []}"#,
         )
         .unwrap();
 
-        std::fs::write(plugin_dir.join("outputs.yaml"), r#"{"metrics": []}"#).unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{"metrics": []}"#).unwrap();
 
         let manifest = PluginManifest {
             schema: None,
@@ -1708,9 +1708,9 @@ mod tests {
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 
@@ -1727,41 +1727,41 @@ mod tests {
         let dir_a = plugins_root.join("plugin-a");
         std::fs::create_dir_all(&dir_a).unwrap();
         std::fs::write(
-            dir_a.join("manifest.yaml"),
+            dir_a.join("manifest.json"),
             r#"{
                 "manifest_version": 1,
                 "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
                 "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.yaml",
-                "inputs": "inputs.yaml",
-                "outputs": "outputs.yaml"
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
             }"#,
         ).unwrap();
-        std::fs::write(dir_a.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         std::fs::write(
-            dir_a.join("inputs.yaml"),
+            dir_a.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(dir_a.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
 
         // 2. Corrupt plugin B (invalid manifest JSON)
         let dir_b = plugins_root.join("plugin-b");
         std::fs::create_dir_all(&dir_b).unwrap();
-        std::fs::write(dir_b.join("manifest.yaml"), "{ broken").unwrap();
+        std::fs::write(dir_b.join("manifest.json"), "{ broken").unwrap();
 
         // 3. Plugin C (missing subcontracts)
         let dir_c = plugins_root.join("plugin-c");
         std::fs::create_dir_all(&dir_c).unwrap();
         std::fs::write(
-            dir_c.join("manifest.yaml"),
+            dir_c.join("manifest.json"),
             r#"{
                 "manifest_version": 1,
                 "metadata": {"id": "plugin-c", "name": "Plugin C", "version": "1.0.0", "description": "C"},
                 "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "missing_params.yaml",
-                "inputs": "inputs.yaml",
-                "outputs": "outputs.yaml"
+                "parameters": "missing_params.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
             }"#,
         ).unwrap();
 
@@ -1769,23 +1769,23 @@ mod tests {
         let dir_d = plugins_root.join("plugin-d");
         std::fs::create_dir_all(&dir_d).unwrap();
         std::fs::write(
-            dir_d.join("manifest.yaml"),
+            dir_d.join("manifest.json"),
             r#"{
                 "manifest_version": 1,
                 "metadata": {"id": "plugin-d", "name": "Plugin D", "version": "2.0.0", "description": "D"},
                 "runtime": {"type": "binary", "entrypoint": "detector"},
-                "parameters": "parameters.yaml",
-                "inputs": "inputs.yaml",
-                "outputs": "outputs.yaml"
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
             }"#,
         ).unwrap();
-        std::fs::write(dir_d.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(dir_d.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         std::fs::write(
-            dir_d.join("inputs.yaml"),
+            dir_d.join("inputs.json"),
             r#"{"granularity": "batch", "supported_mime_types": ["image/tiff"]}"#,
         )
         .unwrap();
-        std::fs::write(dir_d.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(dir_d.join("outputs.json"), r#"{}"#).unwrap();
 
         let discovered = discover_plugins(plugins_root).expect("discover_plugins should succeed");
         assert_eq!(
@@ -1990,7 +1990,7 @@ if "--healthcheck" in sys.argv:
         let mut registry = PluginRegistry::new();
         registry.register(bundle);
 
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         let app_state = crate::AppState {
             plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
             jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -2036,9 +2036,9 @@ if "--healthcheck" in sys.argv:
                 "type": "python",
                 "entrypoint": "../outside/main.py"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
         let err = parse_and_validate_manifest(raw).unwrap_err();
         assert!(matches!(err, PluginError::ManifestInvalid { .. }));
@@ -2056,8 +2056,8 @@ if "--healthcheck" in sys.argv:
                 "entrypoint": "main.py"
             },
             "parameters": "/etc/shadow",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
         let err = parse_and_validate_manifest(raw_abs).unwrap_err();
         assert!(matches!(err, PluginError::ManifestInvalid { .. }));
@@ -2078,9 +2078,9 @@ if "--healthcheck" in sys.argv:
                 "type": "python",
                 "entrypoint": "main.py"
             },
-            "parameters": "parameters.yaml",
-            "inputs": "inputs.yaml",
-            "outputs": "outputs.yaml"
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
         }"#;
         let err = parse_and_validate_manifest(raw).unwrap_err();
         assert!(matches!(err, PluginError::ManifestInvalid { .. }));
@@ -2093,16 +2093,16 @@ if "--healthcheck" in sys.argv:
 
         // Parameter missing required 'type' and 'default'
         std::fs::write(
-            plugin_dir.join("parameters.yaml"),
+            plugin_dir.join("parameters.json"),
             r#"{"parameters": [{"name": "thresh", "label": "Threshold"}]}"#,
         )
         .unwrap();
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(plugin_dir.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
 
         let manifest = PluginManifest {
             schema: None,
@@ -2125,9 +2125,9 @@ if "--healthcheck" in sys.argv:
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 
@@ -2140,14 +2140,14 @@ if "--healthcheck" in sys.argv:
         let temp_dir = tempfile::tempdir().unwrap();
         let plugin_dir = temp_dir.path();
 
-        std::fs::write(plugin_dir.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         // Invalid granularity
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "invalid_granularity", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(plugin_dir.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
 
         let manifest = PluginManifest {
             schema: None,
@@ -2170,9 +2170,9 @@ if "--healthcheck" in sys.argv:
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 
@@ -2181,7 +2181,7 @@ if "--healthcheck" in sys.argv:
 
         // Invalid MIME type
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
+            plugin_dir.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["text/plain"]}"#,
         )
         .unwrap();
@@ -2198,26 +2198,26 @@ if "--healthcheck" in sys.argv:
         let dir_a = plugins_root.join("plugin-a");
         std::fs::create_dir_all(&dir_a).unwrap();
         std::fs::write(
-            dir_a.join("manifest.yaml"),
+            dir_a.join("manifest.json"),
             r#"{
                 "manifest_version": 1,
                 "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
                 "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.yaml",
-                "inputs": "inputs.yaml",
-                "outputs": "outputs.yaml"
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
             }"#,
         )
         .unwrap();
-        std::fs::write(dir_a.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         std::fs::write(
-            dir_a.join("inputs.yaml"),
+            dir_a.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(dir_a.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
 
-        let state_path = plugins_root.join("plugin_state.yaml");
+        let state_path = plugins_root.join("plugin_state.json");
         let app_state = crate::AppState {
             plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::init_plugin_registry_from_dir(plugins_root),
@@ -2241,24 +2241,24 @@ if "--healthcheck" in sys.argv:
         let dir_b = plugins_root.join("plugin-b");
         std::fs::create_dir_all(&dir_b).unwrap();
         std::fs::write(
-            dir_b.join("manifest.yaml"),
+            dir_b.join("manifest.json"),
             r#"{
                 "manifest_version": 1,
                 "metadata": {"id": "plugin-b", "name": "Plugin B", "version": "1.0.0", "description": "B"},
                 "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.yaml",
-                "inputs": "inputs.yaml",
-                "outputs": "outputs.yaml"
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
             }"#,
         )
         .unwrap();
-        std::fs::write(dir_b.join("parameters.yaml"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(dir_b.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         std::fs::write(
-            dir_b.join("inputs.yaml"),
+            dir_b.join("inputs.json"),
             r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(dir_b.join("outputs.yaml"), r#"{}"#).unwrap();
+        std::fs::write(dir_b.join("outputs.json"), r#"{}"#).unwrap();
 
         // 3. Rescan discovers plugin B
         let rescanned = rescan_plugins_internal(&app_state);
@@ -2275,18 +2275,18 @@ if "--healthcheck" in sys.argv:
                 {"name": "apply_blur", "label": "Blur", "type": "boolean", "default": false}
             ]
         }"#;
-        let res = parse_and_validate_parameters(valid_json, "parameters.yaml");
+        let res = parse_and_validate_parameters(valid_json, "parameters.json");
         assert!(res.is_ok());
 
         // Invalid JSON
-        let err_syntax = parse_and_validate_parameters("invalid json", "parameters.yaml");
+        let err_syntax = parse_and_validate_parameters("invalid json", "parameters.json");
         assert!(matches!(
             err_syntax,
             Err(PluginError::SubcontractInvalid { .. })
         ));
 
         // Missing parameters array
-        let err_no_arr = parse_and_validate_parameters(r#"{"params": []}"#, "parameters.yaml");
+        let err_no_arr = parse_and_validate_parameters(r#"{"params": []}"#, "parameters.json");
         assert!(matches!(
             err_no_arr,
             Err(PluginError::SubcontractInvalid { .. })
@@ -2295,7 +2295,7 @@ if "--healthcheck" in sys.argv:
         // Invalid name format (uppercase or hyphen not allowed)
         let err_bad_name = parse_and_validate_parameters(
             r#"{"parameters": [{"name": "bad-name", "label": "L", "type": "string", "default": ""}]}"#,
-            "parameters.yaml",
+            "parameters.json",
         );
         assert!(matches!(
             err_bad_name,
@@ -2305,7 +2305,7 @@ if "--healthcheck" in sys.argv:
         // Unknown type
         let err_bad_type = parse_and_validate_parameters(
             r#"{"parameters": [{"name": "param", "label": "L", "type": "matrix", "default": ""}]}"#,
-            "parameters.yaml",
+            "parameters.json",
         );
         assert!(matches!(
             err_bad_type,
@@ -2319,7 +2319,7 @@ if "--healthcheck" in sys.argv:
             "granularity": "single_image",
             "supported_mime_types": ["image/jpeg", "image/png"]
         }"#;
-        let res = parse_and_validate_inputs(valid_json, "inputs.yaml");
+        let res = parse_and_validate_inputs(valid_json, "inputs.json");
         assert!(res.is_ok());
         let spec = res.unwrap();
         assert_eq!(spec.granularity, "single_image");
@@ -2328,7 +2328,7 @@ if "--healthcheck" in sys.argv:
         // Empty supported MIME types
         let err_empty = parse_and_validate_inputs(
             r#"{"granularity": "single_image", "supported_mime_types": []}"#,
-            "inputs.yaml",
+            "inputs.json",
         );
         assert!(matches!(
             err_empty,
@@ -2338,7 +2338,7 @@ if "--healthcheck" in sys.argv:
         // Invalid granularity
         let err_gran = parse_and_validate_inputs(
             r#"{"granularity": "world_scale", "supported_mime_types": ["image/jpeg"]}"#,
-            "inputs.yaml",
+            "inputs.json",
         );
         assert!(matches!(
             err_gran,
@@ -2348,7 +2348,7 @@ if "--healthcheck" in sys.argv:
         // Unsupported MIME type
         let err_mime = parse_and_validate_inputs(
             r#"{"granularity": "single_image", "supported_mime_types": ["video/mp4"]}"#,
-            "inputs.yaml",
+            "inputs.json",
         );
         assert!(matches!(
             err_mime,
@@ -2365,11 +2365,11 @@ if "--healthcheck" in sys.argv:
             ],
             "artifacts": []
         }"#;
-        let res = parse_and_validate_outputs(valid_json, "outputs.yaml");
+        let res = parse_and_validate_outputs(valid_json, "outputs.json");
         assert!(res.is_ok());
 
         // Not a JSON object
-        let err_arr = parse_and_validate_outputs(r#"["not", "an", "object"]"#, "outputs.yaml");
+        let err_arr = parse_and_validate_outputs(r#"["not", "an", "object"]"#, "outputs.json");
         assert!(matches!(
             err_arr,
             Err(PluginError::SubcontractInvalid { .. })
@@ -2378,7 +2378,7 @@ if "--healthcheck" in sys.argv:
         // Invalid metric type
         let err_metric_type = parse_and_validate_outputs(
             r#"{"metrics": [{"key": "score", "type": "complex_number"}]}"#,
-            "outputs.yaml",
+            "outputs.json",
         );
         assert!(matches!(
             err_metric_type,
@@ -2409,9 +2409,9 @@ if "--healthcheck" in sys.argv:
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 

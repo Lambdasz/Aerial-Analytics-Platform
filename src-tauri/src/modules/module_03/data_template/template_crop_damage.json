@@ -1,0 +1,62 @@
+{
+  "layer_id": "template_crop_damage",
+  "layer_name": "Template - Analisis Kerusakan Tanaman (Kustom)",
+  "display_preference": {
+    "type": "polygon",
+    "color": "#8E44AD",
+    "icon": "",
+    "fields": [
+      { "key": "plot_id", "label": "ID Petak", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "damage_level", "label": "Tingkat Kerusakan", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "damage_percent", "label": "Persentase Kerusakan", "unit": "%", "visible": true, "custom": false, "kind": "number" },
+      { "key": "affected_area_sqm", "label": "Luas Terdampak", "unit": "m²", "visible": true, "custom": false, "kind": "number" },
+      { "key": "inspected", "label": "Sudah Diperiksa", "unit": null, "visible": true, "custom": false, "kind": "boolean" }
+    ]
+  },
+  "spatial_results": [
+    {
+      "source": "crop_damage_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.863, -1.225],
+            [116.8638, -1.2249],
+            [116.864, -1.2256],
+            [116.8633, -1.2258],
+            [116.863, -1.225]
+          ]
+        ]
+      },
+      "properties": {
+        "plot_id": "PTK-A",
+        "damage_level": "ringan",
+        "damage_percent": 12.5,
+        "affected_area_sqm": 160.0,
+        "inspected": true
+      }
+    },
+    {
+      "source": "crop_damage_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.8641, -1.2258],
+            [116.8648, -1.2257],
+            [116.865, -1.2264],
+            [116.8643, -1.2265],
+            [116.8641, -1.2258]
+          ]
+        ]
+      },
+      "properties": {
+        "plot_id": "PTK-B",
+        "damage_level": "sedang",
+        "damage_percent": 38.0,
+        "affected_area_sqm": 540.0,
+        "inspected": false
+      }
+    }
+  ]
+}

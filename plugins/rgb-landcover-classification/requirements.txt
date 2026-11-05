@@ -1,7 +1,3 @@
-# Data contract serialisation (manifest.yaml, parameters.yaml, inputs.yaml,
-# outputs.yaml, payload.yaml, result.yaml).
-pyyaml>=6.0
-
 numpy>=1.26
 Pillow>=10.0
 torch>=2.2

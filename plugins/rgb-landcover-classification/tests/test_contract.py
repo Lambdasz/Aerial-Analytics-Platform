@@ -5,8 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import yaml
-
 import numpy as np
 
 ROOT = Path(__file__).parents[1]
@@ -36,8 +34,8 @@ from core.vector import generate_boundary_vector
 
 class ContractTests(unittest.TestCase):
     def test_manifest_declares_deeplabv3plus_backbones(self):
-        manifest = yaml.safe_load((ROOT / "manifest.yaml").read_text(encoding="utf-8"))
-        model = yaml.safe_load((ROOT / "model.yaml").read_text(encoding="utf-8"))
+        manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+        model = json.loads((ROOT / "model.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["runtime"]["type"], "python")
         self.assertEqual(model["family"], "DeepLabV3+")
         self.assertEqual(
@@ -51,7 +49,7 @@ class ContractTests(unittest.TestCase):
             text=True,
             check=False,
         )
-        info = yaml.safe_load(proc.stdout)
+        info = json.loads(proc.stdout)
         self.assertEqual(info["plugin_id"], "rgb-landcover-classification")
         self.assertIn(info["status"], {"healthy", "unhealthy"})
         self.assertIn("model_family", info["details"])
