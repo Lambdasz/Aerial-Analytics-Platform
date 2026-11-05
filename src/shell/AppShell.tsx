@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_MODULE_ID, findModule, findModuleBySlug, moduleHash } from "./modules";
 
@@ -63,6 +64,7 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
+      <Navbar />
       <div className="app-shell_body">
         <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
         <main className="app-shell_content">
