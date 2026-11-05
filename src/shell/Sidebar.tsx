@@ -1,5 +1,3 @@
-// Sidebar.tsx
-
 import { MODULES } from "./modules";
 
 import "./style.css";
@@ -19,6 +17,7 @@ export function Sidebar({ activeModuleId, onSelectModule }: SidebarProps) {
       <ul className="app-shell_menu">
         {MODULES.map((entry) => {
           const active = entry.id === activeModuleId;
+          const { Icon } = entry;
           return (
             <li key={entry.id}>
               <button
@@ -29,7 +28,7 @@ export function Sidebar({ activeModuleId, onSelectModule }: SidebarProps) {
                   onSelectModule(entry.id);
                 }}
               >
-                {/* <span className="app-shell_icon" /> */}
+                <Icon className="app-shell_icon" aria-hidden="true" />
                 <span className="app-shell_label">{entry.label}</span>
               </button>
             </li>

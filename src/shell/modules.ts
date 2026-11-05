@@ -1,4 +1,14 @@
 import type { ComponentType } from "react";
+import type { IconType } from "react-icons";
+import {
+  FaImage,
+  FaPlug,
+  FaMap,
+  FaChartColumn,
+  FaClockRotateLeft,
+  FaGaugeHigh,
+  FaBookOpen,
+} from "react-icons/fa6";
 
 import { Module01Page } from "../modules/module-01/Module01Page";
 import { Module02Page } from "../modules/module-02/Module02Page";
@@ -13,6 +23,7 @@ export interface ModuleEntry {
   readonly moduleNumber: number;
   readonly slug: string;
   readonly label: string;
+  readonly Icon: IconType;
   readonly Page: ComponentType;
 }
 
@@ -22,6 +33,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 1,
     slug: "image-project-manager",
     label: "Image & Project Manager",
+    Icon: FaImage,
     Page: Module01Page,
   },
   {
@@ -29,6 +41,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 2,
     slug: "plugin-system",
     label: "Plugin System",
+    Icon: FaPlug,
     Page: Module02Page,
   },
   {
@@ -36,6 +49,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 3,
     slug: "map-explorer",
     label: "Map Explorer",
+    Icon: FaMap,
     Page: Module03Page,
   },
   {
@@ -43,6 +57,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 9,
     slug: "area-plot-analytics",
     label: "Area & Plot Analytics",
+    Icon: FaChartColumn,
     Page: Module09Page,
   },
   {
@@ -50,6 +65,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 10,
     slug: "temporal-change",
     label: "Temporal Change",
+    Icon: FaClockRotateLeft,
     Page: Module10Page,
   },
   {
@@ -57,6 +73,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 11,
     slug: "dashboard-reporting",
     label: "Dashboard & Reporting",
+    Icon: FaGaugeHigh,
     Page: Module11Page,
   },
   {
@@ -64,6 +81,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 7,
     slug: "examples",
     label: "Examples",
+    Icon: FaBookOpen,
     Page: Example,
   },
 ];
@@ -71,7 +89,7 @@ export const MODULES: readonly ModuleEntry[] = [
 // Initial page
 export const DEFAULT_MODULE_ID = MODULES[0].id;
 
-// check module existance
+// check module existence
 export function findModule(id: string): ModuleEntry {
   return MODULES.find((entry) => entry.id === id) ?? MODULES[0];
 }
@@ -81,7 +99,7 @@ export function normalizeSlug(raw: string): string {
   return raw.trim().replace(/^#/, "").replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
 }
 
-// Look url slug
+// Look up url slug
 export function findModuleBySlug(raw: string): ModuleEntry | undefined {
   const slug = normalizeSlug(raw);
   if (!slug) return undefined;
