@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-11-05
-
 ### Changed
 
 - **BREAKING:** Plugin data contracts migrated from JSON to YAML. Plugin directories and `schemas/` now use `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml`, `execution_payload.yaml`, `execution_result.yaml`, and `plugin_state.yaml` (previously `.json`). Update any local tooling, validation commands, or docs that read `.json` contracts to the `.yaml` equivalents.
@@ -235,7 +233,6 @@ Second functional milestone. Adds the plugin system, temporal change analysis, a
 
 First functional milestone. Core skeleton: Tauri 2 + React 19 + Blueprint.js shell, plugin discovery and lifecycle scaffolding, Module 1 data models, JSON Schema plugin contracts, and CI (lint, format, cross-platform build).
 
-[2.0.0]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.9.0-alpha...v1.0.0
 [0.9.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.8.0-alpha...v0.9.0-alpha
 [0.8.0-alpha]: https://github.com/Lambdasz/Aerial-Analytics-Platform/compare/v0.7.0-alpha...v0.8.0-alpha
