@@ -1,15 +1,19 @@
 import { useEffect, useRef } from "react";
-import { FaCaretDown, FaMagnifyingGlass, FaPlaneUp, FaPlus } from "react-icons/fa6";
+import { FaBars, FaCaretDown, FaMagnifyingGlass, FaPlaneUp, FaPlus } from "react-icons/fa6";
 
 import "./style.css";
 
 export interface NavbarProps {
+  readonly sidebarOpen: boolean;
+  readonly onToggleSidebar: () => void;
   readonly onSearch?: (query: string) => void;
   readonly onAdd?: () => void;
 }
 
-export function Navbar({ onSearch, onAdd }: NavbarProps) {
+export function Navbar({ sidebarOpen, onToggleSidebar, onSearch, onAdd }: NavbarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Press "/" anywhere to focus search, like GitHub
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -26,24 +30,18 @@ export function Navbar({ onSearch, onAdd }: NavbarProps) {
 
   return (
     <header className="app-shell_navbar">
+      {/* Left: burger, search, add */}
       <div className="app-shell_navbar-left">
-        <span className="app-shell_logo">
-          <FaPlaneUp aria-hidden="true" />
-        </span>
+        <button
+          type="button"
+          className="app-shell_burger"
+          aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+          aria-expanded={sidebarOpen}
+          onClick={onToggleSidebar}
+        >
+          <FaBars aria-hidden="true" />
+        </button>
 
-        <div className="app-shell_navbar-title">
-          <span className="app-shell_navbar-title-top">Aerial Analytic</span>
-          <span className="app-shell_navbar-title-bottom" aria-label="Platforms">
-            {"Platforms".split("").map((char, i) => (
-              <span key={i} aria-hidden="true">
-                {char}
-              </span>
-            ))}
-          </span>
-        </div>
-      </div>
-
-      <div className="app-shell_navbar-right">
         <label className="app-shell_search">
           <FaMagnifyingGlass aria-hidden="true" />
           <input
@@ -62,6 +60,24 @@ export function Navbar({ onSearch, onAdd }: NavbarProps) {
           <FaPlus aria-hidden="true" />
           <FaCaretDown aria-hidden="true" className="app-shell_add-caret" />
         </button>
+      </div>
+
+      {/* Right: program name + logo */}
+      <div className="app-shell_navbar-right">
+        <div className="app-shell_navbar-title">
+          <span className="app-shell_navbar-title-top">Aerial Analytic</span>
+          <span className="app-shell_navbar-title-bottom" aria-label="Platforms">
+            {"Platforms".split("").map((char, i) => (
+              <span key={i} aria-hidden="true">
+                {char}
+              </span>
+            ))}
+          </span>
+        </div>
+
+        <span className="app-shell_logo">
+          <FaPlaneUp aria-hidden="true" />
+        </span>
       </div>
     </header>
   );

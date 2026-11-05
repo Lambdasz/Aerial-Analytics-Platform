@@ -23,6 +23,8 @@
 /* Navbar */
 
 .app-shell .app-shell_navbar {
+  position: relative;
+  z-index: 10;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -30,10 +32,11 @@
   height: 64px;
   box-sizing: border-box;
   padding: 0 24px;
-  background-color: #f1f2f4;
+  background-color: #f8f8f9;
   color: #1b1f27;
   border-bottom: 1px solid rgba(17, 20, 24, 0.08);
   font-family: "Poppins", sans-serif;
+  box-shadow: 0 -2px 7px rgba(13, 14, 16, 0.16);
 }
 
 .app-shell_navbar-left {

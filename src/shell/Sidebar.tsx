@@ -10,10 +10,6 @@ export interface SidebarProps {
 export function Sidebar({ activeModuleId, onSelectModule }: SidebarProps) {
   return (
     <nav className="app-shell_sidebar" aria-label="Navigasi modul">
-      <div className="app-shell_brand">
-        <span className="app-shell_brand-bold">Aerial</span>
-        <span>Analysis</span>
-      </div>
       <ul className="app-shell_menu">
         {MODULES.map((entry) => {
           const active = entry.id === activeModuleId;

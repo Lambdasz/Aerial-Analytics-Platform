@@ -61,12 +61,15 @@ export function AppShell() {
     window.addEventListener("open-module", handleOpenModule);
     return () => window.removeEventListener("open-module", handleOpenModule);
   }, [navigateToModule]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   return (
     <div className="app-shell">
-      <Navbar />
+      <Navbar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((open) => !open)} />
       <div className="app-shell_body">
-        <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
+        {sidebarOpen && (
+          <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
+        )}
         <main className="app-shell_content">
           <ActivePage />
         </main>
