@@ -138,25 +138,58 @@ pub fn execute_import_option_a(
     let mut bounds_source = "manual".to_string();
     let mut detected_crs_code = 4326u32;
     let mut _prj_path_found = None;
+    let mut pipeline_warnings = Vec::new();
 
     let bounds = if let Some(world_file) =
         world_file_reader::find_candidate_world_file(&source_path)
     {
         let prj = world_file_reader::find_candidate_prj_file(&source_path);
-        let wf_res = world_file_reader::read_world_file_envelope(
+        match world_file_reader::read_world_file_envelope(
             &world_file,
             prj.as_deref(),
             orig_width,
             orig_height,
-        )?;
-        bounds_source = "world_file".to_string();
-        detected_crs_code = wf_res.detected_crs;
-        _prj_path_found = wf_res.prj_file_path;
-        wf_res.bounds
+        ) {
+            Ok(wf_res) => {
+                bounds_source = "world_file".to_string();
+                detected_crs_code = wf_res.detected_crs;
+                _prj_path_found = wf_res.prj_file_path;
+                wf_res.bounds
+            }
+            Err(e) => {
+                if let Some(ref manual) = payload.manual_bounds {
+                    pipeline_warnings.push(format!(
+                        "Gagal membaca World File: {}. Menggunakan batas koordinat manual sebagai fallback.",
+                        e.user_friendly_message()
+                    ));
+                    bounds_source = "manual_fallback".to_string();
+                    validate_wgs84_bounds(manual.west, manual.south, manual.east, manual.north)
+                        .map_err(|err| OrthoImportError::KoordinatTidakValid(err.to_string()))?
+                } else {
+                    return Err(e);
+                }
+            }
+        }
     } else if let Some(sidecar_file) = sidecar_reader::find_candidate_sidecar_file(&source_path) {
-        let s_bounds = sidecar_reader::read_sidecar_envelope(&sidecar_file)?;
-        bounds_source = "sidecar_json".to_string();
-        s_bounds
+        match sidecar_reader::read_sidecar_envelope(&sidecar_file) {
+            Ok(s_bounds) => {
+                bounds_source = "sidecar_json".to_string();
+                s_bounds
+            }
+            Err(e) => {
+                if let Some(ref manual) = payload.manual_bounds {
+                    pipeline_warnings.push(format!(
+                        "Gagal membaca Sidecar JSON: {}. Menggunakan batas koordinat manual sebagai fallback.",
+                        e.user_friendly_message()
+                    ));
+                    bounds_source = "manual_fallback".to_string();
+                    validate_wgs84_bounds(manual.west, manual.south, manual.east, manual.north)
+                        .map_err(|err| OrthoImportError::KoordinatTidakValid(err.to_string()))?
+                } else {
+                    return Err(e);
+                }
+            }
+        }
     } else if let Some(ref manual) = payload.manual_bounds {
         validate_wgs84_bounds(manual.west, manual.south, manual.east, manual.north)
             .map_err(|e| OrthoImportError::KoordinatTidakValid(e.to_string()))?
@@ -169,7 +202,6 @@ pub fn execute_import_option_a(
 
     // Ekstrak EXIF (hanya titik kamera drone)
     let exif_meta = exif_reader::read_exif_metadata(&source_path).unwrap_or(None);
-    let mut pipeline_warnings = Vec::new();
     if let Some(orient_warn) = exif_reader::check_exif_orientation_warning(&source_path) {
         pipeline_warnings.push(orient_warn);
     }
@@ -285,7 +317,7 @@ pub fn execute_import_option_a(
         imported_at: chrono::Utc::now().to_rfc3339(),
         warnings: {
             let mut w = encode_res.warnings.clone();
-            w.extend(pipeline_warnings);
+            w.extend(pipeline_warnings.clone());
             w
         },
     };
@@ -342,7 +374,11 @@ pub fn execute_import_option_a(
         aspect_ratio: Some(orig_width as f64 / orig_height as f64),
         display_size_bytes: Some(encode_res.display_size_bytes),
         display_dimensions: Some(encode_res.final_dimensions),
-        warnings: Some(encode_res.warnings.clone()),
+        warnings: {
+            let mut w = encode_res.warnings.clone();
+            w.extend(pipeline_warnings.clone());
+            Some(w)
+        },
         imported_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         is_corrupted: Some(false),

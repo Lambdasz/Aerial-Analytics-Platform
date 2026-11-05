@@ -216,8 +216,8 @@ pub fn read_world_file_envelope(
 
     let params = parse_world_file_content(&content)?;
 
-    // Periksa rotasi dan skew
-    if params.b.abs() > 1e-9 || params.d.abs() > 1e-9 {
+    // Periksa rotasi dan skew (toleransi 1e-5 untuk mengakomodasi roundoff error floating-point dari WebODM/Pix4D)
+    if params.b.abs() > 1e-5 || params.d.abs() > 1e-5 {
         let angle_approx = params.b.abs().max(params.d.abs());
         return Err(OrthoImportError::RotasiTidakDidukung(angle_approx));
     }
@@ -278,5 +278,61 @@ fn fallback_crs_detection(
             "World file menggunakan koordinat terproyeksi tanpa berkas pendamping .prj. Silakan masukkan koordinat WGS84 secara manual."
                 .to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_world_file_rotation_tolerance_accepts_small_roundoff() {
+        let content = "0.00001\n0.0000005\n-0.0000003\n-0.00001\n106.8\n-6.2\n";
+        let temp_dir = std::env::temp_dir().join(format!("test_wf_tol_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let wf_path = temp_dir.join("test.jgw");
+        {
+            let mut f = std::fs::File::create(&wf_path).unwrap();
+            f.write_all(content.as_bytes()).unwrap();
+        }
+
+        let res = read_world_file_envelope(&wf_path, None, 100, 100);
+        assert!(
+            res.is_ok(),
+            "Roundoff kecil (5e-7, -3e-7) harus ditoleransi: {:?}",
+            res.err()
+        );
+
+        let _ = std::fs::remove_file(wf_path);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn test_world_file_rotation_tolerance_rejects_large_rotation() {
+        let content = "0.00001\n0.05\n-0.05\n-0.00001\n106.8\n-6.2\n";
+        let temp_dir = std::env::temp_dir().join(format!("test_wf_rot_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let wf_path = temp_dir.join("test.jgw");
+        {
+            let mut f = std::fs::File::create(&wf_path).unwrap();
+            f.write_all(content.as_bytes()).unwrap();
+        }
+
+        let res = read_world_file_envelope(&wf_path, None, 100, 100);
+        assert!(
+            res.is_err(),
+            "Rotasi besar (0.05) harus ditolak dengan RotasiTidakDidukung"
+        );
+        match res.unwrap_err() {
+            OrthoImportError::RotasiTidakDidukung(_) => {}
+            other => panic!(
+                "Harus mengembalikan RotasiTidakDidukung, bukan: {:?}",
+                other
+            ),
+        }
+
+        let _ = std::fs::remove_file(wf_path);
+        let _ = std::fs::remove_dir(temp_dir);
     }
 }
