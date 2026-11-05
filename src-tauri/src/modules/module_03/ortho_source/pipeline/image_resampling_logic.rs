@@ -173,29 +173,25 @@ pub fn decode_and_scale_png(
         .map_err(|e| OrthoImportError::FileKorup(format!("Gagal membuka berkas PNG: {}", e)))?;
     let buf_reader = BufReader::new(file);
 
-    let decoder = png::Decoder::new(buf_reader);
+    let mut decoder = png::Decoder::new(buf_reader);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder
         .read_info()
         .map_err(|e| OrthoImportError::FileKorup(format!("Gagal membaca info PNG: {}", e)))?;
 
     let info = reader.info();
     let (orig_w, orig_h) = (info.width, info.height);
-    let color_type = info.color_type;
+    let (color_type, _bit_depth) = reader.output_color_type();
     let is_interlaced = info.interlaced;
 
-    // Penolakan Kasus Tepi: PNG 16-bit
-    if info.bit_depth == png::BitDepth::Sixteen {
+    // Pastikan format warna hasil normalisasi (normalize_to_color8) didukung
+    if color_type != png::ColorType::Rgba
+        && color_type != png::ColorType::Rgb
+        && color_type != png::ColorType::Grayscale
+        && color_type != png::ColorType::GrayscaleAlpha
+    {
         return Err(OrthoImportError::FormatTidakDidukung(
-            "PNG 16-bit tidak didukung pada Opsi A. Harap simpan citra sebagai PNG 8-bit atau gunakan Opsi B untuk citra sensor kedalaman tinggi."
-                .to_string(),
-        ));
-    }
-
-    // Penolakan Kasus Tepi: PNG Palette / Indexed
-    if color_type == png::ColorType::Indexed {
-        return Err(OrthoImportError::FormatTidakDidukung(
-            "PNG Palette (Indexed Color) tidak didukung. Harap konversi citra ke format warna RGB atau RGBA."
-                .to_string(),
+            "Format warna PNG tidak didukung.".to_string(),
         ));
     }
 
@@ -413,4 +409,97 @@ pub fn resample_rgb_image_box_filter(
     let resampled = resampler.finish()?;
     image::RgbImage::from_raw(resampled.width, resampled.height, resampled.data)
         .ok_or_else(|| OrthoImportError::InternalError("Buffer RGB resample gagal".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_decode_png_indexed_palette_normalized() {
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 4, 4);
+            encoder.set_color(png::ColorType::Indexed);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_palette(&[
+                255, 0, 0, // 0: Merah
+                0, 255, 0, // 1: Hijau
+                0, 0, 255, // 2: Biru
+                255, 255, 0, // 3: Kuning
+            ]);
+            let mut writer = encoder.write_header().expect("Gagal menulis header PNG");
+            let data = [
+                0, 1, 2, 3, // row 0
+                3, 2, 1, 0, // row 1
+                1, 0, 3, 2, // row 2
+                2, 3, 0, 1, // row 3
+            ];
+            writer
+                .write_image_data(&data)
+                .expect("Gagal menulis piksel PNG");
+        }
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_png_indexed_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("test_indexed.png");
+        {
+            let mut f = File::create(&test_file).expect("Gagal membuat test file");
+            f.write_all(&png_bytes).expect("Gagal menulis bytes PNG");
+        }
+
+        let res = decode_and_scale_png(&test_file, 4);
+        assert!(
+            res.is_ok(),
+            "PNG Indexed harus berhasil didecode dengan normalisasi: {:?}",
+            res.err()
+        );
+        let (dynamic_img, has_alpha) = res.unwrap();
+        assert!(!has_alpha);
+        assert_eq!(dynamic_img.width(), 4);
+        assert_eq!(dynamic_img.height(), 4);
+
+        let _ = std::fs::remove_file(test_file);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn test_decode_png_16bit_grayscale_normalized() {
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 4, 4);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Sixteen);
+            let mut writer = encoder.write_header().expect("Gagal menulis header PNG");
+            // 4x4 * 2 bytes = 32 bytes piksel 16-bit
+            let data = vec![128u8; 32];
+            writer
+                .write_image_data(&data)
+                .expect("Gagal menulis piksel 16-bit");
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!("test_png_16bit_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_file = temp_dir.join("test_16bit.png");
+        {
+            let mut f = File::create(&test_file).expect("Gagal membuat test file");
+            f.write_all(&png_bytes).expect("Gagal menulis bytes PNG");
+        }
+
+        let res = decode_and_scale_png(&test_file, 4);
+        assert!(
+            res.is_ok(),
+            "PNG 16-bit harus berhasil didecode dengan normalisasi: {:?}",
+            res.err()
+        );
+        let (dynamic_img, has_alpha) = res.unwrap();
+        assert!(!has_alpha);
+        assert_eq!(dynamic_img.width(), 4);
+        assert_eq!(dynamic_img.height(), 4);
+
+        let _ = std::fs::remove_file(test_file);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
 }
