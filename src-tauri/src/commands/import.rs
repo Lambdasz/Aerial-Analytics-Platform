@@ -100,7 +100,9 @@ pub async fn import_images(
     // clones while the borrow of `state` must end now (Tauri forbids async
     // borrows crossing awaits).
     let app_state = AppState {
+        plugins: Arc::clone(&state.plugins),
         jobs: Arc::clone(&state.jobs),
+        state_path: state.state_path.clone(),
         db: Arc::clone(&state.db),
         library_root: Arc::clone(&state.library_root),
     };

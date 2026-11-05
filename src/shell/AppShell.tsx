@@ -1,33 +1,70 @@
-import { useState } from "react";
-import { Navbar } from "@blueprintjs/core";
+import { useCallback, useEffect, useState } from "react";
 
 import { Sidebar } from "./Sidebar";
-import { DEFAULT_MODULE_ID, findModule } from "./modules";
+import { DEFAULT_MODULE_ID, findModule, findModuleBySlug, moduleHash } from "./modules";
 
-/**
- * Application shell: a fixed sidebar for module navigation and a content area
- * that renders the selected module's page.
- *
- * Navigation is plain component state on purpose — no router dependency is
- * installed in this repo, and adding one would need to go through the team's
- * dependency procedure.
- */
 export function AppShell() {
-  const [activeModuleId, setActiveModuleId] = useState(DEFAULT_MODULE_ID);
+  console.log("TESTSTESTS");
+  // Read the URL syncs on first render
+  const [activeModuleId, setActiveModuleId] = useState(
+    () => findModuleBySlug(window.location.hash)?.id ?? DEFAULT_MODULE_ID,
+  );
+
   const activeModule = findModule(activeModuleId);
   const ActivePage = activeModule.Page;
 
+  // Writes slug to url
+  const navigateToModule = useCallback((moduleId: string) => {
+    const entry = findModule(moduleId);
+    const target = moduleHash(entry);
+    if (window.location.hash === target) {
+      setActiveModuleId(entry.id);
+      return;
+    }
+
+    // Assigning to location.hash pushes a history entry → Back/Forward work.
+    window.location.hash = target;
+  }, []);
+
+  // Single source of truth: the URL. Anything that changes it updates the page.
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const entry = findModuleBySlug(window.location.hash);
+      if (entry) {
+        setActiveModuleId(entry.id);
+        return;
+      }
+
+      // Empty or unknown slug: fall back to the default and clean the URL.
+      const fallback = findModule(DEFAULT_MODULE_ID);
+      window.history.replaceState(null, "", moduleHash(fallback));
+      setActiveModuleId(fallback.id);
+    };
+
+    syncFromUrl(); // normalise on first load
+    window.addEventListener("hashchange", syncFromUrl);
+    return () => window.removeEventListener("hashchange", syncFromUrl);
+  }, []);
+
+  // Cross-module navigation: pages dispatch `open-module` with a module id (or slug).
+  useEffect(() => {
+    const handleOpenModule = (event: Event) => {
+      const detail = (event as CustomEvent<{ moduleId?: string; slug?: string }>).detail;
+      const key = detail?.moduleId ?? detail?.slug;
+      if (!key) return;
+
+      const entry = findModuleBySlug(key);
+      if (entry) navigateToModule(entry.id);
+    };
+
+    window.addEventListener("open-module", handleOpenModule);
+    return () => window.removeEventListener("open-module", handleOpenModule);
+  }, [navigateToModule]);
+
   return (
     <div className="app-shell">
-      <Navbar className="app-shell_navbar">
-        <div className="app-shell_navbar-brand">
-          <span className="app-shell_navbar-bold">Aerial</span>
-          <span>Analytics Platform</span>
-        </div>
-      </Navbar>
-
       <div className="app-shell_body">
-        <Sidebar activeModuleId={activeModuleId} onSelectModule={setActiveModuleId} />
+        <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
         <main className="app-shell_content">
           <ActivePage />
         </main>

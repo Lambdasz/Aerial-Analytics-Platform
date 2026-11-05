@@ -1,7 +1,7 @@
 {
   "name": "aerial-analytics-platform",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,8 @@
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "prepare": "husky",
-    "commitlint": "commitlint --edit"
+    "commitlint": "commitlint --edit",
+    "test:unit": "vitest run"
   },
   "dependencies": {
     "@blueprintjs/core": "^6.18.0",
@@ -24,6 +25,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-opener": "^2",
+    "js-yaml": "^5.5.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "react": "^19.1.0",
@@ -52,6 +54,7 @@
     "prettier": "^3.6.2",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.0.5"
   }
 }

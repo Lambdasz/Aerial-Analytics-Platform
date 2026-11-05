@@ -2198,6 +2198,7 @@ mod tests {
             analysis_ready: Some(true),
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         }
     }
 
@@ -2750,6 +2751,7 @@ mod tests {
             analysis_ready: Some(true),
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         };
         {
             let conn = db.lock().expect("db lock");
@@ -4026,6 +4028,7 @@ mod tests {
             analysis_ready: None,
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         };
         insert_image(&conn, &legacy).expect("legacy row");
         assert!(matches!(

@@ -1,0 +1,17 @@
+[package]
+name = "vegetation-condition-analysis"
+version = "1.0.0"
+edition = "2021"
+description = "Module 6 - RGB Vegetation Condition Analysis Plugin"
+
+[lib]
+name = "vegetation_condition"
+path = "src/lib.rs"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
+serde_json = { version = "1", features = ["preserve_order"] }

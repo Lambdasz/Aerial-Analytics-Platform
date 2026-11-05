@@ -61,7 +61,11 @@ where
     let conn = rusqlite::Connection::open(root.path().join("aerial.db")).expect("scratch db");
     init(&conn).expect("scratch schema");
     let state = AppState {
+        plugins: Arc::new(RwLock::new(
+            crate::plugin_manager::registry::PluginRegistry::new(),
+        )),
         jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+        state_path: None,
         db: Arc::new(Mutex::new(conn)),
         library_root: Arc::new(root.path().join("library")),
     };
@@ -651,7 +655,11 @@ fn e2e_delete_image_works_when_the_library_root_is_a_symlink() {
     std::os::unix::fs::symlink(&real_library, &link_library).expect("symlink library");
     let env = TestEnv {
         state: AppState {
+            plugins: Arc::new(RwLock::new(
+                crate::plugin_manager::registry::PluginRegistry::new(),
+            )),
             jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
+            state_path: None,
             db: Arc::new(Mutex::new(conn)),
             library_root: Arc::new(link_library),
         },

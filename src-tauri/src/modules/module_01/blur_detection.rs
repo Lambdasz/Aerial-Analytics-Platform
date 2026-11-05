@@ -277,7 +277,7 @@ fn meets_scoring_size(width: u32, height: u32) -> bool {
 /// Mean/stddev/count of a set of blur scores, used as a session's relative
 /// baseline.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SessionBlurStats {
+pub struct SessionBlurStats {
     pub mean: f64,
     pub stddev: f64,
     pub sample_count: usize,

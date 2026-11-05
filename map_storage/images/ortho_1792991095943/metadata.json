@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "image_id": "ortho_1792991095943",
+  "import_mode": "B",
+  "source_format": "geotiff",
+  "source_filename": "600fcc9055481e0005e3129f",
+  "source_dimensions": [
+    13695,
+    15903
+  ],
+  "display_dimensions": [
+    1984,
+    2304
+  ],
+  "source_file_size_bytes": 53171695,
+  "display_file_size_bytes": 9488662,
+  "display_format": "png",
+  "bounds": {
+    "south": -1.1922709389421202,
+    "west": 116.87604270835425,
+    "north": -1.1834345960221202,
+    "east": 116.88360289615424,
+    "source": "geotiff"
+  },
+  "source_crs": "EPSG:4326 (WGS84 Geodetic)",
+  "tiff_technical_details": {
+    "bands": 3,
+    "bit_depth": 8,
+    "sample_format": "uint8",
+    "compression": "JPEG",
+    "layout": "tiled",
+    "chunk_dimensions": [
+      512,
+      512
+    ],
+    "total_chunks": 864,
+    "planar_configuration": "Contiguous (Chunky)",
+    "photometric_interpretation": "Unknown",
+    "has_alpha": false,
+    "nodata_value": 0.0
+  },
+  "imported_at": "2026-10-26T05:04:55.945058900+00:00",
+  "warnings": [
+    "Resolusi pratinjau PNG disesuaikan ke 1984x2304 agar muat dalam batas 10 MiB",
+    "Batas hitam / NoData pada GeoTIFF dikonversi menjadi transparansi (kanal alpha).",
+    "Piramida internal IFD 2 (6848x7952) digunakan untuk akselerasi dekompresi display."
+  ]
+}

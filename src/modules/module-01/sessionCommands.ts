@@ -65,6 +65,7 @@ export interface StoredImage {
   locationLon: number | null;
   capturedAt: string | null;
   gpsAltitudeM: number | null;
+  headingDeg: number | null;
   width: number | null;
   height: number | null;
   format: string | null;

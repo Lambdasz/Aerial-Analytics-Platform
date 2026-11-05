@@ -1,0 +1,135 @@
+{
+  "layer_id": "result_landcover_001",
+  "layer_name": "Klasifikasi Tutupan Lahan ( Rumah rakyat melata)",
+  "display_preference": {
+    "type": "polygon",
+    "color": "#E67E22",
+    "icon": "",
+    "image_url": "/map_storage/images/result_image/result_landcover_001_1792992486715.jpg",
+    "fields": [
+      {
+        "key": "land_cover_class",
+        "label": "Kelas Tutupan Lahan",
+        "visible": true,
+        "custom": false,
+        "kind": "text"
+      },
+      {
+        "key": "confidence",
+        "label": "Keyakinan",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      },
+      {
+        "key": "area_sqm",
+        "label": "Luas",
+        "unit": "m²",
+        "visible": true,
+        "custom": false,
+        "kind": "number"
+      }
+    ]
+  },
+  "spatial_results": [
+    {
+      "source": "landcover_classification_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              116.8595,
+              -1.2212
+            ],
+            [
+              116.8605,
+              -1.221
+            ],
+            [
+              116.861,
+              -1.2216
+            ],
+            [
+              116.8612,
+              -1.2225
+            ],
+            [
+              116.8608,
+              -1.2232
+            ],
+            [
+              116.86,
+              -1.223
+            ],
+            [
+              116.8592,
+              -1.2222
+            ],
+            [
+              116.8595,
+              -1.2212
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "land_cover_class": "bare_soil",
+        "confidence": 0.85,
+        "area_sqm": 980.0,
+        "image_url": "/map_storage/images/result_image/result_landcover_001_1792992486715.jpg"
+      },
+      "image_url": "/map_storage/images/result_image/result_landcover_001_1792992486715.jpg"
+    },
+    {
+      "source": "landcover_classification_v1",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              116.8612,
+              -1.2205
+            ],
+            [
+              116.8622,
+              -1.2202
+            ],
+            [
+              116.8628,
+              -1.221
+            ],
+            [
+              116.8625,
+              -1.2222
+            ],
+            [
+              116.8618,
+              -1.2228
+            ],
+            [
+              116.8612,
+              -1.222
+            ],
+            [
+              116.861,
+              -1.2212
+            ],
+            [
+              116.8612,
+              -1.2205
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "land_cover_class": "built_area",
+        "confidence": 0.91,
+        "area_sqm": 760.0,
+        "image_url": "/map_storage/images/result_image/result_landcover_001_1792992486715.jpg"
+      },
+      "image_url": "/map_storage/images/result_image/result_landcover_001_1792992486715.jpg"
+    }
+  ],
+  "updated_at": "2026-10-26T05:28:06.714Z"
+}

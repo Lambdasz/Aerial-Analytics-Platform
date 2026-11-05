@@ -51,14 +51,15 @@ const IMAGE_TABLE_COLUMNS_DDL: &str = "id            TEXT PRIMARY KEY,
             raw_sibling_id TEXT,
             analysis_ready INTEGER,
             blur_score    REAL,
-            is_blurry     INTEGER";
+            is_blurry     INTEGER,
+            heading_deg   REAL";
 
 /// Columns of the `image` table in canonical order, for `SELECT`s and for
 /// the data-preserving copy in [`migrate_image_schema`].
 const IMAGE_COLUMNS: &str = "id, session_id, file_path, location_lat, location_lon, \
     captured_at, gps_altitude_m, width, height, format, make, camera_model, \
     source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
-    blur_score, is_blurry";
+    blur_score, is_blurry, heading_deg";
 
 /// Canonical `image` columns. A table carrying all of them with nullable
 /// location columns is already current and is never rebuilt, so any columns
@@ -83,6 +84,7 @@ const IMAGE_COLUMN_NAMES: &[&str] = &[
     "analysis_ready",
     "blur_score",
     "is_blurry",
+    "heading_deg",
 ];
 
 /// Index used by project-scope duplicate detection, which looks images up by
@@ -1046,6 +1048,7 @@ pub fn image_from_metadata(
         analysis_ready: None,
         blur_score: None,
         is_blurry: None,
+        heading_deg: metadata.heading_deg,
     }
 }
 
@@ -1063,8 +1066,8 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
         "INSERT INTO image (id, session_id, file_path, location_lat, location_lon, \
             captured_at, gps_altitude_m, width, height, format, make, camera_model, \
             source_path, content_hash, file_size, raw_sibling_id, analysis_ready, \
-            blur_score, is_blurry)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            blur_score, is_blurry, heading_deg)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             image.id.to_string(),
             image.session_id.to_string(),
@@ -1085,6 +1088,7 @@ pub fn insert_image(conn: &Connection, image: &Image) -> Result<(), SessionError
             image.analysis_ready.map(i64::from),
             image.blur_score,
             image.is_blurry.map(i64::from),
+            image.heading_deg,
         ],
     )?;
     Ok(())
@@ -1108,6 +1112,26 @@ pub fn get_image(conn: &Connection, image_id: Uuid) -> Result<Image, SessionErro
     )
     .optional()?
     .ok_or(SessionError::ImageNotFound { image_id })
+}
+
+/// Finds a persisted image by the absolute library path stored in
+/// `image.file_path`. `None` when the path is not tracked (e.g. an image
+/// outside the app library).
+///
+/// # Purity
+///
+/// Impure — reads from the database.
+pub fn find_image_by_path(
+    conn: &Connection,
+    file_path: &str,
+) -> Result<Option<Image>, SessionError> {
+    Ok(conn
+        .query_row(
+            &format!("SELECT {IMAGE_COLUMNS} FROM image WHERE file_path = ?1"),
+            params![file_path],
+            row_to_image,
+        )
+        .optional()?)
 }
 
 /// Lists every persisted image belonging to a session, in file-path order.
@@ -1405,6 +1429,7 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
     let analysis_ready: Option<i64> = row.get(16)?;
     let blur_score: Option<f64> = row.get(17)?;
     let is_blurry: Option<i64> = row.get(18)?;
+    let heading_deg: Option<f64> = row.get(19)?;
 
     let captured_at = captured_at
         .map(|s| naive_from_db(&s).map_err(|e| conversion_err(5, rusqlite::types::Type::Text, e)))
@@ -1478,6 +1503,7 @@ fn row_to_image(row: &Row) -> rusqlite::Result<Image> {
         raw_sibling_id,
         analysis_ready,
         blur_score,
+        heading_deg,
         is_blurry,
     })
 }
@@ -1537,6 +1563,7 @@ mod tests {
             analysis_ready: Some(true),
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         }
     }
 
@@ -1561,6 +1588,7 @@ mod tests {
             analysis_ready: None,
             blur_score: None,
             is_blurry: None,
+            heading_deg: None,
         }
     }
 

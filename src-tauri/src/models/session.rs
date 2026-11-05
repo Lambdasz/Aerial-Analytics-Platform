@@ -134,6 +134,10 @@ pub struct Image {
     pub captured_at: Option<NaiveDateTime>,
     /// GPS altitude in metres above sea level (EXIF). `None` when absent.
     pub gps_altitude_m: Option<f64>,
+
+    /// Camera heading in degrees clockwise from true north (EXIF
+    /// `GPSImgDirection`). `None` for images without a direction tag.
+    pub heading_deg: Option<f64>,
     /// Image width in pixels. `None` when dimensions could not be read.
     pub width: Option<u32>,
     /// Image height in pixels. `None` when dimensions could not be read.

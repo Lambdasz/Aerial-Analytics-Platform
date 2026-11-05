@@ -1,3 +1,30 @@
+:root {
+  /* Colours (Apple-inspired light palette used across Module 3) */
+  --color-gallery-white: #ffffff;
+  --color-studio-mist: #f5f5f7;
+  --color-paper-frost: #fafafc;
+  --color-hairline-silver: #d6d6d6;
+  --color-control-gray: #e6e6e8;
+  --color-ink: #1d1d1f;
+  --color-slate: #707070;
+  --color-steel: #86868b;
+  --color-apple-blue: #0066cc;
+  --color-pricing-blue: #0071e3;
+  --color-launch-orange: #b64400;
+
+  /* Typography */
+  --font-sf-pro-display: "Inter", "Helvetica Neue", "Arial", sans-serif;
+  --font-sf-pro-text: "Inter", "Helvetica Neue", "Arial", sans-serif;
+
+  /* Hairline shadows instead of drop shadows */
+  --shadow-subtle: rgb(230, 230, 232) 0px 0px 0px 1px;
+  --shadow-subtle-2: rgb(134, 134, 139) 0px 0px 0px 1px;
+
+  /* Radii */
+  --radius-cards: 28px;
+  --radius-buttons: 9999px;
+}
+
 html,
 body,
 #root {
@@ -6,4 +33,14 @@ body,
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+}
+
+/* Hide scrollbar utility (panels opt in with this class) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
