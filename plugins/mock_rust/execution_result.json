@@ -1,0 +1,22 @@
+{
+  "execution_id": "exec_20260914_rust_001",
+  "status": "success",
+  "execution_time_ms": 120,
+  "metrics": {
+    "canopy_density_pct": 54.2,
+    "canopy_area_sqm": 12450.0,
+    "tree_cluster_count": 87
+  },
+  "artifacts": {
+    "canopy_mask": {
+      "file_path": "/absolute/path/to/cache/canopy_mask_0099.png",
+      "format": "image/png",
+      "bounds": [116.8523, -1.246, 116.855, -1.2435]
+    },
+    "canopy_polygons": {
+      "file_path": "/absolute/path/to/cache/canopy_polygons_0099.geojson",
+      "format": "application/geo+json"
+    }
+  },
+  "error": null
+}

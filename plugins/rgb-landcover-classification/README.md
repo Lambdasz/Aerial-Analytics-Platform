@@ -10,14 +10,14 @@ The repository does not contain trained weights or a labelled aerial dataset. Pu
 
 ```bash
 python main.py --healthcheck
-python main.py --input payload.yaml --output result.yaml
+python main.py --input payload.json --output result.json
 python main.py --validate-parameters '{"backbone":"resnet101"}'
 ```
 
-Outputs are `result.yaml`, `mask.png`, and `class_statistics.json` in `output_dir`. The payload and result follow the platform's Module 2 execution contract.
+Outputs are `result.json`, `mask.png`, and `class_statistics.json` in `output_dir`. The payload and result follow the platform's Module 2 execution contract.
 
 The plugin emits `PROGRESS:{json}` lines for the Module 2 supervisor. Standard
-class metrics remain fixed so the declared `outputs.yaml` contract is stable;
+class metrics remain fixed so the declared `outputs.json` contract is stable;
 custom classes are returned in `class_statistics.json`.
 
 When `target.metadata.georeference` contains WGS84 bounds, the `boundary_vector`

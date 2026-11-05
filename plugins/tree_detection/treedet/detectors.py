@@ -529,7 +529,7 @@ def deepforest_detector(image_path: str, model_config: Mapping[str, Any]) -> Seq
 
 
 # A new model is one function with this signature, registered here and in the
-# "detector" options of parameters.yaml.
+# "detector" options of parameters.json.
 DETECTORS: Mapping[str, Detector] = {
     "opencv_watershed": opencv_watershed_detector,
     "deepforest": deepforest_detector,

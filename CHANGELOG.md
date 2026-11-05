@@ -5,12 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-- **BREAKING:** Plugin data contracts migrated from JSON to YAML. Plugin directories and `schemas/` now use `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml`, `execution_payload.yaml`, `execution_result.yaml`, and `plugin_state.yaml` (previously `.json`). Update any local tooling, validation commands, or docs that read `.json` contracts to the `.yaml` equivalents.
-
 ## [1.0.0] — 2026-10-29
 
 First stable release. All eleven modules have working implementations; the platform covers the full flow from aerial image import to a printable analytics report.

@@ -7,7 +7,7 @@
 //! - M2.4: Safe ZIP archive installation with Zip-Slip path traversal defense
 //! - M2.5: Enable/disable plugin status toggling
 //! - Uninstallation and removal of user-installed plugins
-//! - Atomic persistence of mutable state (`plugin_state.yaml`)
+//! - Atomic persistence of mutable state (`plugin_state.json`)
 //!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/02_DOMAIN_2_LIFECYCLE_STATE.md`
 
@@ -37,7 +37,7 @@ pub async fn install_plugin(
 /// Permanently uninstalls an existing user-installed plugin.
 ///
 /// **Pre-condition**: `plugin_id` exists; source is `user` (not `builtin`); plugin is not running.  
-/// **Post-condition**: Plugin folder deleted; entry purged from `plugin_state.yaml`.
+/// **Post-condition**: Plugin folder deleted; entry purged from `plugin_state.json`.
 #[tauri::command]
 pub async fn remove_plugin(
     plugin_id: String,
@@ -48,7 +48,7 @@ pub async fn remove_plugin(
         .map_err(Into::into)
 }
 
-/// Toggles active/inactive status of a plugin and flushes changes to `plugin_state.yaml`.
+/// Toggles active/inactive status of a plugin and flushes changes to `plugin_state.json`.
 ///
 /// Provides the administrative enable/disable lifecycle control exposed to the frontend via Tauri IPC (`invoke("set_plugin_status", { pluginId, enabled })`).
 /// Invoked from Module 11 (Extension Manager) when a user activates or deactivates a plugin card or table row,
@@ -63,10 +63,10 @@ pub async fn remove_plugin(
 /// - `_plugin_id` is registered in memory, and the OS AppData state directory is accessible for atomic file persistence.
 ///
 /// # Post-condition
-/// - Updates the in-memory `enabled` flag of the specified plugin and atomically flushes the updated `PluginStateStore` to `plugin_state.yaml` via a temporary file write and atomic rename.
+/// - Updates the in-memory `enabled` flag of the specified plugin and atomically flushes the updated `PluginStateStore` to `plugin_state.json` via a temporary file write and atomic rename.
 ///
 /// # Errors
-/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found in the registry or state, or `STATE_ERROR` if serializing and atomically persisting to `plugin_state.yaml` fails.
+/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found in the registry or state, or `STATE_ERROR` if serializing and atomically persisting to `plugin_state.json` fails.
 ///
 /// # Panics
 /// - This function does not panic.
@@ -108,7 +108,7 @@ pub(crate) fn update_state_store_for_status(
     record.enabled = enabled;
 }
 
-/// Internal helper for toggling plugin status and flushing changes to plugin_state.yaml.
+/// Internal helper for toggling plugin status and flushing changes to plugin_state.json.
 ///
 /// Acts as the **Imperative Shell** around registry synchronization and atomic disk persistence,
 /// delegating the deterministic state record updates to pure function `update_state_store_for_status`.
@@ -182,7 +182,7 @@ pub(crate) fn apply_state_to_registry(
     }
 }
 
-/// Fallback default path for plugin_state.yaml if none is specified in AppState.
+/// Fallback default path for plugin_state.json if none is specified in AppState.
 pub(crate) fn default_state_path() -> PathBuf {
     let candidate_dirs = [
         PathBuf::from("plugins"),
@@ -192,16 +192,16 @@ pub(crate) fn default_state_path() -> PathBuf {
 
     for dir in &candidate_dirs {
         if dir.is_dir() {
-            return dir.join("plugin_state.yaml");
+            return dir.join("plugin_state.json");
         }
     }
 
-    PathBuf::from("plugins").join("plugin_state.yaml")
+    PathBuf::from("plugins").join("plugin_state.json")
 }
 
 /// Updates and persists custom parameter overrides configured by the user.
 ///
-/// **Pre-condition**: `plugin_id` exists; parameters conform to plugin's `parameters.yaml`.  
+/// **Pre-condition**: `plugin_id` exists; parameters conform to plugin's `parameters.json`.  
 /// **Post-condition**: Overrides saved in state and persisted to disk.
 #[tauri::command]
 pub async fn update_plugin_config(
@@ -216,8 +216,8 @@ pub async fn update_plugin_config(
 
 /// Pure: Resolves the plugin root directory from staging inspection results.
 ///
-/// **Pre-condition**: `has_root_manifest` indicates whether manifest.yaml exists directly in staging root.
-/// `candidates` contains subdirectories that contain a manifest.yaml.
+/// **Pre-condition**: `has_root_manifest` indicates whether manifest.json exists directly in staging root.
+/// `candidates` contains subdirectories that contain a manifest.json.
 /// **Post-condition**: Returns the resolved plugin root or an error if missing or ambiguous.
 pub(crate) fn resolve_staged_plugin_root(
     staging_root: &Path,
@@ -229,15 +229,15 @@ pub(crate) fn resolve_staged_plugin_root(
     }
     if candidates.is_empty() {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
-            message: "manifest.yaml not found in archive root or subdirectory".to_string(),
+            path: "manifest.json".to_string(),
+            message: "manifest.json not found in archive root or subdirectory".to_string(),
         });
     }
     if candidates.len() > 1 {
         return Err(PluginError::ManifestInvalid {
-            path: "manifest.yaml".to_string(),
+            path: "manifest.json".to_string(),
             message: format!(
-                "Ambiguous archive: multiple plugin directories with manifest.yaml found ({})",
+                "Ambiguous archive: multiple plugin directories with manifest.json found ({})",
                 candidates.len()
             ),
         });
@@ -382,15 +382,15 @@ pub(crate) async fn install_plugin_internal(
         verify_and_extract_entry(&mut entry, temp_dir.path())?;
     }
 
-    // Step 2: Locate plugin root (root or single top-level directory containing manifest.yaml)
+    // Step 2: Locate plugin root (root or single top-level directory containing manifest.json)
     let staging_path = temp_dir.path();
-    let has_root_manifest = staging_path.join("manifest.yaml").is_file();
+    let has_root_manifest = staging_path.join("manifest.json").is_file();
     let mut candidates = Vec::new();
     if !has_root_manifest {
         if let Ok(entries) = std::fs::read_dir(staging_path) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.is_dir() && p.join("manifest.yaml").is_file() {
+                if p.is_dir() && p.join("manifest.json").is_file() {
                     candidates.push(p);
                 }
             }
@@ -401,9 +401,9 @@ pub(crate) async fn install_plugin_internal(
 
     // Step 3: Parse and validate manifest
     let manifest_str =
-        std::fs::read_to_string(plugin_source_dir.join("manifest.yaml")).map_err(|e| {
+        std::fs::read_to_string(plugin_source_dir.join("manifest.json")).map_err(|e| {
             PluginError::ManifestInvalid {
-                path: "manifest.yaml".to_string(),
+                path: "manifest.json".to_string(),
                 message: e.to_string(),
             }
         })?;
@@ -438,14 +438,14 @@ pub(crate) async fn install_plugin_internal(
         existing_state_source.as_ref(),
     )?;
 
-    // Step 5: Validate sub-contracts (parameters.yaml, inputs.yaml, outputs.yaml)
+    // Step 5: Validate sub-contracts (parameters.json, inputs.json, outputs.json)
     let (parameters_raw, inputs_spec, outputs_raw) =
         super::registry::validate_subcontracts(&plugin_source_dir, &manifest)?;
 
     let inputs_path = plugin_source_dir.join(&manifest.inputs);
     let inputs_raw = std::fs::read_to_string(&inputs_path)
         .ok()
-        .and_then(|s| serde_yaml::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
 
     // Step 6: Atomic commit to plugins/<plugin_id>
@@ -481,7 +481,7 @@ pub(crate) async fn install_plugin_internal(
     registry.register(bundle);
     drop(registry);
 
-    // Step 8: Update and atomically persist plugin_state.yaml
+    // Step 8: Update and atomically persist plugin_state.json
     let now_iso = chrono::Utc::now().to_rfc3339();
     update_state_store_for_install(&mut store, plugin_id, &manifest.metadata.version, &now_iso);
 
@@ -574,7 +574,7 @@ pub(crate) async fn remove_plugin_internal(
     registry.plugins.remove(plugin_id);
     drop(registry);
 
-    // 4. Purge from plugin_state.yaml and flush
+    // 4. Purge from plugin_state.json and flush
     store.plugins.remove(plugin_id);
     store.updated_at = chrono::Utc::now().to_rfc3339();
     save_plugin_state(&state_path, &store)?;
@@ -582,7 +582,7 @@ pub(crate) async fn remove_plugin_internal(
     Ok(())
 }
 
-/// Validates custom parameter values against constraints declared in parameters.yaml.
+/// Validates custom parameter values against constraints declared in parameters.json.
 pub(crate) fn validate_custom_parameters(
     parameters_raw: &serde_json::Value,
     custom_params: &serde_json::Value,
@@ -590,7 +590,7 @@ pub(crate) fn validate_custom_parameters(
     let custom_obj = custom_params
         .as_object()
         .ok_or_else(|| PluginError::SubcontractInvalid {
-            path: "parameters.yaml".to_string(),
+            path: "parameters.json".to_string(),
             message: "Custom parameters must be a JSON object".to_string(),
         })?;
 
@@ -605,7 +605,7 @@ pub(crate) fn validate_custom_parameters(
             .iter()
             .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(key))
             .ok_or_else(|| PluginError::SubcontractInvalid {
-                path: "parameters.yaml".to_string(),
+                path: "parameters.json".to_string(),
                 message: format!("Unknown parameter '{}'", key),
             })?;
 
@@ -615,7 +615,7 @@ pub(crate) fn validate_custom_parameters(
             "boolean" => {
                 if !val.is_boolean() {
                     return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.yaml".to_string(),
+                        path: "parameters.json".to_string(),
                         message: format!("Parameter '{}' must be a boolean", key),
                     });
                 }
@@ -623,7 +623,7 @@ pub(crate) fn validate_custom_parameters(
             "string" => {
                 if !val.is_string() {
                     return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.yaml".to_string(),
+                        path: "parameters.json".to_string(),
                         message: format!("Parameter '{}' must be a string", key),
                     });
                 }
@@ -632,7 +632,7 @@ pub(crate) fn validate_custom_parameters(
                 let str_val = val
                     .as_str()
                     .ok_or_else(|| PluginError::SubcontractInvalid {
-                        path: "parameters.yaml".to_string(),
+                        path: "parameters.json".to_string(),
                         message: format!(
                             "Parameter '{}' must be a string matching one of the options",
                             key
@@ -649,7 +649,7 @@ pub(crate) fn validate_custom_parameters(
                     .unwrap_or_default();
                 if !options.contains(&str_val) {
                     return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.yaml".to_string(),
+                        path: "parameters.json".to_string(),
                         message: format!(
                             "Parameter '{}' value '{}' is not one of the allowed options: {:?}",
                             key, str_val, options
@@ -661,13 +661,13 @@ pub(crate) fn validate_custom_parameters(
                 let num = val
                     .as_f64()
                     .ok_or_else(|| PluginError::SubcontractInvalid {
-                        path: "parameters.yaml".to_string(),
+                        path: "parameters.json".to_string(),
                         message: format!("Parameter '{}' must be a number", key),
                     })?;
                 if let Some(min) = param_def.get("min").and_then(|m| m.as_f64()) {
                     if num < min {
                         return Err(PluginError::SubcontractInvalid {
-                            path: "parameters.yaml".to_string(),
+                            path: "parameters.json".to_string(),
                             message: format!(
                                 "Parameter '{}' value {} is below minimum {}",
                                 key, num, min
@@ -678,7 +678,7 @@ pub(crate) fn validate_custom_parameters(
                 if let Some(max) = param_def.get("max").and_then(|m| m.as_f64()) {
                     if num > max {
                         return Err(PluginError::SubcontractInvalid {
-                            path: "parameters.yaml".to_string(),
+                            path: "parameters.json".to_string(),
                             message: format!(
                                 "Parameter '{}' value {} exceeds maximum {}",
                                 key, num, max
@@ -689,7 +689,7 @@ pub(crate) fn validate_custom_parameters(
             }
             other => {
                 return Err(PluginError::SubcontractInvalid {
-                    path: "parameters.yaml".to_string(),
+                    path: "parameters.json".to_string(),
                     message: format!(
                         "Unsupported parameter type '{}' for parameter '{}'",
                         other, key
@@ -797,7 +797,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), PluginError> {
 // 2. STATE PERSISTENCE & SECURITY HELPERS (pub(crate))
 // ---------------------------------------------------------------------------
 
-/// Reads and parses `plugin_state.yaml` from disk.
+/// Reads and parses `plugin_state.json` from disk.
 ///
 /// Returns empty default store if the state file does not yet exist.
 pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, PluginError> {
@@ -806,7 +806,7 @@ pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, P
     }
 
     let raw = std::fs::read_to_string(state_path).map_err(|e| PluginError::Io(e.to_string()))?;
-    let store: PluginStateStore = serde_yaml::from_str(&raw).map_err(|e| {
+    let store: PluginStateStore = serde_json::from_str(&raw).map_err(|e| {
         PluginError::StateError(format!(
             "Failed to parse plugin state from {:?}: {}",
             state_path, e
@@ -816,7 +816,7 @@ pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, P
     Ok(store)
 }
 
-/// Atomically persists current plugin states to `plugin_state.yaml`.
+/// Atomically persists current plugin states to `plugin_state.json`.
 ///
 /// Writes to a temporary file (`.tmp`) first, then performs an atomic rename.
 pub(crate) fn save_plugin_state(
@@ -828,8 +828,8 @@ pub(crate) fn save_plugin_state(
     std::fs::create_dir_all(parent).map_err(|e| PluginError::Io(e.to_string()))?;
 
     let temp_file_path = state_path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
-    let serialized =
-        serde_yaml::to_string(state).map_err(|e| PluginError::Serialization(e.to_string()))?;
+    let serialized = serde_json::to_string_pretty(state)
+        .map_err(|e| PluginError::Serialization(e.to_string()))?;
 
     let mut file =
         std::fs::File::create(&temp_file_path).map_err(|e| PluginError::Io(e.to_string()))?;
@@ -958,7 +958,7 @@ mod tests {
     #[test]
     fn test_load_plugin_state_nonexistent_returns_default() {
         let temp_dir = tempdir().unwrap();
-        let missing_path = temp_dir.path().join("plugin_state.yaml");
+        let missing_path = temp_dir.path().join("plugin_state.json");
         let store = load_plugin_state(&missing_path).expect("should return default on missing");
         assert_eq!(store.schema_version, 1);
         assert!(store.plugins.is_empty());
@@ -967,7 +967,7 @@ mod tests {
     #[test]
     fn test_save_plugin_state_atomic_and_load_roundtrip() {
         let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("subdir").join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("subdir").join("plugin_state.json");
 
         let mut store = PluginStateStore::default();
         store.plugins.insert(
@@ -1002,7 +1002,7 @@ mod tests {
     #[test]
     fn test_load_plugin_state_malformed_json_returns_state_error() {
         let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         std::fs::write(&state_path, "{ broken json").unwrap();
 
         let err = load_plugin_state(&state_path).unwrap_err();
@@ -1012,7 +1012,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_plugin_status_updates_registry_and_flushes_state_file() {
         let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
 
         let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
         let bundle = crate::plugin_manager::models::PluginBundle {
@@ -1038,9 +1038,9 @@ mod tests {
                     dependencies_file: None,
                     healthcheck_flag: None,
                 },
-                parameters: "parameters.yaml".to_string(),
-                inputs: "inputs.yaml".to_string(),
-                outputs: "outputs.yaml".to_string(),
+                parameters: "parameters.json".to_string(),
+                inputs: "inputs.json".to_string(),
+                outputs: "outputs.json".to_string(),
                 execution: None,
             },
             inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1122,7 +1122,7 @@ mod tests {
     }
 
     fn create_test_app_state(temp_dir: &Path) -> crate::AppState {
-        let state_path = temp_dir.join("plugin_state.yaml");
+        let state_path = temp_dir.join("plugin_state.json");
         crate::AppState {
             plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::plugin_manager::registry::PluginRegistry::new(),
@@ -1142,67 +1142,74 @@ mod tests {
         let file = std::fs::File::create(zip_path).unwrap();
         let mut writer = zip::ZipWriter::new(file);
 
-        let manifest = r#"manifest_version: 1
-metadata:
-  id: __PLUGIN_ID__
-  name: Test User Plugin
-  version: 1.0.0
-  description: User test plugin
-  category: vegetation
-  tags:
-    - user
-    - test
-runtime:
-  type: python
-  entrypoint: main.py
-parameters: parameters.yaml
-inputs: inputs.yaml
-outputs: outputs.yaml
-"#
-        .replace("__PLUGIN_ID__", plugin_id);
+        let manifest = format!(
+            r#"{{
+            "manifest_version": 1,
+            "metadata": {{
+                "id": "{plugin_id}",
+                "name": "Test User Plugin",
+                "version": "1.0.0",
+                "description": "User test plugin",
+                "category": "vegetation",
+                "tags": ["user", "test"]
+            }},
+            "runtime": {{
+                "type": "python",
+                "entrypoint": "main.py"
+            }},
+            "parameters": "parameters.json",
+            "inputs": "inputs.json",
+            "outputs": "outputs.json"
+        }}"#
+        );
 
-        let parameters = r#"parameters:
-  - name: threshold
-    label: Threshold
-    type: number
-    default: 0.5
-    min: 0.0
-    max: 1.0
-  - name: mode
-    label: Mode
-    type: select
-    options:
-      - FAST
-      - ACCURATE
-    default: FAST
-"#;
+        let parameters = r#"{
+            "parameters": [
+                {
+                    "name": "threshold",
+                    "label": "Threshold",
+                    "type": "number",
+                    "default": 0.5,
+                    "min": 0.0,
+                    "max": 1.0
+                },
+                {
+                    "name": "mode",
+                    "label": "Mode",
+                    "type": "select",
+                    "options": ["FAST", "ACCURATE"],
+                    "default": "FAST"
+                }
+            ]
+        }"#;
 
-        let inputs = r#"granularity: single_image
-supported_mime_types:
-  - image/jpeg
-"#;
+        let inputs = r#"{
+            "granularity": "single_image",
+            "supported_mime_types": ["image/jpeg"]
+        }"#;
 
-        let outputs = r#"metrics: []
-artifacts: {}
-"#;
+        let outputs = r#"{
+            "metrics": {},
+            "artifacts": {}
+        }"#;
 
         writer
-            .start_file("manifest.yaml", SimpleFileOptions::default())
+            .start_file("manifest.json", SimpleFileOptions::default())
             .unwrap();
         writer.write_all(manifest.as_bytes()).unwrap();
 
         writer
-            .start_file("parameters.yaml", SimpleFileOptions::default())
+            .start_file("parameters.json", SimpleFileOptions::default())
             .unwrap();
         writer.write_all(parameters.as_bytes()).unwrap();
 
         writer
-            .start_file("inputs.yaml", SimpleFileOptions::default())
+            .start_file("inputs.json", SimpleFileOptions::default())
             .unwrap();
         writer.write_all(inputs.as_bytes()).unwrap();
 
         writer
-            .start_file("outputs.yaml", SimpleFileOptions::default())
+            .start_file("outputs.json", SimpleFileOptions::default())
             .unwrap();
         writer.write_all(outputs.as_bytes()).unwrap();
 
@@ -1236,11 +1243,11 @@ artifacts: {}
 
         // Filesystem verification
         let target_dir = temp_dir.path().join("user-test-plugin");
-        assert!(target_dir.join("manifest.yaml").exists());
+        assert!(target_dir.join("manifest.json").exists());
         assert!(target_dir.join("main.py").exists());
 
         // State persistence verification
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         let store = load_plugin_state(&state_path).unwrap();
         let rec = store.plugins.get("user-test-plugin").unwrap();
         assert_eq!(rec.source, PluginSource::User);
@@ -1307,9 +1314,9 @@ artifacts: {}
                         dependencies_file: None,
                         healthcheck_flag: None,
                     },
-                    parameters: "parameters.yaml".to_string(),
-                    inputs: "inputs.yaml".to_string(),
-                    outputs: "outputs.yaml".to_string(),
+                    parameters: "parameters.json".to_string(),
+                    inputs: "inputs.json".to_string(),
+                    outputs: "outputs.json".to_string(),
                     execution: None,
                 },
                 inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1376,7 +1383,7 @@ artifacts: {}
         drop(reg);
 
         // Assert purged from state store
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         let store = load_plugin_state(&state_path).unwrap();
         assert!(!store.plugins.contains_key("removable-plugin"));
     }
@@ -1412,9 +1419,9 @@ artifacts: {}
                         dependencies_file: None,
                         healthcheck_flag: None,
                     },
-                    parameters: "parameters.yaml".to_string(),
-                    inputs: "inputs.yaml".to_string(),
-                    outputs: "outputs.yaml".to_string(),
+                    parameters: "parameters.json".to_string(),
+                    inputs: "inputs.json".to_string(),
+                    outputs: "outputs.json".to_string(),
                     execution: None,
                 },
                 inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1475,9 +1482,9 @@ artifacts: {}
                         dependencies_file: None,
                         healthcheck_flag: None,
                     },
-                    parameters: "parameters.yaml".to_string(),
-                    inputs: "inputs.yaml".to_string(),
-                    outputs: "outputs.yaml".to_string(),
+                    parameters: "parameters.json".to_string(),
+                    inputs: "inputs.json".to_string(),
+                    outputs: "outputs.json".to_string(),
                     execution: None,
                 },
                 inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1563,9 +1570,9 @@ artifacts: {}
                         dependencies_file: None,
                         healthcheck_flag: None,
                     },
-                    parameters: "parameters.yaml".to_string(),
-                    inputs: "inputs.yaml".to_string(),
-                    outputs: "outputs.yaml".to_string(),
+                    parameters: "parameters.json".to_string(),
+                    inputs: "inputs.json".to_string(),
+                    outputs: "outputs.json".to_string(),
                     execution: None,
                 },
                 inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1615,7 +1622,7 @@ artifacts: {}
         assert!(res.is_ok());
 
         // Check state file on disk
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         let store = load_plugin_state(&state_path).unwrap();
         let rec = store.plugins.get("config-plugin").unwrap();
         assert_eq!(rec.custom_parameters["threshold"], 0.85);
@@ -1677,9 +1684,9 @@ artifacts: {}
                         dependencies_file: None,
                         healthcheck_flag: None,
                     },
-                    parameters: "parameters.yaml".to_string(),
-                    inputs: "inputs.yaml".to_string(),
-                    outputs: "outputs.yaml".to_string(),
+                    parameters: "parameters.json".to_string(),
+                    inputs: "inputs.json".to_string(),
+                    outputs: "outputs.json".to_string(),
                     execution: None,
                 },
                 inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1875,14 +1882,14 @@ artifacts: {}
             let mut writer = zip::ZipWriter::new(file);
 
             writer
-                .start_file("plugin-a/manifest.yaml", SimpleFileOptions::default())
+                .start_file("plugin-a/manifest.json", SimpleFileOptions::default())
                 .unwrap();
-            writer.write_all(b"manifest_version: 1\n").unwrap();
+            writer.write_all(b"{\"manifest_version\": 1}").unwrap();
 
             writer
-                .start_file("plugin-b/manifest.yaml", SimpleFileOptions::default())
+                .start_file("plugin-b/manifest.json", SimpleFileOptions::default())
                 .unwrap();
-            writer.write_all(b"manifest_version: 1\n").unwrap();
+            writer.write_all(b"{\"manifest_version\": 1}").unwrap();
 
             writer.finish().unwrap();
         }
@@ -1897,7 +1904,7 @@ artifacts: {}
         let app_state = create_test_app_state(temp_dir.path());
 
         // Make state_path a directory so rename(&temp_file_path, state_path) fails with EISDIR
-        let state_path = temp_dir.path().join("plugin_state.yaml");
+        let state_path = temp_dir.path().join("plugin_state.json");
         std::fs::create_dir_all(&state_path).unwrap();
 
         let zip_path = temp_dir.path().join("rollback.zip");
@@ -2068,9 +2075,9 @@ artifacts: {}
                 dependencies_file: None,
                 healthcheck_flag: None,
             },
-            parameters: "parameters.yaml".to_string(),
-            inputs: "inputs.yaml".to_string(),
-            outputs: "outputs.yaml".to_string(),
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
             execution: None,
         };
 

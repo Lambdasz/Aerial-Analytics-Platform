@@ -12,7 +12,6 @@ Run from the repository root:
 
 import json
 import os
-import yaml
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -161,11 +160,11 @@ class OpenCVDetectorTest(unittest.TestCase):
 
 
 class DetectorContractTest(unittest.TestCase):
-    """The registry, parameters.yaml and healthcheck have to stay in sync."""
+    """The registry, parameters.json and healthcheck have to stay in sync."""
 
     def test_every_registered_detector_is_offered_in_the_form(self) -> None:
-        with open(os.path.join(REPO_ROOT, "parameters.yaml"), encoding="utf-8") as handle:
-            parameters = yaml.safe_load(handle)["parameters"]
+        with open(os.path.join(REPO_ROOT, "parameters.json"), encoding="utf-8") as handle:
+            parameters = json.load(handle)["parameters"]
         offered = next(p for p in parameters if p["name"] == "detector")
         self.assertEqual(sorted(offered["options"]), sorted(DETECTORS))
         self.assertIn(offered["default"], DETECTORS)

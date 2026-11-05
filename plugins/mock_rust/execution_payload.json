@@ -1,0 +1,39 @@
+{
+  "execution_id": "exec_20260914_rust_001",
+  "session_id": "session_20260914_01",
+  "output_dir": "/absolute/path/to/project/runs/exec_20260914_rust_001",
+  "target": {
+    "granularity": "single_image",
+    "image_path": "/absolute/path/to/session_01/DJI_0099.JPG",
+    "mime_type": "image/jpeg",
+    "metadata": {
+      "resolution": [4000, 3000],
+      "gps": {
+        "lat": -1.2435,
+        "lon": 116.8523
+      },
+      "altitude": 115.0,
+      "timestamp": "2026-09-14T11:15:00Z"
+    }
+  },
+  "aoi": {
+    "type": "geojson_polygon",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [116.8523, -1.2435],
+          [116.855, -1.2435],
+          [116.855, -1.246],
+          [116.8523, -1.246],
+          [116.8523, -1.2435]
+        ]
+      ]
+    }
+  },
+  "parameters": {
+    "min_height": 2.0,
+    "canopy_threshold": 0.4,
+    "export_polygons": true
+  }
+}

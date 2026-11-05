@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 pub use crate::plugin_manager::payload::ImageMetadata;
 
 // ---------------------------------------------------------------------------
-// Plugin Manifest Definition (Conforms to schemas/plugin.schema.yaml)
+// Plugin Manifest Definition (Conforms to schemas/plugin.schema.json)
 // ---------------------------------------------------------------------------
 
 /// Metadata describing plugin identity, author, version, and categorization.
 ///
-/// Corresponds to the `metadata` block in `manifest.yaml` conforming to `plugin.schema.yaml`.
+/// Corresponds to the `metadata` block in `manifest.json` conforming to `plugin.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginMetadata {
     pub id: String,
@@ -83,7 +83,7 @@ fn default_concurrency() -> String {
     "sequential".to_string()
 }
 
-/// Canonical plugin manifest model strictly validated against `plugin.schema.yaml`.
+/// Canonical plugin manifest model strictly validated against `plugin.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PluginManifest {
     #[serde(default, rename = "$schema")]
@@ -91,18 +91,18 @@ pub struct PluginManifest {
     pub manifest_version: u32,
     pub metadata: PluginMetadata,
     pub runtime: PluginRuntime,
-    pub parameters: String, // relative path to parameters.yaml
-    pub inputs: String,     // relative path to inputs.yaml
-    pub outputs: String,    // relative path to outputs.yaml
+    pub parameters: String, // relative path to parameters.json
+    pub inputs: String,     // relative path to inputs.json
+    pub outputs: String,    // relative path to outputs.json
     #[serde(default)]
     pub execution: Option<PluginExecutionConfig>,
 }
 
 // ---------------------------------------------------------------------------
-// Inputs Specification (Conforms to schemas/inputs.schema.yaml)
+// Inputs Specification (Conforms to schemas/inputs.schema.json)
 // ---------------------------------------------------------------------------
 
-/// Input data constraints and metadata requirements validated against `inputs.schema.yaml`.
+/// Input data constraints and metadata requirements validated against `inputs.schema.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InputsSpec {
     pub granularity: String,
@@ -118,14 +118,14 @@ pub struct InputsSpec {
 }
 
 // ---------------------------------------------------------------------------
-// Execution Payload & Result (Conforms to schemas/execution_payload.schema.yaml
-// and schemas/execution_result.schema.yaml)
+// Execution Payload & Result (Conforms to schemas/execution_payload.schema.json
+// and schemas/execution_result.schema.json)
 // ---------------------------------------------------------------------------
 
 /// Target image descriptor within an `ExecutionPayload`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionTarget {
-    /// Matches `inputs.yaml` granularity: `"single_image"`, `"batch"`, etc.
+    /// Matches `inputs.json` granularity: `"single_image"`, `"batch"`, etc.
     pub granularity: String,
     /// Absolute filesystem path to the source image.
     pub image_path: String,
@@ -138,7 +138,7 @@ pub struct ExecutionTarget {
 
 /// Internal payload written to disk and passed to the plugin via `--input`.
 ///
-/// Matches the `execution_payload.schema.yaml` canonical schema.
+/// Matches the `execution_payload.schema.json` canonical schema.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExecutionPayload {
     pub execution_id: String,
@@ -183,7 +183,7 @@ pub struct StandardJobResultDto {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin State Persistence Models (plugin_state.yaml)
+// Plugin State Persistence Models (plugin_state.json)
 // ---------------------------------------------------------------------------
 
 /// Origin source classification of an installed plugin.
@@ -214,7 +214,7 @@ pub struct PluginStats {
     pub last_executed_at: Option<String>,
 }
 
-/// Operational state record stored per plugin in `plugin_state.yaml`.
+/// Operational state record stored per plugin in `plugin_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginStateRecord {
     pub version: String,
@@ -229,7 +229,7 @@ pub struct PluginStateRecord {
     pub stats: PluginStats,
 }
 
-/// Canonical root state store atomically persisted to `plugin_state.yaml`.
+/// Canonical root state store atomically persisted to `plugin_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PluginStateStore {
     pub schema_version: u32,

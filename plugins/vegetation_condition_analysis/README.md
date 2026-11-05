@@ -12,12 +12,12 @@ calculation is a pure function, all I/O lives at the edges.
 
 | File                     | Purpose                                                                                    |
 | :----------------------- | :----------------------------------------------------------------------------------------- |
-| `manifest.yaml`          | Plugin identity, binary runtime (`bin/main`), timeout                                      |
-| `parameters.yaml`        | Thresholds (`exg_threshold`, VARI classes, yellowing hue, browning RBVI), grid, plots      |
-| `inputs.yaml`            | Input requirements (single image, JPEG/PNG/TIFF, optional AOI)                             |
-| `outputs.yaml`           | Metrics (VARI, colour stats, class shares, yellowing/browning) and artifacts               |
-| `execution_payload.yaml` | Sample payload delivered by Module 2                                                       |
-| `execution_result.yaml`  | Sample result written by the plugin                                                        |
+| `manifest.json`          | Plugin identity, binary runtime (`bin/main`), timeout                                      |
+| `parameters.json`        | Thresholds (`exg_threshold`, VARI classes, yellowing hue, browning RBVI), grid, plots      |
+| `inputs.json`            | Input requirements (single image, JPEG/PNG/TIFF, optional AOI)                             |
+| `outputs.json`           | Metrics (VARI, colour stats, class shares, yellowing/browning) and artifacts               |
+| `execution_payload.json` | Sample payload delivered by Module 2                                                       |
+| `execution_result.json`  | Sample result written by the plugin                                                        |
 | `Cargo.toml`             | Rust package (binary `main`)                                                               |
 | `src/lib.rs`             | Pure pipeline (canopy mask, VARI, HSL stats, classes, chlorosis/necrosis, zonation, plots) |
 | `src/main.rs`            | Entrypoint (`--healthcheck`, `--input`/`--output`)                                         |
@@ -43,7 +43,7 @@ Copy-Item plugins\vegetation_condition_analysis\target\release\main.exe plugins\
 ## Public functions (Module 2 interface)
 
 1. `./plugins/vegetation_condition_analysis/bin/main --healthcheck` prints a healthy JSON and exits 0.
-2. `./plugins/vegetation_condition_analysis/bin/main --input <payload.yaml> --output <result.yaml>` runs the analysis and writes the result file. On error it writes `status: "failure"` and exits 1.
+2. `./plugins/vegetation_condition_analysis/bin/main --input <payload.json> --output <result.json>` runs the analysis and writes the result file. On error it writes `status: "failure"` and exits 1.
 
 ## Pipeline (mirrors the research modules M6.0–M6.5)
 

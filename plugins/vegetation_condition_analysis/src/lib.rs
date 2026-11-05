@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!     main --healthcheck
-//!     main --input payload.yaml --output result.yaml
+//!     main --input payload.json --output result.json
 
 use image::RgbaImage;
 use serde_json::{json, Map, Value};
@@ -874,15 +874,9 @@ pub fn write_mask_png(mask: &BinaryMask, path: &str, tint: [u8; 3]) -> Result<()
         .map_err(|e| PluginError::Io(e.to_string()))
 }
 
-/// Writes pretty JSON to disk. I/O edge for GeoJSON artefacts.
+/// Writes pretty JSON to disk. I/O edge.
 pub fn write_json_file(path: &Path, value: &Value) -> Result<()> {
     let text = serde_json::to_string_pretty(value).map_err(|e| PluginError::Io(e.to_string()))?;
-    fs::write(path, text).map_err(|e| PluginError::Io(e.to_string()))
-}
-
-/// Writes pretty YAML to disk. I/O edge for the `result.yaml` execution contract.
-pub fn write_yaml_file(path: &Path, value: &Value) -> Result<()> {
-    let text = serde_yaml::to_string(&value).map_err(|e| PluginError::Io(e.to_string()))?;
     fs::write(path, text).map_err(|e| PluginError::Io(e.to_string()))
 }
 
@@ -890,7 +884,7 @@ pub fn write_yaml_file(path: &Path, value: &Value) -> Result<()> {
 
 /// Manifest identity for the healthcheck payload.
 pub fn load_manifest_metadata() -> (String, String) {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.yaml");
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("manifest.json");
     let fallback = (
         "vegetation-condition-analysis".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
@@ -898,7 +892,7 @@ pub fn load_manifest_metadata() -> (String, String) {
     let Ok(text) = fs::read_to_string(manifest) else {
         return fallback;
     };
-    let Ok(value) = serde_yaml::from_str::<Value>(&text) else {
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
         return fallback;
     };
     (
@@ -1347,7 +1341,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
 
     if !Path::new(input_path).exists() {
         let msg = format!("Input payload file not found: {input_path}");
-        let _ = write_yaml_file(out, &failure_result("unknown", 0, &msg));
+        let _ = write_json_file(out, &failure_result("unknown", 0, &msg));
         return 1;
     }
 
@@ -1363,7 +1357,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
         .and_then(|p| analyze(p, out, start).map_err(|e| e.to_string()));
 
     match outcome {
-        Ok(result) => match write_yaml_file(out, &result) {
+        Ok(result) => match write_json_file(out, &result) {
             Ok(()) => {
                 println!(
                     "Analysis completed successfully in {}ms",
@@ -1383,7 +1377,7 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
                 .and_then(|p| p["execution_id"].as_str())
                 .unwrap_or("unknown");
             let duration_ms = start.elapsed().as_millis() as u64;
-            let _ = write_yaml_file(out, &failure_result(exec_id, duration_ms, &msg));
+            let _ = write_json_file(out, &failure_result(exec_id, duration_ms, &msg));
             eprintln!("Analysis failed: {msg}");
             1
         }

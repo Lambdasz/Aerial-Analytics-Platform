@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aerial-analytics.local/schemas/plugin.v1.json",
+  "title": "Aerial Analytics Plugin Manifest",
+  "description": "JSON Schema for validating core Aerial Analytics Platform plugin manifests (Module 2)",
+  "type": "object",
+  "required": ["manifest_version", "metadata", "runtime", "parameters", "inputs", "outputs"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["id", "name", "version", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-_]+$",
+          "description": "Unique identifier for the plugin (kebab-case or snake_case)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable plugin name"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semantic versioning (e.g., 1.0.0)"
+        },
+        "author": {
+          "type": "string"
+        },
+        "license": {
+          "type": "string",
+          "description": "Software license identifier (e.g., MIT, Apache-2.0, Proprietary)"
+        },
+        "description": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "vegetation",
+            "tree_detection",
+            "tree_counting",
+            "land_cover",
+            "temporal",
+            "elevation",
+            "analytics",
+            "utility",
+            "general"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "min_core_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Minimum compatible core platform version"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["type", "entrypoint"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["python", "binary", "wasm"]
+        },
+        "entrypoint": {
+          "type": "string",
+          "description": "Relative path to entrypoint file (e.g., main.py or bin/detector)"
+        },
+        "min_python_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        },
+        "dependencies_file": {
+          "type": ["string", "null"],
+          "description": "Relative path to requirements.txt or dependency declaration"
+        },
+        "healthcheck_flag": {
+          "type": "string",
+          "description": "CLI flag used to verify environment and dependencies without full execution"
+        }
+      }
+    },
+    "parameters": {
+      "type": "string",
+      "description": "Relative path to the parameters specification file (e.g., parameters.json)"
+    },
+    "inputs": {
+      "type": "string",
+      "description": "Relative path to the inputs specification file (e.g., inputs.json)"
+    },
+    "outputs": {
+      "type": "string",
+      "description": "Relative path to the outputs specification file (e.g., outputs.json)"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        },
+        "provides_output_dir_arg": {
+          "type": "boolean",
+          "default": true
+        },
+        "concurrency": {
+          "type": "string",
+          "enum": ["sequential", "parallel"],
+          "default": "sequential"
+        },
+        "gpu": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "support": {
+              "type": "string",
+              "enum": ["none", "optional", "required"],
+              "default": "none"
+            },
+            "driver": {
+              "type": ["string", "null"],
+              "enum": ["cuda", "rocm", "metal", null]
+            }
+          }
+        }
+      }
+    }
+  }
+}

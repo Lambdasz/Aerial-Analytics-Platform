@@ -319,7 +319,7 @@
 //! |---------|-------------|
 //! | `install_plugin` | Safe extraction and installation of plugin from `.zip` archive |
 //! | `remove_plugin` | Permanent uninstallation of user-installed plugin and state cleanup |
-//! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.yaml` |
+//! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
 //! | `update_plugin_config` | Update and persist user custom parameters overrides |
 //! | `get_installed_plugins` | Return summary list of all registered plugins |
 //! | `reload_plugins` | Rescan plugins directory from disk and rebuild in-memory registry |
@@ -381,9 +381,9 @@
 //! | Item | Value |
 //! |------|-------|
 //! | Architecture | Rust binary plugin (`plugins/rgb-vegetation-detection/`) |
-//! | Interface | `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
 //! | Entrypoint | `bin/main` built from `src/main.rs` |
-//! | CLI | `--healthcheck` or `--input <payload.yaml> --output <result.yaml>` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
 //! | Execution | isolated subprocess via the Module 2 supervisor |
 //! | Progress | completion line on stdout, result file on disk |
 //!
@@ -411,9 +411,9 @@
 //! | Item | Value |
 //! |------|-------|
 //! | Architecture | Rust binary plugin (`plugins/vegetation_coverage_analytics/`) |
-//! | Interface | `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
 //! | Entrypoint | `bin/main` built from `src/main.rs` |
-//! | CLI | `--healthcheck` or `--input <payload.yaml> --output <result.yaml>` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
 //! | Execution | isolated subprocess via the Module 2 supervisor |
 //! | Progress | completion line on stdout, artefacts on disk |
 //!
@@ -441,9 +441,9 @@
 //! | Item | Value |
 //! |------|-------|
 //! | Architecture | Rust binary plugin (`plugins/vegetation_condition_analysis/`) |
-//! | Interface | `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
 //! | Entrypoint | `bin/main` built from `src/main.rs` |
-//! | CLI | `--healthcheck` or `--input <payload.yaml> --output <result.yaml>` |
+//! | CLI | `--healthcheck` or `--input <payload.json> --output <result.json>` |
 //! | Execution | isolated subprocess via the Module 2 supervisor |
 //! | Progress | completion line on stdout, artefacts on disk |
 //!
@@ -474,19 +474,19 @@
 //! | Item | Value |
 //! |------|-------|
 //! | Architecture | Module 2 plugin template (`plugins/template/`) |
-//! | Interface | `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
 //! | Entrypoint | `plugins/mock_rust/src/main.rs` — `fn main()` (Rust binary) |
-//! | CLI | `--healthcheck` \| `--input <payload.yaml> --output <result.yaml>` |
-//! | Execution | isolated subprocess via Module 2 supervisor: `payload.yaml` in → `result.yaml` out |
+//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
 //! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
-//! | Runtime | `binary` (`manifest.yaml` → `runtime.entrypoint = "bin/mock_rust"`) |
+//! | Runtime | `binary` (`manifest.json` → `runtime.entrypoint = "bin/mock_rust"`) |
 //!
 //! Entrypoint (`src/main.rs`, Rust binary):
 //!
 //! ```rust,ignore
 //! fn main() {
 //!     // --healthcheck
-//!     // --input <payload.yaml> --output <result.yaml>
+//!     // --input <payload.json> --output <result.json>
 //! }
 //! ```
 //!
@@ -509,10 +509,10 @@
 //! | Item | Value |
 //! |------|-------|
 //! | Architecture | Module 2 plugin template (`plugins/template/`) |
-//! | Interface | `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml` |
+//! | Interface | `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json` |
 //! | Entrypoint | `plugins/rgb-landcover-classification/main.py` — `def main() -> None` (Python) |
-//! | CLI | `--healthcheck` \| `--input <payload.yaml> --output <result.yaml>` |
-//! | Execution | isolated subprocess via Module 2 supervisor: `payload.yaml` in → `result.yaml` out |
+//! | CLI | `--healthcheck` \| `--input <payload.json> --output <result.json>` |
+//! | Execution | isolated subprocess via Module 2 supervisor: `payload.json` in → `result.json` out |
 //! | Progress | stdout `PROGRESS: {json}` lines parsed by Module 2 |
 //!
 //! Entrypoint (`main.py`, Python):
@@ -520,7 +520,7 @@
 //! ```python
 //! def main() -> None:
 //!     # --healthcheck
-//!     # --input <payload.yaml> --output <result.yaml>
+//!     # --input <payload.json> --output <result.json>
 //! ```
 //!
 //! **Status**: Python plugin at `plugins/rgb-landcover-classification/` with
@@ -656,7 +656,7 @@ pub struct AppState {
     pub plugins: Arc<RwLock<PluginRegistry>>,
     /// Active and recently completed plugin jobs (Role 1 — executor.rs).
     pub jobs: Arc<RwLock<ActiveJobTracker>>,
-    /// Optional path to plugin_state.yaml for state persistence.
+    /// Optional path to plugin_state.json for state persistence.
     pub state_path: Option<std::path::PathBuf>,
     /// SQLite connection shared across commands that need persistence
     /// (currently: Flight Session Management, Module 1.4).
@@ -704,7 +704,7 @@ pub fn init_plugin_registry_from_dir(dir: &std::path::Path) -> PluginRegistry {
         }
     }
 
-    let state_file = dir.join("plugin_state.yaml");
+    let state_file = dir.join("plugin_state.json");
     if let Ok(store) = plugin_manager::lifecycle::load_plugin_state(&state_file) {
         plugin_manager::lifecycle::apply_state_to_registry(&mut registry, &store);
     }
@@ -1115,32 +1115,23 @@ mod tests {
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("manifest.yaml"),
-            r#"manifest_version: 1
-metadata:
-  id: my-test-plugin
-  name: My Plugin
-  version: 1.0.0
-  description: Desc
-runtime:
-  type: python
-  entrypoint: main.py
-parameters: parameters.yaml
-inputs: inputs.yaml
-outputs: outputs.yaml
-"#,
-        )
-        .unwrap();
-        std::fs::write(plugin_dir.join("parameters.yaml"), "parameters: []\n").unwrap();
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
         std::fs::write(
-            plugin_dir.join("inputs.yaml"),
-            r#"granularity: single_image
-supported_mime_types:
-  - image/jpeg
-"#,
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(plugin_dir.join("outputs.yaml"), "{}\n").unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
 
         let registry = init_plugin_registry_from_dir(temp_dir.path());
         assert_eq!(registry.get_summaries().len(), 1);
@@ -1164,61 +1155,52 @@ supported_mime_types:
         std::fs::create_dir_all(&plugin_dir).unwrap();
 
         std::fs::write(
-            plugin_dir.join("manifest.yaml"),
-            r#"manifest_version: 1
-metadata:
-  id: my-test-plugin
-  name: My Plugin
-  version: 1.0.0
-  description: Desc
-runtime:
-  type: python
-  entrypoint: main.py
-parameters: parameters.yaml
-inputs: inputs.yaml
-outputs: outputs.yaml
-"#,
+            plugin_dir.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "my-test-plugin", "name": "My Plugin", "version": "1.0.0", "description": "Desc"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        ).unwrap();
+        std::fs::write(
+            plugin_dir.join("parameters.json"),
+            r#"{"parameters": [{"name": "p1", "label": "P1", "type": "number", "default": 1}]}"#,
         )
         .unwrap();
         std::fs::write(
-            plugin_dir.join("parameters.yaml"),
-            r#"parameters:
-  - name: p1
-    label: P1
-    type: number
-    default: 1
-"#,
+            plugin_dir.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
         )
         .unwrap();
-        std::fs::write(
-            plugin_dir.join("inputs.yaml"),
-            r#"granularity: single_image
-supported_mime_types:
-  - image/jpeg
-"#,
-        )
-        .unwrap();
-        std::fs::write(plugin_dir.join("outputs.yaml"), "{}\n").unwrap();
+        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
 
         // Write persisted plugin state where my-test-plugin is disabled and unhealthy
-        let state_yaml = r#"schema_version: 1
-updated_at: "2026-10-20T10:00:00Z"
-plugins:
-  my-test-plugin:
-    version: 1.0.0
-    source: builtin
-    enabled: false
-    installed_at: "2026-10-20T09:00:00Z"
-    last_healthcheck:
-      status: unhealthy
-      checked_at: "2026-10-20T09:30:00Z"
-      message: Missing dependencies
-    custom_parameters: {}
-    stats:
-      execution_count: 0
-      last_executed_at: null
-"#;
-        std::fs::write(temp_dir.path().join("plugin_state.yaml"), state_yaml).unwrap();
+        let state_json = r#"{
+            "schema_version": 1,
+            "updated_at": "2026-10-20T10:00:00Z",
+            "plugins": {
+                "my-test-plugin": {
+                    "version": "1.0.0",
+                    "source": "builtin",
+                    "enabled": false,
+                    "installed_at": "2026-10-20T09:00:00Z",
+                    "last_healthcheck": {
+                        "status": "unhealthy",
+                        "checked_at": "2026-10-20T09:30:00Z",
+                        "message": "Missing dependencies"
+                    },
+                    "custom_parameters": {},
+                    "stats": {
+                        "execution_count": 0,
+                        "last_executed_at": null
+                    }
+                }
+            }
+        }"#;
+        std::fs::write(temp_dir.path().join("plugin_state.json"), state_json).unwrap();
 
         let registry = init_plugin_registry_from_dir(temp_dir.path());
         let details = registry

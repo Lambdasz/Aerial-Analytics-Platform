@@ -1,0 +1,64 @@
+{
+  "layer_id": "template_tree_detection",
+  "layer_name": "Template - Deteksi Pohon (Point)",
+  "display_preference": {
+    "type": "point",
+    "color": "#27AE60",
+    "icon": "tree_marker",
+    "fields": [
+      { "key": "tree_id", "label": "ID Pohon", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "confidence", "label": "Keyakinan", "unit": null, "visible": true, "custom": false, "kind": "number" },
+      { "key": "height_est_m", "label": "Tinggi Estimasi", "unit": "m", "visible": true, "custom": false, "kind": "number" },
+      { "key": "crown_diameter_m", "label": "Diameter Tajuk", "unit": "m", "visible": true, "custom": false, "kind": "number" },
+      { "key": "health_status", "label": "Kondisi", "unit": null, "visible": true, "custom": false, "kind": "text" },
+      { "key": "detector_run_id", "label": "ID Proses Deteksi", "unit": null, "visible": false, "custom": false, "kind": "text" }
+    ]
+  },
+  "spatial_results": [
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [116.8571, -1.2262]
+      },
+      "properties": {
+        "tree_id": "T-101",
+        "confidence": 0.94,
+        "height_est_m": 11.8,
+        "crown_diameter_m": 4.2,
+        "health_status": "sehat",
+        "detector_run_id": "run-0001"
+      }
+    },
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [116.8573, -1.2264]
+      },
+      "properties": {
+        "tree_id": "T-102",
+        "confidence": 0.89,
+        "height_est_m": 9.6,
+        "crown_diameter_m": 3.5,
+        "health_status": "sehat",
+        "detector_run_id": "run-0001"
+      }
+    },
+    {
+      "source": "tree_detection_v1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [116.8576, -1.2261]
+      },
+      "properties": {
+        "tree_id": "T-103",
+        "confidence": 0.81,
+        "height_est_m": 7.9,
+        "crown_diameter_m": 3.1,
+        "health_status": "perlu_dipantau",
+        "detector_run_id": "run-0001"
+      }
+    }
+  ]
+}

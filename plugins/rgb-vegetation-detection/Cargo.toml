@@ -19,4 +19,3 @@ path = "src/bin/experiment.rs"
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml = "0.9"

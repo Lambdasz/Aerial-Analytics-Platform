@@ -13,7 +13,7 @@ Module 5 - Vegetation Coverage Analytics Plugin
 
 Usage:
     main --healthcheck                          Verify the plugin can run
-    main --input <payload.yaml> --output <result.yaml>
+    main --input <payload.json> --output <result.json>
                                                 Plugin mode";
 
 /// Value following a flag in the argument list.
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--healthcheck") {
-        println!("{}", serde_yaml::to_string(&healthcheck_info()).unwrap());
+        println!("{}", healthcheck_info());
         return ExitCode::SUCCESS;
     }
 

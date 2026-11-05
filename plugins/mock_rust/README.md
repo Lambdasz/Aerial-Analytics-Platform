@@ -49,26 +49,26 @@ Copy-Item plugins\mock_rust\target\release\mock_rust.exe plugins\mock_rust\bin\
 
 ```bash
 ./plugins/mock_rust/bin/mock_rust \
-  --input plugins/mock_rust/execution_payload.yaml \
+  --input plugins/mock_rust/execution_payload.json \
   --output /tmp/rust_test_result.json
 ```
 
 ### Schema Validation
 
 ```bash
-check-jsonschema --schemafile schemas/plugin.schema.yaml plugins/mock_rust/manifest.yaml
-check-jsonschema --schemafile schemas/parameters.schema.yaml plugins/mock_rust/parameters.yaml
-check-jsonschema --schemafile schemas/inputs.schema.yaml plugins/mock_rust/inputs.yaml
-check-jsonschema --schemafile schemas/outputs.schema.yaml plugins/mock_rust/outputs.yaml
-check-jsonschema --schemafile schemas/execution_payload.schema.yaml plugins/mock_rust/execution_payload.yaml
-check-jsonschema --schemafile schemas/execution_result.schema.yaml plugins/mock_rust/execution_result.yaml
+check-jsonschema --schemafile schemas/plugin.schema.json plugins/mock_rust/manifest.json
+check-jsonschema --schemafile schemas/parameters.schema.json plugins/mock_rust/parameters.json
+check-jsonschema --schemafile schemas/inputs.schema.json plugins/mock_rust/inputs.json
+check-jsonschema --schemafile schemas/outputs.schema.json plugins/mock_rust/outputs.json
+check-jsonschema --schemafile schemas/execution_payload.schema.json plugins/mock_rust/execution_payload.json
+check-jsonschema --schemafile schemas/execution_result.schema.json plugins/mock_rust/execution_result.json
 ```
 
 ---
 
 ## Specifications & Documentation
 
-For the full field-by-field schema reference of all contracts and test fixtures (`execution_payload.yaml`, `execution_result.yaml`, `manifest.yaml`, etc.), refer to:
+For the full field-by-field schema reference of all contracts and test fixtures (`execution_payload.json`, `execution_result.json`, `manifest.json`, etc.), refer to:
 
 - [`plugins/template/README.md`](../template/README.md#field-reference-contracts--execution-fixtures)
 - [`schemas/`](../../schemas/)

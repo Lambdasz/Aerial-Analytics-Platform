@@ -1,10 +1,6 @@
 # Python dependencies for the Tree Detection & Counting plugin (Module 7).
 # Keep this list minimal: it is installed by Module 2 before the plugin can run.
 
-# Data contract serialisation (manifest.yaml, parameters.yaml, inputs.yaml,
-# outputs.yaml, payload.yaml, result.yaml).
-pyyaml>=6.0
-
 # Data contracts and validation (treedet/models.py, treedet/pipeline.py).
 pydantic>=2,<3
 
