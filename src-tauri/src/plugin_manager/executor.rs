@@ -43,9 +43,9 @@ pub struct StartJobRequestDto {
     pub mime_type: String,
     /// Optional user-selected bounding geometry (RFC 7946 GeoJSON).
     pub aoi: Option<serde_json::Value>,
-    /// User-configured parameter values corresponding to the plugin's `parameters.json`.
+    /// User-configured parameter values corresponding to the plugin's `parameters.yaml`.
     pub parameters: HashMap<String, serde_json::Value>,
-    /// Optional decoded metadata (resolution, GPS, altitude, timestamp) conforming to `execution_payload.schema.json`.
+    /// Optional decoded metadata (resolution, GPS, altitude, timestamp) conforming to `execution_payload.schema.yaml`.
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
 }
@@ -69,7 +69,7 @@ pub struct JobHandleDto {
 ///
 /// Plugins signal progress by writing to stdout:
 /// ```text
-/// PROGRESS: {"job_id":"...", "percent": 45, "stage": "evaluating_index"}
+/// PROGRESS: {job_id: "...", percent: 45, stage: "evaluating_index"}
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobProgress {
@@ -207,12 +207,12 @@ pub async fn start_plugin_job(
         })?;
     let output_dir = temp_dir.keep();
 
-    // 5. Build canonical execution payload and write to payload.json
+    // 5. Build canonical execution payload and write to payload.yaml
     let payload = build_execution_payload(&job_id, &output_dir, &request)?;
-    let payload_path = output_dir.join("payload.json");
-    let result_path = output_dir.join("result.json");
+    let payload_path = output_dir.join("payload.yaml");
+    let result_path = output_dir.join("result.yaml");
 
-    let payload_str = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
+    let payload_str = serde_yaml::to_string(&payload).map_err(|e| CommandError {
         code: "SERIALIZATION_ERROR".to_string(),
         message: format!("Failed to serialize execution payload: {}", e),
     })?;
@@ -221,7 +221,7 @@ pub async fn start_plugin_job(
         .await
         .map_err(|e| CommandError {
             code: "IO_ERROR".to_string(),
-            message: format!("Failed to write payload.json: {}", e),
+            message: format!("Failed to write payload.yaml: {}", e),
         })?;
 
     // 6. Resolve executable and command configuration
@@ -522,14 +522,14 @@ pub(crate) fn build_execution_payload(
 ///
 /// Plugins signal progress by writing to stdout:
 /// ```text
-/// PROGRESS: {"job_id":"exec_...", "percent": 45, "stage": "evaluating_index"}
+/// PROGRESS: {job_id: "exec_...", percent: 45, stage: "evaluating_index"}
 /// ```
 pub(crate) fn parse_progress_line(line: &str) -> Option<JobProgress> {
     let trimmed = line.trim();
     let json_slice = trimmed
         .strip_prefix("PROGRESS:")
         .or_else(|| trimmed.strip_prefix("progress:"))?;
-    serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
+    serde_yaml::from_str::<JobProgress>(json_slice.trim()).ok()
 }
 
 /// Decides whether a newly parsed progress update should be emitted.
@@ -582,13 +582,13 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
             continue;
         }
 
-        // Direct directory name check: plugins/<plugin_id>/manifest.json
+        // Direct directory name check: plugins/<plugin_id>/manifest.yaml
         let direct_dir = root.join(plugin_id);
         if direct_dir.is_dir() {
-            let manifest_path = direct_dir.join("manifest.json");
+            let manifest_path = direct_dir.join("manifest.yaml");
             if manifest_path.exists() {
                 if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
                         let id = val["metadata"]["id"].as_str().unwrap_or_default();
                         if id == plugin_id {
                             let entrypoint = val["runtime"]["entrypoint"]
@@ -619,10 +619,10 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let manifest_path = path.join("manifest.json");
+                    let manifest_path = path.join("manifest.yaml");
                     if manifest_path.exists() {
                         if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
                                 let id = val["metadata"]["id"].as_str().unwrap_or_default();
                                 if id == plugin_id {
                                     let entrypoint = val["runtime"]["entrypoint"]
@@ -929,7 +929,7 @@ pub(crate) async fn supervise_execution(
             if status.success() {
                 read_and_validate_result(&result_path, &output_dir)
             } else if result_path.exists() {
-                // Plugin may have written a structured failure execution_result.json before exit 1
+                // Plugin may have written a structured failure execution_result.yaml before exit 1
                 read_and_validate_result(&result_path, &output_dir)
             } else {
                 Err(PluginError::SpawnFailed(format!(
@@ -955,7 +955,7 @@ pub(crate) fn read_and_validate_result(
     }
 
     let raw = std::fs::read_to_string(result_path)?;
-    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+    let val: serde_json::Value = serde_yaml::from_str(&raw).map_err(|e| {
         PluginError::Serialization(format!(
             "Failed to parse result artifact at {:?}: {}",
             result_path, e
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn test_parse_progress_line_valid() {
-        let line = r#"PROGRESS: {"job_id":"exec_20260916_abc","percent":45,"stage":"evaluating"}"#;
+        let line = r#"PROGRESS: {job_id: "exec_20260916_abc", percent: 45, stage: "evaluating"}"#;
         let result = parse_progress_line(line);
         assert!(result.is_some());
         let p = result.unwrap();
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[test]
     fn test_parse_progress_line_lowercase() {
-        let line = r#"progress: {"job_id":"exec_20260916_abc","percent":60,"stage":"masking"}"#;
+        let line = r#"progress: {job_id: "exec_20260916_abc", percent: 60, stage: "masking"}"#;
         let result = parse_progress_line(line);
         assert!(result.is_some());
         let p = result.unwrap();
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_parse_progress_line_malformed_json() {
-        let line = "PROGRESS: {broken json}";
+        let line = "PROGRESS: {broken yaml}";
         assert!(parse_progress_line(line).is_none());
     }
 
@@ -1245,12 +1245,8 @@ mod tests {
             "error": null
         });
 
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
+        let result_path = out_dir.join("result.yaml");
+        std::fs::write(&result_path, serde_yaml::to_string(&result_json).unwrap()).unwrap();
 
         let parsed = read_and_validate_result(&result_path, out_dir).unwrap();
         assert_eq!(parsed.job_id, "exec_test");
@@ -1277,12 +1273,8 @@ mod tests {
             }
         });
 
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
+        let result_path = out_dir.join("result.yaml");
+        std::fs::write(&result_path, serde_yaml::to_string(&result_json).unwrap()).unwrap();
 
         let err = read_and_validate_result(&result_path, out_dir);
         assert!(err.is_err());
@@ -1312,12 +1304,8 @@ mod tests {
             }
         });
 
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
+        let result_path = out_dir.join("result.yaml");
+        std::fs::write(&result_path, serde_yaml::to_string(&result_json).unwrap()).unwrap();
 
         let err = read_and_validate_result(&result_path, out_dir);
         assert!(err.is_err());
@@ -1357,9 +1345,9 @@ mod tests {
                     dependencies_file: None,
                     healthcheck_flag: None,
                 },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
+                parameters: "parameters.yaml".to_string(),
+                inputs: "inputs.yaml".to_string(),
+                outputs: "outputs.yaml".to_string(),
                 execution: None,
             },
             inputs_spec: crate::plugin_manager::models::InputsSpec {
@@ -1410,9 +1398,9 @@ mod tests {
                     dependencies_file: None,
                     healthcheck_flag: None,
                 },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
+                parameters: "parameters.yaml".to_string(),
+                inputs: "inputs.yaml".to_string(),
+                outputs: "outputs.yaml".to_string(),
                 execution: None,
             },
             inputs_spec: crate::plugin_manager::models::InputsSpec {

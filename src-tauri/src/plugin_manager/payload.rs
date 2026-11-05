@@ -64,7 +64,7 @@ pub struct Aoi {
     pub geojson: serde_json::Value,
 }
 
-/// Execution input payload written to `payload.json` for plugin execution.
+/// Execution input payload written to `payload.yaml` for plugin execution.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecutionPayload {
     pub plugin_id: String,
@@ -113,12 +113,12 @@ pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
-    let payload_file_path = output_dir.join("payload.json");
-    let json_data = serde_json::to_string_pretty(payload)
-        .map_err(|e| format!("Failed to serialise payload JSON: {}", e))?;
+    let payload_file_path = output_dir.join("payload.yaml");
+    let yaml_data = serde_yaml::to_string(payload)
+        .map_err(|e| format!("Failed to serialise payload YAML: {}", e))?;
 
-    fs::write(&payload_file_path, json_data)
-        .map_err(|e| format!("Failed to write payload.json: {}", e))?;
+    fs::write(&payload_file_path, yaml_data)
+        .map_err(|e| format!("Failed to write payload.yaml: {}", e))?;
 
     Ok(payload_file_path)
 }

@@ -205,7 +205,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   └── workflows/
 │       └── ci.yml                # CI pipeline: lint + format + cross-platform build
 ├── docs/                         # Project documentation
-│   ├── examples/                 # Canonical JSON/GeoJSON fixtures for cross-module contracts
+│   ├── examples/                 # Canonical fixtures for cross-module contracts
 │   ├── modules/                  # Comprehensive module architectural documentation
 │   │   └── module_3/             # Module 3 (Map Explorer) dual-language docs (EN & ID)
 │   ├── Proyek.md                 # Full project brief (11 modules)
@@ -229,13 +229,13 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   ├── tauri.svg
 │   └── vite.svg
 ├── README.md                     # Project documentation
-├── schemas/                      # JSON Schema definitions for plugin contracts
-│   ├── plugin.schema.json        # Plugin manifest schema
-│   ├── execution_payload.schema.json
-│   ├── execution_result.schema.json
-│   ├── inputs.schema.json
-│   ├── outputs.schema.json
-│   └── parameters.schema.json
+├── schemas/                      # JSON Schema definitions (YAML files) for plugin contracts
+│   ├── plugin.schema.yaml        # Plugin manifest schema
+│   ├── execution_payload.schema.yaml
+│   ├── execution_result.schema.yaml
+│   ├── inputs.schema.yaml
+│   ├── outputs.schema.yaml
+│   └── parameters.schema.yaml
 ├── SECURITY.md                   # Vulnerability reporting policy
 ├── src/                          # React frontend application source
 │   ├── main.tsx                  # Application entry point

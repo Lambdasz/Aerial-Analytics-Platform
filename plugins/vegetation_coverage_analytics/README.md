@@ -13,12 +13,12 @@ is confined to the file-reading and artifact-writing edges.
 
 | File                     | Purpose                                                                                  |
 | :----------------------- | :--------------------------------------------------------------------------------------- |
-| `manifest.json`          | Plugin identity, binary runtime (`bin/main`), timeout                                    |
-| `parameters.json`        | User-configurable parameters (`mask_source`, `method`, `grid_size`, thresholds, `plots`) |
-| `inputs.json`            | Input requirements (single image, JPEG/PNG/TIFF, optional AOI)                           |
-| `outputs.json`           | Metrics (coverage, area, classification, plot comparison) and artifacts                  |
-| `execution_payload.json` | Sample payload delivered by Module 2                                                     |
-| `execution_result.json`  | Sample result written by the plugin                                                      |
+| `manifest.yaml`          | Plugin identity, binary runtime (`bin/main`), timeout                                    |
+| `parameters.yaml`        | User-configurable parameters (`mask_source`, `method`, `grid_size`, thresholds, `plots`) |
+| `inputs.yaml`            | Input requirements (single image, JPEG/PNG/TIFF, optional AOI)                           |
+| `outputs.yaml`           | Metrics (coverage, area, classification, plot comparison) and artifacts                  |
+| `execution_payload.yaml` | Sample payload delivered by Module 2                                                     |
+| `execution_result.yaml`  | Sample result written by the plugin                                                      |
 | `Cargo.toml`             | Rust package (binary `main`)                                                             |
 | `src/lib.rs`             | Pure pipeline (index, threshold, coverage, zonation, plots, GeoJSON) plus I/O edges      |
 | `src/main.rs`            | Entrypoint (`--healthcheck`, `--input`/`--output`)                                       |
@@ -44,7 +44,7 @@ Copy-Item plugins\vegetation_coverage_analytics\target\release\main.exe plugins\
 ## Public functions (Module 2 interface)
 
 1. `./plugins/vegetation_coverage_analytics/bin/main --healthcheck` prints a healthy JSON and exits 0.
-2. `./plugins/vegetation_coverage_analytics/bin/main --input <payload.json> --output <result.json>` runs the analysis, prints a completion line, and writes the result file. On error it writes `status: "failure"` and exits 1.
+2. `./plugins/vegetation_coverage_analytics/bin/main --input <payload.yaml> --output <result.yaml>` runs the analysis, prints a completion line, and writes the result file. On error it writes `status: "failure"` and exits 1.
 
 ## Pipeline
 

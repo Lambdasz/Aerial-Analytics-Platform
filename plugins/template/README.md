@@ -6,12 +6,12 @@ To ensure modularity and separation of concerns, each plugin is structured acros
 
 ```text
 plugins/<your_plugin>/
-├── manifest.json          # Contract 1: Plugin identity, runtime engine, and domain pointers
-├── parameters.json        # Contract 2: Dynamic UI parameter controls (for Blueprint.js forms)
-├── inputs.json            # Contract 3: Input requirements contract (MIME types, metadata, AOI)
-├── outputs.json           # Contract 4: Output specification contract (metrics, artifacts, layer hints)
-├── execution_payload.json # Fixture 5: Sample execution payload delivered by host for testing
-├── execution_result.json  # Fixture 6: Sample execution output result written by plugin
+├── manifest.yaml          # Contract 1: Plugin identity, runtime engine, and domain pointers
+├── parameters.yaml        # Contract 2: Dynamic UI parameter controls (for Blueprint.js forms)
+├── inputs.yaml            # Contract 3: Input requirements contract (MIME types, metadata, AOI)
+├── outputs.yaml           # Contract 4: Output specification contract (metrics, artifacts, layer hints)
+├── execution_payload.yaml # Fixture 5: Sample execution payload delivered by host for testing
+├── execution_result.yaml  # Fixture 6: Sample execution output result written by plugin
 ├── main.py                # Plugin Python entrypoint script
 ├── requirements.txt       # Python dependencies
 └── README.md              # Plugin documentation
@@ -70,7 +70,7 @@ pipx ensurepath
 > **Note for Windows:** If `check-jsonschema` is not recognized after installing with pip, you can invoke it directly through Python:
 >
 > ```powershell
-> python -m check_jsonschema --schemafile schemas\plugin.schema.json plugins\<your_plugin>\manifest.json
+> python -m check_jsonschema --schemafile schemas\plugin.schema.yaml plugins\<your_plugin>\manifest.yaml
 > ```
 
 ---
@@ -83,40 +83,40 @@ Run validation from the root of the repository for each domain file:
 
 ```bash
 # 1. Validate core manifest:
-check-jsonschema --schemafile schemas/plugin.schema.json plugins/<your_plugin>/manifest.json
+check-jsonschema --schemafile schemas/plugin.schema.yaml plugins/<your_plugin>/manifest.yaml
 
 # 2. Validate parameters:
-check-jsonschema --schemafile schemas/parameters.schema.json plugins/<your_plugin>/parameters.json
+check-jsonschema --schemafile schemas/parameters.schema.yaml plugins/<your_plugin>/parameters.yaml
 
 # 3. Validate inputs:
-check-jsonschema --schemafile schemas/inputs.schema.json plugins/<your_plugin>/inputs.json
+check-jsonschema --schemafile schemas/inputs.schema.yaml plugins/<your_plugin>/inputs.yaml
 
 # 4. Validate outputs:
-check-jsonschema --schemafile schemas/outputs.schema.json plugins/<your_plugin>/outputs.json
+check-jsonschema --schemafile schemas/outputs.schema.yaml plugins/<your_plugin>/outputs.yaml
 
 # 5. Validate test execution payload & result fixtures:
-check-jsonschema --schemafile schemas/execution_payload.schema.json plugins/<your_plugin>/execution_payload.json
-check-jsonschema --schemafile schemas/execution_result.schema.json plugins/<your_plugin>/execution_result.json
+check-jsonschema --schemafile schemas/execution_payload.schema.yaml plugins/<your_plugin>/execution_payload.yaml
+check-jsonschema --schemafile schemas/execution_result.schema.yaml plugins/<your_plugin>/execution_result.yaml
 ```
 
 #### Windows (PowerShell):
 
 ```powershell
 # 1. Validate core manifest:
-check-jsonschema --schemafile schemas\plugin.schema.json plugins\<your_plugin>\manifest.json
+check-jsonschema --schemafile schemas\plugin.schema.yaml plugins\<your_plugin>\manifest.yaml
 
 # 2. Validate parameters:
-check-jsonschema --schemafile schemas\parameters.schema.json plugins\<your_plugin>\parameters.json
+check-jsonschema --schemafile schemas\parameters.schema.yaml plugins\<your_plugin>\parameters.yaml
 
 # 3. Validate inputs:
-check-jsonschema --schemafile schemas\inputs.schema.json plugins\<your_plugin>\inputs.json
+check-jsonschema --schemafile schemas\inputs.schema.yaml plugins\<your_plugin>\inputs.yaml
 
 # 4. Validate outputs:
-check-jsonschema --schemafile schemas\outputs.schema.json plugins\<your_plugin>\outputs.json
+check-jsonschema --schemafile schemas\outputs.schema.yaml plugins\<your_plugin>\outputs.yaml
 
 # 5. Validate test execution payload & result fixtures:
-check-jsonschema --schemafile schemas\execution_payload.schema.json plugins\<your_plugin>\execution_payload.json
-check-jsonschema --schemafile schemas\execution_result.schema.json plugins\<your_plugin>\execution_result.json
+check-jsonschema --schemafile schemas\execution_payload.schema.yaml plugins\<your_plugin>\execution_payload.yaml
+check-jsonschema --schemafile schemas\execution_result.schema.yaml plugins\<your_plugin>\execution_result.yaml
 ```
 
 ---
@@ -134,7 +134,7 @@ check-jsonschema --schemafile schemas\execution_result.schema.json plugins\<your
 - **Failure:**
   ```text
   Schema validation errors were encountered.
-    plugins/my_plugin/manifest.json::$: 'runtime' is a required property
+    plugins/my_plugin/manifest.yaml::$: 'runtime' is a required property
   ```
   _(Exits with status code `1` and details the exact key, expected format, or missing property)_
 
@@ -142,7 +142,7 @@ check-jsonschema --schemafile schemas\execution_result.schema.json plugins\<your
 
 ## Field Reference (Contracts & Execution Fixtures)
 
-### File 1: `manifest.json`
+### File 1: `manifest.yaml`
 
 #### Root Fields
 
@@ -150,9 +150,9 @@ check-jsonschema --schemafile schemas\execution_result.schema.json plugins\<your
 | :----------------- | :------- | :------- | :------------------------------------------------------ | :---------------------------------- |
 | `$schema`          | `string` | No       | `https://aerial-analytics.local/schemas/plugin.v1.json` | JSON Schema URI for autocompletion. |
 | `manifest_version` | `number` | **Yes**  | `1`                                                     | Manifest specification version.     |
-| `parameters`       | `string` | **Yes**  | `"parameters.json"`                                     | Relative path to parameters file.   |
-| `inputs`           | `string` | **Yes**  | `"inputs.json"`                                         | Relative path to inputs file.       |
-| `outputs`          | `string` | **Yes**  | `"outputs.json"`                                        | Relative path to outputs file.      |
+| `parameters`       | `string` | **Yes**  | `"parameters.yaml"`                                     | Relative path to parameters file.   |
+| `inputs`           | `string` | **Yes**  | `"inputs.yaml"`                                         | Relative path to inputs file.       |
+| `outputs`          | `string` | **Yes**  | `"outputs.yaml"`                                        | Relative path to outputs file.      |
 
 #### `metadata`
 
@@ -189,7 +189,7 @@ check-jsonschema --schemafile schemas\execution_result.schema.json plugins\<your
 
 ---
 
-### File 2: `parameters.json`
+### File 2: `parameters.yaml`
 
 Schema URI: `https://aerial-analytics.local/schemas/parameters.v1.json`
 
@@ -205,7 +205,7 @@ Schema URI: `https://aerial-analytics.local/schemas/parameters.v1.json`
 
 ---
 
-### File 3: `inputs.json`
+### File 3: `inputs.yaml`
 
 Schema URI: `https://aerial-analytics.local/schemas/inputs.v1.json`
 
@@ -220,7 +220,7 @@ Schema URI: `https://aerial-analytics.local/schemas/inputs.v1.json`
 
 ---
 
-### File 4: `outputs.json`
+### File 4: `outputs.yaml`
 
 Schema URI: `https://aerial-analytics.local/schemas/outputs.v1.json`
 
@@ -252,7 +252,7 @@ Schema URI: `https://aerial-analytics.local/schemas/outputs.v1.json`
 
 ---
 
-### File 5: `execution_payload.json`
+### File 5: `execution_payload.yaml`
 
 Schema URI: `https://aerial-analytics.local/schemas/execution_payload.v1.json`
 
@@ -263,16 +263,16 @@ This file models the payload delivered by the platform supervisor into the plugi
 | `execution_id`        | `string` | **Yes**  | e.g., `"exec_20260914_001"`                              | Unique analysis execution ID.                                     |
 | `session_id`          | `string` | No       | e.g., `"session_20260914_01"`                            | Parent flight session / project ID.                               |
 | `output_dir`          | `string` | **Yes**  | Absolute path to folder                                  | Sandboxed directory where artifacts must be written.              |
-| `target.granularity`  | `string` | **Yes**  | `"single_image"`, `"image_pair"`, `"batch"`, `"session"` | Granularity matching `inputs.json`.                               |
+| `target.granularity`  | `string` | **Yes**  | `"single_image"`, `"image_pair"`, `"batch"`, `"session"` | Granularity matching `inputs.yaml`.                               |
 | `target.image_path`   | `string` | **Yes**  | Absolute filesystem path                                 | Path to source aerial RGB image.                                  |
 | `target.mime_type`    | `string` | **Yes**  | `"image/jpeg"`, `"image/png"`, `"image/tiff"`            | MIME type of source image.                                        |
 | `target.metadata.gps` | `object` | No       | `{"lat": number, "lon": number}`                         | Decoded GPS coordinates in WGS84 decimal degrees.                 |
 | `aoi`                 | `object` | No       | RFC 7946 GeoJSON Object                                  | Optional user-selected bounding geometry.                         |
-| `parameters`          | `object` | **Yes**  | Key-value dictionary                                     | Values configured by the user corresponding to `parameters.json`. |
+| `parameters`          | `object` | **Yes**  | Key-value dictionary                                     | Values configured by the user corresponding to `parameters.yaml`. |
 
 ---
 
-### File 6: `execution_result.json`
+### File 6: `execution_result.yaml`
 
 Schema URI: `https://aerial-analytics.local/schemas/execution_result.v1.json`
 
@@ -283,7 +283,7 @@ This file models the structured response written by the plugin upon execution co
 | `execution_id`              | `string`         | **Yes**  | Matching `execution_id`                                               | Confirms output corresponds to request.                                   |
 | `status`                    | `string`         | **Yes**  | `"success"`, `"failure"`, `"warning"`                                 | Exit status. Failure must not crash host.                                 |
 | `execution_time_ms`         | `number`         | **Yes**  | Integer $\ge 0$                                                       | Processing duration measured in milliseconds.                             |
-| `metrics`                   | `object`         | **Yes**  | Key-value dictionary matching `outputs.json`                          | Computed scalar metrics for dashboard and reporting.                      |
+| `metrics`                   | `object`         | **Yes**  | Key-value dictionary matching `outputs.yaml`                          | Computed scalar metrics for dashboard and reporting.                      |
 | `artifacts.<key>.file_path` | `string`         | **Yes**  | Absolute filesystem path                                              | Location of generated raster mask, GeoJSON, or CSV file.                  |
 | `artifacts.<key>.format`    | `string`         | **Yes**  | `"image/png"`, `"image/tiff"`, `"application/geo+json"`, `"text/csv"` | File format MIME type.                                                    |
 | `artifacts.<key>.bounds`    | `number[]`       | No       | `[min_lon, min_lat, max_lon, max_lat]`                                | Georeferenced bounding box (RFC 7946) for Map Explorer raster projection. |
@@ -305,7 +305,7 @@ Host / Tauri Supervisor
   └─ Analytical Job Run ──────────> python main.py --input <payload.json> --output <result.json>
                                       └─> Ingests image & parameters
                                       └─> Writes artifacts into output_dir
-                                      └─> Emits structured execution_result.json
+                                      └─> Emits structured execution_result.yaml
 ```
 
 ---
@@ -323,9 +323,9 @@ python main.py --healthcheck
 The template's default `handle_healthcheck()` is a foundation that **MUST be tailored to your plugin's specific requirements**:
 
 - **Do Not Use a Static Dummy**: A hardcoded status prevents the platform from detecting missing packages, wrong Python environments, or missing model files before running heavy processing jobs.
-- **Dynamic Identity**: The template dynamically reads `id` and `version` from `manifest.json`. When you change `metadata.id` or `metadata.version`, the healthcheck reflects this automatically.
+- **Dynamic Identity**: The template dynamically reads `id` and `version` from `manifest.yaml`. When you change `metadata.id` or `metadata.version`, the healthcheck reflects this automatically.
 - **Dependency Verification**: In `check_dependencies()`, list all required third-party Python modules (e.g., `["numpy", "cv2", "rasterio", "torch"]`). The script attempts to import each one.
-- **Hardware Acceleration Check**: If your plugin requires CUDA/ROCm (declared in `manifest.json` under `execution.gpu.support`), check device availability (e.g., `torch.cuda.is_available()`).
+- **Hardware Acceleration Check**: If your plugin requires CUDA/ROCm (declared in `manifest.yaml` under `execution.gpu.support`), check device availability (e.g., `torch.cuda.is_available()`).
 - **Model Weights Verification**: If your plugin relies on deep learning model weights (`.onnx`, `.pt`), verify that the model files exist on disk and are readable.
 
 #### Expected Healthcheck Output:
@@ -368,14 +368,14 @@ The template's default `handle_healthcheck()` is a foundation that **MUST be tai
 When a user requests analysis in the platform UI, the supervisor delivers an input payload file and expects a structured result file:
 
 ```bash
-python main.py --input <path/to/execution_payload.json> --output <path/to/execution_result.json>
+python main.py --input <path/to/execution_payload.yaml> --output <path/to/execution_result.yaml>
 ```
 
 #### Step-by-Step Implementation Workflow:
 
 1. **Parse Input Payload**:
    - Extract `target.image_path` (absolute path to the source drone image).
-   - Extract `parameters` (user-configured values matching `parameters.json`).
+   - Extract `parameters` (user-configured values matching `parameters.yaml`).
    - Extract `output_dir` (the sandboxed workspace directory for output files).
    - If present, extract `aoi.geometry` (GeoJSON polygon coordinates for spatial clipping).
 
@@ -389,10 +389,10 @@ python main.py --input <path/to/execution_payload.json> --output <path/to/execut
    - Save vector detections/boundaries as GeoJSON (e.g., `f"{exec_id}_features.geojson"`).
    - Compute georeferenced bounding box `[min_lon, min_lat, max_lon, max_lat]` for map layer projection.
 
-4. **Construct and Write `execution_result.json`**:
+4. **Construct and Write `execution_result.yaml`**:
    - `status`: Set to `"success"`.
-   - `metrics`: Populate scalar values matching the keys declared in `outputs.json`.
-   - `artifacts`: Populate descriptors matching the keys declared in `outputs.json`.
+   - `metrics`: Populate scalar values matching the keys declared in `outputs.yaml`.
+   - `artifacts`: Populate descriptors matching the keys declared in `outputs.yaml`.
    - Write JSON to the path given by `--output` and exit with status code `0`.
 
 5. **Fault Isolation & Error Safety**:
@@ -411,9 +411,9 @@ python plugins/template/main.py --healthcheck
 
 # 2. Test analysis execution with test fixtures
 python plugins/template/main.py \
-  --input plugins/template/execution_payload.json \
+  --input plugins/template/execution_payload.yaml \
   --output /tmp/test_result.json
 
 # 3. Validate generated output against schema
-check-jsonschema --schemafile schemas/execution_result.schema.json /tmp/test_result.json
+check-jsonschema --schemafile schemas/execution_result.schema.yaml /tmp/test_result.json
 ```

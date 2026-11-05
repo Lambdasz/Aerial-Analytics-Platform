@@ -83,7 +83,7 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
   - `reporting.rs` + `reporting/` — the original Module 11 contract, now a thin compiled layer: its two commands delegate to `modules/module_11` (report = HTML, exports = CSV/GeoJSON/JSON; XLSX is rejected). The former stub tree was removed.
   - `services/`, `plugins/` — empty placeholders (`.gitkeep` only, no `mod` declaration).
 - `plugins/` — Plugin implementations (mock_rust, rgb-vegetation-detection, rgb-landcover-classification, tree_detection, vegetation_coverage_analytics, vegetation_condition_analysis, template). Modules 4-6 are complete Rust binary plugins; 7-8 are implemented but run placeholder models (tree detector returns no detections, land-cover weights untrained). Build a Rust plugin with build with `cargo build --release --manifest-path plugins/<dir>/Cargo.toml` and copy `target/release/main` to `bin/` (gitignored).
-- `schemas/` — JSON Schema definitions for plugin manifests, execution payloads, and results.
+- `schemas/` — JSON Schema definitions (`.yaml` files) for plugin manifests, execution payloads, and results.
 
 ### Adding new Tauri commands (2 required steps)
 
@@ -105,9 +105,9 @@ There is also a `## Development Priorities` table right after the intro; keep it
 
 ### Plugin contract
 
-Plugins declare their interface via `manifest.json` (validated against `schemas/plugin.schema.json`). Each plugin directory contains: `manifest.json`, `parameters.json`, `inputs.json`, `outputs.json`, and an entrypoint (`main.py` for Python plugins). See `plugins/template/` for the canonical starter.
+Plugins declare their interface via `manifest.yaml` (validated against `schemas/plugin.schema.yaml`). Each plugin directory contains: `manifest.yaml`, `parameters.yaml`, `inputs.yaml`, `outputs.yaml`, and an entrypoint (`main.py` for Python plugins). See `plugins/template/` for the canonical starter.
 
-Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payload.json` / `result.json` files. The executor spawns plugins as async subprocesses with timeout enforcement and stdout progress streaming (`PROGRESS: {...}` protocol).
+Runtime types: `python`, `binary`, `wasm`. Plugins communicate results via `payload.yaml` / `result.yaml` files. The executor spawns plugins as async subprocesses with timeout enforcement and stdout progress streaming (`PROGRESS: {...}` protocol).
 
 ### Key constraints
 

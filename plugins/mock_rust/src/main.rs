@@ -160,7 +160,7 @@ fn handle_healthcheck() {
         "runtime": "binary",
         "compiler": "rustc"
     });
-    println!("{}", serde_json::to_string(&health).unwrap());
+    println!("{}", serde_yaml::to_string(&health).unwrap());
     std::process::exit(0);
 }
 
@@ -174,7 +174,7 @@ fn write_error_result(output_path: &Path, exec_id: &str, err_msg: &str) {
         error: Some(err_msg.to_string()),
     };
     if let Ok(file) = File::create(output_path) {
-        let _ = serde_json::to_writer_pretty(file, &result);
+        let _ = serde_yaml::to_writer(file, &result);
     }
     std::process::exit(1);
 }
@@ -194,13 +194,13 @@ fn run_analysis(input_path: &Path, output_path: &Path) {
         }
     };
 
-    let payload: ExecutionPayload = match serde_json::from_str(&payload_str) {
+    let payload: ExecutionPayload = match serde_yaml::from_str(&payload_str) {
         Ok(p) => p,
         Err(e) => {
             write_error_result(
                 output_path,
                 "unknown",
-                &format!("Failed to parse input payload JSON: {}", e),
+                &format!("Failed to parse input payload YAML: {}", e),
             );
             return;
         }
@@ -306,7 +306,7 @@ fn run_analysis(input_path: &Path, output_path: &Path) {
 
     match File::create(output_path) {
         Ok(file) => {
-            if let Err(e) = serde_json::to_writer_pretty(file, &result) {
+            if let Err(e) = serde_yaml::to_writer(file, &result) {
                 eprintln!("Failed to write execution result: {}", e);
                 std::process::exit(1);
             }
@@ -365,7 +365,7 @@ fn main() {
         run_analysis(&input, &output);
     } else {
         eprintln!(
-            "Usage: mock_rust [--healthcheck] [--input <payload.json> --output <result.json>]"
+            "Usage: mock_rust [--healthcheck] [--input <payload.yaml> --output <result.yaml>]"
         );
         std::process::exit(1);
     }

@@ -1,0 +1,22 @@
+execution_id: exec_20260914_001
+session_id: session_20260914_01
+output_dir: output/
+target:
+  granularity: single_image
+  image_path: sample_aerial.jpg
+  mime_type: image/jpeg
+  metadata:
+    resolution:
+      - 4000
+      - 3000
+    gps:
+      lat: -1.2435
+      lon: 116.8523
+    altitude: 120.5
+    relative_altitude: 100
+    focal_length_35mm: 24
+    gimbal_pitch: -90
+    timestamp: "2026-09-14T10:30:00Z"
+parameters:
+  method: ExG
+  threshold_value: 0.1

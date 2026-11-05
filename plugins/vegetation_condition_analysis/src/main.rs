@@ -13,7 +13,7 @@ Module 6 - RGB Vegetation Condition Analysis Plugin
 
 Usage:
     main --healthcheck                          Verify the plugin can run
-    main --input <payload.json> --output <result.json>
+    main --input <payload.yaml> --output <result.yaml>
                                                 Plugin mode";
 
 /// Value following a flag in the argument list.
@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if args.iter().any(|a| a == "--healthcheck") {
-        println!("{}", healthcheck_info());
+        println!("{}", serde_yaml::to_string(&healthcheck_info()).unwrap());
         return ExitCode::SUCCESS;
     }
 

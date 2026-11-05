@@ -7,20 +7,21 @@ and processes execution payloads to generate artifacts and structured results.
 
 import argparse
 import importlib
-import json
 import os
 import sys
 import time
 from typing import Any, Dict, List, Tuple
 
+import yaml
+
 
 def load_manifest_metadata() -> Tuple[str, str]:
     """
-    Dynamically read plugin ID and version from the adjacent manifest.json.
+    Dynamically read plugin ID and version from the adjacent manifest.yaml.
     Ensures healthcheck output always stays in sync with your manifest edits.
     """
     plugin_dir = os.path.dirname(os.path.abspath(__file__))
-    manifest_path = os.path.join(plugin_dir, "manifest.json")
+    manifest_path = os.path.join(plugin_dir, "manifest.yaml")
 
     plugin_id = "template-analysis-plugin"
     version = "1.0.0"
@@ -28,7 +29,7 @@ def load_manifest_metadata() -> Tuple[str, str]:
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
+                manifest_data = yaml.safe_load(f)
                 meta = manifest_data.get("metadata", {})
                 plugin_id = meta.get("id", plugin_id)
                 version = meta.get("version", version)
@@ -78,27 +79,27 @@ def handle_healthcheck() -> None:
     plugin_id, version = load_manifest_metadata()
     deps_ok, deps_status = check_dependencies()
 
-    if not deps_ok:
+        if not deps_ok:
+            health_info = {
+                "status": "unhealthy",
+                "plugin_id": plugin_id,
+                "version": version,
+                "python_version": sys.version.split()[0],
+                "dependencies": deps_status,
+                "error": "One or more required dependencies failed to import. Run pip install -r requirements.txt",
+            }
+            print(yaml.dump(health_info), file=sys.stderr)
+            sys.exit(1)
+
         health_info = {
-            "status": "unhealthy",
+            "status": "healthy",
             "plugin_id": plugin_id,
             "version": version,
             "python_version": sys.version.split()[0],
-            "dependencies": deps_status,
-            "error": "One or more required dependencies failed to import. Run pip install -r requirements.txt",
+            "dependencies": deps_status if deps_status else "standard_library_only",
         }
-        print(json.dumps(health_info, indent=2), file=sys.stderr)
-        sys.exit(1)
-
-    health_info = {
-        "status": "healthy",
-        "plugin_id": plugin_id,
-        "version": version,
-        "python_version": sys.version.split()[0],
-        "dependencies": deps_status if deps_status else "standard_library_only",
-    }
-    print(json.dumps(health_info))
-    sys.exit(0)
+        print(yaml.dump(health_info))
+        sys.exit(0)
 
 
 def run_analysis(input_path: str, output_path: str) -> None:
@@ -119,13 +120,13 @@ def run_analysis(input_path: str, output_path: str) -> None:
             "error": f"Input payload file not found: {input_path}",
         }
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(error_result, f, indent=2)
+            yaml.dump(error_result, f)
         sys.exit(1)
 
     try:
-        # 2. Parse execution payload
-        with open(input_path, "r", encoding="utf-8") as f:
-            payload: Dict[str, Any] = json.load(f)
+    # 2. Parse execution payload
+    with open(input_path, "r", encoding="utf-8") as f:
+        payload: Dict[str, Any] = yaml.safe_load(f)
 
         exec_id = payload.get("execution_id", "exec_unknown")
         raw_output_dir = payload.get("output_dir", "")
@@ -168,9 +169,9 @@ def run_analysis(input_path: str, output_path: str) -> None:
 
         duration_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # 5. Build structured result conforming to schemas/execution_result.schema.json
-        # NOTE: Keys under "metrics" must match the keys declared in outputs.json!
-        # NOTE: Keys under "artifacts" must match the keys declared in outputs.json!
+        # 5. Build structured result conforming to schemas/execution_result.schema.yaml
+        # NOTE: Keys under "metrics" must match the keys declared in outputs.yaml!
+        # NOTE: Keys under "artifacts" must match the keys declared in outputs.yaml!
         result: Dict[str, Any] = {
             "execution_id": exec_id,
             "status": "success",
@@ -192,7 +193,7 @@ def run_analysis(input_path: str, output_path: str) -> None:
 
         # 6. Write final execution result to destination path
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2)
+            yaml.dump(result, f)
 
         print(f"Analysis completed successfully in {duration_ms}ms")
         sys.exit(0)
@@ -208,7 +209,7 @@ def run_analysis(input_path: str, output_path: str) -> None:
             "error": f"{type(exc).__name__}: {str(exc)}",
         }
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(error_result, f, indent=2)
+            yaml.dump(error_result, f)
         print(f"Analysis failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -225,12 +226,12 @@ def main() -> None:
     parser.add_argument(
         "--input",
         type=str,
-        help="Filesystem path to execution_payload.json",
+        help="Filesystem path to execution_payload.yaml",
     )
     parser.add_argument(
         "--output",
         type=str,
-        help="Filesystem path to write execution_result.json",
+        help="Filesystem path to write execution_result.yaml",
     )
 
     args = parser.parse_args()

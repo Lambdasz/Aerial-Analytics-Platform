@@ -158,7 +158,7 @@ export const PluginConfigModal: React.FC<PluginConfigModalProps> = ({
           <NonIdealState
             icon="document"
             title="No Parameters Defined"
-            description="This plugin does not declare any configurable parameters in parameters.json."
+            description="This plugin does not declare any configurable parameters in parameters.yaml."
           />
         ) : (
           <DynamicParamForm

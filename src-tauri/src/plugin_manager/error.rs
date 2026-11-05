@@ -197,11 +197,11 @@ mod tests {
         assert_eq!(plugin_err.code(), "SERIALIZATION_ERROR");
 
         let manifest_err = PluginError::ManifestInvalid {
-            path: "manifest.json".to_string(),
+            path: "manifest.yaml".to_string(),
             message: serde_err.to_string(),
         };
         assert_eq!(manifest_err.code(), "MANIFEST_INVALID");
-        assert!(manifest_err.to_string().contains("manifest.json"));
+        assert!(manifest_err.to_string().contains("manifest.yaml"));
 
         let cmd_err: CommandError = plugin_err.into();
         assert_eq!(cmd_err.code, "SERIALIZATION_ERROR");

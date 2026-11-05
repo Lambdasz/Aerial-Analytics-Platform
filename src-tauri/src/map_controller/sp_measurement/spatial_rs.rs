@@ -58,16 +58,16 @@ pub mod dummy {
     /// Memuat dan mem-parsing data dummy hasil spasial yang di-embed saat *compile time*.
     ///
     /// Dipanggil langsung oleh frontend melalui Tauri invoke `"get_dummy_spatial_layers"`.
-    /// Data diambil dari file `dummy_sp_result.json`.
+    /// Data diambil dari file `dummy_sp_result.yaml`.
     ///
     /// # Errors
     ///
     /// Mengembalikan `Err(String)` berisi pesan error jika struktur di dalam
-    /// file JSON rusak atau tidak sesuai dengan skema [`MapLayerCommand`].
+    /// file YAML rusak atau tidak sesuai dengan skema [`MapLayerCommand`].
     #[tauri::command]
     pub fn get_dummy_spatial_layers() -> Result<Vec<MapLayerCommand>, String> {
-        const DUMMY_JSON: &str = include_str!("dummy_sp_result.json");
-        serde_json::from_str(DUMMY_JSON)
-            .map_err(|e| format!("Gagal parsing dummy_spatial_results.json: {e}"))
+        const DUMMY_YAML: &str = include_str!("dummy_sp_result.yaml");
+        serde_yaml::from_str(DUMMY_YAML)
+            .map_err(|e| format!("Gagal parsing dummy_spatial_results.yaml: {e}"))
     }
 }
