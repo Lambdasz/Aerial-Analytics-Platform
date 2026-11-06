@@ -48,7 +48,7 @@ Copy-Item plugins\vegetation_coverage_analytics\target\release\main.exe plugins\
 
 ## Pipeline
 
-1. **Mask acquisition** — `mask_source = "auto"` computes ExG/ExR/VARI and thresholds it (threshold defaults per index); `mask_source = "file"` reads a mask PNG (`mask_path`), white pixels = vegetation.
+1. **Mask acquisition** — `mask_source = "file"` (default) reads the vegetation mask PNG produced by Module 4 (`mask_path`), white pixels = vegetation; `mask_source = "auto"` serves as a standalone fallback deriving the mask directly from the image with an RGB vegetation index (ExG/ExR/VARI).
 2. **Georeferencing** — GSD comes from `gsd_m`, else altitude + 35 mm-equivalent focal length, else altitude with an assumed 60° horizontal field of view. Image bounds come from the AOI, else the GPS point plus GSD. Without a GSD the run still reports percentages, with a `warning` status and no area metrics.
 3. **Coverage** — counts vegetation pixels over the whole mask, or only inside the AOI.
 4. **Classification** — `low` when coverage is at or below `low_threshold`, `medium` up to `medium_threshold`, otherwise `high`.

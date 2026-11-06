@@ -60,7 +60,7 @@ pub fn rgb_from_dynamic(image: DynamicImage) -> Result<RgbArray> {
 pub fn load_mask_file(mask_path: &str) -> Result<BinaryMask> {
     if !Path::new(mask_path).is_file() {
         return Err(PluginError::FileNotFound(format!(
-            "Mask file not found: {mask_path}"
+            "Module 4 vegetation mask file not found: '{mask_path}'. Please ensure Module 4 (Vegetation Detection) has been executed."
         )));
     }
     let img = image::open(mask_path).map_err(|e| PluginError::Io(e.to_string()))?;
@@ -168,13 +168,24 @@ pub fn artifact(path: &Path, format: &str, bounds: Option<[f64; 4]>) -> Value {
 }
 
 pub fn resolve_mask(payload: &Value, parameters: &Value) -> Result<(BinaryMask, String)> {
-    let source = parameters["mask_source"].as_str().unwrap_or("auto");
+    let explicit_source = parameters["mask_source"].as_str();
+    let mask_path = parameters["mask_path"].as_str().unwrap_or("").trim();
+
+    // 1. If caller explicitly requested mask_source, respect that choice.
+    // 2. If mask_source is omitted (e.g. caller passed {} like in AnalysePlotsDialog):
+    //    - If mask_path is provided, use "file".
+    //    - Otherwise, gracefully fallback to "auto" so plot analysis is never blocked.
+    let source = match explicit_source {
+        Some(s) => s,
+        None if !mask_path.is_empty() => "file",
+        None => "auto",
+    };
+
     match source {
         "file" => {
-            let mask_path = parameters["mask_path"].as_str().unwrap_or("");
-            if mask_path.trim().is_empty() {
+            if mask_path.is_empty() {
                 return Err(PluginError::Value(
-                    "mask_source is 'file' but mask_path is empty".into(),
+                    "mask_source is 'file' but mask_path is empty. Module 5 requires the vegetation mask PNG produced by Module 4 (Vegetation Detection). Please provide mask_path or switch to 'auto' for standalone fallback.".into(),
                 ));
             }
             Ok((load_mask_file(mask_path)?, "file".into()))
@@ -190,7 +201,7 @@ pub fn resolve_mask(payload: &Value, parameters: &Value) -> Result<(BinaryMask, 
             Ok((mask_from_rgb(&rgb, method, threshold)?, "auto".into()))
         }
         other => Err(PluginError::Value(format!(
-            "mask_source must be 'auto' or 'file', got {other:?}"
+            "mask_source must be 'file' or 'auto', got {other:?}"
         ))),
     }
 }
@@ -476,5 +487,63 @@ pub fn run_analysis(input_path: &str, output_path: &str) -> i32 {
             eprintln!("Analysis failed: {msg}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_mask_empty_params_falls_back_to_auto() {
+        let payload = json!({ "target": { "image_path": "non_existent.jpg" } });
+        let empty_params = json!({});
+        let err = resolve_mask(&payload, &empty_params).unwrap_err();
+        assert!(err.to_string().contains("Image file not found"));
+    }
+
+    #[test]
+    fn resolve_mask_explicit_file_requires_path() {
+        let payload = json!({});
+        let file_params = json!({ "mask_source": "file", "mask_path": "" });
+        let err = resolve_mask(&payload, &file_params).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("mask_source is 'file' but mask_path is empty"));
+    }
+
+    #[test]
+    fn resolve_mask_file_not_found() {
+        let payload = json!({});
+        let params = json!({ "mask_source": "file", "mask_path": "non_existent_file.png" });
+        let err = resolve_mask(&payload, &params).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Module 4 vegetation mask file not found"));
+    }
+
+    #[test]
+    fn resolve_mask_auto_rejects_unknown_method() {
+        let payload = json!({ "target": { "image_path": "test.jpg" } });
+        let params = json!({ "mask_source": "auto", "method": "UNSUPPORTED" });
+        let err = resolve_mask(&payload, &params).unwrap_err();
+        assert!(err.to_string().contains("Unknown method: UNSUPPORTED"));
+    }
+
+    #[test]
+    fn resolve_mask_rejects_invalid_source() {
+        let payload = json!({});
+        let params = json!({ "mask_source": "invalid_source" });
+        let err = resolve_mask(&payload, &params).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("mask_source must be 'file' or 'auto'"));
+    }
+
+    #[test]
+    fn healthcheck_returns_healthy() {
+        let info = healthcheck_info();
+        assert_eq!(info["status"], "healthy");
+        assert_eq!(info["runtime"], "rust");
     }
 }

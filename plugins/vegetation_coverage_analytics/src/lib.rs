@@ -4,6 +4,14 @@
 //! comparison, GeoJSON assembly) plus the impure edges (image/mask loading and
 //! artifact writing) partitioned into distinct functional modules.
 //!
+//! Key Contracts:
+//! - Primary pipeline (`mask_source = "file"`): consumes vegetation mask produced
+//!   by Module 4 (Vegetation Detection).
+//! - Standalone fallback (`mask_source = "auto"`): derives mask directly from RGB
+//!   imagery using normalized spectral vegetation indices (ExG, ExR, VARI).
+//! - 23 pure unit tests covering indices, GSD resolution, coverage math, ray-casting
+//!   point-in-polygon, zonation, and pipeline boundary handling.
+//!
 //! Structure:
 //! - `types`: Domain structs, enums, errors, and constants.
 //! - `indices`: Vegetation index mathematical formulas (ExG, ExR, VARI) and thresholding.
