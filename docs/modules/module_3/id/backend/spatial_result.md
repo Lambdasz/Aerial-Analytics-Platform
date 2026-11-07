@@ -283,7 +283,7 @@ Hal ini memastikan layer baru langsung muncul pada panel pengatur layer di peta 
 Melalui perintah `update_saved_spatial_result`, pengguna dapat mengubah metadata tanpa risiko merusak geometri asli:
 
 1. **Pembaruan Presentasi**: Nama layer, warna heksadesimal (`#RRGGBB`), dan ikon.
-2. **Manajemen Foto Layer**: Mengganti atau menghapus foto unggahan (`image_action: "replace" | "delete" | "keep"`). Foto disimpan di `map_storage/images/result_image/{layer_id}_{timestamp}.{ext}` setelah melewati verifikasi _magic bytes_ citra (JPEG/PNG/WebP, batas maks 10 MB).
+2. **Manajemen Foto Layer**: Mengganti atau menghapus foto unggahan (`image_action: "replace" | "delete" | "keep"`). Foto disimpan di `map_storage/images/result_image/{layer_id}_{timestamp}.{ext}` setelah melewati verifikasi _magic bytes_ citra (JPEG/PNG/WebP, batas maks 10 MB). Saat foto layer diganti atau dihapus, seluruh referensi foto milik layer pada setiap fitur (`image_url` dan `properties.image_url`) secara otomatis disinkronkan agar tidak meninggalkan path usang atau rusak.
 3. **Audit Edit Manual**: Setiap perubahan pada properti fitur ditandai secara otomatis di array `edited_fields`, sehingga algoritma otomatisasi tidak menimpa modifikasi manual tanpa persetujuan pengguna.
 4. **Kontrol Konkurensi Optimistik**: Menggunakan `expected_updated_at` untuk mendeteksi apakah data telah diubah oleh sesi lain sebelum pembaruan diterapkan.
 

@@ -9,7 +9,7 @@
 
 use crate::modules::module_03::aoi::aoi_entity_struct::Polygon;
 use crate::modules::module_03::error::MapControllerError;
-use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
+use crate::modules::module_03::types::geometry_type::SpatialGeometry;
 
 /// Memvalidasi satu koordinat geografis WGS84.
 ///
@@ -26,7 +26,7 @@ use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
 /// # Example
 ///
 /// ```
-/// use aerial_analytics_platform_lib::map_controller::sp_measurement::geometry::validate_coordinate;
+/// use aerial_analytics_platform_lib::map_controller::geometry::validate_coordinate;
 ///
 /// assert!(validate_coordinate(116.833, -1.270).is_ok());
 /// assert!(validate_coordinate(250.0, -1.270).is_err());
@@ -108,7 +108,7 @@ pub fn validate_dynamic_ring(ring_idx: usize, ring: &[Vec<f64>]) -> Result<(), M
 /// # Example
 ///
 /// ```
-/// use aerial_analytics_platform_lib::map_controller::sp_measurement::geometry::validate_polygon;
+/// use aerial_analytics_platform_lib::map_controller::geometry::validate_polygon;
 ///
 /// let valid = vec![vec![
 ///     [116.833, -1.270],

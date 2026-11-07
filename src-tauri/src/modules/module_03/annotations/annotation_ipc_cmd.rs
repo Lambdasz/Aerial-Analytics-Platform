@@ -10,7 +10,7 @@
 use super::annotation_builder_logic;
 use super::annotation_entity_struct::AnnotationFeature;
 use super::annotation_storage_io;
-use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
+use crate::modules::module_03::types::geometry_type::SpatialGeometry;
 use crate::plugin_manager::error::CommandError;
 
 /// Membuat annotation baru pada peta dan menyimpannya ke storage.

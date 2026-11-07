@@ -3,10 +3,8 @@
 //! Komponen dan fungsi yang didefinisikan dalam berkas ini:
 //! - `dispatch_spatial_result`: Memvalidasi payload dan memancarkan event Tauri `map://spatial-result` ke antarmuka Leaflet.
 
+use super::sp_result_struct::{LayerPayload, MapLayerCommand, SPATIAL_RESULT_EVENT};
 use crate::modules::module_03::error::MapControllerError;
-use crate::modules::module_03::types::sp_result_type::{
-    LayerPayload, MapLayerCommand, SPATIAL_RESULT_EVENT,
-};
 use tauri::{AppHandle, Emitter};
 
 /// Memvalidasi dan mengirimkan payload layer spasial ke frontend.

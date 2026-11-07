@@ -18,7 +18,7 @@ use crate::modules::module_03::aoi::aoi_entity_struct::Polygon;
 /// # Example
 ///
 /// ```
-/// use aerial_analytics_platform_lib::map_controller::sp_measurement::geometry::calculate_area;
+/// use aerial_analytics_platform_lib::map_controller::geometry::calculate_area;
 ///
 /// let aoi = vec![vec![
 ///     [116.833, -1.270],
@@ -59,7 +59,7 @@ pub fn calculate_area(polygon: &Polygon) -> f64 {
 /// # Example
 ///
 /// ```
-/// use aerial_analytics_platform_lib::map_controller::sp_measurement::geometry::calculate_perimeter;
+/// use aerial_analytics_platform_lib::map_controller::geometry::calculate_perimeter;
 ///
 /// let aoi = vec![vec![
 ///     [116.833, -1.270],

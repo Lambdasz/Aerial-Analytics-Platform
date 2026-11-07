@@ -275,7 +275,7 @@ This guarantees the layer immediately reflects in the Leaflet Layer Control tree
 The `update_saved_spatial_result` command enables safe modifications:
 
 - **Presentation Updates**: Layer title, hex color (`#RRGGBB`), and icon.
-- **Image Lifecycle**: Secure photo upload/replacement (`keep`, `delete`, `replace`) stored under `map_storage/images/result_image/{layer_id}_{timestamp}.{ext}` after magic byte validation (JPEG/PNG/WebP, max 10 MB).
+- **Image Lifecycle**: Secure photo upload/replacement (`keep`, `delete`, `replace`) stored under `map_storage/images/result_image/{layer_id}_{timestamp}.{ext}` after magic byte validation (JPEG/PNG/WebP, max 10 MB). When layer photos are replaced or deleted, all layer-owned photo references in feature entries (`image_url` and `properties.image_url`) are automatically synchronized to prevent stale references or 404 errors.
 - **Edit Tracking**: Modified property fields are appended to `edited_fields`, protecting user modifications from automated plugin overrides.
 - **Optimistic Concurrency**: Guards against conflicting writes via `expected_updated_at`.
 

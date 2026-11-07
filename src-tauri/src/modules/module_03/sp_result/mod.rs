@@ -30,5 +30,3 @@ pub use sp_result_dispatcher_io::*;
 pub use sp_result_ipc_cmd::*;
 pub use sp_result_logic::*;
 pub use sp_result_struct::*;
-
-pub use crate::modules::module_03::types::sp_result_type::SPATIAL_RESULT_EVENT;

@@ -47,7 +47,6 @@ pub fn get_feature_id(feature: &SpatialResult, index: usize) -> String {
     match &feature.properties {
         SpatialProperties::Tree(t) => sanitize_filename(&t.tree_id),
         SpatialProperties::InspectionPath(p) => sanitize_filename(&p.path_id),
-        SpatialProperties::Ortho(o) => sanitize_filename(&o.ortho_id),
         SpatialProperties::Generic(map) => {
             if let Some(id) = map.get("plot_id").and_then(|v| v.as_str()) {
                 sanitize_filename(id)

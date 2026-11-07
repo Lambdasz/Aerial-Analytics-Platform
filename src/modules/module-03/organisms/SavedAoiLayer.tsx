@@ -58,6 +58,24 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
 
   useEffect(() => {
     // 1. Buat custom pane untuk AOI agar berada di bawah overlayPane (analisis spasial)
+    //
+    // CATATAN ARSITEKTUR & ROADMAP MASA DEPAN (Z-INDEX & CLICK DISAMBIGUATION):
+    // Saat ini seluruh poligon AOI (fill + stroke) berada di `aoiPane` (z-index: 350), yang berada
+    // di bawah `overlayPane` (z-index: 400) tempat fitur vektor Spatial Result berada.
+    //
+    // KASUS KHUSUS / TRADE-OFF:
+    // Jika terdapat poligon Spatial Result (misal: tutupan lahan) yang berukuran LEBIH BESAR
+    // daripada poligon AOI dan menutupi AOI kecil di dalamnya, maka klik pada area tumpang tindih
+    // tersebut di kanvas peta akan ditangkap oleh poligon Spatial Result (bukan AOI).
+    // Pengguna saat ini tetap dapat mengakses AOI tersebut via list kartu di Sidebar AOI atau
+    // mematikan sementara visibilitas layer Spatial Result.
+    //
+    // Opsi peningkatan untuk pengembang mendatang:
+    // 1. Opsi A (Pemisahan Pane Stroke): Buat pane khusus `aoiStrokePane` (z-index: 450) terpisah
+    //    dari `aoiFillPane` (z-index: 350), sehingga outline garis tepi AOI selalu melayang di atas
+    //    poligon spasial apa pun dan dijamin 100% selalu dapat diklik di peta.
+    // 2. Opsi B (Multi-Object Click Disambiguation): Tangkap event klik kanvas dan jika mengenai
+    //    lebih dari satu entitas (>1 poligon bertumpuk), buka popup gabungan dengan UI tab/accordion.
     if (!map.getPane("aoiPane")) {
       const pane = map.createPane("aoiPane");
       pane.style.zIndex = "350"; // Di bawah default overlayPane (zIndex: 400)
@@ -120,7 +138,7 @@ export const SavedAoiLayer: React.FC<SavedAoiLayerProps> = ({
           });
         });
 
-        polygon.bindPopup(buildAoiPopupHtml(aoi), {
+        polygon.bindPopup(() => buildAoiPopupHtml(aoi), {
           maxWidth: 320,
           className: "aoi-custom-popup",
         });

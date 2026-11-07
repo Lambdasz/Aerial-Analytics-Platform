@@ -2,6 +2,8 @@
 //!
 //! Komponen dan fungsi yang didefinisikan dalam berkas ini:
 //! - `update_spatial_result_in_dir`: Memperbarui field metadata aman (nama, warna, fields, foto) tanpa merusak koordinat.
+//!   Saat foto layer diganti/dihapus, referensi foto milik layer pada setiap fitur ikut disinkronkan.
+//! - `sync_decomposed_feature_photos`: Menyinkronkan referensi foto pada berkas fitur format dekomposisi.
 //! - `check_spatial_result_manual_edits_in_dir`: Memeriksa jejak audit modifikasi manual pengguna.
 
 use std::collections::HashSet;
@@ -9,9 +11,9 @@ use std::fs;
 use std::path::Path;
 
 use super::sp_result_logic::{
-    is_reserved_key, validate_custom_field_key, validate_custom_fields_count, validate_field_label,
-    validate_field_unit, validate_hex_color, validate_name, validate_property_value_type,
-    validate_spatial_result_id,
+    is_reserved_key, sync_feature_photo_refs, validate_custom_field_key,
+    validate_custom_fields_count, validate_field_label, validate_field_unit, validate_hex_color,
+    validate_name, validate_property_value_type, validate_spatial_result_id,
 };
 use super::sp_result_reader_io::{
     compute_concurrency_token, get_saved_spatial_result_in_dir, read_decomposed_layer,
@@ -79,6 +81,15 @@ pub fn update_spatial_result_in_dir(
         _ => false,
     };
 
+    // Perubahan foto layer yang harus disinkronkan ke referensi foto milik layer di setiap fitur:
+    // `synced_photo_url = None` berarti referensi dihapus, `Some(url)` berarti diganti.
+    let photo_changed = is_delete_image || resolved_new_image_url.is_some();
+    let synced_photo_url = if is_delete_image {
+        None
+    } else {
+        resolved_new_image_url.as_deref()
+    };
+
     // 1. Cek folder dekomposisi
     let folder_path = root_dir.join(&safe_id);
     let layer_file = folder_path.join("layer.json");
@@ -116,7 +127,8 @@ pub fn update_spatial_result_in_dir(
             }
         }
 
-        // Mutasi gambar level layer pada display_preference (TIDAK PERNAH menyentuh fitur)
+        // Mutasi gambar level layer pada display_preference. Referensi foto di fitur hanya
+        // disinkronkan jika milik layer ini (lihat `sync_feature_photo_refs`)
         if is_delete_image {
             if let Some(disp) = val
                 .get_mut("display_preference")
@@ -259,6 +271,11 @@ pub fn update_spatial_result_in_dir(
             }
         }
 
+        // Sinkronkan referensi foto pada berkas fitur sebelum layer.json diperbarui
+        if photo_changed {
+            sync_decomposed_feature_photos(&features_dir, &safe_id, synced_photo_url)?;
+        }
+
         val["updated_at"] = serde_json::Value::String(now_utc.clone());
         write_atomic(&layer_file, &serde_json::to_string_pretty(&val)?)?;
 
@@ -314,7 +331,8 @@ pub fn update_spatial_result_in_dir(
             }
         }
 
-        // Mutasi gambar level layer pada display_preference (TIDAK PERNAH menyentuh fitur)
+        // Mutasi gambar level layer pada display_preference. Referensi foto di fitur hanya
+        // disinkronkan jika milik layer ini (lihat `sync_feature_photo_refs`)
         if is_delete_image {
             if let Some(disp) = val
                 .get_mut("display_preference")
@@ -450,6 +468,18 @@ pub fn update_spatial_result_in_dir(
             }
         }
 
+        // Sinkronkan referensi foto milik layer pada setiap fitur
+        if photo_changed {
+            if let Some(feats) = val
+                .get_mut("spatial_results")
+                .and_then(|f| f.as_array_mut())
+            {
+                for feat in feats.iter_mut().filter_map(|f| f.as_object_mut()) {
+                    sync_feature_photo_refs(feat, &safe_id, synced_photo_url);
+                }
+            }
+        }
+
         val["updated_at"] = serde_json::Value::String(now_utc);
         write_atomic(&flat_path, &serde_json::to_string_pretty(&val)?)?;
 
@@ -473,6 +503,33 @@ pub fn update_spatial_result_in_dir(
         "Spatial result dengan ID '{}' tidak ditemukan di storage",
         payload.id
     )))
+}
+
+/// Menyinkronkan referensi foto milik layer pada seluruh berkas fitur format dekomposisi
+/// (`features/*.json`). Berkas ditulis ulang secara atomik hanya jika ada nilai yang berubah.
+fn sync_decomposed_feature_photos(
+    features_dir: &Path,
+    layer_id: &str,
+    new_url: Option<&str>,
+) -> Result<(), MapControllerError> {
+    if !features_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(features_dir)?.flatten() {
+        let f_path = entry.path();
+        if !f_path.is_file() || f_path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let mut f_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&f_path)?)?;
+        let changed = f_val
+            .as_object_mut()
+            .map(|feat| sync_feature_photo_refs(feat, layer_id, new_url))
+            .unwrap_or(false);
+        if changed {
+            write_atomic(&f_path, &serde_json::to_string_pretty(&f_val)?)?;
+        }
+    }
+    Ok(())
 }
 
 /// Memperbarui field aman Spatial Result (pembungkus publik ke storage default).

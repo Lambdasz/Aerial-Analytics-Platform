@@ -79,11 +79,7 @@ export type SpatialGeometry =
  * Sesuai dengan `SpatialProperties` enum di backend Rust.
  */
 export type SpatialProperties =
-  | TreeProperties
-  | VegetationProperties
-  | LandCoverProperties
-  | InspectionPathProperties
-  | OrthoProperties;
+  TreeProperties | VegetationProperties | LandCoverProperties | InspectionPathProperties;
 
 /** Modul 7 — Tree Detection & Counting */
 export interface TreeProperties {
@@ -123,15 +119,6 @@ export interface InspectionPathProperties {
   image_url?: string;
 }
 
-/** Citra Orthomosaic (JPG/PNG) */
-export interface OrthoProperties {
-  ortho_id: string;
-  crs: string;
-  resolution_cm: number;
-  area_sqm: number;
-  image_url?: string;
-}
-
 // Type guards untuk membedakan tipe properties
 export function isTreeProperties(p: SpatialProperties): p is TreeProperties {
   return "tree_id" in p;
@@ -147,8 +134,4 @@ export function isLandCoverProperties(p: SpatialProperties): p is LandCoverPrope
 
 export function isInspectionPathProperties(p: SpatialProperties): p is InspectionPathProperties {
   return "path_id" in p;
-}
-
-export function isOrthoProperties(p: SpatialProperties): p is OrthoProperties {
-  return "ortho_id" in p;
 }

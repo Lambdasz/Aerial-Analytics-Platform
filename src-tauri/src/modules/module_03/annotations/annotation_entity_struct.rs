@@ -3,7 +3,7 @@
 //! Komponen dan tipe data yang didefinisikan dalam berkas ini:
 //! - `AnnotationFeature`: Struct fitur anotasi GeoJSON (ID, schema version, teks temuan, geometri spasial).
 
-use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
+use crate::modules::module_03::types::geometry_type::SpatialGeometry;
 use serde::{Deserialize, Serialize};
 
 /// Returns the default schema version (1) for serialized annotations.

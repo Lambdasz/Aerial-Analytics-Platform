@@ -1,8 +1,18 @@
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+import { getStorageRootPath } from "../services/api";
 import type { FieldDef, FieldKind } from "../types/spatialResult";
 import { isReservedKey } from "./fieldValidation";
 
 let cachedStorageRoot: string | null = null;
+
+// Inisialisasi proaktif root path jika berjalan di lingkungan Tauri
+if (isTauri()) {
+  void getStorageRootPath()
+    .then((path) => {
+      cachedStorageRoot = path;
+    })
+    .catch(() => {});
+}
 
 /**
  * Menyimpan path root storage dari backend untuk resolusi convertFileSrc di desktop.

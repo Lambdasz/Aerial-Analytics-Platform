@@ -23,7 +23,7 @@ pub const EARTH_RADIUS_M: f64 = 6_371_008.8;
 /// # Example
 ///
 /// ```
-/// use aerial_analytics_platform_lib::map_controller::sp_measurement::geometry::calculate_distance;
+/// use aerial_analytics_platform_lib::map_controller::geometry::calculate_distance;
 ///
 /// let d = calculate_distance([116.833, -1.270], [116.835, -1.270]);
 /// assert!((d - 222.71).abs() < 2.0);

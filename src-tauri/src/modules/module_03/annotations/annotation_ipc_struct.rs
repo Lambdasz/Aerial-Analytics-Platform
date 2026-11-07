@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::annotation_entity_struct::AnnotationFeature;
-use crate::modules::module_03::types::sp_result_type::SpatialGeometry;
+use crate::modules::module_03::types::geometry_type::SpatialGeometry;
 
 /// Parameter permintaan pembuatan catatan anotasi baru pada peta.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

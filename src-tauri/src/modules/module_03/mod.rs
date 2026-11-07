@@ -209,7 +209,6 @@ pub mod geometry;
 pub mod layers;
 pub mod ortho_source;
 pub mod photos;
-pub mod sp_measurement;
 pub mod sp_result;
 pub mod state;
 pub mod storage_utils;

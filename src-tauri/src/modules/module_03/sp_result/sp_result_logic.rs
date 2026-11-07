@@ -10,6 +10,8 @@
 //! - `calculate_verified_value`: Menghitung ulang nilai terverifikasi (area, perimeter, distance).
 //! - `is_reserved_key`: Memeriksa string terhadap reserved keywords.
 //! - `is_owned_result_photo`: Memeriksa kepemilikan berkas foto hasil analitik.
+//! - `is_layer_owned_photo_url`: Memeriksa apakah image_url menunjuk ke foto milik layer tertentu.
+//! - `sync_feature_photo_refs`: Menyinkronkan image_url fitur dengan perubahan foto layer (ganti/hapus).
 //! - `validate_custom_field_key`: Memvalidasi key properti kustom (regex `^[a-z][a-z0-9_]{0,39}$`).
 //! - `validate_field_label`: Memvalidasi batas panjang label atribut.
 //! - `validate_field_unit`: Memvalidasi batas panjang unit satuan.
@@ -152,7 +154,7 @@ pub fn calculate_verified_value(
 
             let poly: Vec<Vec<[f64; 2]>> = coords
                 .iter()
-                .map(|ring| {
+                .map(|ring: &Vec<Vec<f64>>| {
                     ring.iter()
                         .map(|p| {
                             if p.len() >= 2 {
@@ -161,7 +163,7 @@ pub fn calculate_verified_value(
                                 [0.0, 0.0]
                             }
                         })
-                        .collect()
+                        .collect::<Vec<[f64; 2]>>()
                 })
                 .collect();
 
@@ -180,7 +182,7 @@ pub fn calculate_verified_value(
 
             let poly: Vec<Vec<[f64; 2]>> = coords
                 .iter()
-                .map(|ring| {
+                .map(|ring: &Vec<Vec<f64>>| {
                     ring.iter()
                         .map(|p| {
                             if p.len() >= 2 {
@@ -189,7 +191,7 @@ pub fn calculate_verified_value(
                                 [0.0, 0.0]
                             }
                         })
-                        .collect()
+                        .collect::<Vec<[f64; 2]>>()
                 })
                 .collect();
 
@@ -272,6 +274,62 @@ pub fn is_owned_result_photo(layer_id: &str, filename: &str) -> bool {
 
     let ext_lower = ext_str.to_ascii_lowercase();
     matches!(ext_lower.as_str(), "jpg" | "jpeg" | "png" | "webp")
+}
+
+/// Memeriksa apakah sebuah `image_url` menunjuk ke foto milik layer tertentu,
+/// yaitu berkas dengan pola `{layer_id}_{timestamp}.{ext}` (lihat `is_owned_result_photo`).
+/// Hanya nama berkas (segmen setelah `/` terakhir) yang diperiksa.
+pub fn is_layer_owned_photo_url(layer_id: &str, url: &str) -> bool {
+    url.rsplit('/')
+        .next()
+        .map(|name| is_owned_result_photo(layer_id, name))
+        .unwrap_or(false)
+}
+
+/// Menyinkronkan satu kunci `image_url` pada sebuah objek JSON dengan perubahan foto layer.
+/// Hanya nilai yang menunjuk ke foto milik layer yang disentuh. `new_url = Some(..)` mengganti
+/// nilainya, `None` menghapus kuncinya. Mengembalikan `true` jika objek benar-benar berubah.
+fn sync_photo_ref_in(
+    container: &mut serde_json::Map<String, serde_json::Value>,
+    layer_id: &str,
+    new_url: Option<&str>,
+) -> bool {
+    let current = match container.get("image_url").and_then(|v| v.as_str()) {
+        Some(url) if is_layer_owned_photo_url(layer_id, url) => url.to_string(),
+        _ => return false,
+    };
+    match new_url {
+        Some(url) if url == current => false,
+        Some(url) => {
+            container.insert(
+                "image_url".to_string(),
+                serde_json::Value::String(url.to_string()),
+            );
+            true
+        }
+        None => {
+            container.remove("image_url");
+            true
+        }
+    }
+}
+
+/// Menyinkronkan referensi foto pada satu objek fitur JSON (`image_url` level fitur dan
+/// `properties.image_url`) dengan perubahan foto layer. Foto spesifik fitur (bukan milik layer)
+/// dan fitur tanpa `image_url` tidak disentuh. Mengembalikan `true` jika ada nilai yang berubah.
+pub fn sync_feature_photo_refs(
+    feature: &mut serde_json::Map<String, serde_json::Value>,
+    layer_id: &str,
+    new_url: Option<&str>,
+) -> bool {
+    let mut changed = sync_photo_ref_in(feature, layer_id, new_url);
+    if let Some(props) = feature
+        .get_mut("properties")
+        .and_then(|p| p.as_object_mut())
+    {
+        changed |= sync_photo_ref_in(props, layer_id, new_url);
+    }
+    changed
 }
 
 /// Memvalidasi format key field custom baru: regex `^[a-z][a-z0-9_]{0,39}$`.

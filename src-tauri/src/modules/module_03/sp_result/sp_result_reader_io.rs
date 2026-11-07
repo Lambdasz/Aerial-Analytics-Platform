@@ -90,10 +90,6 @@ pub fn extract_thumbnail_url(payload: &LayerPayload) -> Option<String> {
                 .image_url
                 .as_deref()
                 .or_else(|| p.extra.get("image_url").and_then(|v| v.as_str())),
-            SpatialProperties::Ortho(p) => p
-                .image_url
-                .as_deref()
-                .or_else(|| p.extra.get("image_url").and_then(|v| v.as_str())),
             SpatialProperties::Generic(map) => map.get("image_url").and_then(|v| v.as_str()),
         };
         if let Some(url) = prop_img {
