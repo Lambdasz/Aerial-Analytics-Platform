@@ -322,6 +322,7 @@
 //! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
 //! | `update_plugin_config` | Update and persist user custom parameters overrides |
 //! | `get_installed_plugins` | Return summary list of all registered plugins |
+//! | `reload_plugins` | Rescan plugins directory from disk and rebuild in-memory registry |
 //! | `get_plugin_details` | Retrieve full contract schemas for a specific plugin |
 //! | `query_compatible_plugins` | Filter enabled plugins compatible with target imagery or AOI |
 //! | `check_plugin_health` | Execute fast pre-flight dependency healthcheck |
@@ -553,6 +554,7 @@
 //! | `import_plots` | Parse a GeoJSON file without storing it (legacy) |
 //! | `save_plot_indicators` / `list_plot_indicators` | Persist and read per-plot plugin metrics |
 //! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer |
+//! | `analyse_plots_from_ortho` | Analyse plots directly from an orthomosaic with georeferenced raster clipping and slicing |
 //!
 //! **Status**: Implemented. The Module 09 page and a **Plots** tab inside the
 //! Module 3 sidebar share the same commands; runs execute a plugin once per
@@ -985,6 +987,7 @@ pub fn run() {
             plugin_manager::executor::get_job_result,
             // Role 2 — Plugin Lifecycle & Package Manager (Discovery & Registry)
             plugin_manager::registry::get_installed_plugins,
+            plugin_manager::registry::reload_plugins,
             plugin_manager::registry::get_plugin_details,
             plugin_manager::registry::query_compatible_plugins,
             plugin_manager::registry::check_plugin_health,
@@ -1024,6 +1027,7 @@ pub fn run() {
             commands::plots::save_plot_indicators,
             commands::plots::list_plot_indicators,
             commands::plots::publish_plots_layer,
+            commands::plots::analyse_plots_from_ortho,
             commands::dashboard::get_project_dashboard,
             commands::dashboard::list_dashboard_plugin_results,
             commands::dashboard::export_dashboard_plot_csv,

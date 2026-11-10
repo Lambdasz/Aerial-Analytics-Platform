@@ -2,12 +2,18 @@
   "manifest_version": 1,
   "metadata": {
     "id": "rgb-landcover-classification",
-    "name": "RGB Land-Cover Classification",
-    "version": "0.1.0",
-    "author": "Kelompok ...",
+    "name": "RGB Land-Cover Classification (DeepLabV3+)",
+    "version": "1.0.0",
+    "author": "Aerial Analytics Platform",
     "description": "Classify visible land-cover types from RGB aerial imagery.",
     "category": "land_cover",
-    "tags": ["rgb", "land-cover", "classification", "segmentation"],
+    "tags": [
+      "rgb",
+      "land-cover",
+      "classification",
+      "semantic-segmentation",
+      "deeplabv3plus"
+    ],
     "min_core_version": "0.1.0"
   },
   "runtime": {
