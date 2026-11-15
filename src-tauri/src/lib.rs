@@ -1001,8 +1001,11 @@ pub fn run() {
             });
             // Images imported before the app last closed may still be waiting
             // for a blur score; scoring resumes as a background task. Only the
-            // primary instance does so, or two processes would score the same
-            // queue.
+            // primary instance resumes at startup, so a second process does
+            // not redo the same backlog. Scoring started by an import is not
+            // limited this way: two instances importing at once can decode the
+            // same frame twice, which only wastes work (the stored score is
+            // identical) and is preferable to leaving the images unscored.
             if is_primary_instance {
                 commands::background_tasks::resume_pending_blur_tasks(app.handle());
             }

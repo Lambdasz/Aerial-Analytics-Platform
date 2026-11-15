@@ -5,6 +5,8 @@
 //! registry and events, and tests call it directly (like
 //! `warm_imported_thumbnails`).
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -15,6 +17,7 @@ use super::blur_detection;
 use super::blur_queue::{self, PendingImage};
 use super::error::SessionError;
 use super::flight_session::reclassify_session_blur;
+use crate::models::image::ImageFormat;
 
 /// Upper bound on concurrent scoring threads.
 ///
@@ -58,12 +61,15 @@ fn lock(db: &Mutex<Connection>) -> Result<std::sync::MutexGuard<'_, Connection>,
 }
 
 /// Number of images [`score_pending`] would process for `session_id`.
+///
+/// Computed from the same work list `score_pending` uses, so the two cannot
+/// disagree about what is pending.
 pub(crate) fn pending_total(
     db: &Mutex<Connection>,
     session_id: Uuid,
 ) -> Result<usize, SessionError> {
     let conn = lock(db)?;
-    blur_queue::pending_count(&conn, session_id)
+    Ok(blur_queue::pending_for_session(&conn, session_id)?.len())
 }
 
 /// Scores every queued image of `session_id`, a few at a time.
@@ -87,6 +93,29 @@ pub(crate) fn score_pending(
     cancel: &AtomicBool,
     on_update: impl Fn(BlurProgress) + Sync,
 ) -> Result<BlurSummary, SessionError> {
+    score_pending_with(
+        db,
+        session_id,
+        cancel,
+        &blur_detection::blur_score_for_copy,
+        on_update,
+    )
+}
+
+/// [`score_pending`] with the scoring function supplied, so a test can make
+/// it panic.
+///
+/// A panic inside `scorer` is caught per image and counts as an unscorable
+/// image: without that it would unwind out of the worker scope and leave the
+/// caller's task registered as running forever. (Release builds use
+/// `panic = "abort"`, where a panic ends the process regardless.)
+pub(crate) fn score_pending_with(
+    db: &Mutex<Connection>,
+    session_id: Uuid,
+    cancel: &AtomicBool,
+    scorer: &(dyn Fn(&Path, ImageFormat) -> Option<f64> + Sync),
+    on_update: impl Fn(BlurProgress) + Sync,
+) -> Result<BlurSummary, SessionError> {
     let work: Vec<PendingImage> = {
         let conn = lock(db)?;
         blur_queue::pending_for_session(&conn, session_id)?
@@ -107,7 +136,13 @@ pub(crate) fn score_pending(
                 let Some(item) = work.get(index) else {
                     return;
                 };
-                let score = blur_detection::blur_score_for_copy(&item.path, item.format);
+                let score = catch_unwind(AssertUnwindSafe(|| scorer(&item.path, item.format)))
+                    .unwrap_or_else(|_| {
+                        eprintln!(
+                            "warning: blur scoring panicked; treating the image as unscorable"
+                        );
+                        None
+                    });
                 let stored =
                     lock(db).and_then(|conn| blur_queue::record_score(&conn, item.image_id, score));
                 if let Err(err) = stored {
@@ -133,13 +168,10 @@ pub(crate) fn score_pending(
         }
     });
 
-    if let Some(err) = failure.into_inner().ok().flatten() {
-        return Err(err);
-    }
-
-    // Re-derive every `is_blurry` flag from the final score set so the result
-    // does not depend on completion order. Stored scores stay valid if this
-    // pass fails, so it is logged rather than failing the run.
+    // Re-derive every `is_blurry` flag from the scores stored so far — also
+    // when a worker failed, so the images that were scored do not keep stale
+    // flags. Stored scores stay valid if this pass fails, so it is logged
+    // rather than failing the run.
     match lock(db) {
         Ok(conn) => {
             if let Err(err) =
@@ -149,6 +181,10 @@ pub(crate) fn score_pending(
             }
         }
         Err(err) => eprintln!("warning: could not reclassify session blur flags: {err}"),
+    }
+
+    if let Some(err) = failure.into_inner().ok().flatten() {
+        return Err(err);
     }
 
     Ok(BlurSummary {

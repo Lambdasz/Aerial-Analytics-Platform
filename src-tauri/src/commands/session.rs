@@ -4,6 +4,7 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::commands::background_tasks::spawn_blur_tasks;
 use crate::models::{Image, Session, SessionStatus};
 use crate::modules::module_01::error::SessionError;
 use crate::modules::module_01::{self as flight_session, import_io, thumbnail};
@@ -309,14 +310,23 @@ pub(crate) fn delete_image_impl(
 /// when the file cannot be moved.
 #[tauri::command]
 pub async fn move_image_to_session(
+    handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
     let app = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || move_image_impl(&app, image_id, target_session_id))
-        .await
-        .map_err(join_err)?
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        move_image_impl(&app, image_id, target_session_id)
+    })
+    .await
+    .map_err(join_err)?;
+    if result.is_ok() {
+        // An image that was still waiting for its blur score now belongs to
+        // the target session; make sure that session is scored.
+        spawn_blur_tasks(&handle, vec![target_session_id]);
+    }
+    result
 }
 
 /// Testable core of [`move_image_to_session`].
@@ -406,14 +416,21 @@ pub(crate) fn move_image_impl(
 /// cannot be copied.
 #[tauri::command]
 pub async fn copy_image_to_session(
+    handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     image_id: Uuid,
     target_session_id: Uuid,
 ) -> Result<(), CommandError> {
     let app = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || copy_image_impl(&app, image_id, target_session_id))
-        .await
-        .map_err(join_err)?
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        copy_image_impl(&app, image_id, target_session_id)
+    })
+    .await
+    .map_err(join_err)?;
+    if result.is_ok() {
+        spawn_blur_tasks(&handle, vec![target_session_id]);
+    }
+    result
 }
 
 /// Testable core of [`copy_image_to_session`].
@@ -442,6 +459,9 @@ pub(crate) fn copy_image_impl(
     // symlinked library root. `dunce` matches what import stores: it leaves
     // the `\\?\` prefix off on Windows, so every stored path has one shape.
     let stored_path = dunce::canonicalize(&new_path).unwrap_or_else(|_| new_path.clone());
+    // A copy of an image that is still waiting for its blur score has no
+    // score either, so it must wait in the queue too.
+    let source_queued = crate::modules::module_01::blur_queue::is_queued(&conn, image.id)?;
     let copy = Image {
         id: Uuid::new_v4(),
         session_id: target_session_id,
@@ -461,6 +481,13 @@ pub(crate) fn copy_image_impl(
             );
         }
         return Err(err.into());
+    }
+    if source_queued {
+        if let Err(err) =
+            crate::modules::module_01::blur_queue::enqueue(&conn, target_session_id, &[copy.id])
+        {
+            eprintln!("warning: could not queue the copy for blur scoring: {err}");
+        }
     }
     flight_session::recalculate_session_date_range(&conn, target_session_id)?;
     if let Err(err) = flight_session::reclassify_session_blur(

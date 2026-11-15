@@ -79,7 +79,6 @@ use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
 use super::blur_detection;
-use super::blur_queue;
 use super::error::SessionError;
 use super::flight_session::{
     get_image, get_session, image_from_metadata, insert_images_and_recalculate,
@@ -396,7 +395,8 @@ pub(crate) fn run_import(
 /// batch, the copies' list thumbnails are warmed into `thumbs_dir` on a
 /// detached thread, so decoding them never holds the import open. Blur
 /// scores are not computed here; every inserted row is queued for the
-/// background task instead (see [`record_images`]).
+/// background task instead, inside the insert transaction
+/// ([`super::flight_session::insert_images_and_recalculate`]).
 fn import_planned(
     db: &Mutex<Connection>,
     thumbs_dir: &Path,
@@ -1271,7 +1271,7 @@ struct StagedFile<'a> {
 ///
 /// Blur scoring is **not** done here: it decodes the full frame and used to
 /// dominate the import. `blur_score` and `is_blurry` both start `None`;
-/// [`record_images`] queues the row in [`super::blur_queue`], the background
+/// the insert queues the row in [`super::blur_queue`], the background
 /// task ([`super::blur_task::score_pending`]) fills in the score, and the
 /// session-wide [`super::flight_session::reclassify_session_blur`] pass sets
 /// `is_blurry` once scores exist.
@@ -1313,16 +1313,7 @@ fn record_images(
 ) -> Result<Recorded, SessionError> {
     let conn = lock_db(db)?;
     match insert_images_and_recalculate(&conn, session_id, images)? {
-        None => {
-            // Blur scoring is deferred: queue the rows for the background
-            // task. A failure only leaves them unscored, like rows imported
-            // before scoring existed, so it must not fail the import.
-            let ids: Vec<Uuid> = images.iter().map(|image| image.id).collect();
-            if let Err(err) = blur_queue::enqueue(&conn, session_id, &ids) {
-                eprintln!("warning: could not queue images for blur scoring: {err}");
-            }
-            Ok(Recorded::Inserted)
-        }
+        None => Ok(Recorded::Inserted),
         Some(existing) => Ok(Recorded::Duplicate(existing)),
     }
 }
@@ -2687,6 +2678,90 @@ mod tests {
         assert_eq!(queued_count(&db), 0, "unscorable is final, not retried");
         let again = score_all(&db, session_id);
         assert_eq!(again.total, 0, "nothing is left to retry");
+    }
+
+    #[test]
+    fn a_panicking_scorer_counts_as_unscorable_and_does_not_end_the_run() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let paths = [
+            write_checkerboard_jpeg_phased(
+                source_dir.path(),
+                "good.jpg",
+                blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                0,
+            ),
+            write_checkerboard_jpeg_phased(
+                source_dir.path(),
+                "bad.jpg",
+                blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                1,
+            ),
+        ];
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&paths),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        // A decoder bug on one malformed file must not unwind out of the run
+        // (that would leave the caller's task "running" forever).
+        let summary = super::super::blur_task::score_pending_with(
+            &db,
+            session_id,
+            &std::sync::atomic::AtomicBool::new(false),
+            &|path, _| {
+                if path.file_name().is_some_and(|name| name == "bad.jpg") {
+                    panic!("simulated decoder bug");
+                }
+                Some(1.0)
+            },
+            |_| {},
+        )
+        .expect("the run survives a panicking scorer");
+        assert_eq!((summary.done, summary.unscorable), (2, 1));
+        assert_eq!(
+            queued_count(&db),
+            0,
+            "the panicked image is dequeued, not retried"
+        );
+    }
+
+    #[test]
+    fn a_queue_row_that_can_never_be_scored_is_dequeued_not_left_pending() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_jpeg(source_dir.path(), "DJI_0004.JPG");
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        {
+            let conn = db.lock().expect("db lock");
+            conn.execute("UPDATE image SET format = 'bmp'", [])
+                .expect("corrupt the format");
+            let work = super::super::blur_queue::pending_for_session(&conn, session_id)
+                .expect("work list");
+            assert!(work.is_empty(), "an unknown format cannot be scored");
+        }
+        assert_eq!(
+            queued_count(&db),
+            0,
+            "it must not linger and keep the session pending on every launch"
+        );
     }
 
     #[test]

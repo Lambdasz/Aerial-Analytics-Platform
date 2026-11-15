@@ -1051,3 +1051,106 @@ fn e2e_cancelling_a_blur_task_keeps_the_rest_queued_for_the_next_launch() {
     assert_eq!(resumed.state, TaskState::Done);
     assert_eq!(queued(&env), 0);
 }
+
+#[test]
+fn e2e_images_imported_while_a_task_runs_are_scored_by_the_same_loop() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    for n in 0..4 {
+        write_scorable_jpeg(env.source_dir.path(), &format!("DJI_000{n}.JPG"), n);
+    }
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("first import");
+
+    let later_dir = tempfile::tempdir().expect("second source dir");
+    for n in 0..2 {
+        write_scorable_jpeg(later_dir.path(), &format!("DJI_01{n}.JPG"), 20 + n);
+    }
+    let injected = std::sync::atomic::AtomicBool::new(false);
+    let tasks = BackgroundTasks::default();
+    // A second import lands while the first task is still running: its
+    // `spawn_blur_tasks` would be refused (one live task per session), so the
+    // running loop must pick the new rows up itself.
+    run_blur_task_impl(&env.state.db, &tasks, session_id, |snapshot| {
+        if snapshot.done >= 1 && !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            import_images_impl(
+                &env.state,
+                session_id,
+                &sources(&[later_dir.path().to_path_buf()]),
+                true,
+                |_, _, _| {},
+            )
+            .expect("import during the task");
+        }
+    })
+    .expect("task runs")
+    .expect("there was work");
+
+    assert!(injected.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(queued(&env), 0, "the late rows were scored too");
+    let conn = env.state.db.lock().expect("db lock");
+    let rows = flight_session::get_images_by_session(&conn, session_id).expect("rows");
+    assert_eq!(rows.len(), 6);
+    assert!(rows.iter().all(|row| row.blur_score.is_some()));
+}
+
+#[test]
+fn e2e_moving_or_copying_an_unscored_image_keeps_it_pending() {
+    use crate::modules::module_01::blur_queue;
+
+    let env = test_env();
+    let source_id = env_session(&env);
+    let target_id = env_sibling_session(&env, source_id);
+    write_scorable_jpeg(env.source_dir.path(), "DJI_0001.JPG", 1);
+    write_scorable_jpeg(env.source_dir.path(), "DJI_0002.JPG", 2);
+    import_images_impl(
+        &env.state,
+        source_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("import");
+    let mut rows = {
+        let conn = env.state.db.lock().expect("db lock");
+        flight_session::get_images_by_session(&conn, source_id).expect("rows")
+    };
+    rows.sort_by(|a, b| a.file_path.cmp(&b.file_path));
+
+    // Move one image, copy the other, before any score exists.
+    move_image_impl(&env.state, rows[0].id, target_id).expect("move");
+    copy_image_impl(&env.state, rows[1].id, target_id).expect("copy");
+
+    let conn = env.state.db.lock().expect("db lock");
+    let in_source = blur_queue::pending_for_session(&conn, source_id).expect("source queue");
+    let in_target = blur_queue::pending_for_session(&conn, target_id).expect("target queue");
+    assert_eq!(
+        in_source.len(),
+        1,
+        "the copied original stays pending in its session"
+    );
+    assert_eq!(
+        in_target.len(),
+        2,
+        "the moved image and the copy are pending in the target"
+    );
+    let mut pending = blur_queue::pending_sessions(&conn).expect("pending sessions");
+    pending.sort();
+    let mut expected = vec![source_id, target_id];
+    expected.sort();
+    assert_eq!(pending, expected);
+    drop(conn);
+
+    // Scoring the target session scores the moved image and the copy.
+    let tasks = BackgroundTasks::default();
+    let done = run_blur_task_impl(&env.state.db, &tasks, target_id, |_| {})
+        .expect("target task")
+        .expect("work");
+    assert_eq!((done.state, done.done), (TaskState::Done, 2));
+}

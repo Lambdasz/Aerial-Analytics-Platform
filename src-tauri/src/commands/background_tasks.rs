@@ -28,20 +28,14 @@ use crate::AppState;
 /// Title shown for blur-scoring tasks.
 const BLUR_TASK_TITLE: &str = "Menilai ketajaman citra";
 
-/// Scores a session's queued images as a registered task and blocks until it
-/// ends. `emit` receives a snapshot on start, after every finished image, and
-/// at the end.
-///
-/// Returns `Ok(None)` when there was nothing to do: no queued images, or a
-/// blur task for this session is already live.
-///
-/// A failed run is reported in the returned (and emitted) snapshot with state
-/// `failed`; only a failure before the task could be registered is an `Err`.
-pub(crate) fn run_blur_task_impl(
+/// One scoring pass: registers a task for the session's queued images, scores
+/// them, and finishes the task. Returns `Ok(None)` when there was nothing to
+/// do, or a blur task for this session is already live.
+fn run_blur_pass(
     db: &Mutex<Connection>,
     tasks: &BackgroundTasks,
     session_id: Uuid,
-    emit: impl Fn(&TaskSnapshot) + Sync,
+    emit: &(impl Fn(&TaskSnapshot) + Sync),
 ) -> Result<Option<TaskSnapshot>, CommandError> {
     let total = pending_total(db, session_id)?;
     if total == 0 {
@@ -102,6 +96,57 @@ pub(crate) fn run_blur_task_impl(
     Ok(finished)
 }
 
+/// Scores a session's queued images as registered tasks and blocks until the
+/// queue is empty. `emit` receives a snapshot on start, after every finished
+/// image, and at the end of each pass.
+///
+/// Returns the last pass's final snapshot, or `Ok(None)` when there was
+/// nothing to do: no queued images, or a blur task for this session is
+/// already live.
+///
+/// It keeps going while images are queued. An import into a session whose
+/// task is still running cannot start a second task (see
+/// [`BackgroundTasks::try_start`]); its rows are queued before this task is
+/// finished, so the check after each pass finds them. A cancelled or failed
+/// pass stops the loop.
+///
+/// A failed pass is reported in the returned (and emitted) snapshot with
+/// state `failed`; only a failure before a task could be registered is an
+/// `Err`.
+pub(crate) fn run_blur_task_impl(
+    db: &Mutex<Connection>,
+    tasks: &BackgroundTasks,
+    session_id: Uuid,
+    emit: impl Fn(&TaskSnapshot) + Sync,
+) -> Result<Option<TaskSnapshot>, CommandError> {
+    let mut last = None;
+    while let Some(snapshot) = run_blur_pass(db, tasks, session_id, &emit)? {
+        let more = !matches!(snapshot.state, TaskState::Cancelled | TaskState::Failed);
+        last = Some(snapshot);
+        if !more {
+            break;
+        }
+    }
+    Ok(last)
+}
+
+/// Runs blur-scoring tasks for `session_ids` in order, on the calling thread.
+fn run_sessions(
+    app: &AppHandle,
+    db: &Mutex<Connection>,
+    tasks: &BackgroundTasks,
+    session_ids: Vec<Uuid>,
+) {
+    let emit = |snapshot: &TaskSnapshot| {
+        let _ = app.emit(BACKGROUND_TASK_EVENT, snapshot);
+    };
+    for session_id in session_ids {
+        if let Err(err) = run_blur_task_impl(db, tasks, session_id, emit) {
+            eprintln!("warning: blur scoring for session {session_id} failed to start: {err}");
+        }
+    }
+}
+
 /// Runs blur-scoring tasks for `session_ids`, one session after another, on a
 /// blocking thread. Returns immediately.
 ///
@@ -115,36 +160,34 @@ pub fn spawn_blur_tasks(app: &AppHandle, session_ids: Vec<Uuid>) {
     let db = Arc::clone(&app.state::<AppState>().db);
     let tasks = app.state::<BackgroundTasks>().inner().clone();
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let emit = |snapshot: &TaskSnapshot| {
-            let _ = app.emit(BACKGROUND_TASK_EVENT, snapshot);
-        };
-        for session_id in session_ids {
-            if let Err(err) = run_blur_task_impl(&db, &tasks, session_id, emit) {
-                eprintln!("warning: blur scoring for session {session_id} failed to start: {err}");
-            }
-        }
-    });
+    tauri::async_runtime::spawn_blocking(move || run_sessions(&app, &db, &tasks, session_ids));
 }
 
 /// Resumes blur scoring for every session that still has queued images, for
-/// example after the app was closed mid-run. Safe to call at startup.
+/// example after the app was closed mid-run.
+///
+/// Returns immediately: the queue lookup takes the shared database lock, so
+/// it runs on the blocking thread rather than delaying startup.
 pub fn resume_pending_blur_tasks(app: &AppHandle) {
-    let sessions = {
-        let state = app.state::<AppState>();
-        let Ok(conn) = state.db.lock() else {
-            eprintln!("warning: could not resume blur scoring: db lock");
-            return;
-        };
-        match blur_queue::pending_sessions(&conn) {
-            Ok(sessions) => sessions,
-            Err(err) => {
-                eprintln!("warning: could not resume blur scoring: {err}");
+    let db = Arc::clone(&app.state::<AppState>().db);
+    let tasks = app.state::<BackgroundTasks>().inner().clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let sessions = match db.lock() {
+            Ok(conn) => match blur_queue::pending_sessions(&conn) {
+                Ok(sessions) => sessions,
+                Err(err) => {
+                    eprintln!("warning: could not resume blur scoring: {err}");
+                    return;
+                }
+            },
+            Err(_) => {
+                eprintln!("warning: could not resume blur scoring: db lock");
                 return;
             }
-        }
-    };
-    spawn_blur_tasks(app, sessions);
+        };
+        run_sessions(&app, &db, &tasks, sessions);
+    });
 }
 
 /// Lists every background task: live ones first, newest first within each

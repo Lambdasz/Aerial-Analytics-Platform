@@ -11,9 +11,10 @@
 //! unfinished work and never re-decodes images that can never be scored.
 //!
 //! The table is a side table (not an `image` column) so no `image`-table
-//! rebuild migration is involved. Rows for deleted images are ignored by
-//! every query (they are matched through `image`) and pruned by
-//! [`pending_sessions`].
+//! rebuild migration is involved. Every query matches a queue row to its
+//! image by id and takes the session from the **image row**, so an image
+//! moved to another session carries its pending state along. Rows whose
+//! image no longer exists are ignored and pruned by [`pending_sessions`].
 
 use std::path::PathBuf;
 
@@ -56,7 +57,9 @@ pub fn migrate_blur_queue_schema(conn: &Connection) -> Result<(), SessionError> 
 
 /// Queues `image_ids` of `session_id` for background scoring.
 ///
-/// Idempotent: an id that is already queued is left alone.
+/// Idempotent: an id that is already queued is left alone. The stored
+/// `session_id` is informational; the image row decides which session an
+/// image belongs to.
 pub(crate) fn enqueue(
     conn: &Connection,
     session_id: Uuid,
@@ -83,9 +86,11 @@ fn format_from_db(raw: Option<&str>) -> Option<ImageFormat> {
 /// The images of `session_id` that are still waiting for a score, oldest
 /// first.
 ///
-/// Matched through `image`, so a queue row whose image was deleted (or moved
-/// to another session) is not returned. Rows with an unreadable id or an
-/// unknown format are skipped rather than failing the whole batch.
+/// Matched through `image`, so a queue row whose image was deleted is not
+/// returned, and an image moved here from another session is. A row that can
+/// never be scored — an id that is not a UUID or an unknown format — is
+/// dequeued on the spot instead of being skipped, so it cannot keep a
+/// session "pending" forever or make a count disagree with the work list.
 pub(crate) fn pending_for_session(
     conn: &Connection,
     session_id: Uuid,
@@ -93,49 +98,61 @@ pub(crate) fn pending_for_session(
     let mut stmt = conn.prepare(
         "SELECT i.id, i.file_path, i.format
          FROM blur_queue q
-         JOIN image i ON i.id = q.image_id AND i.session_id = q.session_id
-         WHERE q.session_id = ?1
+         JOIN image i ON i.id = q.image_id
+         WHERE i.session_id = ?1
          ORDER BY q.queued_at, i.id",
     )?;
-    let rows = stmt.query_map(params![session_id.to_string()], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
-    })?;
+    let rows = stmt
+        .query_map(params![session_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     let mut pending = Vec::new();
-    for row in rows {
-        let (id, path, format) = row?;
-        let (Ok(image_id), Some(format)) =
-            (Uuid::parse_str(&id), format_from_db(format.as_deref()))
-        else {
-            continue;
-        };
-        pending.push(PendingImage {
-            image_id,
-            path: PathBuf::from(path),
-            format,
-        });
+    for (id, path, format) in rows {
+        match (Uuid::parse_str(&id), format_from_db(format.as_deref())) {
+            (Ok(image_id), Some(format)) => pending.push(PendingImage {
+                image_id,
+                path: PathBuf::from(path),
+                format,
+            }),
+            _ => {
+                conn.execute("DELETE FROM blur_queue WHERE image_id = ?1", params![id])?;
+            }
+        }
     }
     Ok(pending)
 }
 
-/// Sessions that still have queued images.
+/// Whether `image_id` is still waiting for a score.
+pub(crate) fn is_queued(conn: &Connection, image_id: Uuid) -> Result<bool, SessionError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM blur_queue WHERE image_id = ?1",
+        params![image_id.to_string()],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+/// Sessions that still have queued images, by the session each image is in
+/// now.
 ///
-/// Prunes queue rows that no longer point at an image of that session first,
-/// so deleted or moved images cannot keep a session "pending" forever.
+/// Prunes queue rows whose image no longer exists first, so a deleted image
+/// cannot keep a session "pending" forever.
 pub(crate) fn pending_sessions(conn: &Connection) -> Result<Vec<Uuid>, SessionError> {
     conn.execute(
         "DELETE FROM blur_queue
-         WHERE NOT EXISTS (
-             SELECT 1 FROM image i
-             WHERE i.id = blur_queue.image_id AND i.session_id = blur_queue.session_id
-         )",
+         WHERE NOT EXISTS (SELECT 1 FROM image i WHERE i.id = blur_queue.image_id)",
         [],
     )?;
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT session_id FROM blur_queue ORDER BY session_id")?;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT i.session_id FROM blur_queue q
+         JOIN image i ON i.id = q.image_id
+         ORDER BY i.session_id",
+    )?;
     let ids = stmt
         .query_map([], |row| row.get::<_, String>(0))?
         .filter_map(Result::ok)
@@ -162,16 +179,4 @@ pub(crate) fn record_score(
     )?;
     conn.execute("DELETE FROM blur_queue WHERE image_id = ?1", params![id])?;
     Ok(())
-}
-
-/// How many images of `session_id` are still queued.
-pub(crate) fn pending_count(conn: &Connection, session_id: Uuid) -> Result<usize, SessionError> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM blur_queue q
-         JOIN image i ON i.id = q.image_id AND i.session_id = q.session_id
-         WHERE q.session_id = ?1",
-        params![session_id.to_string()],
-        |row| row.get(0),
-    )?;
-    Ok(usize::try_from(count).unwrap_or(0))
 }
