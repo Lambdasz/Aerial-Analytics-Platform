@@ -612,9 +612,9 @@ pub fn delete_saved_image(category: &str, filename: &str) -> Result<bool, MapCon
     }
 
     // Hapus layer terkait jika ada
-    let _ = crate::modules::module_03::layers::store::delete_saved_layer(filename);
-    let _ = crate::modules::module_03::layers::store::delete_saved_layer(stem);
-    let _ = crate::modules::module_03::layers::store::delete_saved_layer(&safe_id);
+    let _ = crate::modules::module_03::layers::store::delete_saved_layer_disk(filename);
+    let _ = crate::modules::module_03::layers::store::delete_saved_layer_disk(stem);
+    let _ = crate::modules::module_03::layers::store::delete_saved_layer_disk(&safe_id);
 
     Ok(deleted)
 }
@@ -705,9 +705,10 @@ pub fn reconcile_storage_layers() -> Result<(), MapControllerError> {
                                             source_type: Some("raster".to_string()),
                                             source_id: Some(folder_name.clone()),
                                         };
-                                    let _ = crate::modules::module_03::layers::store::save_layer(
-                                        layer_state,
-                                    );
+                                    let _ =
+                                        crate::modules::module_03::layers::store::save_layer_disk(
+                                            layer_state,
+                                        );
                                 }
                             }
                         }
@@ -793,5 +794,5 @@ pub fn register_ortho_layer(
         source_id: Some(image_id.to_string()),
     };
 
-    crate::modules::module_03::layers::store::save_layer(layer_state)
+    crate::modules::module_03::layers::store::save_layer_disk(layer_state)
 }
