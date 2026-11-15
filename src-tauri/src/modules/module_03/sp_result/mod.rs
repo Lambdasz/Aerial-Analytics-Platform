@@ -11,6 +11,7 @@ pub mod sp_result_storage_io;
 pub mod sp_result_struct;
 pub mod sp_result_validation_logic;
 pub mod sp_result_writer_io;
+pub mod sqlite_store;
 
 // Alias kompatibilitas mundur
 pub use sp_result_constants as constants;

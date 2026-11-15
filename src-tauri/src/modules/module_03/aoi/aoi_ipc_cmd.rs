@@ -16,6 +16,13 @@ use super::aoi_storage_io;
 use crate::modules::module_03::geometry;
 use crate::plugin_manager::error::CommandError;
 
+fn lock_err(e: impl std::fmt::Display) -> CommandError {
+    CommandError {
+        code: "DATABASE_ERROR".to_string(),
+        message: format!("Gagal mengakses database: {e}"),
+    }
+}
+
 /// Membuat validated AOI (Area of Interest) GeoJSON Feature secara fungsional.
 #[tauri::command]
 pub fn create_aoi_cmd(request: CreateAoiRequest) -> Result<AoiFeatureResponse, CommandError> {
@@ -37,9 +44,12 @@ pub fn create_aoi_cmd(request: CreateAoiRequest) -> Result<AoiFeatureResponse, C
     Ok(AoiFeatureResponse { aoi })
 }
 
-/// Membuat validated AOI GeoJSON Feature dan langsung menyimpannya ke storage secara atomik.
+/// Membuat validated AOI GeoJSON Feature dan langsung menyimpannya ke database SQLite secara atomik.
 #[tauri::command]
-pub fn save_new_aoi_cmd(request: SaveNewAoiRequest) -> Result<AoiFeatureResponse, CommandError> {
+pub fn save_new_aoi_cmd(
+    state: tauri::State<'_, crate::AppState>,
+    request: SaveNewAoiRequest,
+) -> Result<AoiFeatureResponse, CommandError> {
     crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
     geometry::validate_polygon(&request.polygon)?;
 
@@ -59,31 +69,43 @@ pub fn save_new_aoi_cmd(request: SaveNewAoiRequest) -> Result<AoiFeatureResponse
         perimeter_m,
     );
 
-    let saved = aoi_storage_io::save_aoi(aoi_feature)?;
+    let conn = state.db.lock().map_err(lock_err)?;
+    let saved = aoi_storage_io::save_aoi(&conn, aoi_feature)?;
     Ok(AoiFeatureResponse { aoi: saved })
 }
 
-/// Menyimpan data AOI ke file JSON pada `map_storage/aois/{id}.json`.
+/// Menyimpan data AOI ke database SQLite.
 #[tauri::command]
-pub fn save_aoi(request: SaveAoiRequest) -> Result<AoiFeatureResponse, CommandError> {
+pub fn save_aoi(
+    state: tauri::State<'_, crate::AppState>,
+    request: SaveAoiRequest,
+) -> Result<AoiFeatureResponse, CommandError> {
     crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
-    let saved = aoi_storage_io::save_aoi(request.aoi)?;
+    let conn = state.db.lock().map_err(lock_err)?;
+    let saved = aoi_storage_io::save_aoi(&conn, request.aoi)?;
     Ok(AoiFeatureResponse { aoi: saved })
 }
 
-/// Mengambil seluruh data AOI yang tersimpan pada `map_storage/aois/`.
+/// Mengambil seluruh data AOI yang tersimpan pada SQLite.
 #[tauri::command]
-pub fn get_saved_aois() -> Result<GetSavedAoisResponse, CommandError> {
-    let aois = aoi_storage_io::get_saved_aois()?;
+pub fn get_saved_aois(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<GetSavedAoisResponse, CommandError> {
+    let conn = state.db.lock().map_err(lock_err)?;
+    let aois = aoi_storage_io::get_saved_aois(&conn)?;
     let total = aois.len();
     Ok(GetSavedAoisResponse { aois, total })
 }
 
-/// Menghapus AOI yang tersimpan berdasarkan ID.
+/// Menghapus AOI yang tersimpan berdasarkan ID dari SQLite.
 #[tauri::command]
-pub fn delete_saved_aoi(request: DeleteAoiRequest) -> Result<DeleteAoiResponse, CommandError> {
+pub fn delete_saved_aoi(
+    state: tauri::State<'_, crate::AppState>,
+    request: DeleteAoiRequest,
+) -> Result<DeleteAoiResponse, CommandError> {
     crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
-    let success = aoi_storage_io::delete_saved_aoi(&request.aoi_id)?;
+    let conn = state.db.lock().map_err(lock_err)?;
+    let success = aoi_storage_io::delete_saved_aoi(&conn, &request.aoi_id)?;
     Ok(DeleteAoiResponse {
         success,
         aoi_id: request.aoi_id,
