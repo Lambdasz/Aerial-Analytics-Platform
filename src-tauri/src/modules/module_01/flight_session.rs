@@ -333,6 +333,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         &format!("CREATE INDEX IF NOT EXISTS {IMAGE_CONTENT_HASH_INDEX} ON image(content_hash)"),
         [],
     )?;
+    super::blur_queue::migrate_blur_queue_schema(conn)?;
     Ok(())
 }
 
@@ -838,6 +839,11 @@ pub(crate) fn insert_images_and_recalculate(
         for image in images {
             insert_image(conn, image)?;
         }
+        // Blur scoring is deferred: queue the rows in the same transaction
+        // as the insert, so an image can never be stored without being
+        // queued (it would otherwise stay unscored forever).
+        let ids: Vec<Uuid> = images.iter().map(|image| image.id).collect();
+        super::blur_queue::enqueue(conn, session_id, &ids)?;
         recalculate_session_date_range(conn, session_id)?;
         Ok(None)
     })

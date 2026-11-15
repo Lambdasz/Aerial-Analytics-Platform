@@ -16,6 +16,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+use crate::commands::background_tasks::spawn_blur_tasks;
 use crate::models::image::{ImportError, ImportReport};
 use crate::modules::module_01::error::SessionError;
 use crate::modules::module_01::import_io::{analysis_input, run_import, ImportFailure};
@@ -76,6 +77,11 @@ pub(crate) fn import_images_impl(
 /// come back in [`ImportReport::rejected`]; only a failure that stops the
 /// whole run is an error.
 ///
+/// Blur scoring is not part of the import. Once it returns, the imported
+/// images are scored by a background task (see
+/// [`crate::commands::background_tasks`]) whose progress arrives as
+/// `background-task-updated` events.
+///
 /// # Errors
 ///
 /// `SESSION_NOT_FOUND` for a malformed or unknown session, `NO_IMAGES_FOUND`
@@ -99,6 +105,7 @@ pub async fn import_images(
     // Owned handles into the managed state: the blocking thread owns its
     // clones while the borrow of `state` must end now (Tauri forbids async
     // borrows crossing awaits).
+    let task_app = app.clone();
     let app_state = AppState {
         plugins: Arc::clone(&state.plugins),
         jobs: Arc::clone(&state.jobs),
@@ -134,6 +141,11 @@ pub async fn import_images(
         message: format!("the import task stopped unexpectedly: {err}"),
     })??;
 
+    // Blur scoring is deferred: the imported rows are queued, and this runs
+    // the queue as a watchable background task without holding the import.
+    if !report.imported_image_ids.is_empty() {
+        spawn_blur_tasks(&task_app, vec![session_id]);
+    }
     Ok(report)
 }
 
