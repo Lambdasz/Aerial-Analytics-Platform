@@ -285,6 +285,7 @@
 //! | `get_analysis_input` | Return the image a plugin may analyse (JPEG, or a DNG's same-stem JPEG) |
 //! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
 //! | `thumbnail_image` | Return a small cached thumbnail of an aerial image (its EXIF thumbnail when present, otherwise a 160 px resize) |
+//! | `thumbnail_source_image` | Return a small uncached thumbnail of a file picked for import, before it is in the library (same EXIF-or-160 px rule, any path, blocking thread) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
 //! | `get_sessions_by_project` | List sessions for a project |
@@ -1117,6 +1118,7 @@ pub fn run() {
             commands::import::get_analysis_input,
             commands::image_preview::preview_image,
             commands::image_preview::thumbnail_image,
+            commands::image_preview::thumbnail_source_image,
             // Project management
             commands::project::create_project,
             commands::project::get_project,
