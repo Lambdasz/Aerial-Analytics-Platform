@@ -333,6 +333,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), SessionError> {
         &format!("CREATE INDEX IF NOT EXISTS {IMAGE_CONTENT_HASH_INDEX} ON image(content_hash)"),
         [],
     )?;
+    super::blur_queue::migrate_blur_queue_schema(conn)?;
     Ok(())
 }
 

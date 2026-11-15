@@ -907,3 +907,147 @@ fn e2e_thumbnail_image_refuses_file_outside_library() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Deferred blur scoring as a background task
+// ---------------------------------------------------------------------------
+
+use crate::models::background_task::{TaskSnapshot, TaskState};
+use crate::modules::module_01::blur_detection::BLUR_SCORE_LONG_EDGE_PX;
+use crate::services::background_tasks::BackgroundTasks;
+
+use super::background_tasks::run_blur_task_impl;
+
+/// A JPEG at the scoring cap's long edge, so it is actually scored. `phase`
+/// shifts the pattern so each file has distinct bytes (no duplicates); the
+/// 16 px blocks give a 32 px period, so phases 0..32 never repeat.
+fn write_scorable_jpeg(dir: &std::path::Path, name: &str, phase: u32) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let image =
+        image::RgbImage::from_fn(BLUR_SCORE_LONG_EDGE_PX, BLUR_SCORE_LONG_EDGE_PX, |x, y| {
+            let v = if ((x + phase) / 16 + y / 16).is_multiple_of(2) {
+                0u8
+            } else {
+                255u8
+            };
+            image::Rgb([v, v, v])
+        });
+    let file = std::fs::File::create(&path).expect("create jpeg");
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+    encoder.encode_image(&image).expect("encode synthetic jpeg");
+    path
+}
+
+fn queued(env: &TestEnv) -> i64 {
+    env.state
+        .db
+        .lock()
+        .expect("db lock")
+        .query_row("SELECT COUNT(*) FROM blur_queue", [], |row| row.get(0))
+        .expect("count queue")
+}
+
+#[test]
+fn e2e_import_then_blur_task_scores_every_image_and_reports_progress() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    for n in 0..3 {
+        write_scorable_jpeg(env.source_dir.path(), &format!("DJI_000{n}.JPG"), n);
+    }
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("import");
+    assert_eq!(queued(&env), 3, "the import queues instead of scoring");
+
+    let tasks = BackgroundTasks::default();
+    let events: Mutex<Vec<TaskSnapshot>> = Mutex::new(Vec::new());
+    let finished = run_blur_task_impl(&env.state.db, &tasks, session_id, |snapshot| {
+        events.lock().expect("events").push(snapshot.clone());
+    })
+    .expect("task runs")
+    .expect("there was work");
+
+    assert_eq!(finished.state, TaskState::Done);
+    assert_eq!(
+        (finished.done, finished.total, finished.unscorable),
+        (3, 3, 0)
+    );
+    assert!(finished.finished_at.is_some());
+    assert_eq!(finished.session_name, "e2e");
+
+    let events = events.into_inner().expect("events");
+    assert_eq!(
+        events.first().expect("start event").state,
+        TaskState::Running
+    );
+    assert_eq!(events.first().expect("start event").done, 0);
+    assert_eq!(events.last().expect("end event").state, TaskState::Done);
+    assert!(
+        events.windows(2).all(|pair| pair[0].done <= pair[1].done),
+        "progress never moves backwards: {:?}",
+        events.iter().map(|e| e.done).collect::<Vec<_>>()
+    );
+    assert_eq!(tasks.list().len(), 1);
+
+    assert_eq!(queued(&env), 0);
+    let conn = env.state.db.lock().expect("db lock");
+    let rows = flight_session::get_images_by_session(&conn, session_id).expect("rows");
+    assert!(rows.iter().all(|row| row.blur_score.is_some()));
+    assert!(rows.iter().all(|row| row.is_blurry.is_some()));
+    drop(conn);
+
+    // Nothing left: a second run is a no-op and registers no task.
+    assert!(
+        run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+            .expect("second run")
+            .is_none()
+    );
+    assert_eq!(tasks.list().len(), 1);
+}
+
+#[test]
+fn e2e_cancelling_a_blur_task_keeps_the_rest_queued_for_the_next_launch() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    for n in 0..12 {
+        write_scorable_jpeg(env.source_dir.path(), &format!("DJI_{n:04}.JPG"), n);
+    }
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("import");
+
+    let tasks = BackgroundTasks::default();
+    // The UI's Batalkan button: cancel as soon as the first image finishes.
+    let finished = run_blur_task_impl(&env.state.db, &tasks, session_id, |snapshot| {
+        if snapshot.done >= 1 {
+            tasks.cancel(&snapshot.id).expect("task is registered");
+        }
+    })
+    .expect("task runs")
+    .expect("there was work");
+
+    assert_eq!(finished.state, TaskState::Cancelled);
+    assert!(finished.done >= 1 && finished.done < 12, "{finished:?}");
+    assert_eq!(
+        queued(&env),
+        12 - finished.done as i64,
+        "the rest stays queued"
+    );
+
+    // "Next launch": the resume path runs the same function and finishes it.
+    let resumed = run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+        .expect("resumed run")
+        .expect("work remained");
+    assert_eq!(resumed.state, TaskState::Done);
+    assert_eq!(queued(&env), 0);
+}
