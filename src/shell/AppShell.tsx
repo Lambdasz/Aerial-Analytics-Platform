@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navbar } from "@blueprintjs/core";
 
+import { BackgroundTasks } from "../features/background-tasks/BackgroundTasks";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_MODULE_ID, findModule } from "./modules";
 
@@ -42,6 +43,8 @@ export function AppShell() {
           <ActivePage />
         </main>
       </div>
+
+      <BackgroundTasks />
     </div>
   );
 }
