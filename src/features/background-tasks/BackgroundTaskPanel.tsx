@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@blueprintjs/core";
 
+import { useNow } from "../../hooks/useNow";
 import { isLive, type TaskSnapshot, type TaskState } from "../../lib/backgroundTasks";
 import { currentWork, groupOf, metaText, percentOf, type TaskGroup } from "./backgroundTaskFormat";
 
@@ -36,11 +37,13 @@ function StateIcon({ state }: { state: TaskState }) {
 
 function TaskCard({
   task,
+  now,
   expanded,
   onToggle,
   onCancel,
 }: {
   task: TaskSnapshot;
+  now: number;
   expanded: boolean;
   onToggle: () => void;
   onCancel: () => void;
@@ -69,7 +72,7 @@ function TaskCard({
               </span>
             )}
             <span className={`bt-row__meta${task.state === "warn" ? " bt-row__meta--warn" : ""}`}>
-              {metaText(task)}
+              {metaText(task, now)}
             </span>
           </span>
           <Icon
@@ -143,7 +146,11 @@ export function BackgroundTaskPanel({
 
   const liveCount = tasks.filter((task) => task.state === "running").length;
   const queuedCount = tasks.filter((task) => task.state === "queued").length;
-  const pill = liveCount + queuedCount > 0 ? `${liveCount + queuedCount} aktif` : "Selesai";
+  const activeCount = liveCount + queuedCount;
+  // Ticks once a second only while something is running, for the elapsed time.
+  const now = useNow(liveCount > 0);
+  // No pill for an empty list: the body already says there is nothing.
+  const pill = activeCount > 0 ? `${activeCount} aktif` : tasks.length > 0 ? "Selesai" : null;
 
   return (
     <>
@@ -165,9 +172,9 @@ export function BackgroundTaskPanel({
         <div className="bt-panel__head">
           <div className="bt-panel__heading">
             <h2 className="bt-panel__title">Tugas latar belakang</h2>
-            <span className={`bt-pill${liveCount + queuedCount > 0 ? " bt-pill--accent" : ""}`}>
-              {pill}
-            </span>
+            {pill && (
+              <span className={`bt-pill${activeCount > 0 ? " bt-pill--accent" : ""}`}>{pill}</span>
+            )}
           </div>
           <div className="bt-panel__actions">
             {canClear && (
@@ -206,6 +213,7 @@ export function BackgroundTaskPanel({
                     <TaskCard
                       key={task.id}
                       task={task}
+                      now={now}
                       expanded={expandedId === task.id}
                       onToggle={() => setChosenId(expandedId === task.id ? null : task.id)}
                       onCancel={() => onCancel(task.id)}

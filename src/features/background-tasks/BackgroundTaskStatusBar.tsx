@@ -34,6 +34,8 @@ export function BackgroundTaskStatusBar({ summary, open, onToggle, onOpen }: Pro
       >
         {primary ? (
           <span className="bt-spin bt-spin--small" aria-hidden="true" />
+        ) : summary.empty ? (
+          <Icon icon="dot" size={13} className="bt-bar__none" />
         ) : (
           <Icon icon="tick" size={13} className="bt-bar__idle" />
         )}

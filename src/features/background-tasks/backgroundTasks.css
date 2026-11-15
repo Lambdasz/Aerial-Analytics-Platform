@@ -103,6 +103,10 @@
   color: #16a34a;
 }
 
+.bt-bar__none {
+  color: var(--bt-muted);
+}
+
 .bt-bar__text {
   white-space: nowrap;
 }

@@ -24,22 +24,56 @@ export function percentOf(task: Pick<TaskSnapshot, "done" | "total">): number {
   return Math.min(100, Math.round((task.done / task.total) * 100));
 }
 
-/** The one-line status under a task's title. */
-export function metaText(task: TaskSnapshot): string {
+/**
+ * How long a task has been running, in milliseconds. A finished task is
+ * measured start to finish; a live one up to `now`. Never negative, and 0 when
+ * a timestamp cannot be read.
+ */
+export function elapsedMs(
+  task: Pick<TaskSnapshot, "startedAt" | "finishedAt">,
+  now: number,
+): number {
+  const start = Date.parse(task.startedAt);
+  const end = task.finishedAt ? Date.parse(task.finishedAt) : now;
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.max(0, end - start);
+}
+
+/**
+ * A duration in Indonesian, e.g. `1 menit 12 detik`, `45 detik`, `2 jam`.
+ * Seconds are rounded down; under one second reads `kurang dari 1 detik`.
+ */
+export function formatDuration(ms: number): string {
+  const total = Math.floor(Math.max(0, ms) / 1000);
+  if (total < 1) return "kurang dari 1 detik";
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours} jam`);
+  if (minutes > 0) parts.push(`${minutes} menit`);
+  // Seconds are noise once an hour has passed.
+  if (seconds > 0 && hours === 0) parts.push(`${seconds} detik`);
+  return parts.join(" ");
+}
+
+/** The one-line status under a task's title. `now` is the current time in ms. */
+export function metaText(task: TaskSnapshot, now: number): string {
   const scored = Math.max(0, task.done - task.unscorable);
+  const took = formatDuration(elapsedMs(task, now));
   switch (task.state) {
     case "queued":
       return "Menunggu giliran";
     case "running":
-      return `${task.done} dari ${task.total} citra dinilai`;
+      return `${task.done} dari ${task.total} citra dinilai · ${took}`;
     case "done":
-      return `${task.total} citra dinilai · selesai ${formatClock(task.finishedAt)}`;
+      return `${task.total} citra dinilai selama ${took} · selesai ${formatClock(task.finishedAt)}`;
     case "warn":
-      return `${scored} dari ${task.total} citra dinilai · ${task.unscorable} tidak dapat dinilai`;
+      return `${scored} dari ${task.total} citra dinilai selama ${took} · ${task.unscorable} tidak dapat dinilai`;
     case "cancelled":
-      return `Dibatalkan · ${task.done} dari ${task.total} citra dinilai`;
+      return `Dibatalkan setelah ${took} · ${task.done} dari ${task.total} citra dinilai`;
     case "failed":
-      return `Gagal · ${task.error ?? "kesalahan tidak diketahui"}`;
+      return `Gagal setelah ${took} · ${task.error ?? "kesalahan tidak diketahui"}`;
   }
 }
 
@@ -73,6 +107,8 @@ export function currentWork(task: TaskSnapshot): { title: string; sub: string } 
 /** What the status bar button says, and how much is going on behind it. */
 export type BarSummary = {
   text: string;
+  /** No task exists at all (as opposed to every task being finished). */
+  empty: boolean;
   /** The task whose progress the bar shows, if any are live. */
   primary: TaskSnapshot | null;
   /** Live tasks beyond the primary one. */
@@ -84,7 +120,12 @@ export function summarize(tasks: TaskSnapshot[]): BarSummary {
   const live = tasks.filter((task) => isLive(task.state));
   const primary = live.find((task) => task.state === "running") ?? live[0] ?? null;
   return {
-    text: primary ? `Menilai ketajaman · ${primary.done}/${primary.total}` : "Semua tugas selesai",
+    text: primary
+      ? `Menilai ketajaman · ${primary.done}/${primary.total}`
+      : tasks.length === 0
+        ? "Tidak ada tugas latar belakang"
+        : "Semua tugas selesai",
+    empty: tasks.length === 0,
     primary,
     others: live.length - (primary ? 1 : 0),
     failed: tasks.filter((task) => task.state === "failed").length,
