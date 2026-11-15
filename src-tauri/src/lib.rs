@@ -916,6 +916,7 @@ pub fn run() {
             }
             let db_conn = rusqlite::Connection::open(&db_path)
                 .map_err(|err| format!("failed to open '{}': {err}", db_path.display()))?;
+            eprintln!("info: database opened at '{}'", db_path.display());
             // A schema that cannot be initialised must not stop the desktop
             // app from opening: Modules 2-11 do not need it.
             if let Err(err) = modules::module_01::init_schema(&db_conn) {
@@ -936,6 +937,19 @@ pub fn run() {
                 plugin_manager::result_store::migrate_result_schema(&db_conn)
             {
                 eprintln!("warning: could not initialize the plugin result schema: {err}");
+            }
+            if let Err(err) = modules::module_03::migrate_map_schema(&db_conn) {
+                eprintln!("warning: could not initialize the map schema: {err}");
+            } else {
+                eprintln!("info: module 03 map schema initialized successfully");
+            }
+            let map_storage_root = modules::module_03::storage_utils::get_storage_root();
+            if let Err(err) =
+                modules::module_03::migrate_legacy_json_to_sqlite(&db_conn, &map_storage_root)
+            {
+                eprintln!("warning: could not migrate legacy map json to sqlite: {err}");
+            } else {
+                eprintln!("info: module 03 legacy json migration completed");
             }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
                 Some(value) => absolute_path(PathBuf::from(value))?,
