@@ -142,7 +142,9 @@ fn run_sessions(
     };
     for session_id in session_ids {
         if let Err(err) = run_blur_task_impl(db, tasks, session_id, emit) {
-            eprintln!("warning: blur scoring for session {session_id} failed to start: {err}");
+            // The code only: the message for a missing session carries the
+            // session id, which must not reach the logs.
+            eprintln!("warning: blur scoring failed to start ({})", err.code);
         }
     }
 }
