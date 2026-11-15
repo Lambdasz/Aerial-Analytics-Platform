@@ -5,6 +5,7 @@ import {
   Dialog,
   FormGroup,
   HTMLSelect,
+  Icon,
   InputGroup,
   Intent,
 } from "@blueprintjs/core";
@@ -430,10 +431,16 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
                   {item.preview ? (
                     <img src={item.preview} alt="" className="m1-import-preview__img" />
                   ) : (
-                    <span className="m1-import-preview__fallback">
-                      {item.kind === "folder"
-                        ? "DIR"
-                        : extensionOf(item.path).toUpperCase() || "FILE"}
+                    <span
+                      className={`m1-import-preview__fallback${
+                        item.kind === "folder" ? " m1-import-preview__fallback--folder" : ""
+                      }`}
+                    >
+                      {item.kind === "folder" ? (
+                        <Icon icon="folder-close" size={28} title="Folder" />
+                      ) : (
+                        extensionOf(item.path).toUpperCase() || "FILE"
+                      )}
                     </span>
                   )}
                   <span className="m1-import-preview__name" title={item.path}>
