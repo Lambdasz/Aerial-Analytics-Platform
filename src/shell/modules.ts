@@ -9,71 +9,85 @@ import { Module11Page } from "../modules/module-11/Module11Page";
 import { Example } from "./example";
 
 export interface ModuleEntry {
-  /** Stable identifier used for navigation state. */
   readonly id: string;
-  /** Module number as written in the project brief. */
   readonly moduleNumber: number;
-  /** Short label shown in the sidebar. */
+  readonly slug: string;
   readonly label: string;
-  /** Page rendered when this module is selected. */
   readonly Page: ComponentType;
 }
 
-/**
- * Single source of truth for the sidebar and the content area.
- *
- * To add a module: create its page under `src/modules/`, then append one entry
- * here. Nothing else in the shell needs to change.
- */
 export const MODULES: readonly ModuleEntry[] = [
   {
     id: "module-01",
     moduleNumber: 1,
+    slug: "image-project-manager",
     label: "Image & Project Manager",
     Page: Module01Page,
   },
   {
     id: "module-02",
     moduleNumber: 2,
+    slug: "plugin-system",
     label: "Plugin System",
     Page: Module02Page,
   },
   {
     id: "module-03",
     moduleNumber: 3,
+    slug: "map-explorer",
     label: "Map Explorer",
     Page: Module03Page,
   },
   {
     id: "module-09",
     moduleNumber: 9,
+    slug: "area-plot-analytics",
     label: "Area & Plot Analytics",
     Page: Module09Page,
   },
   {
     id: "module-10",
     moduleNumber: 10,
+    slug: "temporal-change",
     label: "Temporal Change",
     Page: Module10Page,
   },
   {
     id: "module-11",
     moduleNumber: 11,
+    slug: "dashboard-reporting",
     label: "Dashboard & Reporting",
     Page: Module11Page,
   },
   {
     id: "example",
     moduleNumber: 7,
+    slug: "examples",
     label: "Examples",
     Page: Example,
   },
 ];
 
-/** First module in the list, used as the initial selection. */
+// Initial page
 export const DEFAULT_MODULE_ID = MODULES[0].id;
 
-/** Pure lookup: returns the matching module, or the first one as a fallback. */
+// check module existance
 export function findModule(id: string): ModuleEntry {
   return MODULES.find((entry) => entry.id === id) ?? MODULES[0];
+}
+
+// normalize raw URL
+export function normalizeSlug(raw: string): string {
+  return raw.trim().replace(/^#/, "").replace(/^\/+/, "").replace(/\/+$/, "").toLowerCase();
+}
+
+// Look url slug
+export function findModuleBySlug(raw: string): ModuleEntry | undefined {
+  const slug = normalizeSlug(raw);
+  if (!slug) return undefined;
+  return MODULES.find((entry) => entry.slug === slug || entry.id === slug);
+}
+
+export function moduleHash(entry: ModuleEntry): string {
+  return `#/${entry.slug}`;
 }

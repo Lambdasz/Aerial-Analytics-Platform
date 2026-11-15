@@ -12,7 +12,7 @@
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};
 use super::models::{
@@ -69,6 +69,7 @@ impl PluginRegistry {
             outputs: bundle.outputs_raw.clone(),
             install_path: bundle.install_path.to_string_lossy().into_owned(),
             enabled: bundle.enabled,
+            custom_parameters: bundle.custom_parameters.clone(),
         })
     }
 
@@ -115,6 +116,48 @@ pub async fn get_installed_plugins(
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
     let registry = state.plugins.read().await;
     Ok(registry.get_summaries())
+}
+
+/// Rescans the plugins directory from disk and updates the in-memory registry.
+///
+/// Discovers plugins on disk, validates their manifests and subcontracts,
+/// restores persisted status from `plugin_state.json`, and updates the shared registry.
+///
+/// # Arguments
+/// * `state` - Injected Tauri application state containing the plugin registry.
+///
+/// # Pre-condition
+/// - `state` is initialized.
+///
+/// # Post-condition
+/// - In-memory `PluginRegistry` is updated with freshly discovered plugins from disk.
+/// - Returns a list of all installed plugin summaries.
+///
+/// # Errors
+/// - This function returns `Ok` even if individual plugins fail validation (they are skipped and logged).
+///
+/// # Panics
+/// - This function does not panic.
+#[tauri::command]
+pub async fn reload_plugins(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Vec<PluginSummaryDto>, CommandError> {
+    let new_registry = rescan_plugins_internal(&state);
+    let mut registry = state.plugins.write().await;
+    *registry = new_registry;
+    Ok(registry.get_summaries())
+}
+
+/// Internal helper to rescan the plugins directory, honoring custom `state_path` if configured.
+pub(crate) fn rescan_plugins_internal(app_state: &crate::AppState) -> PluginRegistry {
+    if let Some(state_path) = &app_state.state_path {
+        if let Some(parent) = state_path.parent() {
+            if parent.is_dir() {
+                return crate::init_plugin_registry_from_dir(parent);
+            }
+        }
+    }
+    crate::init_plugin_registry()
 }
 
 /// Returns the fully resolved bundle including manifest and sub-contracts for a specific plugin.
@@ -622,9 +665,245 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     Ok(manifest)
 }
 
+/// Pure: Parses and schema-validates parameters JSON from raw string content.
+///
+/// **Pre-condition**: `raw_json` is a valid UTF-8 JSON string.
+/// **Post-condition**: Deterministically validates that `parameters` array exists,
+/// each parameter satisfies identifier naming (`^[a-z0-9_]+$`), label, valid type, and default value.
+pub(crate) fn parse_and_validate_parameters(
+    raw_json: &str,
+    path_label: &str,
+) -> Result<serde_json::Value, PluginError> {
+    let params_val: serde_json::Value =
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: format!("Failed to parse parameters JSON: {}", e),
+        })?;
+
+    let params_arr = params_val
+        .get("parameters")
+        .and_then(|p| p.as_array())
+        .ok_or_else(|| PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: "Parameters definition must contain a 'parameters' array".to_string(),
+        })?;
+
+    const VALID_PARAM_TYPES: &[&str] = &["number", "boolean", "select", "string"];
+    for (idx, p) in params_arr.iter().enumerate() {
+        let p_obj = p
+            .as_object()
+            .ok_or_else(|| PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter at index {} must be an object", idx),
+            })?;
+
+        let name = p_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+            PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter at index {} missing required 'name'", idx),
+            }
+        })?;
+
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter '{}' must match pattern ^[a-z0-9_]+$", name),
+            });
+        }
+
+        if p_obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter '{}' missing required non-empty 'label'", name),
+            });
+        }
+
+        let p_type = p_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter '{}' missing required 'type'", name),
+            }
+        })?;
+
+        if !VALID_PARAM_TYPES.contains(&p_type) {
+            return Err(PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!(
+                    "Parameter '{}' has invalid type '{}', expected one of: {:?}",
+                    name, p_type, VALID_PARAM_TYPES
+                ),
+            });
+        }
+
+        if !p_obj.contains_key("default") {
+            return Err(PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!("Parameter '{}' missing required 'default' value", name),
+            });
+        }
+    }
+
+    Ok(params_val)
+}
+
+/// Pure: Parses and schema-validates inputs JSON from raw string content.
+///
+/// **Pre-condition**: `raw_json` is a valid UTF-8 JSON string.
+/// **Post-condition**: Deterministically validates that `supported_mime_types` is non-empty,
+/// granularity is supported, and all MIME types are valid aerial imagery formats.
+pub(crate) fn parse_and_validate_inputs(
+    raw_json: &str,
+    path_label: &str,
+) -> Result<InputsSpec, PluginError> {
+    let inputs_spec: InputsSpec =
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: format!("Failed to parse inputs specification: {}", e),
+        })?;
+
+    if inputs_spec.supported_mime_types.is_empty() {
+        return Err(PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: "supported_mime_types must contain at least one MIME type".to_string(),
+        });
+    }
+
+    const VALID_GRANULARITIES: &[&str] = &[
+        "single_image",
+        "image_pair",
+        "batch",
+        "session",
+        "flight_session",
+        "multi_image",
+    ];
+    if !VALID_GRANULARITIES.contains(&inputs_spec.granularity.as_str()) {
+        return Err(PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: format!(
+                "Invalid granularity '{}', expected one of: {:?}",
+                inputs_spec.granularity, VALID_GRANULARITIES
+            ),
+        });
+    }
+
+    const VALID_MIME_TYPES: &[&str] = &[
+        "image/jpeg",
+        "image/png",
+        "image/tiff",
+        "application/x-geotiff",
+    ];
+    for mime in &inputs_spec.supported_mime_types {
+        if !VALID_MIME_TYPES.contains(&mime.to_ascii_lowercase().as_str()) {
+            return Err(PluginError::SubcontractInvalid {
+                path: path_label.to_string(),
+                message: format!(
+                    "Unsupported MIME type '{}', expected one of: {:?}",
+                    mime, VALID_MIME_TYPES
+                ),
+            });
+        }
+    }
+
+    Ok(inputs_spec)
+}
+
+/// Pure: Parses and schema-validates outputs JSON from raw string content.
+///
+/// **Pre-condition**: `raw_json` is a valid UTF-8 JSON string.
+/// **Post-condition**: Deterministically validates that output is a JSON object and any declared metrics
+/// contain valid keys and supported data types.
+pub(crate) fn parse_and_validate_outputs(
+    raw_json: &str,
+    path_label: &str,
+) -> Result<serde_json::Value, PluginError> {
+    let outputs_val: serde_json::Value =
+        serde_json::from_str(raw_json).map_err(|e| PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: format!("Failed to parse outputs JSON: {}", e),
+        })?;
+    if !outputs_val.is_object() {
+        return Err(PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: "Outputs definition must be a JSON object".to_string(),
+        });
+    }
+
+    if let Some(metrics_arr) = outputs_val.get("metrics").and_then(|m| m.as_array()) {
+        const VALID_METRIC_TYPES: &[&str] = &["float", "integer", "string", "boolean"];
+        for (idx, m) in metrics_arr.iter().enumerate() {
+            let m_obj = m
+                .as_object()
+                .ok_or_else(|| PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Metric at index {} must be an object", idx),
+                })?;
+            let key = m_obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Metric at index {} missing required 'key'", idx),
+                }
+            })?;
+            let m_type = m_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Metric '{}' missing required 'type'", key),
+                }
+            })?;
+            if !VALID_METRIC_TYPES.contains(&m_type) {
+                return Err(PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!(
+                        "Metric '{}' has invalid type '{}', expected one of: {:?}",
+                        key, m_type, VALID_METRIC_TYPES
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(outputs_val)
+}
+
+/// Pure: Assembles a `PluginBundle` from validated components.
+///
+/// **Pure function** — deterministic, zero I/O, zero side effects.
+pub(crate) fn assemble_plugin_bundle(
+    install_path: PathBuf,
+    manifest: PluginManifest,
+    inputs_spec: InputsSpec,
+    inputs_raw: serde_json::Value,
+    parameters_raw: serde_json::Value,
+    outputs_raw: serde_json::Value,
+) -> PluginBundle {
+    PluginBundle {
+        install_path,
+        manifest,
+        inputs_spec,
+        inputs_raw,
+        parameters_raw,
+        outputs_raw,
+        enabled: true,
+        source: "builtin".to_string(),
+        health_status: "unknown".to_string(),
+        custom_parameters: serde_json::json!({}),
+    }
+}
+
 /// Reads and schema-validates the three sub-contracts (`parameters.json`, `inputs.json`, `outputs.json`).
 ///
-/// **Pre-condition**: Files referenced in manifest exist.  
+/// Acts as the **Imperative Shell** around the pure functions `parse_and_validate_parameters`,
+/// `parse_and_validate_inputs`, and `parse_and_validate_outputs`.
+///
+/// **Pre-condition**: Files referenced in manifest exist within `dir`.  
 /// **Post-condition**: All 3 sub-contracts parsed and schema-validated.
 #[allow(dead_code)]
 pub(crate) fn validate_subcontracts(
@@ -649,83 +928,7 @@ pub(crate) fn validate_subcontracts(
             path: manifest.parameters.clone(),
             message: e.to_string(),
         })?;
-    let params_val: serde_json::Value =
-        serde_json::from_str(&params_raw_str).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.parameters.clone(),
-            message: format!("Failed to parse parameters JSON: {}", e),
-        })?;
-
-    let params_arr = params_val
-        .get("parameters")
-        .and_then(|p| p.as_array())
-        .ok_or_else(|| PluginError::SubcontractInvalid {
-            path: manifest.parameters.clone(),
-            message: "Parameters definition must contain a 'parameters' array".to_string(),
-        })?;
-
-    const VALID_PARAM_TYPES: &[&str] = &["number", "boolean", "select", "string"];
-    for (idx, p) in params_arr.iter().enumerate() {
-        let p_obj = p
-            .as_object()
-            .ok_or_else(|| PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter at index {} must be an object", idx),
-            })?;
-
-        let name = p_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter at index {} missing required 'name'", idx),
-            }
-        })?;
-
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
-            return Err(PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter '{}' must match pattern ^[a-z0-9_]+$", name),
-            });
-        }
-
-        if p_obj
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-        {
-            return Err(PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter '{}' missing required non-empty 'label'", name),
-            });
-        }
-
-        let p_type = p_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-            PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter '{}' missing required 'type'", name),
-            }
-        })?;
-
-        if !VALID_PARAM_TYPES.contains(&p_type) {
-            return Err(PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!(
-                    "Parameter '{}' has invalid type '{}', expected one of: {:?}",
-                    name, p_type, VALID_PARAM_TYPES
-                ),
-            });
-        }
-
-        if !p_obj.contains_key("default") {
-            return Err(PluginError::SubcontractInvalid {
-                path: manifest.parameters.clone(),
-                message: format!("Parameter '{}' missing required 'default' value", name),
-            });
-        }
-    }
+    let params_val = parse_and_validate_parameters(&params_raw_str, &manifest.parameters)?;
 
     if !is_safe_relative_path(&manifest.inputs) {
         return Err(PluginError::SubcontractInvalid {
@@ -745,54 +948,7 @@ pub(crate) fn validate_subcontracts(
             path: manifest.inputs.clone(),
             message: e.to_string(),
         })?;
-    let inputs_spec: InputsSpec =
-        serde_json::from_str(&inputs_raw_str).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: format!("Failed to parse inputs specification: {}", e),
-        })?;
-
-    if inputs_spec.supported_mime_types.is_empty() {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: "supported_mime_types must contain at least one MIME type".to_string(),
-        });
-    }
-
-    const VALID_GRANULARITIES: &[&str] = &[
-        "single_image",
-        "image_pair",
-        "batch",
-        "session",
-        "flight_session",
-        "multi_image",
-    ];
-    if !VALID_GRANULARITIES.contains(&inputs_spec.granularity.as_str()) {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: format!(
-                "Invalid granularity '{}', expected one of: {:?}",
-                inputs_spec.granularity, VALID_GRANULARITIES
-            ),
-        });
-    }
-
-    const VALID_MIME_TYPES: &[&str] = &[
-        "image/jpeg",
-        "image/png",
-        "image/tiff",
-        "application/x-geotiff",
-    ];
-    for mime in &inputs_spec.supported_mime_types {
-        if !VALID_MIME_TYPES.contains(&mime.to_ascii_lowercase().as_str()) {
-            return Err(PluginError::SubcontractInvalid {
-                path: manifest.inputs.clone(),
-                message: format!(
-                    "Unsupported MIME type '{}', expected one of: {:?}",
-                    mime, VALID_MIME_TYPES
-                ),
-            });
-        }
-    }
+    let inputs_spec = parse_and_validate_inputs(&inputs_raw_str, &manifest.inputs)?;
 
     if !is_safe_relative_path(&manifest.outputs) {
         return Err(PluginError::SubcontractInvalid {
@@ -812,50 +968,7 @@ pub(crate) fn validate_subcontracts(
             path: manifest.outputs.clone(),
             message: e.to_string(),
         })?;
-    let outputs_val: serde_json::Value =
-        serde_json::from_str(&outputs_raw_str).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.outputs.clone(),
-            message: format!("Failed to parse outputs JSON: {}", e),
-        })?;
-    if !outputs_val.is_object() {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.outputs.clone(),
-            message: "Outputs definition must be a JSON object".to_string(),
-        });
-    }
-
-    if let Some(metrics_arr) = outputs_val.get("metrics").and_then(|m| m.as_array()) {
-        const VALID_METRIC_TYPES: &[&str] = &["float", "integer", "string", "boolean"];
-        for (idx, m) in metrics_arr.iter().enumerate() {
-            let m_obj = m
-                .as_object()
-                .ok_or_else(|| PluginError::SubcontractInvalid {
-                    path: manifest.outputs.clone(),
-                    message: format!("Metric at index {} must be an object", idx),
-                })?;
-            let key = m_obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
-                PluginError::SubcontractInvalid {
-                    path: manifest.outputs.clone(),
-                    message: format!("Metric at index {} missing required 'key'", idx),
-                }
-            })?;
-            let m_type = m_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-                PluginError::SubcontractInvalid {
-                    path: manifest.outputs.clone(),
-                    message: format!("Metric '{}' missing required 'type'", key),
-                }
-            })?;
-            if !VALID_METRIC_TYPES.contains(&m_type) {
-                return Err(PluginError::SubcontractInvalid {
-                    path: manifest.outputs.clone(),
-                    message: format!(
-                        "Metric '{}' has invalid type '{}', expected one of: {:?}",
-                        key, m_type, VALID_METRIC_TYPES
-                    ),
-                });
-            }
-        }
-    }
+    let outputs_val = parse_and_validate_outputs(&outputs_raw_str, &manifest.outputs)?;
 
     Ok((params_val, inputs_spec, outputs_val))
 }
@@ -934,17 +1047,14 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
 
-        bundles.push(PluginBundle {
-            install_path: path,
+        bundles.push(assemble_plugin_bundle(
+            path,
             manifest,
             inputs_spec,
             inputs_raw,
             parameters_raw,
             outputs_raw,
-            enabled: true,
-            source: "builtin".to_string(),
-            health_status: "unknown".to_string(),
-        });
+        ));
     }
 
     bundles.sort_by(|a, b| a.manifest.metadata.id.cmp(&b.manifest.metadata.id));
@@ -1207,6 +1317,7 @@ mod tests {
             enabled: true,
             source: "builtin".to_string(),
             health_status: "healthy".to_string(),
+            custom_parameters: serde_json::json!({}),
         }
     }
 
@@ -2076,5 +2187,255 @@ if "--healthcheck" in sys.argv:
         .unwrap();
         let err_mime = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
         assert!(matches!(err_mime, PluginError::SubcontractInvalid { .. }));
+    }
+
+    #[test]
+    fn test_rescan_plugins_discovers_new_plugin_on_disk() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugins_root = temp_dir.path();
+
+        // 1. Initially create plugin A
+        let dir_a = plugins_root.join("plugin-a");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::write(
+            dir_a.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            dir_a.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
+
+        let state_path = plugins_root.join("plugin_state.json");
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::init_plugin_registry_from_dir(plugins_root),
+            )),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: Some(state_path),
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(temp_dir.path().join("library")),
+        };
+
+        // Initially only plugin A
+        let initial_reg = rescan_plugins_internal(&app_state);
+        assert_eq!(initial_reg.plugins.len(), 1);
+        assert!(initial_reg.plugins.contains_key("plugin-a"));
+
+        // 2. Add plugin B to disk while app is running
+        let dir_b = plugins_root.join("plugin-b");
+        std::fs::create_dir_all(&dir_b).unwrap();
+        std::fs::write(
+            dir_b.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "plugin-b", "name": "Plugin B", "version": "1.0.0", "description": "B"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(dir_b.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            dir_b.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir_b.join("outputs.json"), r#"{}"#).unwrap();
+
+        // 3. Rescan discovers plugin B
+        let rescanned = rescan_plugins_internal(&app_state);
+        assert_eq!(rescanned.plugins.len(), 2);
+        assert!(rescanned.plugins.contains_key("plugin-a"));
+        assert!(rescanned.plugins.contains_key("plugin-b"));
+    }
+
+    #[test]
+    fn test_parse_and_validate_parameters_pure() {
+        let valid_json = r#"{
+            "parameters": [
+                {"name": "threshold_val", "label": "Threshold", "type": "number", "default": 0.25},
+                {"name": "apply_blur", "label": "Blur", "type": "boolean", "default": false}
+            ]
+        }"#;
+        let res = parse_and_validate_parameters(valid_json, "parameters.json");
+        assert!(res.is_ok());
+
+        // Invalid JSON
+        let err_syntax = parse_and_validate_parameters("invalid json", "parameters.json");
+        assert!(matches!(
+            err_syntax,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Missing parameters array
+        let err_no_arr = parse_and_validate_parameters(r#"{"params": []}"#, "parameters.json");
+        assert!(matches!(
+            err_no_arr,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Invalid name format (uppercase or hyphen not allowed)
+        let err_bad_name = parse_and_validate_parameters(
+            r#"{"parameters": [{"name": "bad-name", "label": "L", "type": "string", "default": ""}]}"#,
+            "parameters.json",
+        );
+        assert!(matches!(
+            err_bad_name,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Unknown type
+        let err_bad_type = parse_and_validate_parameters(
+            r#"{"parameters": [{"name": "param", "label": "L", "type": "matrix", "default": ""}]}"#,
+            "parameters.json",
+        );
+        assert!(matches!(
+            err_bad_type,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_parse_and_validate_inputs_pure() {
+        let valid_json = r#"{
+            "granularity": "single_image",
+            "supported_mime_types": ["image/jpeg", "image/png"]
+        }"#;
+        let res = parse_and_validate_inputs(valid_json, "inputs.json");
+        assert!(res.is_ok());
+        let spec = res.unwrap();
+        assert_eq!(spec.granularity, "single_image");
+        assert_eq!(spec.supported_mime_types.len(), 2);
+
+        // Empty supported MIME types
+        let err_empty = parse_and_validate_inputs(
+            r#"{"granularity": "single_image", "supported_mime_types": []}"#,
+            "inputs.json",
+        );
+        assert!(matches!(
+            err_empty,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Invalid granularity
+        let err_gran = parse_and_validate_inputs(
+            r#"{"granularity": "world_scale", "supported_mime_types": ["image/jpeg"]}"#,
+            "inputs.json",
+        );
+        assert!(matches!(
+            err_gran,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Unsupported MIME type
+        let err_mime = parse_and_validate_inputs(
+            r#"{"granularity": "single_image", "supported_mime_types": ["video/mp4"]}"#,
+            "inputs.json",
+        );
+        assert!(matches!(
+            err_mime,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_parse_and_validate_outputs_pure() {
+        let valid_json = r#"{
+            "metrics": [
+                {"key": "green_pct", "type": "float"},
+                {"key": "tree_count", "type": "integer"}
+            ],
+            "artifacts": []
+        }"#;
+        let res = parse_and_validate_outputs(valid_json, "outputs.json");
+        assert!(res.is_ok());
+
+        // Not a JSON object
+        let err_arr = parse_and_validate_outputs(r#"["not", "an", "object"]"#, "outputs.json");
+        assert!(matches!(
+            err_arr,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+
+        // Invalid metric type
+        let err_metric_type = parse_and_validate_outputs(
+            r#"{"metrics": [{"key": "score", "type": "complex_number"}]}"#,
+            "outputs.json",
+        );
+        assert!(matches!(
+            err_metric_type,
+            Err(PluginError::SubcontractInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn test_assemble_plugin_bundle_pure() {
+        let manifest = PluginManifest {
+            schema: None,
+            manifest_version: 1,
+            metadata: crate::plugin_manager::models::PluginMetadata {
+                id: "pure-test".to_string(),
+                name: "Pure Test".to_string(),
+                version: "1.0.0".to_string(),
+                author: None,
+                license: None,
+                description: "Test description".to_string(),
+                category: None,
+                tags: vec![],
+                min_core_version: None,
+            },
+            runtime: crate::plugin_manager::models::PluginRuntime {
+                runtime_type: "python".to_string(),
+                entrypoint: "main.py".to_string(),
+                min_python_version: None,
+                dependencies_file: None,
+                healthcheck_flag: None,
+            },
+            parameters: "parameters.json".to_string(),
+            inputs: "inputs.json".to_string(),
+            outputs: "outputs.json".to_string(),
+            execution: None,
+        };
+
+        let inputs_spec = InputsSpec {
+            granularity: "single_image".to_string(),
+            supported_mime_types: vec!["image/jpeg".to_string()],
+            requires_metadata: vec![],
+            optional_metadata: vec![],
+            supports_aoi: false,
+            aoi_format: None,
+        };
+
+        let bundle = assemble_plugin_bundle(
+            PathBuf::from("/path/to/plugin"),
+            manifest,
+            inputs_spec,
+            serde_json::json!({}),
+            serde_json::json!({"parameters": []}),
+            serde_json::json!({}),
+        );
+
+        assert_eq!(bundle.manifest.metadata.id, "pure-test");
+        assert!(bundle.enabled);
+        assert_eq!(bundle.source, "builtin");
+        assert_eq!(bundle.install_path, PathBuf::from("/path/to/plugin"));
     }
 }

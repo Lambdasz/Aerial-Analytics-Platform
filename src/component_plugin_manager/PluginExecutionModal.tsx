@@ -5,6 +5,7 @@ import { DynamicParamForm } from "./DynamicParamForm";
 import { validateParams } from "./validation";
 import {
   getPluginDetails,
+  updatePluginConfig,
   startPluginJob,
   abortPluginJob,
   getJobStatus,
@@ -43,6 +44,8 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
   const [isLoadingSchema, setIsLoadingSchema] = useState<boolean>(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [isAborting, setIsAborting] = useState<boolean>(false);
+  const [isSavingDefault, setIsSavingDefault] = useState<boolean>(false);
+  const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ percent: number; stage: string } | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
 
@@ -75,6 +78,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     const fetchSchema = async () => {
       setIsLoadingSchema(true);
       setExecutionError(null);
+      setSaveSuccessNotice(null);
       setActiveJobId(null);
       setProgress(null);
       setErrors({});
@@ -96,7 +100,7 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
         setParamsDef(defs);
         const initial: Record<string, unknown> = {};
         for (const d of defs) {
-          initial[d.name] = d.default;
+          initial[d.name] = details.custom_parameters?.[d.name] ?? d.default;
         }
         setParamValues(initial);
       } catch (err) {
@@ -291,6 +295,31 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
     }
   }, [paramsDef, paramValues, pluginId, target]);
 
+  // 3b. Handle Save as Default
+  const handleSaveAsDefault = useCallback(async () => {
+    const validation = validateParams(paramsDef, paramValues);
+    if (!validation.isValid) {
+      setErrors(validation.errors);
+      return;
+    }
+    setErrors({});
+    setIsSavingDefault(true);
+    setSaveSuccessNotice(null);
+    setExecutionError(null);
+
+    try {
+      await updatePluginConfig(pluginId, validation.data);
+      setSaveSuccessNotice("Default parameters saved successfully.");
+      setTimeout(() => {
+        setSaveSuccessNotice(null);
+      }, 4000);
+    } catch (err) {
+      setExecutionError(formatErrorMessage(err));
+    } finally {
+      setIsSavingDefault(false);
+    }
+  }, [paramsDef, paramValues, pluginId]);
+
   // 4. Handle Abort Job
   const handleAbort = useCallback(async () => {
     if (!activeJobId) return;
@@ -333,6 +362,12 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
       style={{ width: 560 }}
     >
       <div className="bp6-dialog-body" style={{ minHeight: 180 }}>
+        {saveSuccessNotice && (
+          <Callout intent={Intent.SUCCESS} style={{ marginBottom: 16 }}>
+            {saveSuccessNotice}
+          </Callout>
+        )}
+
         {executionError && (
           <Callout intent={Intent.DANGER} title="Execution Notice" style={{ marginBottom: 16 }}>
             {executionError}
@@ -386,17 +421,39 @@ export const PluginExecutionModal: React.FC<PluginExecutionModalProps> = ({
               loading={isAborting}
             />
           ) : (
-            <>
-              <Button onClick={onClose} text="Cancel" />
-              <Button
-                intent={Intent.PRIMARY}
-                text="Execute Analysis"
-                onClick={() => {
-                  void handleLaunch();
-                }}
-                disabled={isLoadingSchema}
-              />
-            </>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                width: "100%",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                {paramsDef.length > 0 && (
+                  <Button
+                    icon="floppy-disk"
+                    text="Save as Default"
+                    onClick={() => {
+                      void handleSaveAsDefault();
+                    }}
+                    loading={isSavingDefault}
+                    disabled={isLoadingSchema}
+                  />
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button onClick={onClose} text="Cancel" disabled={isSavingDefault} />
+                <Button
+                  intent={Intent.PRIMARY}
+                  text="Execute Analysis"
+                  onClick={() => {
+                    void handleLaunch();
+                  }}
+                  disabled={isLoadingSchema || isSavingDefault}
+                />
+              </div>
+            </div>
           )}
         </div>
       </div>

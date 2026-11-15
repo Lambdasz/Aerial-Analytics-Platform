@@ -136,3 +136,34 @@ export function publishPlotsLayer(
 ): Promise<{ layer_name: string }> {
   return invoke<{ layer_name: string }>("publish_plots_layer", { projectId, layerName });
 }
+
+export interface AnalysePlotsOrthoPayload {
+  orthoId: string;
+  plotIds: string[];
+  pluginId: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface PlotAnalysisOutcome {
+  successfulPlots: number;
+  failedPlots: string[];
+  totalSlicesProcessed: number;
+}
+
+export interface PlotAnalysisProgressEvent {
+  stage: string;
+  plotIndex: number;
+  totalPlots: number;
+  plotName: string;
+  sliceIndex: number;
+  totalSlices: number;
+  percent: number;
+  message: string;
+}
+
+/** Runs a plugin over plots using a georeferenced orthomosaic raster with tiled slicing. */
+export function analysePlotsFromOrtho(
+  payload: AnalysePlotsOrthoPayload,
+): Promise<PlotAnalysisOutcome> {
+  return invoke<PlotAnalysisOutcome>("analyse_plots_from_ortho", { payload });
+}
