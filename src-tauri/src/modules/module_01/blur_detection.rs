@@ -355,8 +355,10 @@ pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
 /// sessions.
 ///
 /// With fewer than [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a
-/// zero stddev, there is no meaningful baseline yet, so classification falls
-/// back to `hard_floor` alone. Once a baseline exists, `hard_floor` is
+/// near-zero stddev (relative to the mean — catches floating-point rounding
+/// noise on near-identical scores, not just an exact `0.0`), there is no
+/// meaningful baseline yet, so classification falls back to `hard_floor`
+/// alone. Once a baseline exists, `hard_floor` is
 /// *not* consulted — only a z-score below `z_threshold` standard deviations
 /// under the session mean counts as blurry. See [`HARD_FLOOR_BLUR_SCORE`]
 /// for why the floor must not override the relative check once there is a
@@ -371,7 +373,9 @@ pub(crate) fn classify_blur(
     hard_floor: f64,
     z_threshold: f64,
 ) -> bool {
-    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE || stats.stddev == 0.0 {
+    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE
+        || stats.stddev <= stats.mean.abs() * 1e-9
+    {
         // No meaningful baseline yet: the absolute floor is the only signal
         // available.
         return raw_score < hard_floor;
@@ -626,6 +630,19 @@ mod tests {
             sample_count: 10,
         };
         assert!(!classify_blur(10.0, &stats, 5.0, -1.5));
+    }
+
+    #[test]
+    fn classify_blur_near_zero_stddev_falls_back_to_hard_floor_only() {
+        let stats = SessionBlurStats {
+            mean: 50.0,
+            stddev: 1e-10,
+            sample_count: 10,
+        };
+        // Floor path, not a z-score computed off a near-zero stddev (which
+        // would read as an enormous |z| and wrongly flag almost everything).
+        assert!(classify_blur(3.0, &stats, 5.0, -1.5));
+        assert!(!classify_blur(8.0, &stats, 5.0, -1.5));
     }
 
     #[test]
