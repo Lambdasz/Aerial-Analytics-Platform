@@ -841,8 +841,18 @@ pub(crate) fn insert_images_and_recalculate(
         }
         // Blur scoring is deferred: queue the rows in the same transaction
         // as the insert, so an image can never be stored without being
-        // queued (it would otherwise stay unscored forever).
-        let ids: Vec<Uuid> = images.iter().map(|image| image.id).collect();
+        // queued (it would otherwise stay unscored forever). A paired DNG
+        // is excluded: it is the same capture as its JPEG sibling, so
+        // decoding its preview independently would waste a decode for a
+        // score that gets copied over anyway (see
+        // `blur_queue::copy_paired_dng_scores`).
+        let ids: Vec<Uuid> = images
+            .iter()
+            .filter(|image| {
+                !(image.format.as_deref() == Some("dng") && image.raw_sibling_id.is_some())
+            })
+            .map(|image| image.id)
+            .collect();
         super::blur_queue::enqueue(conn, session_id, &ids)?;
         recalculate_session_date_range(conn, session_id)?;
         Ok(None)
@@ -1257,10 +1267,17 @@ pub fn move_image_row(
 /// over the whole session, rather than classifying each image incrementally
 /// as it is inserted, makes the result depend only on the session's final
 /// score set — not on import order or how many separate import runs it took
-/// to assemble it. A DNG with a same-stem JPEG is excluded from the
-/// baseline and from direct classification (it is the same capture as its
-/// JPEG, so scoring it as an independent sample would double-count that
-/// capture); it mirrors its JPEG's flag instead.
+/// to assemble it. Every DNG — paired with a same-stem JPEG or standalone —
+/// is excluded from the baseline and from direct classification: a DNG
+/// preview's score sits on a different scale than a camera JPEG's, so
+/// mixing it into a JPEG-dominated baseline is a format mismatch, not a
+/// sharpness signal. A paired DNG mirrors its JPEG's flag instead (same
+/// capture, so classifying it independently would double-count that
+/// capture); a standalone DNG has no JPEG to mirror, so it is left
+/// unflagged (`is_blurry` stays `None`). A scored row with no `format`
+/// recorded (e.g. migrated before this column existed) is treated as "not a
+/// DNG" and kept in the baseline, rather than silently dropped by SQL's
+/// three-valued `NULL` logic.
 ///
 /// Each row's leave-one-out baseline comes from
 /// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
@@ -1290,7 +1307,7 @@ pub fn reclassify_session_blur(
             let mut stmt = conn.prepare(
                 "SELECT id, blur_score FROM image
                  WHERE session_id = ?1 AND blur_score IS NOT NULL
-                   AND NOT (format = 'dng' AND raw_sibling_id IS NOT NULL)",
+                   AND (format IS NULL OR format != 'dng')",
             )?;
             let rows = stmt.query_map(params![session_id.to_string()], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -1830,6 +1847,115 @@ mod tests {
         assert_eq!(
             dng_flag, jpeg_flag,
             "the paired dng must mirror its jpeg's flag, not its own score"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_excludes_a_standalone_dng_from_the_baseline() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        let sharp_ids: Vec<Uuid> = sharp_scores
+            .iter()
+            .enumerate()
+            .map(|(n, score)| {
+                let mut image = image_row(
+                    session.id,
+                    &format!("/photos/sharp{n}.jpg"),
+                    Some(&format!("sharp{n}")),
+                );
+                image.blur_score = Some(*score);
+                let id = image.id;
+                insert_image(&conn, &image).expect("insert sharp");
+                id
+            })
+            .collect();
+
+        // No jpeg sibling — scored from a DNG preview, which sits on a
+        // different scale than a camera jpeg's, so it must not skew (or be
+        // judged against) the jpeg baseline.
+        let mut standalone_dng = image_row(session.id, "/photos/lone.dng", Some("lone-dng"));
+        standalone_dng.format = Some("dng".to_string());
+        standalone_dng.blur_score = Some(999.0);
+        let dng_id = standalone_dng.id;
+        insert_image(&conn, &standalone_dng).expect("insert standalone dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        let dng_flag = get_image(&conn, dng_id).expect("get dng").is_blurry;
+        assert_eq!(
+            dng_flag, None,
+            "a standalone dng has no jpeg to mirror and must stay unflagged"
+        );
+
+        for sharp_id in sharp_ids {
+            let sharp = get_image(&conn, sharp_id).expect("get sharp");
+            assert_eq!(
+                sharp.is_blurry,
+                Some(false),
+                "a tight sharp cluster must not be skewed by the dng's outlying score"
+            );
+        }
+    }
+
+    #[test]
+    fn reclassify_session_blur_keeps_a_null_format_row_in_the_baseline() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        for (n, score) in sharp_scores.iter().enumerate() {
+            let mut image = image_row(
+                session.id,
+                &format!("/photos/sharp{n}.jpg"),
+                Some(&format!("sharp{n}")),
+            );
+            image.blur_score = Some(*score);
+            insert_image(&conn, &image).expect("insert sharp");
+        }
+
+        // A row with no recorded format (e.g. migrated before the column
+        // existed) scored inside the sharp cluster: it must still be kept in
+        // the baseline, not silently dropped by NULL != 'dng' evaluating to
+        // NULL.
+        let mut null_format_sharp = image_row(session.id, "/photos/legacy-sharp.jpg", None);
+        null_format_sharp.format = None;
+        null_format_sharp.blur_score = Some(101.0);
+        let sharp_id = null_format_sharp.id;
+        insert_image(&conn, &null_format_sharp).expect("insert null-format sharp");
+
+        // And a null-format row that actually is a relative outlier, to
+        // prove it is classified, not merely passed through untouched.
+        let mut null_format_outlier = image_row(session.id, "/photos/legacy-outlier.jpg", None);
+        null_format_outlier.format = None;
+        null_format_outlier.blur_score = Some(30.0);
+        let outlier_id = null_format_outlier.id;
+        insert_image(&conn, &null_format_outlier).expect("insert null-format outlier");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        assert_eq!(
+            get_image(&conn, sharp_id).expect("get sharp").is_blurry,
+            Some(false),
+            "a null-format row inside the sharp cluster must not be dropped from the baseline"
+        );
+        assert_eq!(
+            get_image(&conn, outlier_id).expect("get outlier").is_blurry,
+            Some(true),
+            "a null-format row must actively participate in classification, not just pass through"
         );
     }
 
