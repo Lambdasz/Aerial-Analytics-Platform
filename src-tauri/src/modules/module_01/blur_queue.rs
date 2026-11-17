@@ -180,3 +180,123 @@ pub(crate) fn record_score(
     conn.execute("DELETE FROM blur_queue WHERE image_id = ?1", params![id])?;
     Ok(())
 }
+
+/// Copies a paired DNG's `blur_score` from its JPEG sibling.
+///
+/// A paired DNG is never queued (see `flight_session::insert_images_and_recalculate`,
+/// which excludes it from the `enqueue` call) — its preview is the same
+/// capture as its JPEG sibling, so decoding it a second time would be
+/// wasted work for a score that just gets mirrored here. Call once after
+/// the worker pool drains, before `reclassify_session_blur`.
+///
+/// Idempotent: only rows still missing a score are touched, so re-running
+/// this is harmless. A sibling that is not yet scored itself (still queued,
+/// or its scoring failed) leaves the DNG's score `NULL`, consistent with
+/// how every other not-yet-scored image is represented.
+///
+/// # Purity
+///
+/// Impure — updates the `image` table.
+pub(crate) fn copy_paired_dng_scores(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<(), SessionError> {
+    conn.execute(
+        "UPDATE image SET blur_score =
+             (SELECT j.blur_score FROM image j WHERE j.id = image.raw_sibling_id)
+         WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL
+           AND blur_score IS NULL",
+        params![session_id.to_string()],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::session::Image;
+    use crate::modules::module_01::flight_session::{create_project, create_session, insert_image};
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        crate::modules::module_01::flight_session::init_schema(&conn).expect("init schema");
+        migrate_blur_queue_schema(&conn).expect("migrate blur_queue schema");
+        conn
+    }
+
+    fn image_row(session_id: Uuid, file_path: &str) -> Image {
+        Image {
+            id: Uuid::new_v4(),
+            session_id,
+            file_path: file_path.to_string(),
+            location_lat: None,
+            location_lon: None,
+            captured_at: None,
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: Some("jpeg".to_string()),
+            make: None,
+            camera_model: None,
+            source_path: None,
+            content_hash: None,
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
+            heading_deg: None,
+        }
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_copies_a_scored_jpegs_score_to_its_dng() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.blur_score = Some(42.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(dng_row.blur_score, Some(42.0));
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_leaves_the_dng_null_when_the_jpeg_is_unscored() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(dng_row.blur_score, None);
+    }
+}

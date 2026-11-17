@@ -174,6 +174,11 @@ pub(crate) fn score_pending_with(
     // rather than failing the run.
     match lock(db) {
         Ok(conn) => {
+            // A paired DNG was never queued (see `insert_images_and_recalculate`),
+            // so its score only exists once copied from its scored JPEG sibling.
+            if let Err(err) = blur_queue::copy_paired_dng_scores(&conn, session_id) {
+                eprintln!("warning: could not copy paired dng blur scores: {err}");
+            }
             if let Err(err) =
                 reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {

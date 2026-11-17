@@ -2560,13 +2560,71 @@ mod tests {
             jpeg_row.blur_score.is_some(),
             "the jpeg half should be scored: {jpeg_row:?}"
         );
-        assert!(
-            dng_row.blur_score.is_some(),
-            "the dng's embedded preview should be decodable and scored: {dng_row:?}"
+        assert_eq!(
+            dng_row.blur_score, jpeg_row.blur_score,
+            "a paired dng is never scored independently; its score is copied from its jpeg: {dng_row:?}"
         );
         assert_eq!(
             dng_row.is_blurry, jpeg_row.is_blurry,
             "a paired dng mirrors its jpeg's flag rather than being classified on its own score"
+        );
+    }
+
+    #[test]
+    fn pair_import_does_not_queue_the_paired_dng_for_independent_scoring() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_checkerboard_jpeg(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+        let preview = encode_jpeg_bytes(&image::RgbImage::from_fn(
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            |x, y| {
+                let v = if (x / 4 + y / 4).is_multiple_of(2) {
+                    0u8
+                } else {
+                    255u8
+                };
+                image::Rgb([v, v, v])
+            },
+        ));
+        write_dng_with_jpeg_preview(source_dir.path(), "DJI_0001.DNG", &preview);
+
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("pair import");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        let jpeg_id = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".JPG"))
+            .expect("jpeg row")
+            .id;
+        let dng_id = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".DNG"))
+            .expect("dng row")
+            .id;
+        assert!(
+            super::super::blur_queue::is_queued(&conn, jpeg_id).expect("jpeg queued check"),
+            "the jpeg half is the only one that needs decoding"
+        );
+        assert!(
+            !super::super::blur_queue::is_queued(&conn, dng_id).expect("dng queued check"),
+            "a paired dng must not be queued for an independent, redundant decode"
         );
     }
 
