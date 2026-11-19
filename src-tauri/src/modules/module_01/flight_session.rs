@@ -841,16 +841,16 @@ pub(crate) fn insert_images_and_recalculate(
         }
         // Blur scoring is deferred: queue the rows in the same transaction
         // as the insert, so an image can never be stored without being
-        // queued (it would otherwise stay unscored forever). A paired DNG
-        // is excluded: it is the same capture as its JPEG sibling, so
-        // decoding its preview independently would waste a decode for a
-        // score that gets copied over anyway (see
-        // `blur_queue::copy_paired_dng_scores`).
+        // queued (it would otherwise stay unscored forever). Every DNG is
+        // excluded, paired or not: a paired DNG is the same capture as its
+        // JPEG sibling, so decoding its preview independently would waste a
+        // decode for a score that gets copied over anyway (see
+        // `blur_queue::copy_paired_dng_scores`); a standalone DNG's score is
+        // never used by `reclassify_session_blur` either, so decoding it
+        // would just be thrown away.
         let ids: Vec<Uuid> = images
             .iter()
-            .filter(|image| {
-                !(image.format.as_deref() == Some("dng") && image.raw_sibling_id.is_some())
-            })
+            .filter(|image| image.format.as_deref() != Some("dng"))
             .map(|image| image.id)
             .collect();
         super::blur_queue::enqueue(conn, session_id, &ids)?;
@@ -1273,11 +1273,15 @@ pub fn move_image_row(
 /// mixing it into a JPEG-dominated baseline is a format mismatch, not a
 /// sharpness signal. A paired DNG mirrors its JPEG's flag instead (same
 /// capture, so classifying it independently would double-count that
-/// capture); a standalone DNG has no JPEG to mirror, so it is left
-/// unflagged (`is_blurry` stays `None`). A scored row with no `format`
-/// recorded (e.g. migrated before this column existed) is treated as "not a
-/// DNG" and kept in the baseline, rather than silently dropped by SQL's
-/// three-valued `NULL` logic.
+/// capture); a standalone DNG has no JPEG to mirror, so it is actively
+/// cleared to unflagged (`is_blurry` set to `None`) rather than left
+/// untouched — this also clears a flag left over from before a DNG was
+/// excluded (an existing database) or from losing its JPEG partner
+/// (deleted or moved away), since a paired DNG carries a copied
+/// `blur_score` that would otherwise make it look already-classified. A
+/// scored row with no `format` recorded (e.g. migrated before this column
+/// existed) is treated as "not a DNG" and kept in the baseline, rather than
+/// silently dropped by SQL's three-valued `NULL` logic.
 ///
 /// Each row's leave-one-out baseline comes from
 /// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
@@ -1325,6 +1329,15 @@ pub fn reclassify_session_blur(
             "UPDATE image SET is_blurry =
                  (SELECT j.is_blurry FROM image j WHERE j.id = image.raw_sibling_id)
              WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL",
+            params![session_id.to_string()],
+        )?;
+        // A DNG with no JPEG partner is never classified (see the query
+        // above), so clear any flag left over from before it was excluded
+        // or unlinked — a stale flag from a prior score-it-independently
+        // pass, or one orphaned when its JPEG was deleted or moved away.
+        conn.execute(
+            "UPDATE image SET is_blurry = NULL
+             WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NULL",
             params![session_id.to_string()],
         )?;
         Ok(())
@@ -1956,6 +1969,37 @@ mod tests {
             get_image(&conn, outlier_id).expect("get outlier").is_blurry,
             Some(true),
             "a null-format row must actively participate in classification, not just pass through"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_clears_a_stale_flag_on_a_standalone_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        // Simulates a row from before standalone DNGs were excluded (or one
+        // that just lost its jpeg partner via unlink_sibling): it already
+        // carries a score and a flag from an earlier, independent scoring
+        // pass.
+        let mut stale_dng = image_row(session.id, "/photos/stale.dng", Some("stale-dng"));
+        stale_dng.format = Some("dng".to_string());
+        stale_dng.blur_score = Some(5.0);
+        stale_dng.is_blurry = Some(true);
+        let dng_id = stale_dng.id;
+        insert_image(&conn, &stale_dng).expect("insert stale dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        assert_eq!(
+            get_image(&conn, dng_id).expect("get dng").is_blurry,
+            None,
+            "a standalone dng's stale flag must be cleared, not left as-is"
         );
     }
 
