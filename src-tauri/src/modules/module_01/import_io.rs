@@ -2629,6 +2629,34 @@ mod tests {
     }
 
     #[test]
+    fn standalone_dng_import_does_not_queue_it_for_scoring() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_dng(source_dir.path(), "DJI_0004.DNG", 4000, 3000);
+
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            !super::super::blur_queue::is_queued(&conn, images[0].id).expect("dng queued check"),
+            "a standalone dng's score is never used by reclassify_session_blur, \
+             so decoding it would just be thrown away"
+        );
+    }
+
+    #[test]
     fn import_defers_blur_scoring_and_queues_every_image() {
         let source_dir = tempfile::tempdir().expect("source dir");
         let library = tempfile::tempdir().expect("library");
