@@ -79,14 +79,16 @@ use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
 use super::blur_detection;
+use super::blur_queue;
 use super::error::SessionError;
 use super::flight_session::{
     get_image, get_session, image_from_metadata, insert_images_and_recalculate,
-    known_hashes_for_project, reclassify_session_blur, ExistingContent,
+    known_hashes_for_project, reclassify_session_blur, unpaired_images_for_session,
+    ExistingContent,
 };
 use super::image_importer::{
-    classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
-    NameFolding,
+    classify_file, dest_basename, extension_of, find_retroactive_sibling, folding_for_os,
+    import_images, pair_raw_siblings, NameFolding,
 };
 use super::metadata_extractor::{extract_metadata, read_dng, to_plugin_metadata};
 use super::thumbnail;
@@ -454,6 +456,17 @@ fn import_planned(
         duplicates: std::mem::take(&mut report.duplicates),
     };
 
+    // A candidate with no in-batch partner may still have one already in the
+    // database, imported separately (the common case: JPEGs added first,
+    // the matching DNGs added later). Loaded once per `import_planned` call
+    // and consumed as matches are claimed below, so two same-stem candidates
+    // in this batch cannot both retroactively claim the same existing row.
+    let mut retroactive_candidates = match lock_db(db) {
+        Ok(conn) => unpaired_images_for_session(&conn, session_id).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    let folding = folding_for_os();
+
     for candidate in work {
         let partner = partner_of
             .get(candidate.id.as_str())
@@ -469,7 +482,25 @@ fn import_planned(
         let duplicates_before = scope.duplicates_len();
         let outcome = match partner {
             Some(partner) => scope.pair(candidate, partner),
-            None => scope.single(candidate).map(|imported| vec![imported]),
+            None => {
+                let retroactive_sibling = classify_file(candidate).ok().and_then(|format| {
+                    find_retroactive_sibling(candidate, format, &retroactive_candidates, folding)
+                });
+                match retroactive_sibling {
+                    Some(sibling_id) => {
+                        let outcome = scope
+                            .link_to_existing(candidate, sibling_id)
+                            .map(|imported| vec![imported]);
+                        if outcome.is_ok() {
+                            // Claimed: no later candidate in this batch may
+                            // also link to it.
+                            retroactive_candidates.retain(|(id, ..)| *id != sibling_id);
+                        }
+                        outcome
+                    }
+                    None => scope.single(candidate).map(|imported| vec![imported]),
+                }
+            }
         };
         let rejected_added = scope.rejected_len() - rejected_before;
         let duplicates_added = scope.duplicates_len() - duplicates_before;
@@ -492,14 +523,22 @@ fn import_planned(
         done += duplicates_added;
     }
 
-    // Re-derive the session's `is_blurry` flags from the scores stored so
-    // far. New rows are still unscored (the background task scores them and
+    // Mirror blur scores onto any DNG freshly linked above (retroactively or
+    // as part of a same-batch pair) whose sibling already has a score — a
+    // sibling imported in an earlier run may already be fully scored, and
+    // without this the mirrored score would otherwise wait for some future,
+    // unrelated import to trigger a scoring pass for this session. Then
+    // re-derive the session's `is_blurry` flags from the scores stored so
+    // far: new rows are still unscored (the background task scores them and
     // runs this pass again), but earlier imports into the same session may
     // already have scores, and the flags must not depend on import order.
-    // A failure here is logged, not propagated: the import itself already
+    // Failures here are logged, not propagated: the import itself already
     // succeeded.
     match lock_db(db) {
         Ok(conn) => {
+            if let Err(err) = blur_queue::copy_paired_dng_scores(&conn, session_id) {
+                eprintln!("warning: could not copy paired dng blur scores: {err}");
+            }
             if let Err(err) =
                 reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {
@@ -607,6 +646,34 @@ impl ImportScope<'_> {
 
     /// Copies and records one standalone image.
     fn single(&mut self, candidate: &ImportCandidate) -> Result<ImportedFile, ()> {
+        self.single_with_sibling(candidate, None)
+    }
+
+    /// Copies and records `candidate`, retroactively linking it to `sibling`
+    /// — an unpaired image already in this session with the matching stem,
+    /// found by `image_importer::find_retroactive_sibling` because its
+    /// partner was imported in an earlier, separate batch rather than
+    /// alongside `candidate`. The new row carries the link from the moment
+    /// it is built; `insert_images_and_recalculate` points the existing row
+    /// back at it in the same transaction (see `flight_session::link_sibling`).
+    fn link_to_existing(
+        &mut self,
+        candidate: &ImportCandidate,
+        sibling: Uuid,
+    ) -> Result<ImportedFile, ()> {
+        self.single_with_sibling(candidate, Some(sibling))
+    }
+
+    /// Copies and records one image, optionally linked to `sibling` — an
+    /// already-persisted row from an earlier import (see
+    /// [`Self::link_to_existing`]). A linked row is always analysis-ready: a
+    /// JPEG already is, and a DNG now stands in for the same effect `pair`
+    /// applies to a same-batch pair.
+    fn single_with_sibling(
+        &mut self,
+        candidate: &ImportCandidate,
+        sibling: Option<Uuid>,
+    ) -> Result<ImportedFile, ()> {
         let base = match base_name_for(candidate) {
             Ok(base) => base,
             Err(err) => {
@@ -630,7 +697,7 @@ impl ImportScope<'_> {
         };
         let metadata = metadata_from_copy(&copy.dest, format);
         let image_id = Uuid::new_v4();
-        let ready = format == ImageFormat::Jpeg;
+        let ready = sibling.is_some() || format == ImageFormat::Jpeg;
         let image = build_image(
             image_id,
             self.session_id,
@@ -639,7 +706,7 @@ impl ImportScope<'_> {
                 candidate,
             },
             &metadata,
-            None,
+            sibling,
             ready,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
@@ -2256,8 +2323,7 @@ mod tests {
     /// embedded JPEG — unlike [`tiff_with_dimensions`]/[`write_dng`] above,
     /// which carry no preview at all, this is enough for
     /// `dng_preview::read_dng_preview` to locate the bytes *and* for
-    /// `image::load_from_memory` to decode them, so `blur_score_for_copy`
-    /// can score it.
+    /// `image::load_from_memory` to decode them.
     fn write_dng_with_jpeg_preview(dir: &Path, name: &str, jpeg: &[u8]) -> PathBuf {
         const PREVIEW_IMAGE_START: u16 = 50981;
         const PREVIEW_IMAGE_LENGTH: u16 = 50982;
@@ -2802,7 +2868,7 @@ mod tests {
             &db,
             session_id,
             &std::sync::atomic::AtomicBool::new(false),
-            &|path, _| {
+            &|path| {
                 if path.file_name().is_some_and(|name| name == "bad.jpg") {
                     panic!("simulated decoder bug");
                 }
@@ -3515,11 +3581,11 @@ mod tests {
     }
 
     /// Full pipeline: the JPEG of a stem pair is already in the project, so
-    /// the planner flags it as a duplicate and only the DNG is imported —
-    /// alone and not analysis-ready (its pair is gone, the planner split
-    /// them before any copy happened).
+    /// the planner flags the re-imported JPEG as a duplicate, but the DNG
+    /// still links retroactively to the original JPEG row already in the
+    /// session — it does not have to arrive in the same batch to be found.
     #[test]
-    fn pair_with_jpeg_already_in_project_imports_dng_alone() {
+    fn pair_with_jpeg_already_in_project_links_retroactively() {
         let first_dir = tempfile::tempdir().expect("first dir");
         let pair_dir = tempfile::tempdir().expect("pair dir");
         let library = tempfile::tempdir().expect("library");
@@ -3537,6 +3603,7 @@ mod tests {
         )
         .expect("jpeg-only import");
         assert_eq!(report.imported_image_ids.len(), 1);
+        let jpeg_id = report.imported_image_ids[0].clone();
 
         // Same bytes, so the same content hash: the pair's JPEG re-imports
         // as a known duplicate and the DNG rides in for free.
@@ -3566,15 +3633,15 @@ mod tests {
             "the jpeg is the duplicate: {:?}",
             pair_report.duplicates[0]
         );
-        assert_eq!(
-            pair_report.not_analysis_ready.len(),
-            1,
-            "the dng is imported but cannot be analysed without its pair: {pair_report:?}"
+        assert!(
+            pair_report.not_analysis_ready.is_empty(),
+            "the dng links to the existing jpeg, so it is analysis-ready: {pair_report:?}"
         );
         assert!(pair_report.rejected.is_empty());
 
-        // The recorded dng is unpaired and not analysis-ready; the library
-        // keeps the original jpeg and now holds the dng copy.
+        // The recorded dng is linked to the pre-existing jpeg, and the jpeg
+        // now points back at it; the library keeps the original jpeg and
+        // now holds the dng copy.
         let project_id = {
             let conn = db.lock().expect("db lock");
             crate::modules::module_01::get_session(&conn, session_id)
@@ -3590,8 +3657,21 @@ mod tests {
                 .iter()
                 .find(|row| row.file_path.ends_with("DJI_0005.DNG"))
                 .expect("dng row");
-            assert_eq!(dng_row.raw_sibling_id, None, "no jpeg pair to link to");
-            assert_eq!(dng_row.analysis_ready, Some(false));
+            assert_eq!(
+                dng_row.raw_sibling_id,
+                Some(Uuid::parse_str(&jpeg_id).expect("jpeg id")),
+                "the dng links to the jpeg from the earlier import"
+            );
+            assert_eq!(dng_row.analysis_ready, Some(true));
+            let jpeg_row = rows
+                .iter()
+                .find(|row| row.id.to_string() == jpeg_id)
+                .expect("jpeg row");
+            assert_eq!(
+                jpeg_row.raw_sibling_id,
+                Some(dng_row.id),
+                "the pre-existing jpeg points back at the new dng"
+            );
         }
         let dest_dir = session_images_dir(
             library.path(),
@@ -3608,6 +3688,126 @@ mod tests {
             leftover,
             vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],
             "the dng copy landed beside the original: {leftover:?}"
+        );
+    }
+
+    /// The symmetric case: a standalone DNG is already in the project, and a
+    /// later, separate import brings in its matching-stem JPEG. The JPEG
+    /// links back to the existing DNG, flipping the DNG's `analysis_ready`
+    /// from `false` to `true`.
+    #[test]
+    fn dng_already_in_project_links_retroactively_to_a_later_jpeg() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_dng(dng_dir.path(), "DJI_0007.DNG", 4000, 3000);
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("dng-only import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+        let dng_id = report.imported_image_ids[0].clone();
+        assert_eq!(report.not_analysis_ready, vec![dng_id.clone()]);
+
+        write_jpeg(jpeg_dir.path(), "DJI_0007.JPG");
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("jpeg import beside a known dng");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 1);
+        assert!(jpeg_report.not_analysis_ready.is_empty());
+        assert!(jpeg_report.duplicates.is_empty());
+        assert!(jpeg_report.rejected.is_empty());
+
+        let conn = db.lock().expect("db lock");
+        let dng_row =
+            crate::modules::module_01::get_image(&conn, Uuid::parse_str(&dng_id).expect("dng id"))
+                .expect("dng row");
+        assert_eq!(
+            dng_row.raw_sibling_id,
+            Some(Uuid::parse_str(&jpeg_report.imported_image_ids[0]).expect("jpeg id")),
+            "the pre-existing dng links to the new jpeg"
+        );
+        assert_eq!(
+            dng_row.analysis_ready,
+            Some(true),
+            "retroactively linking flips the dng's analysis_ready to true"
+        );
+    }
+
+    /// An ambiguous stem across batches — two existing DNGs already share
+    /// the new JPEG's stem — must not guess. The JPEG imports standalone,
+    /// same as the in-batch ambiguity guard in `pair_raw_siblings`.
+    #[test]
+    fn retroactive_linking_skips_an_ambiguous_stem() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        // Same stem, two separate imports into the same session (different
+        // dimensions/bytes so neither trips the content-hash duplicate
+        // check), so the lookup — scoped per session — sees both as
+        // unpaired candidates for the jpeg's stem.
+        write_dng(dng_dir.path(), "DJI_0009.DNG", 4000, 3000);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("first dng import");
+
+        let dng_dir_2 = tempfile::tempdir().expect("second dng dir");
+        write_dng(dng_dir_2.path(), "DJI_0009.DNG", 4001, 3001);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir_2.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("second dng import");
+
+        write_jpeg(jpeg_dir.path(), "DJI_0009.JPG");
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("jpeg import");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 1);
+        let conn = db.lock().expect("db lock");
+        let jpeg_row = crate::modules::module_01::get_image(
+            &conn,
+            Uuid::parse_str(&jpeg_report.imported_image_ids[0]).expect("jpeg id"),
+        )
+        .expect("jpeg row");
+        assert_eq!(
+            jpeg_row.raw_sibling_id, None,
+            "two same-stem dngs make the stem ambiguous; the jpeg must not guess"
         );
     }
 
