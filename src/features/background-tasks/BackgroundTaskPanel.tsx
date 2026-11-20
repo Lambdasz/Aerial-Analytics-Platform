@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Icon, type IconName } from "@blueprintjs/core";
 
 import { useNow } from "../../hooks/useNow";
@@ -8,7 +8,6 @@ import { currentWork, groupOf, metaText, percentOf, type TaskGroup } from "./bac
 type Props = {
   tasks: TaskSnapshot[];
   canClear: boolean;
-  onClose: () => void;
   onCancel: (taskId: string) => void;
   onClearFinished: () => void;
 };
@@ -35,6 +34,7 @@ function StateIcon({ state }: { state: TaskState }) {
   );
 }
 
+/** One task. The header and the expanded detail are a single bordered card. */
 function TaskCard({
   task,
   now,
@@ -52,13 +52,15 @@ function TaskCard({
   const work = currentWork(task);
   const percent = percentOf(task);
   return (
-    <div className={`bt-card${expanded ? " bt-card--open" : ""}`}>
+    <div className={`bt-card bt-card--${task.state}${expanded ? " bt-card--open" : ""}`}>
       <div className="bt-card__head">
         <button type="button" className="bt-row" aria-expanded={expanded} onClick={onToggle}>
           <StateIcon state={task.state} />
           <span className="bt-row__body">
             <span className="bt-row__title">{task.title}</span>
-            <span className="bt-row__scope">{task.sessionName}</span>
+            <span className="bt-row__scope" title={task.sessionName}>
+              {task.sessionName}
+            </span>
             {task.state === "running" && (
               <span
                 className="bt-track"
@@ -96,18 +98,16 @@ function TaskCard({
       {expanded && (
         <div className="bt-detail">
           <span className="bt-detail__label">Pekerjaan saat ini</span>
-          <div className="bt-detail__box">
-            <div className="bt-detail__line">
-              <span className="bt-detail__title">{work.title}</span>
-              {task.state === "running" && <span className="bt-detail__pct">{percent}%</span>}
-            </div>
-            <span className="bt-detail__sub">{work.sub}</span>
-            {task.state === "running" && (
-              <span className="bt-track bt-track--thin" aria-hidden="true">
-                <span className="bt-track__fill" style={{ width: `${percent}%` }} />
-              </span>
-            )}
+          <div className="bt-detail__line">
+            <span className="bt-detail__title">{work.title}</span>
+            {task.state === "running" && <span className="bt-detail__pct">{percent}%</span>}
           </div>
+          <span className="bt-detail__sub">{work.sub}</span>
+          {task.state === "running" && (
+            <span className="bt-track bt-track--thin" aria-hidden="true">
+              <span className="bt-track__fill" style={{ width: `${percent}%` }} />
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -115,118 +115,90 @@ function TaskCard({
 }
 
 /**
- * Panel listing every background task in Berjalan / Antre / Selesai groups.
- * Escape and a click outside close it.
+ * Sidebar section listing every background task in Berjalan / Antre / Selesai
+ * groups. Sits at the bottom of the sidebar; grows with its content but never
+ * past the space under the menu, then the list scrolls.
  */
-export function BackgroundTaskPanel({
-  tasks,
-  canClear,
-  onClose,
-  onCancel,
-  onClearFinished,
-}: Props) {
+export function BackgroundTaskPanel({ tasks, canClear, onCancel, onClearFinished }: Props) {
   // `undefined` until the user opens or closes a card; until then the first
   // live task is shown expanded so its current work is visible at once.
   const [chosenId, setChosenId] = useState<string | null | undefined>(undefined);
   const expandedId =
     chosenId === undefined ? (tasks.find((task) => isLive(task.state))?.id ?? null) : chosenId;
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    panelRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
 
   const liveCount = tasks.filter((task) => task.state === "running").length;
   const queuedCount = tasks.filter((task) => task.state === "queued").length;
   const activeCount = liveCount + queuedCount;
+  const failedCount = tasks.filter((task) => task.state === "failed").length;
   // Ticks once a second only while something is running, for the elapsed time.
   const now = useNow(liveCount > 0);
   // No pill for an empty list: the body already says there is nothing.
   const pill = activeCount > 0 ? `${activeCount} aktif` : tasks.length > 0 ? "Selesai" : null;
 
   return (
-    <>
-      <button
-        type="button"
-        className="bt-backdrop"
-        aria-label="Tutup panel tugas latar belakang"
-        tabIndex={-1}
-        onClick={onClose}
-      />
-      <div
-        id="bt-panel"
-        ref={panelRef}
-        className="bt-panel"
-        role="region"
-        aria-label="Tugas latar belakang"
-        tabIndex={-1}
-      >
-        <div className="bt-panel__head">
-          <div className="bt-panel__heading">
-            <h2 className="bt-panel__title">Tugas latar belakang</h2>
-            {pill && (
-              <span className={`bt-pill${activeCount > 0 ? " bt-pill--accent" : ""}`}>{pill}</span>
-            )}
-          </div>
-          <div className="bt-panel__actions">
-            {canClear && (
-              <button type="button" className="bt-ghost bt-ghost--text" onClick={onClearFinished}>
-                Bersihkan selesai
-              </button>
-            )}
+    <section className="bt-section" aria-label="Tugas latar belakang">
+      <div className="bt-section__head">
+        <div className="bt-section__bar">
+          <h2 className="bt-section__title">Tugas latar belakang</h2>
+          {canClear && (
             <button
               type="button"
               className="bt-ghost bt-ghost--icon"
-              aria-label="Sembunyikan panel"
-              onClick={onClose}
+              aria-label="Bersihkan selesai"
+              title="Bersihkan selesai"
+              onClick={onClearFinished}
             >
-              <Icon icon="cross" size={14} />
+              <Icon icon="trash" size={14} />
             </button>
-          </div>
-        </div>
-
-        <div className="bt-panel__list">
-          {tasks.length === 0 ? (
-            <div className="bt-empty">
-              <span className="bt-empty__icon">
-                <Icon icon="tick" size={18} />
-              </span>
-              <span className="bt-empty__title">Tidak ada tugas latar belakang</span>
-              <span className="bt-empty__sub">Pemrosesan citra akan muncul di sini.</span>
-            </div>
-          ) : (
-            GROUPS.map((group) => {
-              const inGroup = tasks.filter((task) => groupOf(task.state) === group);
-              if (inGroup.length === 0) return null;
-              return (
-                <div key={group}>
-                  <div className="bt-group">{group}</div>
-                  {inGroup.map((task) => (
-                    <TaskCard
-                      key={task.id}
-                      task={task}
-                      now={now}
-                      expanded={expandedId === task.id}
-                      onToggle={() => setChosenId(expandedId === task.id ? null : task.id)}
-                      onCancel={() => onCancel(task.id)}
-                    />
-                  ))}
-                </div>
-              );
-            })
           )}
         </div>
-
-        <div className="bt-panel__foot">Tugas tetap berjalan saat Anda berpindah halaman.</div>
+        {(pill || failedCount > 0) && (
+          <div className="bt-section__pills">
+            {pill && (
+              <span className={`bt-pill${activeCount > 0 ? " bt-pill--accent" : ""}`}>{pill}</span>
+            )}
+            {failedCount > 0 && (
+              <span className="bt-pill bt-pill--danger">{failedCount} gagal</span>
+            )}
+          </div>
+        )}
       </div>
-    </>
+
+      <div className="bt-section__list" aria-live="polite">
+        {tasks.length === 0 ? (
+          <div className="bt-empty">
+            <span className="bt-zzz" aria-hidden="true">
+              <span>z</span>
+              <span>z</span>
+              <span>Z</span>
+            </span>
+            <span className="bt-empty__title">Tidak ada tugas latar belakang</span>
+            <span className="bt-empty__sub">Pemrosesan citra akan muncul di sini.</span>
+          </div>
+        ) : (
+          GROUPS.map((group) => {
+            const inGroup = tasks.filter((task) => groupOf(task.state) === group);
+            if (inGroup.length === 0) return null;
+            return (
+              <div key={group}>
+                <div className="bt-group">{group}</div>
+                {inGroup.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    now={now}
+                    expanded={expandedId === task.id}
+                    onToggle={() => setChosenId(expandedId === task.id ? null : task.id)}
+                    onCancel={() => onCancel(task.id)}
+                  />
+                ))}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="bt-section__foot">Tugas tetap berjalan saat Anda berpindah halaman.</div>
+    </section>
   );
 }

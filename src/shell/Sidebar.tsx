@@ -1,5 +1,6 @@
 // Sidebar.tsx
 
+import { BackgroundTasks } from "../features/background-tasks/BackgroundTasks";
 import { MODULES } from "./modules";
 
 import "./style.css";
@@ -36,6 +37,8 @@ export function Sidebar({ activeModuleId, onSelectModule }: SidebarProps) {
           );
         })}
       </ul>
+
+      <BackgroundTasks />
     </nav>
   );
 }
