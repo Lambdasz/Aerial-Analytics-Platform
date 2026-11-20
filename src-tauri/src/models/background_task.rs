@@ -58,6 +58,11 @@ pub struct TaskSnapshot {
     /// Finished items that produced no result (for blur scoring: too small or
     /// undecodable).
     pub unscorable: usize,
+    /// Items deliberately not processed at all, outside of `total` (for blur
+    /// scoring: standalone DNGs with no paired JPEG — their sharpness is
+    /// never scored, unlike `unscorable`, which counts items that were
+    /// attempted and failed).
+    pub skipped: usize,
     /// Name of the item that most recently finished, if any.
     pub current: Option<String>,
     /// Failure message when `state` is `failed`.
