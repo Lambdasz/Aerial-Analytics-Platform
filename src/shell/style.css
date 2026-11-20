@@ -51,7 +51,11 @@
   flex: 0 0 260px;
   width: 260px;
   box-sizing: border-box;
-  padding: 0 16px;
+  /* Column layout so the background tasks can sit at the bottom. */
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 16px;
+  /* Fallback only: scrolls when the window is shorter than brand + menu + tasks minimum. */
   overflow-y: auto;
   background-color: #f8f8f9;
   color: #1b1f27;
@@ -60,6 +64,7 @@
 }
 
 .app-shell_brand {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -96,10 +101,12 @@
 }
 
 .app-shell_menu {
+  /* Never shrinks, so the navigation buttons are never cut off. */
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 0;
+  margin: 0 0 12px;
   padding: 8px 0 0;
   list-style: none;
 }

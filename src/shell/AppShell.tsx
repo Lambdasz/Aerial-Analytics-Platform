@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { BackgroundTasks } from "../features/background-tasks/BackgroundTasks";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_MODULE_ID, findModule, findModuleBySlug, moduleHash } from "./modules";
 
 export function AppShell() {
-  console.log("TESTSTESTS");
   // Read the URL syncs on first render
   const [activeModuleId, setActiveModuleId] = useState(
     () => findModuleBySlug(window.location.hash)?.id ?? DEFAULT_MODULE_ID,
@@ -70,8 +68,6 @@ export function AppShell() {
           <ActivePage />
         </main>
       </div>
-
-      <BackgroundTasks />
     </div>
   );
 }
