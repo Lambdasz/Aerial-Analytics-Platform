@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::blur_detection::SessionBlurStats;
 use super::error::SessionError;
-use crate::models::image::ImageMetadata;
+use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::models::{Image, Project, Session, SessionStatus};
 
 /// Column definitions for the `image` table, shared by [`init_schema`]
@@ -788,6 +788,11 @@ pub(crate) struct ExistingContent {
 /// serialises writers, so re-checking every content hash **inside** it makes
 /// the second writer see the first one's rows.
 ///
+/// A row in `images` with `raw_sibling_id` set to an id outside this batch
+/// (found by `image_importer::find_retroactive_sibling` against
+/// [`unpaired_images_for_session`]) is linked back to that existing row via
+/// [`link_sibling`], in the same transaction.
+///
 /// # Purity
 ///
 /// Impure — writes the database.
@@ -838,6 +843,22 @@ pub(crate) fn insert_images_and_recalculate(
         }
         for image in images {
             insert_image(conn, image)?;
+        }
+        // A row inserted with a `raw_sibling_id` pointing outside this batch
+        // is a retroactive link to an image from an earlier import batch —
+        // `ImportScope::pair` already sets both sides directly when it
+        // builds a same-batch pair's two rows together, so only this case
+        // needs the existing row updated to point back (see
+        // `link_sibling`). Same transaction as the insert, so the link can
+        // never be one-sided.
+        let batch_ids: std::collections::HashSet<Uuid> =
+            images.iter().map(|image| image.id).collect();
+        for image in images {
+            if let Some(sibling_id) = image.raw_sibling_id {
+                if !batch_ids.contains(&sibling_id) {
+                    link_sibling(conn, sibling_id, image.id)?;
+                }
+            }
         }
         // Blur scoring is deferred: queue the rows in the same transaction
         // as the insert, so an image can never be stored without being
@@ -1185,6 +1206,73 @@ fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionErro
         params![sibling_id.to_string()],
     )?;
     Ok(())
+}
+
+/// Points `sibling_id`'s existing row at `image_id`, the row that was just
+/// inserted pointing at it — the inverse of [`unlink_sibling`], for a pair
+/// discovered across separate import batches (a same-batch pair already has
+/// both sides set when `ImportScope::pair` builds the two rows together, see
+/// [`insert_images_and_recalculate`]) rather than built together within one
+/// `pair` call.
+///
+/// A DNG's `analysis_ready` flips to `true`, mirroring the effect `pair`
+/// applies to a same-batch pair; the JPEG side is unaffected (already
+/// `true`). `blur_score`/`is_blurry` are left alone: a paired DNG's score is
+/// mirrored from its sibling by `blur_queue::copy_paired_dng_scores`, called
+/// right after this in the same import.
+fn link_sibling(conn: &Connection, sibling_id: Uuid, image_id: Uuid) -> Result<(), SessionError> {
+    conn.execute(
+        "UPDATE image SET raw_sibling_id = ?2, \
+            analysis_ready = CASE WHEN format = 'dng' THEN 1 ELSE analysis_ready END \
+         WHERE id = ?1",
+        params![sibling_id.to_string(), image_id.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Unpaired JPEG/DNG images of `session_id`, as `(id, format, file_name)`
+/// triples — `file_name` is the basename of each row's original
+/// `source_path` (falling back to its stored `file_path` for a row imported
+/// before `source_path` was tracked), for matching against a new candidate's
+/// name with the exact same stem rule `pair_raw_siblings` uses in-batch.
+///
+/// Only rows with no sibling yet are returned: an already-paired image is
+/// never a candidate for another, ambiguous link.
+///
+/// # Purity
+///
+/// Impure — reads the `image` table.
+pub(crate) fn unpaired_images_for_session(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<Vec<(Uuid, ImageFormat, String)>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, format, COALESCE(source_path, file_path) FROM image
+         WHERE session_id = ?1 AND raw_sibling_id IS NULL
+           AND format IN ('jpeg', 'dng')",
+    )?;
+    let rows = stmt
+        .query_map(params![session_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut images = Vec::new();
+    for (id, format, file_name) in rows {
+        let Ok(id) = Uuid::parse_str(&id) else {
+            continue;
+        };
+        let format = match format.as_str() {
+            "jpeg" => ImageFormat::Jpeg,
+            "dng" => ImageFormat::Dng,
+            _ => continue,
+        };
+        images.push((id, format, file_name));
+    }
+    Ok(images)
 }
 
 /// Deletes one image row, unlinking its raw sibling when it had one.
