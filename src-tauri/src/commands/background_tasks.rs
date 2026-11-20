@@ -31,14 +31,31 @@ const BLUR_TASK_TITLE: &str = "Menilai ketajaman citra";
 /// One scoring pass: registers a task for the session's queued images, scores
 /// them, and finishes the task. Returns `Ok(None)` when there was nothing to
 /// do, or a blur task for this session is already live.
+///
+/// `skip_already_reported` suppresses the standalone-DNG count: pass `true`
+/// once a prior pass in the same [`run_blur_task_impl`] call already carried
+/// it (either in a real pass's `skipped` field or as its own skip-only
+/// pass), so a drained queue that still has standalone DNGs sitting in the
+/// `image` table — permanent, not something later passes consume — does not
+/// register a second, redundant skip-only task that would overwrite the real
+/// result as the loop's `last` snapshot.
 fn run_blur_pass(
     db: &Mutex<Connection>,
     tasks: &BackgroundTasks,
     session_id: Uuid,
     emit: &(impl Fn(&TaskSnapshot) + Sync),
+    skip_already_reported: bool,
 ) -> Result<Option<TaskSnapshot>, CommandError> {
     let total = pending_total(db, session_id)?;
-    if total == 0 {
+    let skipped = if skip_already_reported {
+        0
+    } else {
+        let conn = db
+            .lock()
+            .map_err(|err| SessionError::LockPoisoned(err.to_string()))?;
+        blur_queue::standalone_dng_count(&conn, session_id)?
+    };
+    if total == 0 && skipped == 0 {
         return Ok(None);
     }
     let session_name = {
@@ -53,11 +70,23 @@ fn run_blur_pass(
         &session_id.to_string(),
         &session_name,
         total,
+        skipped,
     ) else {
         return Ok(None);
     };
     let task_id = started.snapshot.id.clone();
     emit(&started.snapshot);
+
+    // Nothing queued — the session has only standalone DNGs. There is no
+    // scoring to run; report the skip and finish immediately so this pass
+    // does not try to drain an empty queue.
+    if total == 0 {
+        let finished = tasks.finish(&task_id, TaskState::Done, None);
+        if let Some(snapshot) = &finished {
+            emit(snapshot);
+        }
+        return Ok(finished);
+    }
 
     let outcome = score_pending(db, session_id, &started.cancel, |progress| {
         // Workers finish out of order; progress only ever moves forward.
@@ -120,8 +149,14 @@ pub(crate) fn run_blur_task_impl(
     emit: impl Fn(&TaskSnapshot) + Sync,
 ) -> Result<Option<TaskSnapshot>, CommandError> {
     let mut last = None;
-    while let Some(snapshot) = run_blur_pass(db, tasks, session_id, &emit)? {
-        let more = !matches!(snapshot.state, TaskState::Cancelled | TaskState::Failed);
+    let mut skip_already_reported = false;
+    while let Some(snapshot) = run_blur_pass(db, tasks, session_id, &emit, skip_already_reported)? {
+        skip_already_reported = true;
+        // A pass with `total == 0` only reported standalone DNGs that were
+        // skipped — there was nothing to score, so another pass would just
+        // register the same skip-only task again forever.
+        let more = snapshot.total > 0
+            && !matches!(snapshot.state, TaskState::Cancelled | TaskState::Failed);
         last = Some(snapshot);
         if !more {
             break;

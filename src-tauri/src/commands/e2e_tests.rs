@@ -1154,3 +1154,162 @@ fn e2e_moving_or_copying_an_unscored_image_keeps_it_pending() {
         .expect("work");
     assert_eq!((done.state, done.done), (TaskState::Done, 2));
 }
+
+#[test]
+fn e2e_a_dng_only_session_reports_the_skip_as_a_single_finished_pass() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    write_dng(env.source_dir.path(), "DJI_0001.DNG", 4000, 3000);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("import");
+    assert_eq!(queued(&env), 0, "a standalone dng is never queued");
+
+    let tasks = BackgroundTasks::default();
+    let finished = run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+        .expect("task runs")
+        .expect("a skip-only pass still registers a task");
+
+    assert_eq!(
+        (finished.state, finished.total, finished.skipped),
+        (TaskState::Done, 0, 1)
+    );
+    assert!(finished.finished_at.is_some());
+    // Exactly one task: the loop in `run_blur_task_impl` must not keep
+    // re-registering a skip-only pass forever.
+    assert_eq!(tasks.list().len(), 1);
+}
+
+#[test]
+fn e2e_a_mixed_session_reports_jpegs_scored_and_dngs_skipped_separately() {
+    let env = test_env();
+    let session_id = env_session(&env);
+    for n in 0..2 {
+        write_scorable_jpeg(env.source_dir.path(), &format!("DJI_000{n}.JPG"), n);
+    }
+    write_dng(env.source_dir.path(), "DJI_0099.DNG", 4000, 3000);
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("import");
+    assert_eq!(queued(&env), 2, "only the jpegs are queued");
+
+    let tasks = BackgroundTasks::default();
+    let finished = run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+        .expect("task runs")
+        .expect("there was work");
+
+    assert_eq!(
+        (
+            finished.state,
+            finished.done,
+            finished.total,
+            finished.skipped
+        ),
+        (TaskState::Done, 2, 2, 1)
+    );
+}
+
+#[test]
+fn e2e_dngs_imported_after_their_jpegs_are_scored_link_retroactively_and_are_not_skipped() {
+    use crate::modules::module_01::blur_queue;
+
+    // Reproduces the reported bug: JPEGs imported and scored first, their
+    // matching-stem DNGs imported later in a separate batch. Before
+    // retroactive linking, every one of those DNGs looked standalone and the
+    // background panel reported them all as skipped, even though their
+    // names obviously matched a JPEG already in the session.
+    let env = test_env();
+    let session_id = env_session(&env);
+    let names = ["DJI-Mavic-3-Pro", "Ricoh-GR-III", "Pixel_6_pro", "iPhone_8"];
+    for (n, name) in names.iter().enumerate() {
+        write_scorable_jpeg(env.source_dir.path(), &format!("{name}.JPG"), n as u32);
+    }
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[env.source_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("jpeg import");
+
+    let tasks = BackgroundTasks::default();
+    let jpeg_pass = run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+        .expect("jpeg scoring task runs")
+        .expect("there was work");
+    assert_eq!(
+        (jpeg_pass.state, jpeg_pass.done, jpeg_pass.skipped),
+        (TaskState::Done, 4, 0)
+    );
+
+    let dng_dir = tempfile::tempdir().expect("dng dir");
+    for (n, name) in names.iter().enumerate() {
+        // Distinct dimensions per file: identical bytes would trip the
+        // content-hash duplicate check and only the first dng would import.
+        write_dng(
+            dng_dir.path(),
+            &format!("{name}.DNG"),
+            4000 + n as u32,
+            3000,
+        );
+    }
+    import_images_impl(
+        &env.state,
+        session_id,
+        &sources(&[dng_dir.path().to_path_buf()]),
+        true,
+        |_, _, _| {},
+    )
+    .expect("dng import");
+
+    let conn = env.state.db.lock().expect("db lock");
+    let rows = flight_session::get_images_by_session(&conn, session_id).expect("rows");
+    assert_eq!(rows.len(), 8);
+    let dng_rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.format.as_deref() == Some("dng"))
+        .collect();
+    assert_eq!(dng_rows.len(), 4);
+    for dng in &dng_rows {
+        assert!(
+            dng.raw_sibling_id.is_some(),
+            "every dng must have linked to its matching-stem jpeg: {dng:?}"
+        );
+        assert_eq!(
+            dng.analysis_ready,
+            Some(true),
+            "a retroactively linked dng is analysis-ready"
+        );
+        // Linking happens at import time and mirrors the jpeg's existing
+        // score immediately — it does not wait for a scoring pass.
+        assert!(
+            dng.blur_score.is_some(),
+            "the jpeg was already scored, so the mirrored score should be immediate: {dng:?}"
+        );
+    }
+    drop(conn);
+
+    // No images were newly queued (dngs are never queued) and nothing is
+    // standalone, so there is nothing left to report.
+    assert_eq!(
+        blur_queue::standalone_dng_count(&env.state.db.lock().expect("db lock"), session_id)
+            .expect("count"),
+        0
+    );
+    assert!(
+        run_blur_task_impl(&env.state.db, &tasks, session_id, |_| {})
+            .expect("second task run")
+            .is_none(),
+        "nothing left to score or report once every dng is linked"
+    );
+}
