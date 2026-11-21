@@ -223,25 +223,44 @@ export function BackgroundTaskPanel({ tasks, canClear, onCancel, onClearFinished
   const summary = spokenSummary(organized);
 
   return (
-    <section className="bt-section" aria-label="Tugas latar belakang">
+    <section className="bt-section" aria-label="Background Tasks">
       <p className="bt-sr" role="status">
         {summary}
       </p>
 
       <div className="bt-section__head">
         <div className="bt-section__bar">
-          <h2 className="bt-section__title">Tugas latar belakang</h2>
-          {canClear && (
-            <button
-              type="button"
-              className="bt-ghost bt-ghost--icon"
-              aria-label="Bersihkan selesai"
-              title="Bersihkan selesai"
-              onClick={onClearFinished}
-            >
-              <Icon icon="trash" size={14} />
-            </button>
-          )}
+          <h2 className="bt-section__title">
+            Background Tasks
+            <span className="bt-info">
+              <button
+                type="button"
+                className="bt-ghost bt-ghost--icon"
+                aria-label="Tentang tugas latar belakang"
+                aria-describedby="bt-info-tip"
+              >
+                <span className="bt-info__badge" aria-hidden="true">
+                  i
+                </span>
+              </button>
+              <span id="bt-info-tip" role="tooltip" className="bt-info__tip">
+                Tugas tetap berjalan saat Anda berpindah halaman.
+              </span>
+            </span>
+          </h2>
+          <div className="bt-section__tools">
+            {canClear && (
+              <button
+                type="button"
+                className="bt-ghost bt-ghost--icon"
+                aria-label="Bersihkan selesai"
+                title="Bersihkan selesai"
+                onClick={onClearFinished}
+              >
+                <Icon icon="trash" size={14} />
+              </button>
+            )}
+          </div>
         </div>
         {(pill || failed > 0) && (
           <div className="bt-section__pills">
@@ -284,8 +303,6 @@ export function BackgroundTaskPanel({ tasks, canClear, onCancel, onClearFinished
           )
         )}
       </div>
-
-      <div className="bt-section__foot">Tugas tetap berjalan saat Anda berpindah halaman.</div>
     </section>
   );
 }
