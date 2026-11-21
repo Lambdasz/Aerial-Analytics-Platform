@@ -77,7 +77,7 @@ export function metaText(task: TaskSnapshot, now: number): string {
   }
 }
 
-/** The "Pekerjaan saat ini" box shown when a task card is expanded. */
+/** The "Pekerjaan saat ini" strip shown when a task card is expanded. */
 export function currentWork(task: TaskSnapshot): { title: string; sub: string } {
   switch (task.state) {
     case "queued":

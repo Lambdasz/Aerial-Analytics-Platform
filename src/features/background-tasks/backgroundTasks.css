@@ -13,9 +13,10 @@
   --bt-warn-soft: #ffefe0;
   --bt-danger: #b91c1c;
   --bt-danger-soft: #fee2e2;
-  --bt-ink: #696b6e;
-  --bt-ink-2: #666c75;
-  --bt-muted: #82858b;
+  /* Dark slate, not pure black; all pass 4.5:1 on white and on the sidebar grey. */
+  --bt-ink: #2b3240;
+  --bt-ink-2: #4a5361;
+  --bt-muted: #5b6472;
   --bt-line: #e3e7ee;
   --bt-line-strong: #d5dbe5;
   --bt-surface: #ffffff;
@@ -43,19 +44,43 @@
   .bt-spin {
     animation-duration: 2.4s;
   }
+
+  .bt-track__fill,
+  .bt-detail-wrap,
+  .bt-card {
+    transition: none;
+  }
+
+  .bt-card--open .bt-detail {
+    animation: none;
+  }
 }
 
-/* No focus ring anywhere in the section; keyboard focus gets a light tint instead. */
-.bt-section button {
+/* Visually hidden, still read by screen readers. */
+.bt-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Keyboard focus only (:focus-visible, so mouse clicks show nothing). The ring
+ * is drawn inside the element so the card's rounded clipping never cuts it.
+ */
+.bt-section button:focus-visible {
+  outline: 2px solid var(--bt-accent);
+  outline-offset: -2px;
+}
+
+/* Blueprint draws its own ring on every :focus, mouse clicks included; cancel that. */
+.bt-section button:focus:not(:focus-visible) {
   outline: none;
-}
-
-.bt-row:focus-visible {
-  background: var(--bt-surface-2);
-}
-
-.bt-ghost:focus-visible {
-  background: #e2e7ef;
 }
 
 /*
@@ -65,6 +90,7 @@
  */
 
 .bt-section {
+  position: relative;
   flex: 0 1 auto;
   min-height: 160px;
   display: flex;
@@ -111,8 +137,8 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  /* Wheel at the end of the list doesn't scroll the page behind. */
   overscroll-behavior: contain;
-  /* wheel at the end of the list doesn't scroll the page behind */
   scrollbar-width: thin;
   padding: 2px 2px 8px;
 }
@@ -183,10 +209,18 @@
   border: 1px solid var(--bt-line-strong);
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  /* Long lists: the browser skips layout and paint for cards scrolled out of view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 92px;
 }
 
+/* An open card lifts slightly, so it is clear which one changed. */
 .bt-card--open {
   border-color: #b9c4d6;
+  box-shadow: 0 4px 14px rgba(17, 24, 39, 0.1);
 }
 
 .bt-card--failed {
@@ -215,6 +249,7 @@
   align-items: start;
   padding: 10px 4px 10px 10px;
   border: 0;
+  border-radius: 10px;
   background: transparent;
   text-align: left;
   font: inherit;
@@ -314,15 +349,33 @@
   margin-top: 4px;
 }
 
+/* Progress is drawn with transform (scaleX), which animates without re-layout. */
 .bt-track__fill {
   display: block;
+  width: 100%;
   height: 100%;
-  border-radius: 999px;
   background: var(--bt-accent);
-  transition: width 0.45s ease;
+  transform-origin: left center;
+  transition: transform 0.45s ease;
 }
 
 /* Expanded detail: a tinted strip at the bottom of the same card */
+
+/* Smooth open/close: the grid row animates 0fr <-> 1fr, so height follows the content. */
+.bt-detail-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.bt-card--open .bt-detail-wrap {
+  grid-template-rows: 1fr;
+}
+
+.bt-detail-clip {
+  min-height: 0;
+  overflow: hidden;
+}
 
 .bt-detail {
   display: flex;
@@ -331,6 +384,23 @@
   padding: 10px 12px 12px;
   border-top: 1px solid var(--bt-line);
   background: var(--bt-surface-2);
+}
+
+/* On open the content also fades and slides in a little. */
+.bt-card--open .bt-detail {
+  animation: bt-detail-in 0.28s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes bt-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .bt-detail__label {
@@ -346,11 +416,10 @@
   gap: 8px;
 }
 
+/* Wraps instead of truncating: the detail strip shows the complete text. */
 .bt-detail__title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 12px;
   font-weight: 700;
 }
