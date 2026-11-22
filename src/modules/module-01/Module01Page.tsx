@@ -50,27 +50,65 @@ const DEFAULT_STATUS_FILTER: StatusFilter = "active";
 type SortOrder = "newest" | "oldest" | "name";
 type View = { kind: "list" } | { kind: "detail"; sessionId: string };
 
+/** A cached image count. `key` changes whenever the session row does. */
+interface CachedCount {
+  key: string;
+  count: number;
+}
+
+/** Sessions counted per round trip: small enough to keep the UI responsive between batches. */
+const COUNT_BATCH = 3;
+
+const countKey = (session: Session) =>
+  `${session.updatedAt}|${session.dateStart}|${session.dateEnd}`;
+
 /**
- * Counts the stored images of every session, in parallel.
+ * Counts the stored images of every session. This is the honest "how many berkas" source for
+ * the session cards: the session type carries no count, and inferring one from the date range
+ * misses images that have no capture time. A session whose rows cannot be read stays absent
+ * from the map, and its card shows the unknown state.
  *
- * This is the honest "how many berkas" source for the session cards: the
- * session type carries no count, and inferring one from the date range misses
- * images that have no capture time. A session whose rows cannot be read stays
- * absent from the map, and its card shows the unknown state.
+ * The backend has no count command, so each count downloads the session's image rows. To keep
+ * that affordable: counts already known are reused (`cache`) and shown at once, and the rest
+ * are fetched in small batches so the UI keeps responding in between.
  */
 async function countImagesPerSession(
   sessions: Session[],
-): Promise<Record<string, number | undefined>> {
-  const counts = await Promise.all(
-    sessions.map(async (session) => {
-      try {
-        return (await getImagesBySession(session.id)).length;
-      } catch {
-        return undefined;
-      }
-    }),
-  );
-  return Object.fromEntries(sessions.map((session, index) => [session.id, counts[index]]));
+  cache: Map<string, CachedCount>,
+  onProgress: (counts: Record<string, number | undefined>) => void,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const counts: Record<string, number | undefined> = {};
+  const todo: Session[] = [];
+  for (const session of sessions) {
+    const hit = cache.get(session.id);
+    if (hit && hit.key === countKey(session)) counts[session.id] = hit.count;
+    else todo.push(session);
+  }
+  onProgress({ ...counts });
+
+  for (let i = 0; i < todo.length; i += COUNT_BATCH) {
+    if (isCancelled()) return;
+    const batch = todo.slice(i, i + COUNT_BATCH);
+    const results = await Promise.all(
+      batch.map(async (session) => {
+        try {
+          return (await getImagesBySession(session.id)).length;
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    if (isCancelled()) return;
+    batch.forEach((session, index) => {
+      const count = results[index];
+      counts[session.id] = count;
+      if (count !== undefined) cache.set(session.id, { key: countKey(session), count });
+    });
+    // Yield so the browser can paint and handle input between batches.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  if (!isCancelled()) onProgress({ ...counts });
 }
 
 function Module01PageInner() {
@@ -213,6 +251,22 @@ function Module01PageInner() {
     projectIdRef.current = projectId;
   }, [projectId]);
 
+  // Image counts: cached per session for this page's lifetime, abandoned when superseded.
+  const countCacheRef = useRef(new Map<string, CachedCount>());
+  const countRunRef = useRef(0);
+  const refreshCounts = useCallback((list: Session[], pid: string) => {
+    const run = ++countRunRef.current;
+    const stale = () => run !== countRunRef.current || projectIdRef.current !== pid;
+    void countImagesPerSession(
+      list,
+      countCacheRef.current,
+      (counts) => {
+        if (!stale()) setImageCounts(counts);
+      },
+      stale,
+    );
+  }, []);
+
   // Load sessions from backend
   const fetchSessions = useCallback(
     async (pid: string, isInitial = false) => {
@@ -229,13 +283,10 @@ function Module01PageInner() {
         const result = await getSessionsByProject(pid.trim());
         if (projectIdRef.current !== pid) return;
         setSessions(result);
-        // Per-session counts for the cards, plus the project total.
-        const [counts, total] = await Promise.all([
-          countImagesPerSession(result),
-          countImagesByProject(pid.trim()).catch(() => undefined),
-        ]);
+        // Card counts fill in on their own; only the project total gates the busy state.
+        refreshCounts(result, pid);
+        const total = await countImagesByProject(pid.trim()).catch(() => undefined);
         if (projectIdRef.current !== pid) return;
-        setImageCounts(counts);
         setTotalImages(total);
       } catch (err) {
         if (projectIdRef.current === pid) setError(formatError(err));
@@ -244,7 +295,7 @@ function Module01PageInner() {
         setBusy(false);
       }
     },
-    [formatError],
+    [formatError, refreshCounts],
   );
 
   // Load sessions when project changes
@@ -256,11 +307,8 @@ function Module01PageInner() {
           if (isMounted) {
             setSessions(result);
             setLoading(false);
+            refreshCounts(result, projectId);
           }
-          return countImagesPerSession(result);
-        })
-        .then((counts) => {
-          if (isMounted) setImageCounts(counts);
         })
         .catch((err: unknown) => {
           if (isMounted) {
@@ -287,8 +335,9 @@ function Module01PageInner() {
     }
     return () => {
       isMounted = false;
+      countRunRef.current += 1; // abandon a count still running for the previous project
     };
-  }, [projectId, formatError]);
+  }, [projectId, formatError, refreshCounts]);
 
   // Handle Project selection
   const handleSelectProject = useCallback(
@@ -426,6 +475,7 @@ function Module01PageInner() {
     showToast(message);
     setAssignTarget(null);
     setImageRevision((revision) => revision + 1);
+    countCacheRef.current.clear(); // images changed: every cached count may be wrong
     if (projectId) await fetchSessions(projectId, false);
   };
 

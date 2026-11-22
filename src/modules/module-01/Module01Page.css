@@ -1,7 +1,8 @@
 /* ==========================================================================
    Module 01: Sesi Penerbangan (Flight Sessions)
    Design accurately adapted from TaskFlow reference layout & palette.
-   ========================================================================== */ /* App shell content alignment for Module 01 to eliminate edge gaps */
+   ========================================================================== */
+/* App shell content alignment for Module 01 to eliminate edge gaps */
 .app-shell_content:has(> .m1-page) {
   padding: 0;
   background-color: #f6f7f9;
@@ -86,7 +87,9 @@
 .m1-condensed {
   font-stretch: semi-condensed;
   font-variation-settings: "wdth" 85;
-} /* ── White Panel Cards ──────────────────────────────────────────────────── */
+}
+
+/* ── White Panel Cards ──────────────────────────────────────────────────── */
 
 .m1-white-panel {
   background-color: var(--m1-card-bg);
@@ -94,7 +97,9 @@
   border-radius: 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   margin-bottom: 0;
-} /* Header: plain text on the page background (no white card in the artifact) */
+}
+
+/* Header: plain text on the page background (no white card in the artifact) */
 .m1-header-panel {
   background-color: transparent;
   border: none;
@@ -150,7 +155,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-} /* Outlined primary action ("Sesi baru") */
+}
+
+/* Outlined primary action ("Sesi baru") */
 .m1-primary-pill-btn {
   background: var(--m1-card-bg);
   color: var(--m1-blue-primary);
@@ -181,7 +188,9 @@
 .m1-primary-pill-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-} /* Project pill (trigger for the project picker) */
+}
+
+/* Project pill (trigger for the project picker) */
 
 /* Summary panel: project identity + stat tiles */
 .m1-summary-panel {
@@ -252,13 +261,20 @@
   color: var(--m1-text-muted);
   margin: 0;
   line-height: 1.4;
-} /* ── 3. Panel ID Proyek ─────────────────────────────────────────────────── */ /* Button: Muat Sesi */ /* Button: Buat ID Proyek Baru */ /* Project Input Wrapper */
+}
+
+/* ── 3. Panel ID Proyek ─────────────────────────────────────────────────── */
+/* Button: Muat Sesi */
+/* Button: Buat ID Proyek Baru */
+/* Project Input Wrapper */
 
 @keyframes m1-spin {
   to {
     transform: rotate(360deg);
   }
-} /* ── 4. Panel "Daftar Sesi": title, controls, card grid, pagination ───────── */
+}
+
+/* ── 4. Panel "Daftar Sesi": title, controls, card grid, pagination ───────── */
 
 .m1-sessions-container {
   padding: 20px;
@@ -306,7 +322,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-} /* Search pill */
+}
+
+/* Search pill */
 .m1-search-box {
   position: relative;
   display: flex;
@@ -360,7 +378,9 @@
 
 .m1-search-clear:hover {
   color: var(--m1-text-main);
-} /* Segmented filter: Semua / Aktif / Diarsipkan dengan sliding indicator */
+}
+
+/* Segmented filter: Semua / Aktif / Diarsipkan dengan sliding indicator */
 .m1-filter-capsule {
   position: relative;
   display: inline-flex;
@@ -430,7 +450,9 @@
 .m1-filter-pill:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-} /* Sort pill */
+}
+
+/* Sort pill */
 .m1-sort-container {
   position: relative;
   display: inline-block;
@@ -510,6 +532,7 @@
     opacity: 0;
     transform: translateY(-4px) scale(0.97);
   }
+
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
@@ -530,7 +553,10 @@
   color: var(--m1-text-body);
   cursor: pointer;
   text-align: left;
-  transition: all 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .m1-sort-item:hover {
@@ -552,7 +578,9 @@
   justify-content: center;
   flex-shrink: 0;
   color: var(--m1-blue-primary);
-} /* ── Session card grid ──────────────────────────────────────────────────── */
+}
+
+/* ── Session card grid ──────────────────────────────────────────────────── */
 
 .m1-session-grid {
   display: grid;
@@ -580,7 +608,9 @@
 .m1-session-card:hover {
   border-color: var(--m1-border-control);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
-} /* Active sessions carry the artifact's accent border */
+}
+
+/* Active sessions carry the artifact's accent border */
 .m1-session-card--active {
   border: 1.5px solid #a9bdf2;
 }
@@ -596,7 +626,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-} /* Status pill */
+}
+
+/* Status pill */
 .m1-session-card__tag {
   font-size: 12px;
   font-weight: 700;
@@ -613,7 +645,9 @@
 .m1-session-card__tag--archived {
   color: var(--m1-text-body);
   background-color: var(--m1-surface-segment);
-} /* 44px menu button and dropdown */
+}
+
+/* 44px menu button and dropdown */
 .m1-card-menu-wrapper {
   position: relative;
 }
@@ -629,7 +663,10 @@
   justify-content: center;
   cursor: pointer;
   color: var(--m1-text-body);
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .m1-card-menu-btn:hover,
@@ -673,7 +710,10 @@
   color: var(--m1-text-body);
   cursor: pointer;
   text-align: left;
-  transition: all 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .m1-card-menu-item:hover {
@@ -711,7 +751,9 @@
   height: 1px;
   background-color: var(--m1-border);
   margin: 4px 0;
-} /* Title, ID chip and copy button */
+}
+
+/* Title, ID chip and copy button */
 .m1-session-card__name {
   font-size: 18px;
   font-weight: 800;
@@ -757,7 +799,9 @@
 .m1-copy-btn:hover {
   background-color: var(--m1-surface-muted);
   color: var(--m1-text-main);
-} /* Facts: 2-column dl */
+}
+
+/* Facts: 2-column dl */
 .m1-session-card__facts {
   margin: 0;
   display: grid;
@@ -788,7 +832,9 @@
 .m1-session-card__fact dd.m1-session-card__fact-empty {
   font-weight: 400;
   color: var(--m1-text-muted);
-} /* Image count strip */
+}
+
+/* Image count strip */
 .m1-session-card__images {
   display: flex;
   justify-content: space-between;
@@ -812,7 +858,9 @@
   font-size: 13px;
   font-weight: 800;
   color: var(--m1-text-main);
-} /* Stepper: "Tahap sesi" */
+}
+
+/* Stepper: "Tahap sesi" */
 .m1-session-card__stepper {
   border: 1px solid var(--m1-border);
   border-radius: var(--m1-radius-tile);
@@ -851,7 +899,9 @@
   align-items: center;
   gap: 6px;
   text-align: center;
-} /* Connector to the next step */
+}
+
+/* Connector to the next step */
 .m1-session-card__step:not(:last-child)::after {
   content: "";
   position: absolute;
@@ -903,7 +953,9 @@
 
 .m1-session-card__step--current .m1-session-card__step-label {
   font-weight: 800;
-} /* Footer actions: "Lihat detail" (outlined) and "Tambah citra" (filled) */
+}
+
+/* Footer actions: "Lihat detail" (outlined) and "Tambah citra" (filled) */
 .m1-session-card__footer {
   margin-top: auto;
   display: flex;
@@ -962,7 +1014,9 @@
 .m1-copy-btn:focus-visible {
   outline: 2px solid var(--m1-blue-primary);
   outline-offset: 2px;
-} /* Dashed "Buat sesi baru" tile, last cell of the grid */
+}
+
+/* Dashed "Buat sesi baru" tile, last cell of the grid */
 .m1-new-session-tile {
   display: flex;
   flex-direction: column;
@@ -992,7 +1046,9 @@
   border-radius: var(--m1-radius-pill);
   background-color: var(--m1-blue-tint);
   color: var(--m1-blue-primary);
-} /* ── Pagination ─────────────────────────────────────────────────────────── */
+}
+
+/* ── Pagination ─────────────────────────────────────────────────────────── */
 
 .m1-pagination-bar {
   display: flex;
@@ -1028,7 +1084,10 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .m1-page-num-btn:hover:not(:disabled) {
@@ -1046,7 +1105,9 @@
 .m1-page-num-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-} /* ── States: loading, empty ─────────────────────────────────────────────── */
+}
+
+/* ── States: loading, empty ─────────────────────────────────────────────── */
 
 .m1-state-container {
   display: flex;
@@ -1166,8 +1227,7 @@
   color: var(--m1-text-body) !important;
 }
 
-.m1-state-container
-  .bp6-button:not(.bp6-intent-primary):not(.bp6-intent-danger):hover:not(:disabled) {
+.m1-state-container .bp6-button:not(.bp6-intent-primary):not(.bp6-intent-danger):hover:not(:disabled) {
   background: var(--m1-surface-muted) !important;
   border-color: var(--m1-border-action) !important;
 }
@@ -1184,9 +1244,11 @@
   0% {
     opacity: 0.5;
   }
+
   50% {
     opacity: 1;
   }
+
   100% {
     opacity: 0.5;
   }

@@ -1,11 +1,25 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { LuChevronDown, LuPlus } from "react-icons/lu";
+import {
+  LuChevronDown,
+  LuChevronRight,
+  LuFolder,
+  LuFolderOpen,
+  LuFolderPlus,
+  LuPlus,
+} from "react-icons/lu";
 
 import { type Project, listProjects } from "../modules/module-01/projectCommands";
+import { type Session, getSessionsByProject } from "../modules/module-01/sessionCommands";
 import { sendM1Intent } from "../modules/module-01/navIntent";
 
-const MAX_PROJECTS = 5;
+/** Folders that start open (the active project first, then the most recent). */
+const DEFAULT_EXPANDED = 2;
+/** Sessions listed per folder; the rest are reachable through search. */
+const MAX_SESSIONS = 5;
 const ACTIVE_PROJECT_KEY = "m1_last_project_id";
+
+/** `undefined` = not asked for yet. */
+type SessionState = Session[] | "loading" | "error" | undefined;
 
 /** The project Module 01 has open right now, if any (it stores the whole project object). */
 function readActiveProjectId(): string | null {
@@ -19,24 +33,33 @@ function readActiveProjectId(): string | null {
   }
 }
 
+const byRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
+  Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+
 /**
- * GitHub-style "+" menu. The tree reads like a directory listing:
+ * GitHub-style "+" menu, laid out like a file explorer:
  *
- *   Sesi baru di…
- *   ├─ Blok A
- *   ├─ Blok B
- *   └─ + Proyek baru
+ *   Sesi baru di proyek                  [+]   <- new project
+ *   ▾ Blok A
+ *   │   ✈ Penerbangan pagi
+ *   │   + Tambah sesi
+ *   ▸ Blok B
+ *
+ * Clicking a project only opens or closes its folder. Sessions open that session, and
+ * "Tambah sesi" starts a new session in that project.
  */
 export function NewMenu() {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [sessions, setSessions] = useState<Record<string, SessionState>>({});
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const loadSeq = useRef(0);
+  const openSeq = useRef(0);
   const menuId = useId();
 
   const close = useCallback((returnFocus: boolean) => {
@@ -44,22 +67,61 @@ export function NewMenu() {
     if (returnFocus) triggerRef.current?.focus();
   }, []);
 
+  /** Fetch a project's sessions once per opening of the menu. */
+  const loadSessions = useCallback((projectId: string, seq: number) => {
+    setSessions((prev) =>
+      prev[projectId] === undefined ? { ...prev, [projectId]: "loading" } : prev,
+    );
+    getSessionsByProject(projectId)
+      .then((rows) => {
+        if (seq === openSeq.current) {
+          setSessions((prev) => ({ ...prev, [projectId]: [...rows].sort(byRecent) }));
+        }
+      })
+      .catch(() => {
+        if (seq === openSeq.current) setSessions((prev) => ({ ...prev, [projectId]: "error" }));
+      });
+  }, []);
+
   const toggle = () => {
     if (open) {
       close(false);
       return;
     }
+    const seq = ++openSeq.current;
+    const active = readActiveProjectId();
     setOpen(true);
-    setActiveId(readActiveProjectId());
+    setActiveId(active);
     setFailed(false);
-    const seq = ++loadSeq.current;
+    setProjects(null);
+    setSessions({});
+    setExpanded(new Set());
     listProjects()
       .then((list) => {
-        if (seq === loadSeq.current) setProjects(list);
+        if (seq !== openSeq.current) return;
+        const ordered = [...list].sort((a, b) => {
+          if (a.id === active) return -1;
+          if (b.id === active) return 1;
+          return byRecent(a, b);
+        });
+        setProjects(ordered);
+        const initial = ordered.slice(0, DEFAULT_EXPANDED).map((p) => p.id);
+        setExpanded(new Set(initial));
+        initial.forEach((id) => loadSessions(id, seq));
       })
       .catch(() => {
-        if (seq === loadSeq.current) setFailed(true);
+        if (seq === openSeq.current) setFailed(true);
       });
+  };
+
+  const setFolder = (projectId: string, shouldOpen: boolean) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (shouldOpen) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+    if (shouldOpen) loadSessions(projectId, openSeq.current);
   };
 
   useEffect(() => {
@@ -71,11 +133,13 @@ export function NewMenu() {
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [open, close]);
 
-  // Move focus into the menu once it has items (and again when the project list arrives).
+  // Focus the first folder once the project list has arrived (the header "+" otherwise).
   useEffect(() => {
     if (!open) return;
-    const first = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
-    first?.focus();
+    const target =
+      menuRef.current?.querySelector<HTMLElement>("[data-folder]") ??
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    target?.focus();
   }, [open, projects]);
 
   const onMenuKeyDown = (e: React.KeyboardEvent) => {
@@ -88,38 +152,108 @@ export function NewMenu() {
       menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
     );
     if (entries.length === 0) return;
-    const at = entries.indexOf(document.activeElement as HTMLElement);
+    const current = document.activeElement as HTMLElement | null;
+    const at = current ? entries.indexOf(current) : -1;
+
     let next: number | null = null;
     if (e.key === "ArrowDown") next = (at + 1) % entries.length;
     else if (e.key === "ArrowUp") next = (at - 1 + entries.length) % entries.length;
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = entries.length - 1;
+    else if (e.key === "ArrowRight" && current?.dataset.folder) {
+      e.preventDefault();
+      const id = current.dataset.folder;
+      if (!expanded.has(id)) setFolder(id, true);
+      else if (at + 1 < entries.length) entries[at + 1].focus();
+      return;
+    } else if (e.key === "ArrowLeft" && current) {
+      const folderId = current.dataset.folder;
+      const parentId = current.dataset.parent;
+      if (folderId && expanded.has(folderId)) {
+        e.preventDefault();
+        setFolder(folderId, false);
+      } else if (parentId) {
+        e.preventDefault();
+        menuRef.current?.querySelector<HTMLElement>(`[data-folder="${parentId}"]`)?.focus();
+      }
+      return;
+    }
     if (next !== null) {
       e.preventDefault();
       entries[next].focus();
     }
   };
 
-  const createSessionIn = (project: Project) => {
-    sendM1Intent({ kind: "create-session", project });
-    close(false);
-  };
-
-  const createProject = () => {
+  const addProject = () => {
     sendM1Intent({ kind: "create-project" });
     close(false);
   };
 
-  // The project Module 01 has open goes first, then the most recently touched.
-  const shown = (projects ?? [])
-    .slice()
-    .sort((a, b) => {
-      if (a.id === activeId) return -1;
-      if (b.id === activeId) return 1;
-      return Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
-    })
-    .slice(0, MAX_PROJECTS);
-  const hiddenCount = (projects?.length ?? 0) - shown.length;
+  const addSession = (project: Project) => {
+    sendM1Intent({ kind: "create-session", project });
+    close(false);
+  };
+
+  /** Makes a project the one Module 01 has open; the menu stays open so the chip visibly swaps. */
+  const activateProject = (project: Project) => {
+    sendM1Intent({ kind: "select-project", project });
+    setActiveId(project.id);
+    menuRef.current?.querySelector<HTMLElement>(`[data-folder="${project.id}"]`)?.focus();
+  };
+
+  const openSession = (project: Project, session: Session) => {
+    sendM1Intent({ kind: "open-session", project, sessionId: session.id });
+    close(false);
+  };
+
+  const renderChildren = (project: Project) => {
+    const state = sessions[project.id];
+    const rows = Array.isArray(state) ? state : [];
+    const shown = rows.slice(0, MAX_SESSIONS);
+    const hidden = rows.length - shown.length;
+    return (
+      <div className="app-shell_ft-children" role="group" aria-label={`Sesi ${project.name}`}>
+        {state === "loading" && (
+          <p className="app-shell_ft-note" role="presentation">
+            Memuat sesi…
+          </p>
+        )}
+        {state === "error" && (
+          <p className="app-shell_ft-note" role="presentation">
+            Gagal memuat sesi
+          </p>
+        )}
+        {shown.map((session) => (
+          <button
+            key={session.id}
+            type="button"
+            role="menuitem"
+            data-parent={project.id}
+            className="app-shell_ft-row app-shell_ft-row--file"
+            onClick={() => openSession(project, session)}
+          >
+            <span className="app-shell_ft-label">{session.name}</span>
+            {session.status === "archived" && <span className="app-shell_ft-tag">arsip</span>}
+          </button>
+        ))}
+        {hidden > 0 && (
+          <p className="app-shell_ft-note" role="presentation">
+            … {hidden} sesi lain, pakai pencarian
+          </p>
+        )}
+        <button
+          type="button"
+          role="menuitem"
+          data-parent={project.id}
+          className="app-shell_ft-row app-shell_ft-row--add"
+          onClick={() => addSession(project)}
+        >
+          <span className="app-shell_ft-label">Tambah sesi</span>
+          <LuPlus className="app-shell_ft-plus" aria-hidden="true" />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="app-shell_new" ref={wrapperRef}>
@@ -148,55 +282,81 @@ export function NewMenu() {
           tabIndex={-1}
           onKeyDown={onMenuKeyDown}
         >
-          <p className="app-shell_tree-root" role="presentation">
-            Sesi baru di proyek…
-          </p>
-
-          {projects === null && !failed && (
-            <p className="app-shell_tree-note" role="presentation">
-              <span className="app-shell_tree-glyph" aria-hidden="true" />
-              <span className="app-shell_tree-label">memuat…</span>
+          <div className="app-shell_ft-head">
+            <p className="app-shell_ft-title" role="presentation">
+              Sesi baru di proyek
             </p>
-          )}
-          {failed && (
-            <p className="app-shell_tree-note" role="presentation">
-              <span className="app-shell_tree-glyph" aria-hidden="true" />
-              <span className="app-shell_tree-label">gagal memuat proyek</span>
-            </p>
-          )}
-
-          {shown.map((project) => (
             <button
-              key={project.id}
               type="button"
               role="menuitem"
-              className="app-shell_tree-row"
-              onClick={() => createSessionIn(project)}
+              className="app-shell_ft-addproject"
+              aria-label="Proyek baru"
+              title="Proyek baru"
+              onClick={addProject}
             >
-              <span className="app-shell_tree-glyph" aria-hidden="true" />
-              <span className="app-shell_tree-label">{project.name}</span>
-              {project.id === activeId && <span className="app-shell_tree-badge">aktif</span>}
+              <LuFolderPlus size={16} aria-hidden="true" />
             </button>
-          ))}
+          </div>
 
-          {hiddenCount > 0 && (
-            <p className="app-shell_tree-note" role="presentation">
-              <span className="app-shell_tree-glyph" aria-hidden="true" />
-              <span className="app-shell_tree-label">
-                … {hiddenCount} proyek lain, pakai pencarian
-              </span>
-            </p>
-          )}
+          <div className="app-shell_ft-scroll">
+            {projects === null && !failed && (
+              <p className="app-shell_ft-note app-shell_ft-note--top" role="presentation">
+                Memuat proyek…
+              </p>
+            )}
+            {failed && (
+              <p className="app-shell_ft-note app-shell_ft-note--top" role="presentation">
+                Gagal memuat proyek
+              </p>
+            )}
+            {projects?.length === 0 && (
+              <p className="app-shell_ft-note app-shell_ft-note--top" role="presentation">
+                Belum ada proyek. Tekan tombol di kanan atas untuk membuat satu.
+              </p>
+            )}
 
-          <button
-            type="button"
-            role="menuitem"
-            className="app-shell_tree-row app-shell_tree-row--add"
-            onClick={createProject}
-          >
-            <span className="app-shell_tree-glyph app-shell_tree-glyph--last" aria-hidden="true" />
-            <span className="app-shell_tree-label">+ Proyek baru</span>
-          </button>
+            {projects?.map((project) => {
+              const isOpen = expanded.has(project.id);
+              const isActive = project.id === activeId;
+              const Chevron = isOpen ? LuChevronDown : LuChevronRight;
+              const Folder = isOpen ? LuFolderOpen : LuFolder;
+              return (
+                <div key={project.id} className="app-shell_ft-node">
+                  <div className="app-shell_ft-folder">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      data-folder={project.id}
+                      aria-expanded={isOpen}
+                      className="app-shell_ft-row app-shell_ft-row--folder"
+                      onClick={() => setFolder(project.id, !isOpen)}
+                    >
+                      <Chevron className="app-shell_ft-chevron" aria-hidden="true" />
+                      <Folder
+                        className={`app-shell_ft-icon${isActive ? " app-shell_ft-icon--active" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span className="app-shell_ft-label">{project.name}</span>
+                    </button>
+                    {isActive ? (
+                      <span className="app-shell_ft-tag app-shell_ft-tag--blue">aktif</span>
+                    ) : (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="app-shell_ft-activate"
+                        aria-label={`Aktifkan proyek ${project.name}`}
+                        onClick={() => activateProject(project)}
+                      >
+                        aktifkan
+                      </button>
+                    )}
+                  </div>
+                  {isOpen && renderChildren(project)}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
 import { Alert, Dialog, Intent } from "@blueprintjs/core";
 import { getSessionsByProject, commandErrorMessage } from "../sessionCommands";
 import { type Project, listProjects, deleteProject } from "../projectCommands";
@@ -149,7 +149,7 @@ const IconTrash: FC = () => (
   </svg>
 );
 
-export const ProjectPicker: FC<ProjectPickerProps> = ({
+const ProjectPickerBase: FC<ProjectPickerProps> = ({
   selectedProject,
   onSelect,
   onProjectDeleted,
@@ -654,3 +654,5 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
     </div>
   );
 };
+
+export const ProjectPicker = memo(ProjectPickerBase);

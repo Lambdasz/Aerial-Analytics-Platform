@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { LuFolder, LuPlaneTakeoff, LuSearch } from "react-icons/lu";
+import { LuFolder, LuSearch } from "react-icons/lu";
 
 import { type Project, listProjects } from "../modules/module-01/projectCommands";
 import { type Session, getSessionsByProject } from "../modules/module-01/sessionCommands";
@@ -108,11 +108,10 @@ export function NavbarSearch() {
   }, []);
 
   const openBox = useCallback(() => {
-    setOpen((was) => {
-      if (!was) refresh();
-      return true;
-    });
-  }, [refresh]);
+    if (open) return;
+    setOpen(true);
+    refresh();
+  }, [open, refresh]);
 
   // "/" and Ctrl/Cmd+K focus the search, like GitHub.
   useEffect(() => {
@@ -228,7 +227,7 @@ export function NavbarSearch() {
     const { session, project } = item.hit;
     return (
       <li key={item.key} {...common}>
-        <LuPlaneTakeoff className="app-shell_search-icon" aria-hidden="true" />
+        <span className="app-shell_search-icon" aria-hidden="true" />
         <span className="app-shell_search-text">
           <span className="app-shell_search-name">{highlight(session.name, query)}</span>
           <span className="app-shell_search-meta">
