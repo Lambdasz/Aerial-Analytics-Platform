@@ -166,17 +166,11 @@ pub(crate) fn pair_raw_siblings(
 
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for candidate in candidates {
-        let Some(base) = dest_basename(&candidate.file_name) else {
+        let Some((stem, extension)) = fold_stem_and_extension(&candidate.file_name, folding) else {
             continue;
         };
-        let Some((stem, extension)) = base.rsplit_once('.') else {
-            continue;
-        };
-        if stem.is_empty() {
-            continue;
-        }
-        let group = groups.entry(fold_name(stem, folding)).or_default();
-        match extension.to_ascii_lowercase().as_str() {
+        let group = groups.entry(stem).or_default();
+        match extension.as_str() {
             "jpg" | "jpeg" => group.jpgs.push(candidate),
             "dng" => group.dngs.push(candidate),
             _ => {}
@@ -192,6 +186,82 @@ pub(crate) fn pair_raw_siblings(
             },
         )
         .collect()
+}
+
+/// Splits a file name into its folded stem key and lowercase extension, or
+/// `None` when [`dest_basename`] would reject the name or it has no
+/// extension — the same exclusion [`pair_raw_siblings`] applies to every
+/// candidate, factored out so [`find_retroactive_sibling`] can match against
+/// it with the exact same rule.
+fn fold_stem_and_extension(file_name: &str, folding: NameFolding) -> Option<(String, String)> {
+    let base = dest_basename(file_name)?;
+    let (stem, extension) = base.rsplit_once('.')?;
+    if stem.is_empty() {
+        return None;
+    }
+    Some((fold_name(stem, folding), extension.to_ascii_lowercase()))
+}
+
+/// Finds the one existing, unpaired image in `existing` whose source file
+/// name folds to the same stem as `candidate`'s and whose format is the
+/// opposite of `candidate_format` — the retroactive counterpart to
+/// [`pair_raw_siblings`], for a same-stem sibling that was imported in an
+/// earlier, separate batch (so it never appeared in `candidates` together
+/// with this one).
+///
+/// # Purity
+///
+/// Pure. `existing` is already loaded from the database by the caller.
+///
+/// # Returns
+///
+/// `None` when:
+/// - `candidate` has no extension, or `batch` has more than one candidate of
+///   `candidate_format` sharing its stem — `pair_raw_siblings` already
+///   leaves a stem like that unpaired in-batch (e.g. `A.JPG` and `A.jpeg`
+///   imported together) because it cannot tell which one an opposite-format
+///   file belongs to; guessing here would make the same mistake, just
+///   against an existing row instead of another candidate.
+/// - no match, or an ambiguous one (more than one), in `existing`.
+pub(crate) fn find_retroactive_sibling(
+    candidate: &ImportCandidate,
+    candidate_format: ImageFormat,
+    batch: &[ImportCandidate],
+    existing: &[(uuid::Uuid, ImageFormat, String)],
+    folding: NameFolding,
+) -> Option<uuid::Uuid> {
+    let needed_format = match candidate_format {
+        ImageFormat::Jpeg => ImageFormat::Dng,
+        ImageFormat::Dng => ImageFormat::Jpeg,
+    };
+    let (stem, _extension) = fold_stem_and_extension(&candidate.file_name, folding)?;
+
+    let same_stem_same_format_in_batch = batch
+        .iter()
+        .filter(|other| {
+            classify_file(other) == Ok(candidate_format)
+                && fold_stem_and_extension(&other.file_name, folding)
+                    .map(|(other_stem, _)| other_stem)
+                    .as_deref()
+                    == Some(stem.as_str())
+        })
+        .count();
+    if same_stem_same_format_in_batch > 1 {
+        return None;
+    }
+
+    let mut matches = existing.iter().filter(|(_, format, file_name)| {
+        *format == needed_format
+            && fold_stem_and_extension(file_name, folding)
+                .map(|(other_stem, _)| other_stem)
+                .as_deref()
+                == Some(stem.as_str())
+    });
+    let (id, _, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(*id)
 }
 
 /// Maps a character through its single-character case mapping, leaving it
