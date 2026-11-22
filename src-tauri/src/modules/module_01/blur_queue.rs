@@ -186,10 +186,15 @@ pub(crate) fn record_score(
 /// wasted work for a score that just gets mirrored here. Call once after
 /// the worker pool drains, before `reclassify_session_blur`.
 ///
-/// Idempotent: only rows still missing a score are touched, so re-running
-/// this is harmless. A sibling that is not yet scored itself (still queued,
-/// or its scoring failed) leaves the DNG's score `NULL`, consistent with
-/// how every other not-yet-scored image is represented.
+/// Idempotent, and kept in sync rather than only filled once: every paired
+/// DNG whose sibling has a score is copied, even when the DNG already has
+/// one. A JPEG's score only ever changes by being rescored to the same
+/// value (scoring is deterministic for the same bytes), but if that ever
+/// changes, copying unconditionally means the DNG's score and its mirrored
+/// `is_blurry` flag (see `reclassify_session_blur`) can never drift apart. A
+/// sibling that is not yet scored itself (still queued, or its scoring
+/// failed) leaves the DNG's score `NULL`, consistent with how every other
+/// not-yet-scored image is represented.
 ///
 /// # Purity
 ///
@@ -202,7 +207,7 @@ pub(crate) fn copy_paired_dng_scores(
         "UPDATE image SET blur_score =
              (SELECT j.blur_score FROM image j WHERE j.id = image.raw_sibling_id)
          WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL
-           AND blur_score IS NULL",
+           AND (SELECT j.blur_score FROM image j WHERE j.id = image.raw_sibling_id) IS NOT NULL",
         params![session_id.to_string()],
     )?;
     Ok(())
@@ -320,6 +325,44 @@ mod tests {
         let dng_row =
             crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
         assert_eq!(dng_row.blur_score, None);
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_updates_an_already_copied_score_when_the_jpeg_is_rescored() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.blur_score = Some(42.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        // Already carries a (now stale) copied score from an earlier run.
+        dng.blur_score = Some(42.0);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        conn.execute(
+            "UPDATE image SET blur_score = 10.0 WHERE id = ?1",
+            params![jpeg_id.to_string()],
+        )
+        .expect("rescore jpeg");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(
+            dng_row.blur_score,
+            Some(10.0),
+            "the dng's score must track a rescored jpeg, not just fill once"
+        );
     }
 
     #[test]
