@@ -1220,13 +1220,33 @@ fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionErro
 /// `true`). `blur_score`/`is_blurry` are left alone: a paired DNG's score is
 /// mirrored from its sibling by `blur_queue::copy_paired_dng_scores`, called
 /// right after this in the same import.
+///
+/// Guarded by `raw_sibling_id IS NULL` and the affected-row count, not just
+/// the id: `unpaired_images_for_session` is read before this transaction's
+/// `BEGIN IMMEDIATE`, so between that read and this write another writer
+/// could have paired or deleted `sibling_id` first. Silently overwriting
+/// that link would leave the *other* writer's row pointing at `sibling_id`
+/// while `sibling_id` now points elsewhere — a one-sided link. Returning an
+/// error instead rolls back the whole transaction (see
+/// `with_immediate_transaction`), so the new row this call was meant to
+/// link is not left half-paired either.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when `sibling_id` no longer exists or already
+/// has a sibling.
 fn link_sibling(conn: &Connection, sibling_id: Uuid, image_id: Uuid) -> Result<(), SessionError> {
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE image SET raw_sibling_id = ?2, \
             analysis_ready = CASE WHEN format = 'dng' THEN 1 ELSE analysis_ready END \
-         WHERE id = ?1",
+         WHERE id = ?1 AND raw_sibling_id IS NULL",
         params![sibling_id.to_string(), image_id.to_string()],
     )?;
+    if changed != 1 {
+        return Err(SessionError::Storage(format!(
+            "could not link sibling '{sibling_id}': it no longer exists or is already paired"
+        )));
+    }
     Ok(())
 }
 
@@ -3281,5 +3301,78 @@ mod tests {
             dng.is_blurry, None,
             "an unscored lone dng must have is_blurry cleared"
         );
+    }
+
+    #[test]
+    fn link_sibling_points_an_unpaired_row_back_at_its_new_sibling() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.analysis_ready = Some(false);
+        insert_image(&conn, &dng).expect("dng row");
+
+        let jpeg_id = Uuid::new_v4();
+        link_sibling(&conn, dng_id, jpeg_id).expect("link");
+
+        let dng = get_image(&conn, dng_id).expect("dng row");
+        assert_eq!(dng.raw_sibling_id, Some(jpeg_id));
+        assert_eq!(
+            dng.analysis_ready,
+            Some(true),
+            "linking a dng flips it to analysis-ready"
+        );
+    }
+
+    #[test]
+    fn link_sibling_refuses_a_row_that_is_already_paired() {
+        // The race the reviewer flagged: `unpaired_images_for_session` is
+        // read before the caller's transaction begins, so another writer
+        // could have paired `dng_id` in between. Silently overwriting that
+        // link would leave the other writer's row pointing at a sibling
+        // that no longer points back.
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let first_jpeg_id = Uuid::new_v4();
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(first_jpeg_id);
+        insert_image(&conn, &dng).expect("dng row");
+
+        let second_jpeg_id = Uuid::new_v4();
+        let err = link_sibling(&conn, dng_id, second_jpeg_id)
+            .expect_err("already-paired row must not be overwritten");
+        assert!(matches!(err, SessionError::Storage(_)));
+
+        let dng = get_image(&conn, dng_id).expect("dng row");
+        assert_eq!(
+            dng.raw_sibling_id,
+            Some(first_jpeg_id),
+            "the original link must survive the refused overwrite"
+        );
+    }
+
+    #[test]
+    fn link_sibling_refuses_a_row_that_no_longer_exists() {
+        let conn = memory_db();
+        let err = link_sibling(&conn, Uuid::new_v4(), Uuid::new_v4())
+            .expect_err("a deleted/nonexistent sibling must not succeed silently");
+        assert!(matches!(err, SessionError::Storage(_)));
     }
 }
