@@ -1227,7 +1227,8 @@
   color: var(--m1-text-body) !important;
 }
 
-.m1-state-container .bp6-button:not(.bp6-intent-primary):not(.bp6-intent-danger):hover:not(:disabled) {
+.m1-state-container
+  .bp6-button:not(.bp6-intent-primary):not(.bp6-intent-danger):hover:not(:disabled) {
   background: var(--m1-surface-muted) !important;
   border-color: var(--m1-border-action) !important;
 }
