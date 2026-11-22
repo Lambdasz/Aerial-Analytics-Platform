@@ -462,8 +462,14 @@ fn import_planned(
     // and consumed as matches are claimed below, so two same-stem candidates
     // in this batch cannot both retroactively claim the same existing row.
     let mut retroactive_candidates = match lock_db(db) {
-        Ok(conn) => unpaired_images_for_session(&conn, session_id).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Ok(conn) => unpaired_images_for_session(&conn, session_id).unwrap_or_else(|err| {
+            eprintln!("warning: retroactive dng/jpeg pairing disabled for this import: {err}");
+            Vec::new()
+        }),
+        Err(err) => {
+            eprintln!("warning: retroactive dng/jpeg pairing disabled for this import: {err}");
+            Vec::new()
+        }
     };
     let folding = folding_for_os();
 
@@ -484,7 +490,13 @@ fn import_planned(
             Some(partner) => scope.pair(candidate, partner),
             None => {
                 let retroactive_sibling = classify_file(candidate).ok().and_then(|format| {
-                    find_retroactive_sibling(candidate, format, &retroactive_candidates, folding)
+                    find_retroactive_sibling(
+                        candidate,
+                        format,
+                        &request.candidates,
+                        &retroactive_candidates,
+                        folding,
+                    )
                 });
                 match retroactive_sibling {
                     Some(sibling_id) => {
@@ -3809,6 +3821,55 @@ mod tests {
             jpeg_row.raw_sibling_id, None,
             "two same-stem dngs make the stem ambiguous; the jpeg must not guess"
         );
+    }
+
+    /// An ambiguous stem *within the current batch* — `A.JPG` and `A.jpeg`
+    /// imported together, same as `pair_raw_siblings`'s own ambiguity test —
+    /// must not let the retroactive fallback guess which one an existing
+    /// `A.DNG` belongs to. Before this guard, whichever of the two the loop
+    /// reached first would silently claim the DNG.
+    #[test]
+    fn retroactive_linking_skips_a_stem_ambiguous_within_the_batch() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_dng(dng_dir.path(), "DJI_0011.DNG", 4000, 3000);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("dng import");
+
+        write_jpeg_seeded(jpeg_dir.path(), "DJI_0011.JPG", 1);
+        write_jpeg_seeded(jpeg_dir.path(), "DJI_0011.jpeg", 2);
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("ambiguous jpeg pair import");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 2);
+        let conn = db.lock().expect("db lock");
+        for id in &jpeg_report.imported_image_ids {
+            let row =
+                crate::modules::module_01::get_image(&conn, Uuid::parse_str(id).expect("jpeg id"))
+                    .expect("jpeg row");
+            assert_eq!(
+                row.raw_sibling_id, None,
+                "two same-stem jpegs in one batch are ambiguous; neither may claim the dng"
+            );
+        }
     }
 
     /// Insert-time race: the planner approved both halves, but between the
