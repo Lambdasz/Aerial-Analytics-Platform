@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FC, type FormEvent } from "react";
-import { Alert, Button, Dialog, FormGroup, InputGroup, Intent } from "@blueprintjs/core";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
+import { Alert, Dialog, Intent } from "@blueprintjs/core";
 import { getSessionsByProject, commandErrorMessage } from "../sessionCommands";
-import { type Project, listProjects, createProject, deleteProject } from "../projectCommands";
+import { type Project, listProjects, deleteProject } from "../projectCommands";
 import { shortId } from "../sessionStats";
+import { CreateProjectDialog } from "./CreateProjectDialog";
 import "./ProjectPicker.css";
 
 export interface ProjectPickerProps {
@@ -11,6 +12,8 @@ export interface ProjectPickerProps {
   onProjectDeleted: (projectId: string) => void;
   onError: (message: string) => void;
   onToast: (message: string) => void;
+  /** Bump to make the picker refetch (a project was created elsewhere, e.g. from the navbar). */
+  refreshKey?: number;
 }
 
 type PickerTab = "recent" | "starred" | "all";
@@ -152,6 +155,7 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
   onProjectDeleted,
   onError,
   onToast,
+  refreshKey = 0,
 }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -171,14 +175,10 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newDesc, setNewDesc] = useState("");
-  const [createBusy, setCreateBusy] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
   const attemptedCountsRef = useRef<Set<string>>(new Set());
 
   const fetchProjects = useCallback(async () => {
@@ -198,7 +198,7 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
     queueMicrotask(() => {
       void fetchProjects();
     });
-  }, [fetchProjects]);
+  }, [fetchProjects, refreshKey]);
 
   // Auto-select the first project when nothing is selected (ported from ProjectBar).
   useEffect(() => {
@@ -252,10 +252,6 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
     pillRef.current?.focus();
   }, []);
 
-  const closeCreate = useCallback(() => {
-    setCreateOpen(false);
-  }, []);
-
   // Escape closes the popover. Dialogs handle Escape and focus through Blueprint's overlay stack.
   useEffect(() => {
     if (!popoverOpen) return;
@@ -285,25 +281,10 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
     setCreateOpen(true);
   };
 
-  const requestCloseCreate = () => {
-    if (!createBusy) closeCreate();
-  };
-
-  const handleCreate = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (!newName.trim() || createBusy) return;
-    setCreateBusy(true);
-    try {
-      const project = await createProject(newName.trim(), newDesc.trim() || null);
-      closeCreate();
-      await fetchProjects();
-      onSelect(project);
-      onToast(`Proyek "${project.name}" dibuat.`);
-    } catch (err) {
-      onError(commandErrorMessage(err));
-    } finally {
-      setCreateBusy(false);
-    }
+  const handleCreated = async (project: Project) => {
+    await fetchProjects();
+    onSelect(project);
+    onToast(`Proyek "${project.name}" dibuat.`);
   };
 
   const handleDelete = async (project: Project) => {
@@ -403,58 +384,6 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
         </p>
       </div>
     </Alert>
-  );
-
-  const createDialog = (
-    <Dialog
-      isOpen={createOpen}
-      onClose={requestCloseCreate}
-      onClosed={() => {
-        setNewName("");
-        setNewDesc("");
-      }}
-      onOpened={() => nameInputRef.current?.focus()}
-      title="Proyek baru"
-      className="m1-custom-dialog"
-      portalClassName="m1-dialog-portal"
-      canEscapeKeyClose={!createBusy}
-      canOutsideClickClose={!createBusy}
-    >
-      <form onSubmit={(e) => void handleCreate(e)}>
-        <div className="m1-dialog-content">
-          <FormGroup label="Nama proyek" labelFor="m1-pp-create-name">
-            <InputGroup
-              id="m1-pp-create-name"
-              inputRef={nameInputRef}
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="cth: Blok A Perkebunan Sawit"
-              disabled={createBusy}
-              required
-            />
-          </FormGroup>
-          <FormGroup label="Deskripsi" labelInfo="(opsional)" labelFor="m1-pp-create-desc">
-            <InputGroup
-              id="m1-pp-create-desc"
-              value={newDesc}
-              onChange={(e) => setNewDesc(e.target.value)}
-              placeholder="Deskripsi singkat"
-              disabled={createBusy}
-            />
-          </FormGroup>
-        </div>
-        <div className="m1-dialog-footer">
-          <Button text="Batal" onClick={requestCloseCreate} disabled={createBusy} />
-          <Button
-            type="submit"
-            intent={Intent.PRIMARY}
-            text="Buat proyek"
-            loading={createBusy}
-            disabled={!newName.trim() || createBusy}
-          />
-        </div>
-      </form>
-    </Dialog>
   );
 
   const modal = (
@@ -715,7 +644,12 @@ export const ProjectPicker: FC<ProjectPickerProps> = ({
       ) : null}
 
       {modal}
-      {createDialog}
+      <CreateProjectDialog
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+        onError={onError}
+      />
       {deleteAlert}
     </div>
   );

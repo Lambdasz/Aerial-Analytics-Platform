@@ -24,11 +24,13 @@ import {
 } from "./sessionCommands";
 
 import { type Project, countImagesByProject } from "./projectCommands";
+import { M1_INTENT_EVENT, type M1Intent, takeM1Intent } from "./navIntent";
 
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
 import { SummaryBoxes } from "./components/SummaryBoxes";
 import { ProjectPicker } from "./components/ProjectPicker";
+import { CreateProjectDialog } from "./components/CreateProjectDialog";
 import { SessionCard } from "./components/SessionCard";
 import { SessionDetail } from "./components/SessionDetail";
 import {
@@ -158,6 +160,9 @@ function Module01PageInner() {
 
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  // "Proyek baru" opened from the navbar; projectsVersion makes the picker refetch afterwards.
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+  const [projectsVersion, setProjectsVersion] = useState(0);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [assignTarget, setAssignTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
@@ -325,6 +330,42 @@ function Module01PageInner() {
     },
     [selectedProject],
   );
+
+  // Navbar intents (search results and the "+" menu live in the app shell, outside this page)
+  const applyIntent = useCallback(
+    (intent: M1Intent) => {
+      switch (intent.kind) {
+        case "select-project":
+          handleSelectProject(intent.project);
+          break;
+        case "open-session":
+          handleSelectProject(intent.project);
+          // The detail view appears once that project's sessions have loaded.
+          setView({ kind: "detail", sessionId: intent.sessionId });
+          break;
+        case "create-session":
+          handleSelectProject(intent.project);
+          setIsCreateOpen(true);
+          break;
+        case "create-project":
+          setView({ kind: "list" });
+          setIsCreateProjectOpen(true);
+          break;
+      }
+    },
+    [handleSelectProject],
+  );
+
+  useEffect(() => {
+    const consume = () => {
+      const intent = takeM1Intent();
+      if (intent) applyIntent(intent);
+    };
+    // Mounted by the navbar's own navigation: the intent is already waiting.
+    queueMicrotask(consume);
+    window.addEventListener(M1_INTENT_EVENT, consume);
+    return () => window.removeEventListener(M1_INTENT_EVENT, consume);
+  }, [applyIntent]);
 
   // Manual load sessions button
   const handleLoadSessions = () => {
@@ -576,6 +617,7 @@ function Module01PageInner() {
                 onProjectDeleted={handleProjectDeleted}
                 onError={setError}
                 onToast={showToast}
+                refreshKey={projectsVersion}
               />
               <button
                 type="button"
@@ -1046,6 +1088,17 @@ function Module01PageInner() {
       )}
 
       {/* ── Dialogs ────────────────────────────────────────────────── */}
+      <CreateProjectDialog
+        isOpen={isCreateProjectOpen}
+        onClose={() => setIsCreateProjectOpen(false)}
+        onCreated={(project) => {
+          setProjectsVersion((v) => v + 1);
+          handleSelectProject(project);
+          showToast(`Proyek "${project.name}" dibuat.`);
+        }}
+        onError={setError}
+      />
+
       <CreateSessionDialog
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
