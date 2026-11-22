@@ -72,6 +72,7 @@ impl BackgroundTasks {
         session_id: &str,
         session_name: &str,
         total: usize,
+        skipped: usize,
     ) -> Option<StartedTask> {
         let mut table = self.table();
         let duplicate = table.tasks.values().any(|entry| {
@@ -92,6 +93,7 @@ impl BackgroundTasks {
             done: 0,
             total,
             unscorable: 0,
+            skipped,
             current: None,
             error: None,
             started_at: Utc::now().to_rfc3339(),
@@ -190,7 +192,7 @@ mod tests {
     use super::*;
 
     fn start(tasks: &BackgroundTasks, session: &str) -> Option<StartedTask> {
-        tasks.try_start(TaskKind::BlurScoring, "Menilai", session, "Sesi", 5)
+        tasks.try_start(TaskKind::BlurScoring, "Menilai", session, "Sesi", 5, 0)
     }
 
     #[test]

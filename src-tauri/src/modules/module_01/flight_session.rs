@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::blur_detection::SessionBlurStats;
 use super::error::SessionError;
-use crate::models::image::ImageMetadata;
+use crate::models::image::{ImageFormat, ImageMetadata};
 use crate::models::{Image, Project, Session, SessionStatus};
 
 /// Column definitions for the `image` table, shared by [`init_schema`]
@@ -788,6 +788,11 @@ pub(crate) struct ExistingContent {
 /// serialises writers, so re-checking every content hash **inside** it makes
 /// the second writer see the first one's rows.
 ///
+/// A row in `images` with `raw_sibling_id` set to an id outside this batch
+/// (found by `image_importer::find_retroactive_sibling` against
+/// [`unpaired_images_for_session`]) is linked back to that existing row via
+/// [`link_sibling`], in the same transaction.
+///
 /// # Purity
 ///
 /// Impure — writes the database.
@@ -839,10 +844,36 @@ pub(crate) fn insert_images_and_recalculate(
         for image in images {
             insert_image(conn, image)?;
         }
+        // A row inserted with a `raw_sibling_id` pointing outside this batch
+        // is a retroactive link to an image from an earlier import batch —
+        // `ImportScope::pair` already sets both sides directly when it
+        // builds a same-batch pair's two rows together, so only this case
+        // needs the existing row updated to point back (see
+        // `link_sibling`). Same transaction as the insert, so the link can
+        // never be one-sided.
+        let batch_ids: std::collections::HashSet<Uuid> =
+            images.iter().map(|image| image.id).collect();
+        for image in images {
+            if let Some(sibling_id) = image.raw_sibling_id {
+                if !batch_ids.contains(&sibling_id) {
+                    link_sibling(conn, sibling_id, image.id)?;
+                }
+            }
+        }
         // Blur scoring is deferred: queue the rows in the same transaction
         // as the insert, so an image can never be stored without being
-        // queued (it would otherwise stay unscored forever).
-        let ids: Vec<Uuid> = images.iter().map(|image| image.id).collect();
+        // queued (it would otherwise stay unscored forever). Every DNG is
+        // excluded, paired or not: a paired DNG is the same capture as its
+        // JPEG sibling, so decoding its preview independently would waste a
+        // decode for a score that gets copied over anyway (see
+        // `blur_queue::copy_paired_dng_scores`); a standalone DNG's score is
+        // never used by `reclassify_session_blur` either, so decoding it
+        // would just be thrown away.
+        let ids: Vec<Uuid> = images
+            .iter()
+            .filter(|image| image.format.as_deref() != Some("dng"))
+            .map(|image| image.id)
+            .collect();
         super::blur_queue::enqueue(conn, session_id, &ids)?;
         recalculate_session_date_range(conn, session_id)?;
         Ok(None)
@@ -1177,6 +1208,93 @@ fn unlink_sibling(conn: &Connection, sibling_id: Uuid) -> Result<(), SessionErro
     Ok(())
 }
 
+/// Points `sibling_id`'s existing row at `image_id`, the row that was just
+/// inserted pointing at it — the inverse of [`unlink_sibling`], for a pair
+/// discovered across separate import batches (a same-batch pair already has
+/// both sides set when `ImportScope::pair` builds the two rows together, see
+/// [`insert_images_and_recalculate`]) rather than built together within one
+/// `pair` call.
+///
+/// A DNG's `analysis_ready` flips to `true`, mirroring the effect `pair`
+/// applies to a same-batch pair; the JPEG side is unaffected (already
+/// `true`). `blur_score`/`is_blurry` are left alone: a paired DNG's score is
+/// mirrored from its sibling by `blur_queue::copy_paired_dng_scores`, called
+/// right after this in the same import.
+///
+/// Guarded by `raw_sibling_id IS NULL` and the affected-row count, not just
+/// the id: `unpaired_images_for_session` is read before this transaction's
+/// `BEGIN IMMEDIATE`, so between that read and this write another writer
+/// could have paired or deleted `sibling_id` first. Silently overwriting
+/// that link would leave the *other* writer's row pointing at `sibling_id`
+/// while `sibling_id` now points elsewhere — a one-sided link. Returning an
+/// error instead rolls back the whole transaction (see
+/// `with_immediate_transaction`), so the new row this call was meant to
+/// link is not left half-paired either.
+///
+/// # Errors
+///
+/// [`SessionError::Storage`] when `sibling_id` no longer exists or already
+/// has a sibling.
+fn link_sibling(conn: &Connection, sibling_id: Uuid, image_id: Uuid) -> Result<(), SessionError> {
+    let changed = conn.execute(
+        "UPDATE image SET raw_sibling_id = ?2, \
+            analysis_ready = CASE WHEN format = 'dng' THEN 1 ELSE analysis_ready END \
+         WHERE id = ?1 AND raw_sibling_id IS NULL",
+        params![sibling_id.to_string(), image_id.to_string()],
+    )?;
+    if changed != 1 {
+        return Err(SessionError::Storage(format!(
+            "could not link sibling '{sibling_id}': it no longer exists or is already paired"
+        )));
+    }
+    Ok(())
+}
+
+/// Unpaired JPEG/DNG images of `session_id`, as `(id, format, file_name)`
+/// triples — `file_name` is the basename of each row's original
+/// `source_path` (falling back to its stored `file_path` for a row imported
+/// before `source_path` was tracked), for matching against a new candidate's
+/// name with the exact same stem rule `pair_raw_siblings` uses in-batch.
+///
+/// Only rows with no sibling yet are returned: an already-paired image is
+/// never a candidate for another, ambiguous link.
+///
+/// # Purity
+///
+/// Impure — reads the `image` table.
+pub(crate) fn unpaired_images_for_session(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<Vec<(Uuid, ImageFormat, String)>, SessionError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, format, COALESCE(source_path, file_path) FROM image
+         WHERE session_id = ?1 AND raw_sibling_id IS NULL
+           AND format IN ('jpeg', 'dng')",
+    )?;
+    let rows = stmt
+        .query_map(params![session_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut images = Vec::new();
+    for (id, format, file_name) in rows {
+        let Ok(id) = Uuid::parse_str(&id) else {
+            continue;
+        };
+        let format = match format.as_str() {
+            "jpeg" => ImageFormat::Jpeg,
+            "dng" => ImageFormat::Dng,
+            _ => continue,
+        };
+        images.push((id, format, file_name));
+    }
+    Ok(images)
+}
+
 /// Deletes one image row, unlinking its raw sibling when it had one.
 ///
 /// The caller removes the file itself; this only touches the database. Runs
@@ -1257,10 +1375,21 @@ pub fn move_image_row(
 /// over the whole session, rather than classifying each image incrementally
 /// as it is inserted, makes the result depend only on the session's final
 /// score set — not on import order or how many separate import runs it took
-/// to assemble it. A DNG with a same-stem JPEG is excluded from the
-/// baseline and from direct classification (it is the same capture as its
-/// JPEG, so scoring it as an independent sample would double-count that
-/// capture); it mirrors its JPEG's flag instead.
+/// to assemble it. Every DNG — paired with a same-stem JPEG or standalone —
+/// is excluded from the baseline and from direct classification: a DNG
+/// preview's score sits on a different scale than a camera JPEG's, so
+/// mixing it into a JPEG-dominated baseline is a format mismatch, not a
+/// sharpness signal. A paired DNG mirrors its JPEG's flag instead (same
+/// capture, so classifying it independently would double-count that
+/// capture); a standalone DNG has no JPEG to mirror, so it is actively
+/// cleared to unflagged (`is_blurry` set to `None`) rather than left
+/// untouched — this also clears a flag left over from before a DNG was
+/// excluded (an existing database) or from losing its JPEG partner
+/// (deleted or moved away), since a paired DNG carries a copied
+/// `blur_score` that would otherwise make it look already-classified. A
+/// scored row with no `format` recorded (e.g. migrated before this column
+/// existed) is treated as "not a DNG" and kept in the baseline, rather than
+/// silently dropped by SQL's three-valued `NULL` logic.
 ///
 /// Each row's leave-one-out baseline comes from
 /// [`super::blur_detection::leave_one_out_stats`] — an O(n) pure helper, not
@@ -1290,7 +1419,7 @@ pub fn reclassify_session_blur(
             let mut stmt = conn.prepare(
                 "SELECT id, blur_score FROM image
                  WHERE session_id = ?1 AND blur_score IS NOT NULL
-                   AND NOT (format = 'dng' AND raw_sibling_id IS NOT NULL)",
+                   AND (format IS NULL OR format != 'dng')",
             )?;
             let rows = stmt.query_map(params![session_id.to_string()], |row| {
                 Ok((row.get(0)?, row.get(1)?))
@@ -1308,6 +1437,15 @@ pub fn reclassify_session_blur(
             "UPDATE image SET is_blurry =
                  (SELECT j.is_blurry FROM image j WHERE j.id = image.raw_sibling_id)
              WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL",
+            params![session_id.to_string()],
+        )?;
+        // A DNG with no JPEG partner is never classified (see the query
+        // above), so clear any flag left over from before it was excluded
+        // or unlinked — a stale flag from a prior score-it-independently
+        // pass, or one orphaned when its JPEG was deleted or moved away.
+        conn.execute(
+            "UPDATE image SET is_blurry = NULL
+             WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NULL",
             params![session_id.to_string()],
         )?;
         Ok(())
@@ -1830,6 +1968,146 @@ mod tests {
         assert_eq!(
             dng_flag, jpeg_flag,
             "the paired dng must mirror its jpeg's flag, not its own score"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_excludes_a_standalone_dng_from_the_baseline() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        let sharp_ids: Vec<Uuid> = sharp_scores
+            .iter()
+            .enumerate()
+            .map(|(n, score)| {
+                let mut image = image_row(
+                    session.id,
+                    &format!("/photos/sharp{n}.jpg"),
+                    Some(&format!("sharp{n}")),
+                );
+                image.blur_score = Some(*score);
+                let id = image.id;
+                insert_image(&conn, &image).expect("insert sharp");
+                id
+            })
+            .collect();
+
+        // No jpeg sibling — scored from a DNG preview, which sits on a
+        // different scale than a camera jpeg's, so it must not skew (or be
+        // judged against) the jpeg baseline.
+        let mut standalone_dng = image_row(session.id, "/photos/lone.dng", Some("lone-dng"));
+        standalone_dng.format = Some("dng".to_string());
+        standalone_dng.blur_score = Some(999.0);
+        let dng_id = standalone_dng.id;
+        insert_image(&conn, &standalone_dng).expect("insert standalone dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        let dng_flag = get_image(&conn, dng_id).expect("get dng").is_blurry;
+        assert_eq!(
+            dng_flag, None,
+            "a standalone dng has no jpeg to mirror and must stay unflagged"
+        );
+
+        for sharp_id in sharp_ids {
+            let sharp = get_image(&conn, sharp_id).expect("get sharp");
+            assert_eq!(
+                sharp.is_blurry,
+                Some(false),
+                "a tight sharp cluster must not be skewed by the dng's outlying score"
+            );
+        }
+    }
+
+    #[test]
+    fn reclassify_session_blur_keeps_a_null_format_row_in_the_baseline() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let sharp_scores = [95.0, 100.0, 105.0, 98.0, 102.0];
+        for (n, score) in sharp_scores.iter().enumerate() {
+            let mut image = image_row(
+                session.id,
+                &format!("/photos/sharp{n}.jpg"),
+                Some(&format!("sharp{n}")),
+            );
+            image.blur_score = Some(*score);
+            insert_image(&conn, &image).expect("insert sharp");
+        }
+
+        // A row with no recorded format (e.g. migrated before the column
+        // existed) scored inside the sharp cluster: it must still be kept in
+        // the baseline, not silently dropped by NULL != 'dng' evaluating to
+        // NULL.
+        let mut null_format_sharp = image_row(session.id, "/photos/legacy-sharp.jpg", None);
+        null_format_sharp.format = None;
+        null_format_sharp.blur_score = Some(101.0);
+        let sharp_id = null_format_sharp.id;
+        insert_image(&conn, &null_format_sharp).expect("insert null-format sharp");
+
+        // And a null-format row that actually is a relative outlier, to
+        // prove it is classified, not merely passed through untouched.
+        let mut null_format_outlier = image_row(session.id, "/photos/legacy-outlier.jpg", None);
+        null_format_outlier.format = None;
+        null_format_outlier.blur_score = Some(30.0);
+        let outlier_id = null_format_outlier.id;
+        insert_image(&conn, &null_format_outlier).expect("insert null-format outlier");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        assert_eq!(
+            get_image(&conn, sharp_id).expect("get sharp").is_blurry,
+            Some(false),
+            "a null-format row inside the sharp cluster must not be dropped from the baseline"
+        );
+        assert_eq!(
+            get_image(&conn, outlier_id).expect("get outlier").is_blurry,
+            Some(true),
+            "a null-format row must actively participate in classification, not just pass through"
+        );
+    }
+
+    #[test]
+    fn reclassify_session_blur_clears_a_stale_flag_on_a_standalone_dng() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        // Simulates a row from before standalone DNGs were excluded (or one
+        // that just lost its jpeg partner via unlink_sibling): it already
+        // carries a score and a flag from an earlier, independent scoring
+        // pass.
+        let mut stale_dng = image_row(session.id, "/photos/stale.dng", Some("stale-dng"));
+        stale_dng.format = Some("dng".to_string());
+        stale_dng.blur_score = Some(5.0);
+        stale_dng.is_blurry = Some(true);
+        let dng_id = stale_dng.id;
+        insert_image(&conn, &stale_dng).expect("insert stale dng");
+
+        reclassify_session_blur(
+            &conn,
+            session.id,
+            crate::modules::module_01::blur_detection::classify_with_stats,
+        )
+        .expect("reclassify");
+
+        assert_eq!(
+            get_image(&conn, dng_id).expect("get dng").is_blurry,
+            None,
+            "a standalone dng's stale flag must be cleared, not left as-is"
         );
     }
 
@@ -3023,5 +3301,78 @@ mod tests {
             dng.is_blurry, None,
             "an unscored lone dng must have is_blurry cleared"
         );
+    }
+
+    #[test]
+    fn link_sibling_points_an_unpaired_row_back_at_its_new_sibling() {
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.analysis_ready = Some(false);
+        insert_image(&conn, &dng).expect("dng row");
+
+        let jpeg_id = Uuid::new_v4();
+        link_sibling(&conn, dng_id, jpeg_id).expect("link");
+
+        let dng = get_image(&conn, dng_id).expect("dng row");
+        assert_eq!(dng.raw_sibling_id, Some(jpeg_id));
+        assert_eq!(
+            dng.analysis_ready,
+            Some(true),
+            "linking a dng flips it to analysis-ready"
+        );
+    }
+
+    #[test]
+    fn link_sibling_refuses_a_row_that_is_already_paired() {
+        // The race the reviewer flagged: `unpaired_images_for_session` is
+        // read before the caller's transaction begins, so another writer
+        // could have paired `dng_id` in between. Silently overwriting that
+        // link would leave the other writer's row pointing at a sibling
+        // that no longer points back.
+        let conn = memory_db();
+        let project = test_project(&conn);
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let first_jpeg_id = Uuid::new_v4();
+        let mut dng = image_from_metadata(
+            dng_id,
+            session.id,
+            "/lib/a.dng".to_string(),
+            &full_metadata(),
+        );
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(first_jpeg_id);
+        insert_image(&conn, &dng).expect("dng row");
+
+        let second_jpeg_id = Uuid::new_v4();
+        let err = link_sibling(&conn, dng_id, second_jpeg_id)
+            .expect_err("already-paired row must not be overwritten");
+        assert!(matches!(err, SessionError::Storage(_)));
+
+        let dng = get_image(&conn, dng_id).expect("dng row");
+        assert_eq!(
+            dng.raw_sibling_id,
+            Some(first_jpeg_id),
+            "the original link must survive the refused overwrite"
+        );
+    }
+
+    #[test]
+    fn link_sibling_refuses_a_row_that_no_longer_exists() {
+        let conn = memory_db();
+        let err = link_sibling(&conn, Uuid::new_v4(), Uuid::new_v4())
+            .expect_err("a deleted/nonexistent sibling must not succeed silently");
+        assert!(matches!(err, SessionError::Storage(_)));
     }
 }

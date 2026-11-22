@@ -237,26 +237,38 @@
 //!   removes copies when their session is deleted or a startup sweep finds
 //!   them orphaned. Folder imports recursively scan nested subdirectories up
 //!   to 6 levels deep (skipping hidden folders and symlinked directories while
-//!   supporting symlinked image files).
+//!   supporting symlinked image files). Pairing is not limited to files
+//!   arriving in the same import call: a candidate with no same-batch
+//!   partner is also matched against unpaired images already in the session
+//!   (`flight_session::unpaired_images_for_session` +
+//!   `image_importer::find_retroactive_sibling`), so a JPEG and its DNG
+//!   still link even when imported in two separate, later operations — the
+//!   same one-JPEG-one-DNG-per-stem ambiguity guard applies across batches
+//!   as within one.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
 //!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
 //!   1280px long edge when the source is larger — never upscaled, since that
 //!   would smooth away the edges the Laplacian measures and score a small
-//!   source as falsely blurry, so a source already below the cap (a DNG's
-//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
-//!   decoded directly, DNG from its stored preview. `blur_score` is **not**
-//!   computed during `import_io::run_import`: the import only queues each new
-//!   row (see `blur_queue`) and the scoring runs afterwards as a background
-//!   task. `is_blurry` is then re-derived for every scored image in the
-//!   session in one pass (`flight_session::reclassify_session_blur`, called
-//!   when a scoring run ends) from the session's mean/stddev z-score, falling
-//!   back to an absolute hard floor only while the session has too few scored
-//!   images for a baseline — not frozen per image at insert time, so the flag
-//!   depends only on the session's current score set, not on import order or
-//!   batch boundaries.
-//! - `modules::module_01::blur_queue` — the `blur_queue` side table of images
+//!   source as falsely blurry, so a source already below the cap is left
+//!   unscored instead. Only JPEGs reach the scorer; no raw decoder exists in
+//!   this codebase. `blur_score` is **not** computed during
+//!   `import_io::run_import`: the import only queues each new JPEG row (see
+//!   `blur_queue`) and the scoring runs afterwards as a background task. A
+//!   paired DNG has its score mirrored from its JPEG sibling
+//!   (`blur_queue::copy_paired_dng_scores`) once scoring ends; a standalone
+//!   DNG with no sibling is never scored, and the count is reported to the
+//!   background-task UI as a deliberate skip
+//!   (`blur_queue::standalone_dng_count`), not silently dropped.
+//!   `is_blurry` is then re-derived for every scored image in the session in
+//!   one pass (`flight_session::reclassify_session_blur`, called when a
+//!   scoring run ends) from the session's mean/stddev z-score, falling back
+//!   to an absolute hard floor only while the session has too few scored
+//!   images for a baseline — not frozen per image at insert time, so the
+//!   flag depends only on the session's current score set, not on import
+//!   order or batch boundaries.
+//! - `modules::module_01::blur_queue` — the `blur_queue` side table of JPEGs
 //!   still waiting for a score. A queue (instead of "`blur_score IS NULL`")
 //!   because NULL also means *too small*, *undecodable* or *imported before
 //!   scoring existed*; only queued ids are pending, so an unscorable image is
@@ -314,18 +326,21 @@
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
 //! The `preview_image` command serves those previews over IPC.
-//! Blur detection (M1-29) is also implemented: every imported image gets a
+//! Blur detection (M1-29) is also implemented: every imported JPEG gets a
 //! `blur_score`/`is_blurry` pair persisted alongside it. Scoring is deferred
 //! so it never blocks the import: `import_images` returns once the files are
-//! copied and recorded, then a background task scores the queued images in
+//! copied and recorded, then a background task scores the queued JPEGs in
 //! parallel and reports progress through the `background-task-updated` event
 //! (watched in the app's status bar). Until an image is scored its
 //! `blur_score` is `None`. The task can be cancelled; images it did not reach
-//! stay queued and are scored on the next launch. Known, deliberate
-//! limitations: DNGs are scored from their camera-processed preview, not
-//! raw sensor data; no sensor-noise pre-filtering is applied; the queue is
-//! per session and sessions are scored one after another. Surfacing quality
-//! flags in the UI (M1-32) is a separate, not-yet-implemented task.
+//! stay queued and are scored on the next launch. A standalone DNG (no
+//! same-stem JPEG) is never scored — no raw decoder exists in this
+//! codebase — and the `TaskSnapshot.skipped` count the UI shows for such a
+//! session reports that as a deliberate skip rather than hiding it. Known,
+//! deliberate limitations: no sensor-noise pre-filtering is applied; the
+//! queue is per session and sessions are scored one after another.
+//! Surfacing quality flags in the UI (M1-32) is a separate, not-yet-
+//! implemented task.
 //!
 //! ---
 //!
