@@ -215,12 +215,18 @@ fn fold_stem_and_extension(file_name: &str, folding: NameFolding) -> Option<(Str
 ///
 /// # Returns
 ///
-/// `None` for no match or an ambiguous one (more than one) — the same guard
-/// `pair_raw_siblings` applies to an in-batch stem group: guessing would
-/// attach the wrong raw file to the wrong preview.
+/// `None` when:
+/// - `candidate` has no extension, or `batch` has more than one candidate of
+///   `candidate_format` sharing its stem — `pair_raw_siblings` already
+///   leaves a stem like that unpaired in-batch (e.g. `A.JPG` and `A.jpeg`
+///   imported together) because it cannot tell which one an opposite-format
+///   file belongs to; guessing here would make the same mistake, just
+///   against an existing row instead of another candidate.
+/// - no match, or an ambiguous one (more than one), in `existing`.
 pub(crate) fn find_retroactive_sibling(
     candidate: &ImportCandidate,
     candidate_format: ImageFormat,
+    batch: &[ImportCandidate],
     existing: &[(uuid::Uuid, ImageFormat, String)],
     folding: NameFolding,
 ) -> Option<uuid::Uuid> {
@@ -229,6 +235,21 @@ pub(crate) fn find_retroactive_sibling(
         ImageFormat::Dng => ImageFormat::Jpeg,
     };
     let (stem, _extension) = fold_stem_and_extension(&candidate.file_name, folding)?;
+
+    let same_stem_same_format_in_batch = batch
+        .iter()
+        .filter(|other| {
+            classify_file(other) == Ok(candidate_format)
+                && fold_stem_and_extension(&other.file_name, folding)
+                    .map(|(other_stem, _)| other_stem)
+                    .as_deref()
+                    == Some(stem.as_str())
+        })
+        .count();
+    if same_stem_same_format_in_batch > 1 {
+        return None;
+    }
+
     let mut matches = existing.iter().filter(|(_, format, file_name)| {
         *format == needed_format
             && fold_stem_and_extension(file_name, folding)
