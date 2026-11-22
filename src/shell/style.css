@@ -28,7 +28,6 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  /* above the sidebar and content so the dropdowns can overlap them */
   position: relative;
   z-index: 30;
 }
@@ -141,7 +140,6 @@
   flex: 0 0 20px;
   width: 20px;
   height: 20px;
-  /* react-icons draw with currentColor, so they follow the item's text color */
 }
 
 /* Content */
@@ -259,8 +257,6 @@
   min-height: 220px;
 }
 
-/* Navbar: search + "+" menu */
-
 .app-shell_navbar-end {
   display: flex;
   align-items: center;
@@ -269,8 +265,6 @@
   margin-left: auto;
   font-family: "DM Sans", sans-serif;
 }
-
-/* Search */
 
 .app-shell_search {
   position: relative;
@@ -447,8 +441,6 @@
   font-size: 11px;
 }
 
-/* "+" menu */
-
 .app-shell_new {
   position: relative;
 }
@@ -489,8 +481,6 @@
   background: #ffffff;
   box-shadow: 0 12px 32px rgba(17, 20, 24, 0.14);
 }
-
-/* Explorer-style tree: folder rows, an indent guide, sessions as files. */
 
 .app-shell_ft-head {
   display: flex;
@@ -604,7 +594,6 @@
   color: #1f6feb;
 }
 
-/* Folder row = toggle button + the "aktif" chip (or the "aktifkan" button for inactive projects). */
 .app-shell_ft-folder {
   display: flex;
   align-items: center;
@@ -630,7 +619,6 @@
   margin: 0 8px 0 0;
 }
 
-/* Not active yet: same chip, outline only, no fill. */
 .app-shell_ft-activate {
   flex: none;
   height: 20px;
@@ -652,7 +640,6 @@
   background: #e2edff;
 }
 
-/* Children sit under the folder's chevron, joined by a thin indent guide. */
 .app-shell_ft-children {
   margin: 0 0 4px 15px;
   padding-left: 6px;
@@ -705,14 +692,12 @@
   }
 }
 
-/* No focus rings, borders or glows anywhere in the navbar. Hover is the only feedback. */
 .app-shell_navbar :focus,
 .app-shell_navbar :focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* The resets above must not touch what is not a focus style. */
 .app-shell_navbar .app-shell_search-input:focus {
   border-color: rgba(17, 20, 24, 0.14) !important;
 }

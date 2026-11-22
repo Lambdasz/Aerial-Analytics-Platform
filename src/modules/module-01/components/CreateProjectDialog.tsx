@@ -6,15 +6,10 @@ import { type Project, createProject } from "../projectCommands";
 export interface CreateProjectDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Runs after the project is stored and the dialog has been asked to close. */
   onCreated: (project: Project) => void | Promise<void>;
   onError: (message: string) => void;
 }
 
-/**
- * "Proyek baru" dialog. Extracted from ProjectPicker so the picker and the navbar's "+" menu
- * (through Module 01) share one implementation.
- */
 export const CreateProjectDialog: FC<CreateProjectDialogProps> = ({
   isOpen,
   onClose,

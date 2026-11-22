@@ -22,14 +22,12 @@ interface SearchIndex {
   sessions: SessionHit[];
 }
 
-/** Projects plus every project's sessions. Local database, so the fan-out is cheap. */
 async function loadIndex(): Promise<SearchIndex> {
   const projects = await listProjects();
   const perProject = await Promise.all(
     projects.map((project) =>
       getSessionsByProject(project.id)
         .then((sessions) => sessions.map((session) => ({ session, project })))
-        // One broken project must not blank the whole search.
         .catch((): SessionHit[] => []),
     ),
   );
@@ -39,7 +37,6 @@ async function loadIndex(): Promise<SearchIndex> {
 const byRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
   Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
 
-/** 0 = best. null = no match. Every word of the query must appear. */
 function score(query: string, name: string, id: string): number | null {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return 0;
@@ -84,7 +81,6 @@ export function NavbarSearch() {
   const loadSeq = useRef(0);
   const listId = useId();
 
-  // Refresh the index every time the box opens, so sessions made since last time show up.
   const refresh = useCallback(() => {
     const seq = ++loadSeq.current;
     setLoading(true);
@@ -113,7 +109,6 @@ export function NavbarSearch() {
     refresh();
   }, [open, refresh]);
 
-  // "/" and Ctrl/Cmd+K focus the search, like GitHub.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const slash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
@@ -203,11 +198,9 @@ export function NavbarSearch() {
       id: `${listId}-opt-${flatIndex}`,
       role: "option" as const,
       "aria-selected": active,
-      // Not in the tab order: the input keeps focus and points here via aria-activedescendant.
       tabIndex: -1,
       className: `app-shell_search-item${active ? " app-shell_search-item--active" : ""}`,
       onMouseMove: () => setActiveIdx(flatIndex),
-      // mousedown keeps the input focused; the click then fires the choice.
       onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
       onClick: () => choose(item),
     };

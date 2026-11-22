@@ -50,27 +50,23 @@ const DEFAULT_STATUS_FILTER: StatusFilter = "active";
 type SortOrder = "newest" | "oldest" | "name";
 type View = { kind: "list" } | { kind: "detail"; sessionId: string };
 
-/** A cached image count. `key` changes whenever the session row does. */
 interface CachedCount {
   key: string;
   count: number;
 }
 
-/** Sessions counted per round trip: small enough to keep the UI responsive between batches. */
 const COUNT_BATCH = 3;
 
 const countKey = (session: Session) =>
   `${session.updatedAt}|${session.dateStart}|${session.dateEnd}`;
 
 /**
- * Counts the stored images of every session. This is the honest "how many berkas" source for
- * the session cards: the session type carries no count, and inferring one from the date range
- * misses images that have no capture time. A session whose rows cannot be read stays absent
- * from the map, and its card shows the unknown state.
+ * Counts the stored images of every session, in parallel.
  *
- * The backend has no count command, so each count downloads the session's image rows. To keep
- * that affordable: counts already known are reused (`cache`) and shown at once, and the rest
- * are fetched in small batches so the UI keeps responding in between.
+ * This is the honest "how many berkas" source for the session cards: the
+ * session type carries no count, and inferring one from the date range misses
+ * images that have no capture time. A session whose rows cannot be read stays
+ * absent from the map, and its card shows the unknown state.
  */
 async function countImagesPerSession(
   sessions: Session[],
@@ -105,7 +101,6 @@ async function countImagesPerSession(
       counts[session.id] = count;
       if (count !== undefined) cache.set(session.id, { key: countKey(session), count });
     });
-    // Yield so the browser can paint and handle input between batches.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   if (!isCancelled()) onProgress({ ...counts });
@@ -198,7 +193,6 @@ function Module01PageInner() {
 
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  // "Proyek baru" opened from the navbar; projectsVersion makes the picker refetch afterwards.
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [projectsVersion, setProjectsVersion] = useState(0);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
@@ -251,7 +245,6 @@ function Module01PageInner() {
     projectIdRef.current = projectId;
   }, [projectId]);
 
-  // Image counts: cached per session for this page's lifetime, abandoned when superseded.
   const countCacheRef = useRef(new Map<string, CachedCount>());
   const countRunRef = useRef(0);
   const refreshCounts = useCallback((list: Session[], pid: string) => {
@@ -283,7 +276,6 @@ function Module01PageInner() {
         const result = await getSessionsByProject(pid.trim());
         if (projectIdRef.current !== pid) return;
         setSessions(result);
-        // Card counts fill in on their own; only the project total gates the busy state.
         refreshCounts(result, pid);
         const total = await countImagesByProject(pid.trim()).catch(() => undefined);
         if (projectIdRef.current !== pid) return;
@@ -335,7 +327,7 @@ function Module01PageInner() {
     }
     return () => {
       isMounted = false;
-      countRunRef.current += 1; // abandon a count still running for the previous project
+      countRunRef.current += 1;
     };
   }, [projectId, formatError, refreshCounts]);
 
@@ -380,7 +372,6 @@ function Module01PageInner() {
     [selectedProject],
   );
 
-  // Navbar intents (search results and the "+" menu live in the app shell, outside this page)
   const applyIntent = useCallback(
     (intent: M1Intent) => {
       switch (intent.kind) {
@@ -389,7 +380,6 @@ function Module01PageInner() {
           break;
         case "open-session":
           handleSelectProject(intent.project);
-          // The detail view appears once that project's sessions have loaded.
           setView({ kind: "detail", sessionId: intent.sessionId });
           break;
         case "create-session":
@@ -410,7 +400,6 @@ function Module01PageInner() {
       const intent = takeM1Intent();
       if (intent) applyIntent(intent);
     };
-    // Mounted by the navbar's own navigation: the intent is already waiting.
     queueMicrotask(consume);
     window.addEventListener(M1_INTENT_EVENT, consume);
     return () => window.removeEventListener(M1_INTENT_EVENT, consume);
@@ -475,7 +464,7 @@ function Module01PageInner() {
     showToast(message);
     setAssignTarget(null);
     setImageRevision((revision) => revision + 1);
-    countCacheRef.current.clear(); // images changed: every cached count may be wrong
+    countCacheRef.current.clear();
     if (projectId) await fetchSessions(projectId, false);
   };
 

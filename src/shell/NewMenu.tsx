@@ -12,16 +12,12 @@ import { type Project, listProjects } from "../modules/module-01/projectCommands
 import { type Session, getSessionsByProject } from "../modules/module-01/sessionCommands";
 import { sendM1Intent } from "../modules/module-01/navIntent";
 
-/** Folders that start open (the active project first, then the most recent). */
 const DEFAULT_EXPANDED = 2;
-/** Sessions listed per folder; the rest are reachable through search. */
 const MAX_SESSIONS = 5;
 const ACTIVE_PROJECT_KEY = "m1_last_project_id";
 
-/** `undefined` = not asked for yet. */
 type SessionState = Session[] | "loading" | "error" | undefined;
 
-/** The project Module 01 has open right now, if any (it stores the whole project object). */
 function readActiveProjectId(): string | null {
   try {
     const raw = window.localStorage.getItem(ACTIVE_PROJECT_KEY);
@@ -36,18 +32,6 @@ function readActiveProjectId(): string | null {
 const byRecent = (a: { updatedAt: string }, b: { updatedAt: string }) =>
   Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
 
-/**
- * GitHub-style "+" menu, laid out like a file explorer:
- *
- *   Sesi baru di proyek                  [+]   <- new project
- *   ▾ Blok A
- *   │   ✈ Penerbangan pagi
- *   │   + Tambah sesi
- *   ▸ Blok B
- *
- * Clicking a project only opens or closes its folder. Sessions open that session, and
- * "Tambah sesi" starts a new session in that project.
- */
 export function NewMenu() {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -67,7 +51,6 @@ export function NewMenu() {
     if (returnFocus) triggerRef.current?.focus();
   }, []);
 
-  /** Fetch a project's sessions once per opening of the menu. */
   const loadSessions = useCallback((projectId: string, seq: number) => {
     setSessions((prev) =>
       prev[projectId] === undefined ? { ...prev, [projectId]: "loading" } : prev,
@@ -133,7 +116,6 @@ export function NewMenu() {
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [open, close]);
 
-  // Focus the first folder once the project list has arrived (the header "+" otherwise).
   useEffect(() => {
     if (!open) return;
     const target =
@@ -194,7 +176,6 @@ export function NewMenu() {
     close(false);
   };
 
-  /** Makes a project the one Module 01 has open; the menu stays open so the chip visibly swaps. */
   const activateProject = (project: Project) => {
     sendM1Intent({ kind: "select-project", project });
     setActiveId(project.id);
@@ -344,6 +325,7 @@ export function NewMenu() {
                       <button
                         type="button"
                         role="menuitem"
+                        data-parent={project.id}
                         className="app-shell_ft-activate"
                         aria-label={`Aktifkan proyek ${project.name}`}
                         onClick={() => activateProject(project)}

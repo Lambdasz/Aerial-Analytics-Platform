@@ -49,7 +49,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 3,
     slug: "map-explorer",
     label: "Map Explorer",
-    icon: LuMap, // not in your list: my pick
+    icon: LuMap,
     Page: Module03Page,
   },
   {
@@ -65,7 +65,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 10,
     slug: "temporal-change",
     label: "Temporal Change",
-    icon: LuHistory, // not in your list: my pick
+    icon: LuHistory,
     Page: Module10Page,
   },
   {
@@ -81,7 +81,7 @@ export const MODULES: readonly ModuleEntry[] = [
     moduleNumber: 7,
     slug: "examples",
     label: "Examples",
-    icon: LuFlaskConical, // not in your list: my pick
+    icon: LuFlaskConical,
     Page: Example,
   },
 ];

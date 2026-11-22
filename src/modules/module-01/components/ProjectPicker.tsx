@@ -12,7 +12,6 @@ export interface ProjectPickerProps {
   onProjectDeleted: (projectId: string) => void;
   onError: (message: string) => void;
   onToast: (message: string) => void;
-  /** Bump to make the picker refetch (a project was created elsewhere, e.g. from the navbar). */
   refreshKey?: number;
 }
 
