@@ -28,7 +28,10 @@ export function getCachedStorageRoot(): string | null {
 }
 
 function isSafeImageUrl(url: string): boolean {
-  if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+  for (const character of url) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
   if (SAFE_DATA_IMAGE_URL.test(url)) return true;
   if (url.startsWith("/") && !url.startsWith("//")) return true;
 
