@@ -95,7 +95,7 @@ export const PopupPreviewCard: React.FC<PopupPreviewCardProps> = ({
           }}
         >
           <img
-            src={resolvedPhoto}
+            src={encodeURI(resolvedPhoto)}
             alt="Pratinjau"
             style={{
               width: "100%",
