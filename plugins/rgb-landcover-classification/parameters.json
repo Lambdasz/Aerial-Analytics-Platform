@@ -2,12 +2,17 @@
   "$schema": "https://aerial-analytics.local/schemas/parameters.v1.json",
   "parameters": [
     {
-      "name": "model_id",
-      "label": "Model",
+      "name": "backbone",
+      "label": "DeepLabV3+ Backbone",
       "type": "select",
-      "options": ["rf_superpixel_v1", "deeplab_resnet101_v1"],
-      "default": "rf_superpixel_v1",
-      "description": "Model klasifikasi yang dipakai."
+      "options": ["resnet101", "xception"],
+      "default": "resnet101"
+    },
+    {
+      "name": "weights_path",
+      "label": "Model Weights",
+      "type": "string",
+      "default": "models/deeplabv3plus_resnet101.pt"
     },
     {
       "name": "min_confidence",
@@ -16,17 +21,7 @@
       "default": 0.5,
       "min": 0,
       "max": 1,
-      "step": 0.05,
-      "description": "Piksel dengan confidence di bawah nilai ini tidak diklasifikasi."
-    },
-    {
-      "name": "segment_size",
-      "label": "Superpixel Segment Size",
-      "type": "number",
-      "default": 500,
-      "min": 1,
-      "step": 1,
-      "description": "Parameter segmentasi superpixel untuk rf_superpixel_v1."
+      "step": 0.05
     },
     {
       "name": "gsd_m_per_px",
@@ -34,23 +29,8 @@
       "type": "number",
       "default": 0,
       "min": 0,
-      "step": 0.001,
-      "description": "Meter per piksel. 0 = tidak diisi (estimasi otomatis)."
+      "step": 0.001
     },
-    {
-      "name": "device",
-      "label": "Device",
-      "type": "select",
-      "options": ["auto", "cpu", "cuda"],
-      "default": "auto",
-      "description": "Perangkat inferensi."
-    },
-    {
-      "name": "classes_json",
-      "label": "Custom Classes (JSON)",
-      "type": "string",
-      "default": "",
-      "description": "Kosong = kelas bawaan. Isi list JSON [{id, name, color}]."
-    }
+    { "name": "classes_json", "label": "Custom Classes (JSON)", "type": "string", "default": "" }
   ]
 }

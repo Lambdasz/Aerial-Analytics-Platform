@@ -1,7 +1,16 @@
 //! Modul atomic untuk citra ortomosaik dan raster JPG/PNG.
 
+// Modul dari main
+pub mod clipper;
+pub mod commands;
+pub mod constants;
+pub mod exif_reader;
+pub mod geotiff_reader;
+
+// Modul dari feat
 pub mod exif_metadata_io;
 pub mod geotiff_reader_io;
+
 pub mod image_pipeline;
 pub mod job_lifecycle_io;
 pub mod jpeg_decoder_wrapper_io;
@@ -34,6 +43,8 @@ pub use sidecar_json_io as sidecar_reader;
 pub use streaming_resampler_logic as streaming_resampler;
 pub use world_file_parser_logic as world_file_reader;
 
+// Re-export
+pub use clipper::*;
 pub use exif_metadata_io::*;
 pub use geotiff_reader_io::*;
 pub use image_pipeline::*;

@@ -44,3 +44,18 @@ body,
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Blueprint overlay & portal z-index stacking.
+   Leaflet panes and controls use z-index 200-1000.
+   Elevate Blueprint portals and overlays so dialogs, alerts, and popovers always sit on top. */
+.bp6-portal {
+  position: relative;
+  z-index: 2000;
+}
+
+.bp6-overlay,
+.bp6-overlay-backdrop,
+.bp6-overlay-content,
+.bp6-overlay-container {
+  z-index: 2000;
+}

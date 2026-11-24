@@ -22,6 +22,7 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
 image = "0.25"
 
 # Process signals (plugin cancellation safety)
@@ -69,6 +70,18 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.kamadak-exif]
+opt-level = 3
+
+# `image` decodes JPEG with zune-jpeg (not jpeg-decoder), and every import
+# hashes each file with sha2. Left at opt-level 0 they made a 3-photo import
+# take ~12 s in `tauri dev`.
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.sha2]
 opt-level = 3
 
 [dev-dependencies]

@@ -57,8 +57,22 @@ const MAX_LONG_EDGE: u32 = 1280;
 /// Returns a [`CommandError`] with code `UNSUPPORTED_FORMAT` for an
 /// extension this command does not handle, `PREVIEW_UNAVAILABLE` for a DNG
 /// that stores no JPEG, and `IO_ERROR` for a file that cannot be read.
+///
+/// The decode, resize and base64 encoding run on a blocking thread. A plain
+/// (non-`async`) command runs on the main thread in Tauri 2, so a few large
+/// frames requested at once used to freeze the whole window.
 #[tauri::command]
-pub fn preview_image(path: String) -> Result<ImagePreview, CommandError> {
+pub async fn preview_image(path: String) -> Result<ImagePreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || preview_image_impl(path))
+        .await
+        .map_err(|err| CommandError {
+            code: "PREVIEW_JOIN_ERROR".to_string(),
+            message: format!("the preview task stopped unexpectedly: {err}"),
+        })?
+}
+
+/// Testable core of [`preview_image`].
+pub(crate) fn preview_image_impl(path: String) -> Result<ImagePreview, CommandError> {
     let extension = Path::new(&path)
         .extension()
         .and_then(|name| name.to_str())
@@ -176,6 +190,43 @@ pub(crate) fn thumbnail_image_impl(
     })
 }
 
+/// Reads a small thumbnail of a file the user just picked, before it is
+/// imported.
+///
+/// The import dialog previews every picked file, and a batch can be hundreds
+/// of ~5 MB frames. [`preview_image`] would decode each full frame; this
+/// returns the JPEG's own EXIF thumbnail when it is small enough, and
+/// otherwise a 160 px resize (a DNG is served from its stored preview).
+///
+/// Unlike [`thumbnail_image`] it accepts any path, because the file is not in
+/// the library yet, and it never touches the thumbnail cache, so previewing
+/// files that are then not imported leaves nothing behind. The work runs on a
+/// blocking thread.
+///
+/// # Errors
+///
+/// `UNSUPPORTED_FORMAT` for an extension this command does not handle,
+/// `PREVIEW_UNAVAILABLE` for a DNG that stores no JPEG, `MAGIC_MISMATCH` for a
+/// `.jpg` that is not a JPEG, and `IO_ERROR` for a file that cannot be read.
+#[tauri::command]
+pub async fn thumbnail_source_image(path: String) -> Result<ImagePreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || thumbnail_source_image_impl(path))
+        .await
+        .map_err(|err| CommandError {
+            code: "THUMBNAIL_JOIN_ERROR".to_string(),
+            message: format!("the thumbnail task stopped unexpectedly: {err}"),
+        })?
+}
+
+/// Testable core of [`thumbnail_source_image`].
+pub(crate) fn thumbnail_source_image_impl(path: String) -> Result<ImagePreview, CommandError> {
+    let bytes = thumbnail::thumbnail_jpeg_uncached(Path::new(&path))?;
+    Ok(ImagePreview {
+        mime: PREVIEW_MIME.to_string(),
+        base64: BASE64.encode(bytes),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,7 +244,7 @@ mod tests {
 
     #[test]
     fn preview_image_rejects_an_unsupported_extension() {
-        let error = preview_image("a.tif".to_string()).expect_err("expected an error");
+        let error = preview_image_impl("a.tif".to_string()).expect_err("expected an error");
         assert_eq!(error.code, "UNSUPPORTED_FORMAT");
     }
 
@@ -204,7 +255,7 @@ mod tests {
         let original = jpeg(64, 48);
         std::fs::write(&path, &original).expect("write");
 
-        let preview = preview_image(path.display().to_string()).expect("preview");
+        let preview = preview_image_impl(path.display().to_string()).expect("preview");
         assert_eq!(preview.mime, "image/jpeg");
         assert_eq!(BASE64.decode(&preview.base64).expect("decode"), original);
     }
@@ -215,7 +266,7 @@ mod tests {
         let path = dir.path().join("a.jpg");
         std::fs::write(&path, b"not a jpeg").expect("write");
 
-        let error = preview_image(path.display().to_string()).expect_err("expected an error");
+        let error = preview_image_impl(path.display().to_string()).expect_err("expected an error");
         assert_eq!(error.code, "MAGIC_MISMATCH");
     }
 
@@ -232,5 +283,51 @@ mod tests {
             .expect("decode");
         assert!(decoded.width() <= MAX_LONG_EDGE);
         assert!(decoded.height() <= MAX_LONG_EDGE);
+    }
+
+    #[test]
+    fn thumbnail_source_image_bounds_a_large_jpeg_without_touching_a_cache() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DJI_0001.JPG");
+        std::fs::write(&path, jpeg(2000, 1500)).expect("write");
+
+        let thumb = thumbnail_source_image_impl(path.display().to_string()).expect("thumbnail");
+        assert_eq!(thumb.mime, "image/jpeg");
+        let bytes = BASE64.decode(&thumb.base64).expect("decode");
+        let decoded = image::ImageReader::new(Cursor::new(&bytes))
+            .with_guessed_format()
+            .expect("guess format")
+            .decode()
+            .expect("decode thumbnail");
+        assert!(decoded.width().max(decoded.height()) <= thumbnail::THUMB_LONG_EDGE);
+        assert!(bytes.len() < 20 * 1024, "a thumbnail, not the frame");
+
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("list dir")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(
+            names.len(),
+            1,
+            "nothing was written next to the source: {names:?}"
+        );
+    }
+
+    #[test]
+    fn thumbnail_source_image_rejects_an_unsupported_extension() {
+        let error =
+            thumbnail_source_image_impl("a.tif".to_string()).expect_err("expected an error");
+        assert_eq!(error.code, "UNSUPPORTED_FORMAT");
+    }
+
+    #[test]
+    fn thumbnail_source_image_rejects_a_jpeg_without_jpeg_magic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.jpg");
+        std::fs::write(&path, b"not a jpeg").expect("write");
+
+        let error =
+            thumbnail_source_image_impl(path.display().to_string()).expect_err("expected an error");
+        assert_eq!(error.code, "MAGIC_MISMATCH");
     }
 }

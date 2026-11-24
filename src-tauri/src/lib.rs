@@ -237,29 +237,57 @@
 //!   removes copies when their session is deleted or a startup sweep finds
 //!   them orphaned. Folder imports recursively scan nested subdirectories up
 //!   to 6 levels deep (skipping hidden folders and symlinked directories while
-//!   supporting symlinked image files).
+//!   supporting symlinked image files). Pairing is not limited to files
+//!   arriving in the same import call: a candidate with no same-batch
+//!   partner is also matched against unpaired images already in the session
+//!   (`flight_session::unpaired_images_for_session` +
+//!   `image_importer::find_retroactive_sibling`), so a JPEG and its DNG
+//!   still link even when imported in two separate, later operations — the
+//!   same one-JPEG-one-DNG-per-stem ambiguity guard applies across batches
+//!   as within one.
 //! - `modules::module_01::flight_session` — flight session CRUD and the SQLite
 //!   `session`/`image` schema, including the crash-safe `image` table migration.
 //! - `modules::module_01::blur_detection` — Laplacian-variance sharpness
 //!   scoring (`compute_blur_score`) on a grayscale buffer downscaled to a
 //!   1280px long edge when the source is larger — never upscaled, since that
 //!   would smooth away the edges the Laplacian measures and score a small
-//!   source as falsely blurry, so a source already below the cap (a DNG's
-//!   embedded preview, or a small JPEG) is left unscored instead. JPEG
-//!   decoded directly, DNG from its stored preview. `blur_score` is computed
-//!   per image during `import_io::run_import`; `is_blurry` is then
-//!   re-derived for every scored image in the session in one pass
-//!   (`flight_session::reclassify_session_blur`, called once per import run)
-//!   from the session's mean/stddev z-score, falling back to an absolute
-//!   hard floor only while the session has too few scored images for a
-//!   baseline — not frozen per image at insert time, so the flag depends
-//!   only on the
-//!   session's current score set, not on import order or batch boundaries.
+//!   source as falsely blurry, so a source already below the cap is left
+//!   unscored instead. Only JPEGs reach the scorer; no raw decoder exists in
+//!   this codebase. `blur_score` is **not** computed during
+//!   `import_io::run_import`: the import only queues each new JPEG row (see
+//!   `blur_queue`) and the scoring runs afterwards as a background task. A
+//!   paired DNG has its score mirrored from its JPEG sibling
+//!   (`blur_queue::copy_paired_dng_scores`) once scoring ends; a standalone
+//!   DNG with no sibling is never scored, and the count is reported to the
+//!   background-task UI as a deliberate skip
+//!   (`blur_queue::standalone_dng_count`), not silently dropped.
+//!   `is_blurry` is then re-derived for every scored image in the session in
+//!   one pass (`flight_session::reclassify_session_blur`, called when a
+//!   scoring run ends) from the session's mean/stddev z-score, falling back
+//!   to an absolute hard floor only while the session has too few scored
+//!   images for a baseline — not frozen per image at insert time, so the
+//!   flag depends only on the session's current score set, not on import
+//!   order or batch boundaries.
+//! - `modules::module_01::blur_queue` — the `blur_queue` side table of JPEGs
+//!   still waiting for a score. A queue (instead of "`blur_score IS NULL`")
+//!   because NULL also means *too small*, *undecodable* or *imported before
+//!   scoring existed*; only queued ids are pending, so an unscorable image is
+//!   dequeued for good and a restart resumes exactly the unfinished work.
+//! - `modules::module_01::blur_task` — `score_pending`, which drains one
+//!   session's queue on up to 4 scoped worker threads with a cooperative
+//!   cancel flag checked between images.
+//! - `services::background_tasks` — the `BackgroundTasks` registry (Tauri
+//!   managed state, separate from the plugin job tracker) holding a
+//!   `models::background_task::TaskSnapshot` per task.
+//!   `commands::background_tasks` runs blur scoring as such a task, emits the
+//!   `background-task-updated` event after every change, and resumes queued
+//!   work at startup (primary app instance only).
 //! - `commands::session` — flight session Tauri commands.
 //! - `commands::import` — copy-on-import commands (`import_images`,
 //!   `get_analysis_input`) and the `import-progress` event.
 //! - `commands::image_preview` — serves a `.jpg`/`.jpeg`/`.dng` as a
 //!   base64-encoded JPEG preview over IPC.
+//! - `commands::background_tasks` — list, cancel and clear background tasks.
 //!
 //! ### Tauri Commands
 //!
@@ -269,6 +297,7 @@
 //! | `get_analysis_input` | Return the image a plugin may analyse (JPEG, or a DNG's same-stem JPEG) |
 //! | `preview_image` | Return a displayable JPEG preview of an aerial image (JPEG as-is or downscaled, DNG from its stored preview) |
 //! | `thumbnail_image` | Return a small cached thumbnail of an aerial image (its EXIF thumbnail when present, otherwise a 160 px resize) |
+//! | `thumbnail_source_image` | Return a small uncached thumbnail of a file picked for import, before it is in the library (same EXIF-or-160 px rule, any path, blocking thread) |
 //! | `create_session` | Create a new flight session |
 //! | `get_session` | Fetch a session by id |
 //! | `get_sessions_by_project` | List sessions for a project |
@@ -281,6 +310,9 @@
 //! | `move_image_to_session` | Move one image (row and file) into another session of the same project |
 //! | `copy_image_to_session` | Copy one image (row and file) into another session of the same project |
 //! | `get_image_metadata` | Read EXIF and XMP from a stored image's file (exposure and DJI tags the row does not keep) |
+//! | `list_background_tasks` | List background tasks (blur scoring), live ones first |
+//! | `cancel_background_task` | Ask a running task to stop; unfinished images stay queued for the next launch |
+//! | `clear_finished_background_tasks` | Forget finished tasks and return their ids |
 //!
 //! **Status**: Flight session commands, metadata extraction (JPEG and DNG),
 //! import planning, copy-on-import I/O and the schema migration are
@@ -294,14 +326,21 @@
 //! `read_dng_preview` for reading its stored JPEG preview, so no module has
 //! to reach into Module 1's TIFF parser; no other module calls them yet.
 //! The `preview_image` command serves those previews over IPC.
-//! Blur detection (M1-29) is also implemented: every imported image gets a
-//! `blur_score`/`is_blurry` pair persisted alongside it, computed and
-//! classified at import time (no new command — it is not yet exposed over
-//! IPC beyond the `Image` record's own fields). Known, deliberate
-//! limitations: DNGs are scored from their camera-processed preview, not
-//! raw sensor data; no sensor-noise pre-filtering is applied; scoring is
-//! sequential, not parallelised. Surfacing quality flags in the UI (M1-32)
-//! is a separate, not-yet-implemented task.
+//! Blur detection (M1-29) is also implemented: every imported JPEG gets a
+//! `blur_score`/`is_blurry` pair persisted alongside it. Scoring is deferred
+//! so it never blocks the import: `import_images` returns once the files are
+//! copied and recorded, then a background task scores the queued JPEGs in
+//! parallel and reports progress through the `background-task-updated` event
+//! (watched in the app's status bar). Until an image is scored its
+//! `blur_score` is `None`. The task can be cancelled; images it did not reach
+//! stay queued and are scored on the next launch. A standalone DNG (no
+//! same-stem JPEG) is never scored — no raw decoder exists in this
+//! codebase — and the `TaskSnapshot.skipped` count the UI shows for such a
+//! session reports that as a deliberate skip rather than hiding it. Known,
+//! deliberate limitations: no sensor-noise pre-filtering is applied; the
+//! queue is per session and sessions are scored one after another.
+//! Surfacing quality flags in the UI (M1-32) is a separate, not-yet-
+//! implemented task.
 //!
 //! ---
 //!
@@ -322,6 +361,7 @@
 //! | `set_plugin_status` | Toggle plugin enabled/disabled status and flush to `plugin_state.json` |
 //! | `update_plugin_config` | Update and persist user custom parameters overrides |
 //! | `get_installed_plugins` | Return summary list of all registered plugins |
+//! | `reload_plugins` | Rescan plugins directory from disk and rebuild in-memory registry |
 //! | `get_plugin_details` | Retrieve full contract schemas for a specific plugin |
 //! | `query_compatible_plugins` | Filter enabled plugins compatible with target imagery or AOI |
 //! | `check_plugin_health` | Execute fast pre-flight dependency healthcheck |
@@ -551,6 +591,7 @@
 //! | `import_plots` | Parse a GeoJSON file without storing it (legacy) |
 //! | `save_plot_indicators` / `list_plot_indicators` | Persist and read per-plot plugin metrics |
 //! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer |
+//! | `analyse_plots_from_ortho` | Analyse plots directly from an orthomosaic with georeferenced raster clipping and slicing |
 //!
 //! **Status**: Implemented. The Module 09 page and a **Plots** tab inside the
 //! Module 3 sidebar share the same commands; runs execute a plugin once per
@@ -638,6 +679,7 @@ pub mod modules;
 mod plot;
 pub mod plugin_manager;
 mod reporting;
+pub mod services;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use plugin_manager::executor::ActiveJobTracker;
@@ -864,7 +906,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             // Penguncian single instance aplikasi pada map_storage/.app.lock
-            match map_controller::ortho_source::instance_lock::acquire_global_instance_lock() {
+            let is_primary_instance = match map_controller::ortho_source::instance_lock::acquire_global_instance_lock() {
                 Ok(()) => {
                     // Hanya instansi primer pemegang kunci yang boleh menjalankan pembersihan startup & rekonsiliasi
                     if let Err(e) = map_controller::ortho_source::job_manager::cleanup_stale_import_jobs() {
@@ -873,6 +915,7 @@ pub fn run() {
                     if let Err(e) = map_controller::ortho_source::store::reconcile_storage_layers() {
                         eprintln!("[WARN] reconcile_storage_layers error: {}", e);
                     }
+                    true
                 }
                 Err(e) => {
                     // Instansi sekunder: TIDAK BOLEH menjalankan cleanup atau rekonsiliasi agar tidak mengganggu instansi primer
@@ -880,8 +923,9 @@ pub fn run() {
                         "[WARN] Instansi aplikasi lain terdeteksi aktif ({:?}). Mode sekunder: melewati cleanup_stale_import_jobs dan reconcile_storage_layers.",
                         e
                     );
+                    false
                 }
-            }
+            };
             // Resolved here, not in the command, so every import in this
             // process writes below the same root. There is no silent cwd
             // fallback: an import that later cannot be found again is worse
@@ -963,6 +1007,7 @@ pub fn run() {
             let state_path = plugin_manager::lifecycle::default_state_path();
             let registry = init_plugin_registry();
 
+            app.manage(services::background_tasks::BackgroundTasks::default());
             app.manage(AppState {
                 plugins: Arc::new(RwLock::new(registry)),
                 jobs: Arc::new(RwLock::new(ActiveJobTracker::new())),
@@ -986,10 +1031,24 @@ pub fn run() {
                     eprintln!("info: moved {trashed} orphaned image copies to .trash");
                 }
             });
+            // Images imported before the app last closed may still be waiting
+            // for a blur score; scoring resumes as a background task. Only the
+            // primary instance resumes at startup, so a second process does
+            // not redo the same backlog. Scoring started by an import is not
+            // limited this way: two instances importing at once can decode the
+            // same frame twice, which only wastes work (the stored score is
+            // identical) and is preferable to leaving the images unscored.
+            if is_primary_instance {
+                commands::background_tasks::resume_pending_blur_tasks(app.handle());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            // Background tasks
+            commands::background_tasks::list_background_tasks,
+            commands::background_tasks::cancel_background_task,
+            commands::background_tasks::clear_finished_background_tasks,
             // Role 1 — Subprocess Supervisor & Isolation Engineer
             plugin_manager::executor::start_plugin_job,
             plugin_manager::executor::abort_plugin_job,
@@ -997,6 +1056,7 @@ pub fn run() {
             plugin_manager::executor::get_job_result,
             // Role 2 — Plugin Lifecycle & Package Manager (Discovery & Registry)
             plugin_manager::registry::get_installed_plugins,
+            plugin_manager::registry::reload_plugins,
             plugin_manager::registry::get_plugin_details,
             plugin_manager::registry::query_compatible_plugins,
             plugin_manager::registry::check_plugin_health,
@@ -1036,6 +1096,7 @@ pub fn run() {
             commands::plots::save_plot_indicators,
             commands::plots::list_plot_indicators,
             commands::plots::publish_plots_layer,
+            commands::plots::analyse_plots_from_ortho,
             commands::dashboard::get_project_dashboard,
             commands::dashboard::list_dashboard_plugin_results,
             commands::dashboard::export_dashboard_plot_csv,
@@ -1090,6 +1151,7 @@ pub fn run() {
             commands::import::get_analysis_input,
             commands::image_preview::preview_image,
             commands::image_preview::thumbnail_image,
+            commands::image_preview::thumbnail_source_image,
             // Project management
             commands::project::create_project,
             commands::project::get_project,

@@ -12,18 +12,8 @@
     { "key": "other_pct", "label": "Other Coverage", "type": "float", "unit": "%" },
     { "key": "other_area_m2", "label": "Other Area", "type": "float", "unit": "m2" },
     { "key": "unclassified_pct", "label": "Unclassified", "type": "float", "unit": "%" },
-    {
-      "key": "total_pixels_analyzed",
-      "label": "Pixels Analyzed",
-      "type": "integer",
-      "unit": "px"
-    },
-    {
-      "key": "gsd_m_per_px",
-      "label": "Ground Sampling Distance",
-      "type": "float",
-      "unit": "m/px"
-    }
+    { "key": "total_pixels_analyzed", "label": "Pixels Analyzed", "type": "integer", "unit": "px" },
+    { "key": "gsd_m_per_px", "label": "Ground Sampling Distance", "type": "float", "unit": "m/px" }
   ],
   "artifacts": [
     {
@@ -32,11 +22,7 @@
       "type": "raster",
       "format": "image/png",
       "optional": false,
-      "coordinate_system": "pixel",
-      "layer_hint": {
-        "layer_type": "raster_overlay",
-        "default_opacity": 0.6
-      }
+      "coordinate_system": "crs"
     },
     {
       "key": "boundary_vector",
@@ -44,12 +30,7 @@
       "type": "vector",
       "format": "application/geo+json",
       "optional": true,
-      "coordinate_system": "crs",
-      "layer_hint": {
-        "layer_type": "polygon_boundary",
-        "stroke_color": "#2185d0",
-        "fill_opacity": 0.2
-      }
+      "coordinate_system": "crs"
     },
     {
       "key": "class_statistics",

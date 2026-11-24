@@ -170,10 +170,11 @@ pub struct Image {
     pub analysis_ready: Option<bool>,
     /// Laplacian-variance sharpness score of the stored copy (downscaled to
     /// a fixed long edge first when larger, so the value is comparable
-    /// across source resolutions). Higher is sharper. `None` when scoring
-    /// failed (corrupt or undecodable file), the source was too small to
-    /// downscale without upscaling, or for rows imported before this field
-    /// existed.
+    /// across source resolutions). Higher is sharper. `None` while the image
+    /// is still queued for background scoring (it is scored after the import
+    /// returns), and for good when scoring failed (corrupt or undecodable
+    /// file), the source was too small to downscale without upscaling, or the
+    /// row was imported before this field existed.
     pub blur_score: Option<f64>,
     /// Whether this image is classified as blurry relative to its flight
     /// session's other scored images (plus an absolute hard-floor safety
@@ -182,8 +183,9 @@ pub struct Image {
     /// so this value is **not** frozen at import: it is meant to reflect the
     /// session's current score set, not the state at the moment this
     /// particular row was inserted — but that only holds if every path that
-    /// changes a session's image set calls that function. Today only import
-    /// does; see its docs for what that means for a future delete/move path.
+    /// changes a session's image set calls that function. Today the
+    /// background scoring task, delete, move and copy do; see its docs for
+    /// what that means for a future path.
     /// `None` when `blur_score` is `None`.
     pub is_blurry: Option<bool>,
 }

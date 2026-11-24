@@ -141,10 +141,11 @@ pub fn latest_metric(
     image_id: &str,
     keys: &[&str],
 ) -> Result<Option<(f64, String)>, rusqlite::Error> {
-    for result in latest_for_image(conn, image_id)? {
-        for key in keys {
+    let results = latest_for_image(conn, image_id)?;
+    for key in keys {
+        for result in &results {
             if let Some(value) = result.metrics.get(*key).and_then(Value::as_f64) {
-                return Ok(Some((value, result.plugin_id)));
+                return Ok(Some((value, result.plugin_id.clone())));
             }
         }
     }
@@ -158,8 +159,9 @@ pub fn latest_artifact(
     keys: &[&str],
     format_prefix: &str,
 ) -> Result<Option<String>, rusqlite::Error> {
-    for result in latest_for_image(conn, image_id)? {
-        for key in keys {
+    let results = latest_for_image(conn, image_id)?;
+    for key in keys {
+        for result in &results {
             let Some(artifact) = result.artifacts.get(*key) else {
                 continue;
             };

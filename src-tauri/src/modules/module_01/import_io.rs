@@ -79,14 +79,16 @@ use crate::plugin_manager::error::CommandError;
 use crate::plugin_manager::payload::ImageMetadata as PluginImageMetadata;
 
 use super::blur_detection;
+use super::blur_queue;
 use super::error::SessionError;
 use super::flight_session::{
     get_image, get_session, image_from_metadata, insert_images_and_recalculate,
-    known_hashes_for_project, reclassify_session_blur, ExistingContent,
+    known_hashes_for_project, reclassify_session_blur, unpaired_images_for_session,
+    ExistingContent,
 };
 use super::image_importer::{
-    classify_file, dest_basename, extension_of, folding_for_os, import_images, pair_raw_siblings,
-    NameFolding,
+    classify_file, dest_basename, extension_of, find_retroactive_sibling, folding_for_os,
+    import_images, pair_raw_siblings, NameFolding,
 };
 use super::metadata_extractor::{extract_metadata, read_dng, to_plugin_metadata};
 use super::thumbnail;
@@ -393,7 +395,10 @@ pub(crate) fn run_import(
 /// `rejected`, a race-detected duplicate becomes a `duplicates` entry, and
 /// unpaired DNGs are collected in `not_analysis_ready`. After a successful
 /// batch, the copies' list thumbnails are warmed into `thumbs_dir` on a
-/// detached thread, so decoding them never holds the import open.
+/// detached thread, so decoding them never holds the import open. Blur
+/// scores are not computed here; every inserted row is queued for the
+/// background task instead, inside the insert transaction
+/// ([`super::flight_session::insert_images_and_recalculate`]).
 fn import_planned(
     db: &Mutex<Connection>,
     thumbs_dir: &Path,
@@ -451,6 +456,23 @@ fn import_planned(
         duplicates: std::mem::take(&mut report.duplicates),
     };
 
+    // A candidate with no in-batch partner may still have one already in the
+    // database, imported separately (the common case: JPEGs added first,
+    // the matching DNGs added later). Loaded once per `import_planned` call
+    // and consumed as matches are claimed below, so two same-stem candidates
+    // in this batch cannot both retroactively claim the same existing row.
+    let mut retroactive_candidates = match lock_db(db) {
+        Ok(conn) => unpaired_images_for_session(&conn, session_id).unwrap_or_else(|err| {
+            eprintln!("warning: retroactive dng/jpeg pairing disabled for this import: {err}");
+            Vec::new()
+        }),
+        Err(err) => {
+            eprintln!("warning: retroactive dng/jpeg pairing disabled for this import: {err}");
+            Vec::new()
+        }
+    };
+    let folding = folding_for_os();
+
     for candidate in work {
         let partner = partner_of
             .get(candidate.id.as_str())
@@ -466,7 +488,31 @@ fn import_planned(
         let duplicates_before = scope.duplicates_len();
         let outcome = match partner {
             Some(partner) => scope.pair(candidate, partner),
-            None => scope.single(candidate).map(|imported| vec![imported]),
+            None => {
+                let retroactive_sibling = classify_file(candidate).ok().and_then(|format| {
+                    find_retroactive_sibling(
+                        candidate,
+                        format,
+                        &request.candidates,
+                        &retroactive_candidates,
+                        folding,
+                    )
+                });
+                match retroactive_sibling {
+                    Some(sibling_id) => {
+                        let outcome = scope
+                            .link_to_existing(candidate, sibling_id)
+                            .map(|imported| vec![imported]);
+                        if outcome.is_ok() {
+                            // Claimed: no later candidate in this batch may
+                            // also link to it.
+                            retroactive_candidates.retain(|(id, ..)| *id != sibling_id);
+                        }
+                        outcome
+                    }
+                    None => scope.single(candidate).map(|imported| vec![imported]),
+                }
+            }
         };
         let rejected_added = scope.rejected_len() - rejected_before;
         let duplicates_added = scope.duplicates_len() - duplicates_before;
@@ -489,13 +535,22 @@ fn import_planned(
         done += duplicates_added;
     }
 
-    // Re-derive every `is_blurry` flag in the session from the final score
-    // set, so the result does not depend on import order or on how many
-    // separate import runs it took to assemble the session. A failure here
-    // is logged, not propagated: the import itself already succeeded, and
-    // every row still has its `blur_score` even if this pass could not run.
+    // Mirror blur scores onto any DNG freshly linked above (retroactively or
+    // as part of a same-batch pair) whose sibling already has a score — a
+    // sibling imported in an earlier run may already be fully scored, and
+    // without this the mirrored score would otherwise wait for some future,
+    // unrelated import to trigger a scoring pass for this session. Then
+    // re-derive the session's `is_blurry` flags from the scores stored so
+    // far: new rows are still unscored (the background task scores them and
+    // runs this pass again), but earlier imports into the same session may
+    // already have scores, and the flags must not depend on import order.
+    // Failures here are logged, not propagated: the import itself already
+    // succeeded.
     match lock_db(db) {
         Ok(conn) => {
+            if let Err(err) = blur_queue::copy_paired_dng_scores(&conn, session_id) {
+                eprintln!("warning: could not copy paired dng blur scores: {err}");
+            }
             if let Err(err) =
                 reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {
@@ -603,6 +658,34 @@ impl ImportScope<'_> {
 
     /// Copies and records one standalone image.
     fn single(&mut self, candidate: &ImportCandidate) -> Result<ImportedFile, ()> {
+        self.single_with_sibling(candidate, None)
+    }
+
+    /// Copies and records `candidate`, retroactively linking it to `sibling`
+    /// — an unpaired image already in this session with the matching stem,
+    /// found by `image_importer::find_retroactive_sibling` because its
+    /// partner was imported in an earlier, separate batch rather than
+    /// alongside `candidate`. The new row carries the link from the moment
+    /// it is built; `insert_images_and_recalculate` points the existing row
+    /// back at it in the same transaction (see `flight_session::link_sibling`).
+    fn link_to_existing(
+        &mut self,
+        candidate: &ImportCandidate,
+        sibling: Uuid,
+    ) -> Result<ImportedFile, ()> {
+        self.single_with_sibling(candidate, Some(sibling))
+    }
+
+    /// Copies and records one image, optionally linked to `sibling` — an
+    /// already-persisted row from an earlier import (see
+    /// [`Self::link_to_existing`]). A linked row is always analysis-ready: a
+    /// JPEG already is, and a DNG now stands in for the same effect `pair`
+    /// applies to a same-batch pair.
+    fn single_with_sibling(
+        &mut self,
+        candidate: &ImportCandidate,
+        sibling: Option<Uuid>,
+    ) -> Result<ImportedFile, ()> {
         let base = match base_name_for(candidate) {
             Ok(base) => base,
             Err(err) => {
@@ -626,7 +709,7 @@ impl ImportScope<'_> {
         };
         let metadata = metadata_from_copy(&copy.dest, format);
         let image_id = Uuid::new_v4();
-        let ready = format == ImageFormat::Jpeg;
+        let ready = sibling.is_some() || format == ImageFormat::Jpeg;
         let image = build_image(
             image_id,
             self.session_id,
@@ -635,9 +718,8 @@ impl ImportScope<'_> {
                 candidate,
             },
             &metadata,
-            None,
+            sibling,
             ready,
-            format,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -760,7 +842,6 @@ impl ImportScope<'_> {
                 &jpeg_metadata,
                 Some(dng_id),
                 true,
-                ImageFormat::Jpeg,
             ),
             build_image(
                 dng_id,
@@ -772,7 +853,6 @@ impl ImportScope<'_> {
                 &dng_metadata,
                 Some(jpeg_id),
                 true,
-                ImageFormat::Dng,
             ),
         ];
         match record_images(self.db, self.session_id, &images) {
@@ -840,7 +920,6 @@ impl ImportScope<'_> {
             &metadata,
             None,
             true,
-            ImageFormat::Jpeg,
         );
         match record_images(self.db, self.session_id, std::slice::from_ref(&image)) {
             Ok(Recorded::Inserted) => {}
@@ -1267,15 +1346,14 @@ struct StagedFile<'a> {
     candidate: &'a ImportCandidate,
 }
 
-/// Builds the persisted record for one copied file, including its blur
-/// score.
+/// Builds the persisted record for one copied file.
 ///
-/// Scoring happens here, not at each call site: `is_blurry` is never set by
-/// this function (it starts `None`, same as [`image_from_metadata`] leaves
-/// it, and is filled in later by the session-wide
-/// [`super::flight_session::reclassify_session_blur`] pass) — so there is
-/// only ever one blur-related field for a caller to populate, not two that
-/// could drift out of sync.
+/// Blur scoring is **not** done here: it decodes the full frame and used to
+/// dominate the import. `blur_score` and `is_blurry` both start `None`;
+/// the insert queues the row in [`super::blur_queue`], the background
+/// task ([`super::blur_task::score_pending`]) fills in the score, and the
+/// session-wide [`super::flight_session::reclassify_session_blur`] pass sets
+/// `is_blurry` once scores exist.
 fn build_image(
     image_id: Uuid,
     session_id: Uuid,
@@ -1283,7 +1361,6 @@ fn build_image(
     metadata: &ImageMetadata,
     raw_sibling_id: Option<Uuid>,
     analysis_ready: bool,
-    format: ImageFormat,
 ) -> Image {
     let mut image = image_from_metadata(
         image_id,
@@ -1296,7 +1373,6 @@ fn build_image(
     image.file_size = Some(staged.copy.file_size);
     image.raw_sibling_id = raw_sibling_id;
     image.analysis_ready = Some(analysis_ready);
-    image.blur_score = blur_detection::blur_score_for_copy(&staged.copy.dest, format);
     image
 }
 
@@ -2259,8 +2335,7 @@ mod tests {
     /// embedded JPEG — unlike [`tiff_with_dimensions`]/[`write_dng`] above,
     /// which carry no preview at all, this is enough for
     /// `dng_preview::read_dng_preview` to locate the bytes *and* for
-    /// `image::load_from_memory` to decode them, so `blur_score_for_copy`
-    /// can score it.
+    /// `image::load_from_memory` to decode them.
     fn write_dng_with_jpeg_preview(dir: &Path, name: &str, jpeg: &[u8]) -> PathBuf {
         const PREVIEW_IMAGE_START: u16 = 50981;
         const PREVIEW_IMAGE_LENGTH: u16 = 50982;
@@ -2309,6 +2384,25 @@ mod tests {
         )
         .expect("session")
         .id
+    }
+
+    /// Runs the deferred blur scoring to completion, as the background task
+    /// does after an import.
+    fn score_all(db: &Mutex<Connection>, session_id: Uuid) -> super::super::blur_task::BlurSummary {
+        super::super::blur_task::score_pending(
+            db,
+            session_id,
+            &std::sync::atomic::AtomicBool::new(false),
+            |_| {},
+        )
+        .expect("blur scoring")
+    }
+
+    fn queued_count(db: &Mutex<Connection>) -> i64 {
+        db.lock()
+            .expect("db lock")
+            .query_row("SELECT COUNT(*) FROM blur_queue", [], |row| row.get(0))
+            .expect("count queue")
     }
 
     fn sources(paths: &[PathBuf]) -> Vec<String> {
@@ -2388,6 +2482,8 @@ mod tests {
         .expect("import");
         assert_eq!(report.imported_image_ids.len(), 1);
 
+        score_all(&db, session_id);
+
         let conn = db.lock().expect("db lock");
         let images = get_images_by_session(&conn, session_id).expect("images");
         assert_eq!(images.len(), 1);
@@ -2416,6 +2512,8 @@ mod tests {
         )
         .expect("import");
         assert_eq!(report.imported_image_ids.len(), 1);
+
+        score_all(&db, session_id);
 
         let conn = db.lock().expect("db lock");
         let images = get_images_by_session(&conn, session_id).expect("images");
@@ -2459,6 +2557,8 @@ mod tests {
         )
         .expect("import");
         assert_eq!(report.imported_image_ids.len(), 6);
+
+        score_all(&db, session_id);
 
         let conn = db.lock().expect("db lock");
         let images = get_images_by_session(&conn, session_id).expect("images");
@@ -2522,6 +2622,8 @@ mod tests {
         .expect("pair import");
         assert_eq!(report.imported_image_ids.len(), 2, "{report:?}");
 
+        score_all(&db, session_id);
+
         let conn = db.lock().expect("db lock");
         let images = get_images_by_session(&conn, session_id).expect("images");
         let jpeg_row = images
@@ -2536,13 +2638,326 @@ mod tests {
             jpeg_row.blur_score.is_some(),
             "the jpeg half should be scored: {jpeg_row:?}"
         );
-        assert!(
-            dng_row.blur_score.is_some(),
-            "the dng's embedded preview should be decodable and scored: {dng_row:?}"
+        assert_eq!(
+            dng_row.blur_score, jpeg_row.blur_score,
+            "a paired dng is never scored independently; its score is copied from its jpeg: {dng_row:?}"
         );
         assert_eq!(
             dng_row.is_blurry, jpeg_row.is_blurry,
             "a paired dng mirrors its jpeg's flag rather than being classified on its own score"
+        );
+    }
+
+    #[test]
+    fn pair_import_does_not_queue_the_paired_dng_for_independent_scoring() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_checkerboard_jpeg(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+        let preview = encode_jpeg_bytes(&image::RgbImage::from_fn(
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+            |x, y| {
+                let v = if (x / 4 + y / 4).is_multiple_of(2) {
+                    0u8
+                } else {
+                    255u8
+                };
+                image::Rgb([v, v, v])
+            },
+        ));
+        write_dng_with_jpeg_preview(source_dir.path(), "DJI_0001.DNG", &preview);
+
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("pair import");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        let jpeg_id = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".JPG"))
+            .expect("jpeg row")
+            .id;
+        let dng_id = images
+            .iter()
+            .find(|img| img.file_path.ends_with(".DNG"))
+            .expect("dng row")
+            .id;
+        assert!(
+            super::super::blur_queue::is_queued(&conn, jpeg_id).expect("jpeg queued check"),
+            "the jpeg half is the only one that needs decoding"
+        );
+        assert!(
+            !super::super::blur_queue::is_queued(&conn, dng_id).expect("dng queued check"),
+            "a paired dng must not be queued for an independent, redundant decode"
+        );
+    }
+
+    #[test]
+    fn standalone_dng_import_does_not_queue_it_for_scoring() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_dng(source_dir.path(), "DJI_0004.DNG", 4000, 3000);
+
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[source]),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert_eq!(images.len(), 1);
+        assert!(
+            !super::super::blur_queue::is_queued(&conn, images[0].id).expect("dng queued check"),
+            "a standalone dng's score is never used by reclassify_session_blur, \
+             so decoding it would just be thrown away"
+        );
+    }
+
+    #[test]
+    fn import_defers_blur_scoring_and_queues_every_image() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let paths: Vec<PathBuf> = (0..3)
+            .map(|n| {
+                write_checkerboard_jpeg_phased(
+                    source_dir.path(),
+                    &format!("img{n}.jpg"),
+                    blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                    n,
+                )
+            })
+            .collect();
+
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&paths),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        assert_eq!(report.imported_image_ids.len(), 3);
+
+        {
+            let conn = db.lock().expect("db lock");
+            let images = get_images_by_session(&conn, session_id).expect("images");
+            assert!(
+                images.iter().all(|img| img.blur_score.is_none()),
+                "import must not score inline"
+            );
+        }
+        assert_eq!(queued_count(&db), 3, "every imported row is queued");
+
+        let summary = score_all(&db, session_id);
+        assert_eq!((summary.done, summary.total), (3, 3));
+        assert!(!summary.cancelled);
+        assert_eq!(queued_count(&db), 0, "the queue is drained");
+        let conn = db.lock().expect("db lock");
+        let images = get_images_by_session(&conn, session_id).expect("images");
+        assert!(images.iter().all(|img| img.blur_score.is_some()));
+    }
+
+    #[test]
+    fn a_cancelled_run_scores_nothing_and_keeps_the_queue() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_jpeg_sized(
+            source_dir.path(),
+            "DJI_0001.JPG",
+            blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+        );
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        let summary = super::super::blur_task::score_pending(
+            &db,
+            session_id,
+            &std::sync::atomic::AtomicBool::new(true),
+            |_| {},
+        )
+        .expect("cancelled run");
+        assert!(summary.cancelled);
+        assert_eq!(summary.done, 0);
+        assert_eq!(queued_count(&db), 1, "unfinished work stays queued");
+
+        // The next run (for example after a restart) finishes it.
+        let resumed = score_all(&db, session_id);
+        assert_eq!((resumed.done, resumed.cancelled), (1, false));
+        assert_eq!(queued_count(&db), 0);
+    }
+
+    #[test]
+    fn an_unscorable_image_is_dequeued_and_counted() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        // 8x8: below the scoring cap, so it can never be scored.
+        let source = write_jpeg(source_dir.path(), "tiny.jpg");
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        let summary = score_all(&db, session_id);
+        assert_eq!((summary.done, summary.unscorable), (1, 1));
+        assert_eq!(queued_count(&db), 0, "unscorable is final, not retried");
+        let again = score_all(&db, session_id);
+        assert_eq!(again.total, 0, "nothing is left to retry");
+    }
+
+    #[test]
+    fn a_panicking_scorer_counts_as_unscorable_and_does_not_end_the_run() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let paths = [
+            write_checkerboard_jpeg_phased(
+                source_dir.path(),
+                "good.jpg",
+                blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                0,
+            ),
+            write_checkerboard_jpeg_phased(
+                source_dir.path(),
+                "bad.jpg",
+                blur_detection::BLUR_SCORE_LONG_EDGE_PX,
+                1,
+            ),
+        ];
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&paths),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+
+        // A decoder bug on one malformed file must not unwind out of the run
+        // (that would leave the caller's task "running" forever).
+        let summary = super::super::blur_task::score_pending_with(
+            &db,
+            session_id,
+            &std::sync::atomic::AtomicBool::new(false),
+            &|path| {
+                if path.file_name().is_some_and(|name| name == "bad.jpg") {
+                    panic!("simulated decoder bug");
+                }
+                Some(1.0)
+            },
+            |_| {},
+        )
+        .expect("the run survives a panicking scorer");
+        assert_eq!((summary.done, summary.unscorable), (2, 1));
+        assert_eq!(
+            queued_count(&db),
+            0,
+            "the panicked image is dequeued, not retried"
+        );
+    }
+
+    #[test]
+    fn a_queue_row_that_can_never_be_scored_is_dequeued_not_left_pending() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_jpeg(source_dir.path(), "DJI_0004.JPG");
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        {
+            let conn = db.lock().expect("db lock");
+            conn.execute("UPDATE image SET format = 'bmp'", [])
+                .expect("corrupt the format");
+            let work = super::super::blur_queue::pending_for_session(&conn, session_id)
+                .expect("work list");
+            assert!(work.is_empty(), "an unknown format cannot be scored");
+        }
+        assert_eq!(
+            queued_count(&db),
+            0,
+            "it must not linger and keep the session pending on every launch"
+        );
+    }
+
+    #[test]
+    fn queue_rows_of_deleted_images_do_not_keep_a_session_pending() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+        let source = write_jpeg(source_dir.path(), "DJI_0003.JPG");
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(std::slice::from_ref(&source)),
+            false,
+            |_, _, _| {},
+        )
+        .expect("import");
+        let image_id = Uuid::parse_str(&report.imported_image_ids[0]).expect("image id");
+
+        let conn = db.lock().expect("db lock");
+        assert_eq!(
+            super::super::blur_queue::pending_sessions(&conn).expect("pending"),
+            vec![session_id]
+        );
+        crate::modules::module_01::flight_session::delete_image_row(&conn, image_id)
+            .expect("delete row");
+        assert!(
+            super::super::blur_queue::pending_sessions(&conn)
+                .expect("pending")
+                .is_empty(),
+            "the orphan queue row is pruned"
         );
     }
 
@@ -3178,11 +3593,11 @@ mod tests {
     }
 
     /// Full pipeline: the JPEG of a stem pair is already in the project, so
-    /// the planner flags it as a duplicate and only the DNG is imported —
-    /// alone and not analysis-ready (its pair is gone, the planner split
-    /// them before any copy happened).
+    /// the planner flags the re-imported JPEG as a duplicate, but the DNG
+    /// still links retroactively to the original JPEG row already in the
+    /// session — it does not have to arrive in the same batch to be found.
     #[test]
-    fn pair_with_jpeg_already_in_project_imports_dng_alone() {
+    fn pair_with_jpeg_already_in_project_links_retroactively() {
         let first_dir = tempfile::tempdir().expect("first dir");
         let pair_dir = tempfile::tempdir().expect("pair dir");
         let library = tempfile::tempdir().expect("library");
@@ -3200,6 +3615,7 @@ mod tests {
         )
         .expect("jpeg-only import");
         assert_eq!(report.imported_image_ids.len(), 1);
+        let jpeg_id = report.imported_image_ids[0].clone();
 
         // Same bytes, so the same content hash: the pair's JPEG re-imports
         // as a known duplicate and the DNG rides in for free.
@@ -3229,15 +3645,15 @@ mod tests {
             "the jpeg is the duplicate: {:?}",
             pair_report.duplicates[0]
         );
-        assert_eq!(
-            pair_report.not_analysis_ready.len(),
-            1,
-            "the dng is imported but cannot be analysed without its pair: {pair_report:?}"
+        assert!(
+            pair_report.not_analysis_ready.is_empty(),
+            "the dng links to the existing jpeg, so it is analysis-ready: {pair_report:?}"
         );
         assert!(pair_report.rejected.is_empty());
 
-        // The recorded dng is unpaired and not analysis-ready; the library
-        // keeps the original jpeg and now holds the dng copy.
+        // The recorded dng is linked to the pre-existing jpeg, and the jpeg
+        // now points back at it; the library keeps the original jpeg and
+        // now holds the dng copy.
         let project_id = {
             let conn = db.lock().expect("db lock");
             crate::modules::module_01::get_session(&conn, session_id)
@@ -3253,8 +3669,21 @@ mod tests {
                 .iter()
                 .find(|row| row.file_path.ends_with("DJI_0005.DNG"))
                 .expect("dng row");
-            assert_eq!(dng_row.raw_sibling_id, None, "no jpeg pair to link to");
-            assert_eq!(dng_row.analysis_ready, Some(false));
+            assert_eq!(
+                dng_row.raw_sibling_id,
+                Some(Uuid::parse_str(&jpeg_id).expect("jpeg id")),
+                "the dng links to the jpeg from the earlier import"
+            );
+            assert_eq!(dng_row.analysis_ready, Some(true));
+            let jpeg_row = rows
+                .iter()
+                .find(|row| row.id.to_string() == jpeg_id)
+                .expect("jpeg row");
+            assert_eq!(
+                jpeg_row.raw_sibling_id,
+                Some(dng_row.id),
+                "the pre-existing jpeg points back at the new dng"
+            );
         }
         let dest_dir = session_images_dir(
             library.path(),
@@ -3272,6 +3701,175 @@ mod tests {
             vec!["DJI_0005.DNG".to_string(), "DJI_0005.JPG".to_string()],
             "the dng copy landed beside the original: {leftover:?}"
         );
+    }
+
+    /// The symmetric case: a standalone DNG is already in the project, and a
+    /// later, separate import brings in its matching-stem JPEG. The JPEG
+    /// links back to the existing DNG, flipping the DNG's `analysis_ready`
+    /// from `false` to `true`.
+    #[test]
+    fn dng_already_in_project_links_retroactively_to_a_later_jpeg() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_dng(dng_dir.path(), "DJI_0007.DNG", 4000, 3000);
+        let report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("dng-only import");
+        assert_eq!(report.imported_image_ids.len(), 1);
+        let dng_id = report.imported_image_ids[0].clone();
+        assert_eq!(report.not_analysis_ready, vec![dng_id.clone()]);
+
+        write_jpeg(jpeg_dir.path(), "DJI_0007.JPG");
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("jpeg import beside a known dng");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 1);
+        assert!(jpeg_report.not_analysis_ready.is_empty());
+        assert!(jpeg_report.duplicates.is_empty());
+        assert!(jpeg_report.rejected.is_empty());
+
+        let conn = db.lock().expect("db lock");
+        let dng_row =
+            crate::modules::module_01::get_image(&conn, Uuid::parse_str(&dng_id).expect("dng id"))
+                .expect("dng row");
+        assert_eq!(
+            dng_row.raw_sibling_id,
+            Some(Uuid::parse_str(&jpeg_report.imported_image_ids[0]).expect("jpeg id")),
+            "the pre-existing dng links to the new jpeg"
+        );
+        assert_eq!(
+            dng_row.analysis_ready,
+            Some(true),
+            "retroactively linking flips the dng's analysis_ready to true"
+        );
+    }
+
+    /// An ambiguous stem across batches — two existing DNGs already share
+    /// the new JPEG's stem — must not guess. The JPEG imports standalone,
+    /// same as the in-batch ambiguity guard in `pair_raw_siblings`.
+    #[test]
+    fn retroactive_linking_skips_an_ambiguous_stem() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        // Same stem, two separate imports into the same session (different
+        // dimensions/bytes so neither trips the content-hash duplicate
+        // check), so the lookup — scoped per session — sees both as
+        // unpaired candidates for the jpeg's stem.
+        write_dng(dng_dir.path(), "DJI_0009.DNG", 4000, 3000);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("first dng import");
+
+        let dng_dir_2 = tempfile::tempdir().expect("second dng dir");
+        write_dng(dng_dir_2.path(), "DJI_0009.DNG", 4001, 3001);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir_2.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("second dng import");
+
+        write_jpeg(jpeg_dir.path(), "DJI_0009.JPG");
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("jpeg import");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 1);
+        let conn = db.lock().expect("db lock");
+        let jpeg_row = crate::modules::module_01::get_image(
+            &conn,
+            Uuid::parse_str(&jpeg_report.imported_image_ids[0]).expect("jpeg id"),
+        )
+        .expect("jpeg row");
+        assert_eq!(
+            jpeg_row.raw_sibling_id, None,
+            "two same-stem dngs make the stem ambiguous; the jpeg must not guess"
+        );
+    }
+
+    /// An ambiguous stem *within the current batch* — `A.JPG` and `A.jpeg`
+    /// imported together, same as `pair_raw_siblings`'s own ambiguity test —
+    /// must not let the retroactive fallback guess which one an existing
+    /// `A.DNG` belongs to. Before this guard, whichever of the two the loop
+    /// reached first would silently claim the DNG.
+    #[test]
+    fn retroactive_linking_skips_a_stem_ambiguous_within_the_batch() {
+        let dng_dir = tempfile::tempdir().expect("dng dir");
+        let jpeg_dir = tempfile::tempdir().expect("jpeg dir");
+        let library = tempfile::tempdir().expect("library");
+        let db = test_db();
+        let session_id = session(&db);
+
+        write_dng(dng_dir.path(), "DJI_0011.DNG", 4000, 3000);
+        run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[dng_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("dng import");
+
+        write_jpeg_seeded(jpeg_dir.path(), "DJI_0011.JPG", 1);
+        write_jpeg_seeded(jpeg_dir.path(), "DJI_0011.jpeg", 2);
+        let jpeg_report = run_import(
+            &db,
+            library.path(),
+            session_id,
+            &sources(&[jpeg_dir.path().to_path_buf()]),
+            true,
+            |_, _, _| {},
+        )
+        .expect("ambiguous jpeg pair import");
+
+        assert_eq!(jpeg_report.imported_image_ids.len(), 2);
+        let conn = db.lock().expect("db lock");
+        for id in &jpeg_report.imported_image_ids {
+            let row =
+                crate::modules::module_01::get_image(&conn, Uuid::parse_str(id).expect("jpeg id"))
+                    .expect("jpeg row");
+            assert_eq!(
+                row.raw_sibling_id, None,
+                "two same-stem jpegs in one batch are ambiguous; neither may claim the dng"
+            );
+        }
     }
 
     /// Insert-time race: the planner approved both halves, but between the
