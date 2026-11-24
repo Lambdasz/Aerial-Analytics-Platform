@@ -22,50 +22,45 @@ pub fn generate_zonation(
     if mask.width == 0 || mask.height == 0 {
         return Err(PluginError::Value("mask has no pixels".into()));
     }
-
     let bounds = |total: usize, part: usize, index: usize| -> (usize, usize) {
         let start = index * total / part;
         let end = (index + 1) * total / part;
         (start, end)
     };
-
-    let mut cells = Vec::with_capacity(grid_size * grid_size);
-    for row in 0..grid_size {
-        let (y0, y1) = bounds(mask.height, grid_size, row);
-        for col in 0..grid_size {
-            let (x0, x1) = bounds(mask.width, grid_size, col);
-            let (mut total, mut vegetation) = (0usize, 0usize);
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let i = y * mask.width + x;
-                    if let Some(selector) = keep {
-                        if !selector.get(i).copied().unwrap_or(false) {
-                            continue;
-                        }
-                    }
-                    total += 1;
-                    vegetation += mask.at(x, y) as usize;
-                }
-            }
-            cells.push(GridCell {
-                row,
-                col,
-                x0,
-                y0,
-                x1,
-                y1,
-                coverage: Coverage {
-                    total_pixels: total,
-                    vegetation_pixels: vegetation,
-                    coverage_percentage: if total == 0 {
-                        0.0
-                    } else {
-                        (vegetation as f64 / total as f64) * 100.0
+    let cells = (0..grid_size)
+        .flat_map(|row| {
+            let (y0, y1) = bounds(mask.height, grid_size, row);
+            (0..grid_size).map(move |col| {
+                let (x0, x1) = bounds(mask.width, grid_size, col);
+                let (total, vegetation) = (y0..y1)
+                    .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                    .filter(|&(x, y)| {
+                        let i = y * mask.width + x;
+                        keep.is_none_or(|selector| selector.get(i).copied().unwrap_or(false))
+                    })
+                    .fold((0usize, 0usize), |(tot, veg), (x, y)| {
+                        (tot + 1, veg + mask.at(x, y) as usize)
+                    });
+                GridCell {
+                    row,
+                    col,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    coverage: Coverage {
+                        total_pixels: total,
+                        vegetation_pixels: vegetation,
+                        coverage_percentage: if total == 0 {
+                            0.0
+                        } else {
+                            (vegetation as f64 / total as f64) * 100.0
+                        },
                     },
-                },
-            });
-        }
-    }
+                }
+            })
+        })
+        .collect();
     Ok(cells)
 }
 

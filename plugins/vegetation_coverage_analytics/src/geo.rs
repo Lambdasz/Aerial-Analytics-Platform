@@ -96,18 +96,20 @@ pub fn aoi_ring(payload: &Value) -> Option<Vec<(f64, f64)>> {
 /// Bounds of an AOI: polygon ring or bbox array. Pure.
 pub fn bounds_from_aoi(payload: &Value) -> Option<[f64; 4]> {
     if let Some(ring) = aoi_ring(payload) {
-        let mut bounds = [
+        let init = [
             f64::INFINITY,
             f64::INFINITY,
             f64::NEG_INFINITY,
             f64::NEG_INFINITY,
         ];
-        for (lon, lat) in ring {
-            bounds[0] = bounds[0].min(lon);
-            bounds[1] = bounds[1].min(lat);
-            bounds[2] = bounds[2].max(lon);
-            bounds[3] = bounds[3].max(lat);
-        }
+        let bounds = ring.into_iter().fold(init, |acc, (lon, lat)| {
+            [
+                acc[0].min(lon),
+                acc[1].min(lat),
+                acc[2].max(lon),
+                acc[3].max(lat),
+            ]
+        });
         return Some(bounds);
     }
     let bbox = payload["aoi"]["geometry"]["coordinates"].as_array()?;

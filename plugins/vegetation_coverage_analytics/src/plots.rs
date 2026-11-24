@@ -14,21 +14,18 @@ pub fn point_in_polygon(lon: f64, lat: f64, ring: &[(f64, f64)]) -> bool {
     if ring.len() < 3 {
         return false;
     }
-    let mut inside = false;
-    let mut j = ring.len() - 1;
-    for i in 0..ring.len() {
-        let (xi, yi) = ring[i];
-        let (xj, yj) = ring[j];
-        let straddles = (yi > lat) != (yj > lat);
-        if straddles {
-            let x_cross = (xj - xi) * (lat - yi) / (yj - yi) + xi;
-            if lon < x_cross {
-                inside = !inside;
+    let prev_points = ring.iter().cycle().skip(ring.len() - 1);
+    ring.iter()
+        .zip(prev_points)
+        .fold(false, |inside, (&(xi, yi), &(xj, yj))| {
+            let straddles = (yi > lat) != (yj > lat);
+            let crosses = straddles && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+            if crosses {
+                !inside
+            } else {
+                inside
             }
-        }
-        j = i;
-    }
-    inside
+        })
 }
 
 /// Pixel selector for a polygon, using pixel centers. Pure.
@@ -38,11 +35,9 @@ pub fn polygon_pixel_mask(
     height: usize,
     ring: &[(f64, f64)],
 ) -> Vec<bool> {
-    let mut keep = vec![false; width * height];
-    for (index, lon, lat) in pixel_centers(bounds, width, height) {
-        keep[index] = point_in_polygon(lon, lat, ring);
-    }
-    keep
+    pixel_centers(bounds, width, height)
+        .map(|(_, lon, lat)| point_in_polygon(lon, lat, ring))
+        .collect()
 }
 
 /// Coverage inside one plot polygon (Module 5 §5). Pure.
@@ -155,30 +150,32 @@ pub fn parse_plots(parameters: &Value) -> std::result::Result<Vec<PlotRequest>, 
     let items = parsed
         .as_array()
         .ok_or_else(|| "plots parameter must be a JSON array".to_string())?;
-    let mut requests = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let plot_id = item["plot_id"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("plot_{}", index + 1));
-        let polygon = item["polygon"]
-            .as_array()
-            .ok_or_else(|| format!("plot '{plot_id}' is missing a polygon array"))?;
-        let ring: Vec<(f64, f64)> = polygon
-            .iter()
-            .filter_map(|point| {
-                let pair = point.as_array()?;
-                Some((pair.first()?.as_f64()?, pair.get(1)?.as_f64()?))
-            })
-            .collect();
-        if ring.len() < 3 {
-            return Err(format!(
-                "plot '{plot_id}' polygon needs at least 3 lon/lat pairs"
-            ));
-        }
-        requests.push(PlotRequest { plot_id, ring });
-    }
-    Ok(requests)
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let plot_id = item["plot_id"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("plot_{}", index + 1));
+            let polygon = item["polygon"]
+                .as_array()
+                .ok_or_else(|| format!("plot '{plot_id}' is missing a polygon array"))?;
+            let ring: Vec<(f64, f64)> = polygon
+                .iter()
+                .filter_map(|point| {
+                    let pair = point.as_array()?;
+                    Some((pair.first()?.as_f64()?, pair.get(1)?.as_f64()?))
+                })
+                .collect();
+            if ring.len() < 3 {
+                return Err(format!(
+                    "plot '{plot_id}' polygon needs at least 3 lon/lat pairs"
+                ));
+            }
+            Ok(PlotRequest { plot_id, ring })
+        })
+        .collect()
 }
 
 #[cfg(test)]
