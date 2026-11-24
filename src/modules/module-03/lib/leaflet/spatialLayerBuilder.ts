@@ -292,7 +292,7 @@ export function buildLayerGroupWithPoints(
         pane: "orthoPane",
       });
       if (payload.spatial_results && payload.spatial_results.length > 0) {
-        layer.bindPopup(
+        layer.bindPopup(() =>
           buildPopupHtml(
             payload.spatial_results[0],
             payload.layer_name,
@@ -354,7 +354,7 @@ export function buildLayerGroupWithPoints(
     sortedResults.forEach((result) => {
       const layer = buildFeatureLayer(result, payload.display_preference);
       if (layer) {
-        layer.bindPopup(
+        layer.bindPopup(() =>
           buildPopupHtml(result, payload.layer_name, layerImageUrl, fieldsDef, displayColor),
         );
         if (result.geometry.type === "Point") {

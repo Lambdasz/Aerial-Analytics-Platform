@@ -96,7 +96,7 @@ export const ResultPhoto: React.FC<ResultPhotoProps> = ({
       }}
     >
       <img
-        src={resolvedSrc || ""}
+        src={encodeURI(resolvedSrc || "")}
         alt={alt}
         loading="lazy"
         onError={() => setFailedKey(currentKey)}

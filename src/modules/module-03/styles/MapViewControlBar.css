@@ -2,7 +2,7 @@
   position: absolute;
   bottom: 24px;
   right: 24px;
-  z-index: 1000; /* Above Leaflet map */
+  z-index: 500; /* Above Leaflet map */
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -31,6 +31,12 @@
 
 .control-capsule .bp5-button:hover {
   background: var(--color-studio-mist) !important;
+}
+
+.control-capsule .bp5-button:focus,
+.control-capsule .bp5-button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .control-divider {

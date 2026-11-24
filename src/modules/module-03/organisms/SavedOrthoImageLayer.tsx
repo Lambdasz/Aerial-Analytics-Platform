@@ -206,7 +206,7 @@ export const SavedOrthoImageLayer: React.FC<SavedOrthoImageLayerProps> = ({ laye
             pane: "orthoPane",
           });
 
-          overlay.bindPopup(buildOrthoPopupHtml(img, true), {
+          overlay.bindPopup(() => buildOrthoPopupHtml(img, true), {
             maxWidth: 350,
             className: "apple-glass-popup",
           });
@@ -276,7 +276,7 @@ export const SavedOrthoImageLayer: React.FC<SavedOrthoImageLayerProps> = ({ laye
             });
           });
 
-          outline.bindPopup(buildOrthoPopupHtml(img, false), {
+          outline.bindPopup(() => buildOrthoPopupHtml(img, false), {
             maxWidth: 350,
             className: "apple-glass-popup",
           });

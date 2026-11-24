@@ -3,7 +3,7 @@ import { useMap } from "react-leaflet";
 import * as L from "leaflet";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
-import { invokeMap } from "../services/error";
+import { getSavedSpatialResults } from "../services/api";
 import type { MapLayerCommand, LayerPayload } from "../types/map";
 import type { LayerState } from "../types/layer";
 import {
@@ -327,11 +327,14 @@ export function useSpatialResultLayers(
     };
 
     // Muat data hasil spasial dari storage `/storage/spatial_results/`
-    invokeMap<LayerPayload[]>("get_saved_spatial_results")
+    getSavedSpatialResults()
       .then((savedPayloads) => {
         if (cancelled) return;
-        if (savedPayloads && savedPayloads.length > 0) {
-          const cmds: MapLayerCommand[] = savedPayloads.map((payload) => ({
+        const payloads = Array.isArray(savedPayloads)
+          ? savedPayloads
+          : ((savedPayloads as unknown as { results?: LayerPayload[] })?.results ?? []);
+        if (payloads.length > 0) {
+          const cmds: MapLayerCommand[] = payloads.map((payload) => ({
             action: "load_spatial_result",
             payload,
           }));

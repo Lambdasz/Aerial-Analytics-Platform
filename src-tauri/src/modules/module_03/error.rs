@@ -1,6 +1,8 @@
-#![allow(dead_code)]
-
-//! Error types for the Map Controller module (Module 3).
+//! Berkas ini mendefinisikan tipe error terpadu untuk Map Controller (Modul 3).
+//!
+//! Tipe Error yang Didefinisikan:
+//! - `MapControllerError`: Enum error domain untuk operasi peta, geometri, dan persistensi I/O.
+//! - `OrthoImportError`: Enum error terperinci untuk alur impor citra orthomosaic dan GeoTIFF.
 
 use thiserror::Error;
 
