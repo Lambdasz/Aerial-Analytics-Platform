@@ -139,13 +139,7 @@ export function AnalysePlotsDialog({
 
   // Load sessions whenever the selected project changes.
   useEffect(() => {
-    if (!projectId) {
-      setSessions([]);
-      setSessionId("");
-      setImages([]);
-      setImageId("");
-      return;
-    }
+    if (!projectId) return;
 
     let cancelled = false;
 
@@ -174,11 +168,7 @@ export function AnalysePlotsDialog({
 
   // Load analysis-ready images whenever the selected session changes.
   useEffect(() => {
-    if (!sessionId) {
-      setImages([]);
-      setImageId("");
-      return;
-    }
+    if (!sessionId) return;
 
     let cancelled = false;
 
@@ -207,14 +197,12 @@ export function AnalysePlotsDialog({
 
   const canRun = Boolean(
     pluginId &&
-      plots.length > 0 &&
-      !isRunning &&
-      (sourceType === "session" ? selectedImage : selectedOrtho),
+    plots.length > 0 &&
+    !isRunning &&
+    (sourceType === "session" ? selectedImage : selectedOrtho?.id),
   );
 
-  const waitForJob = async (
-    jobId: string,
-  ): Promise<"completed" | "failed"> => {
+  const waitForJob = async (jobId: string): Promise<"completed" | "failed"> => {
     for (;;) {
       if (abortRef.current) return "failed";
 
@@ -244,7 +232,7 @@ export function AnalysePlotsDialog({
 
     // Orthomosaic processing is handled by the native raster pipeline.
     if (sourceType === "ortho") {
-      if (!selectedOrtho) {
+      if (!selectedOrtho?.id) {
         setIsRunning(false);
         return;
       }
@@ -255,15 +243,12 @@ export function AnalysePlotsDialog({
       let unlisten: (() => void) | undefined;
 
       try {
-        unlisten = await listen<PlotAnalysisProgressEvent>(
-          "plot-analysis-progress",
-          (event) => {
-            setProgressMessage(event.payload.message);
-            setProgressPercent(event.payload.percent);
-            setDone(event.payload.plotIndex);
-            setCurrentPlot(event.payload.plotName);
-          },
-        );
+        unlisten = await listen<PlotAnalysisProgressEvent>("plot-analysis-progress", (event) => {
+          setProgressMessage(event.payload.message);
+          setProgressPercent(event.payload.percent);
+          setDone(event.payload.plotIndex);
+          setCurrentPlot(event.payload.plotName);
+        });
 
         const outcome = await analysePlotsFromOrtho({
           orthoId: selectedOrtho.id,
@@ -331,18 +316,11 @@ export function AnalysePlotsDialog({
         const result = await getJobResult(handle.job_id);
 
         if (String(result.status).toLowerCase() === "failure") {
-          failures.push(
-            `${plot.name}: ${result.error ?? "plugin reported failure"}`,
-          );
+          failures.push(`${plot.name}: ${result.error ?? "plugin reported failure"}`);
           continue;
         }
 
-        await savePlotIndicators(
-          plot.id,
-          pluginId,
-          handle.job_id,
-          result.metrics,
-        );
+        await savePlotIndicators(plot.id, pluginId, handle.job_id, result.metrics);
       } catch (error) {
         activeJobRef.current = null;
         failures.push(`${plot.name}: ${message(error)}`);
@@ -372,8 +350,7 @@ export function AnalysePlotsDialog({
   };
 
   const percent =
-    progressPercent ??
-    (plots.length === 0 ? 0 : Math.round((done / plots.length) * 100));
+    progressPercent ?? (plots.length === 0 ? 0 : Math.round((done / plots.length) * 100));
 
   return (
     <Dialog
@@ -417,9 +394,7 @@ export function AnalysePlotsDialog({
                 disabled={plugins.length === 0 || isRunning}
                 onChange={(event) => setPluginId(event.currentTarget.value)}
                 options={[
-                  ...(plugins.length === 0
-                    ? [{ label: "No enabled plugins", value: "" }]
-                    : []),
+                  ...(plugins.length === 0 ? [{ label: "No enabled plugins", value: "" }] : []),
                   ...plugins.map((plugin) => ({
                     label: `${plugin.name} (${plugin.runtime_type})`,
                     value: plugin.id,
@@ -435,9 +410,7 @@ export function AnalysePlotsDialog({
             <ButtonGroup fill style={{ marginBottom: 12 }}>
               <Button
                 text="Flight Session"
-                intent={
-                  sourceType === "session" ? Intent.PRIMARY : Intent.NONE
-                }
+                intent={sourceType === "session" ? Intent.PRIMARY : Intent.NONE}
                 onClick={() => setSourceType("session")}
                 disabled={isRunning}
               />
@@ -451,9 +424,7 @@ export function AnalysePlotsDialog({
 
             {sourceType === "ortho" ? (
               <>
-                <div className="bp6-label">
-                  Orthomosaic ({orthos.length} available)
-                </div>
+                <div className="bp6-label">Orthomosaic ({orthos.length} available)</div>
                 <HTMLSelect
                   fill
                   value={orthoId}
@@ -466,9 +437,7 @@ export function AnalysePlotsDialog({
                   onChange={(event) => setOrthoId(event.currentTarget.value)}
                   options={orthos.map((ortho) => ({
                     label: `${ortho.filename || ortho.id || "unnamed"} ${
-                      ortho.dimensions
-                        ? `(${ortho.dimensions[0]}×${ortho.dimensions[1]} px)`
-                        : ""
+                      ortho.dimensions ? `(${ortho.dimensions[0]}×${ortho.dimensions[1]} px)` : ""
                     }`,
                     value: ortho.id ?? "",
                   }))}
@@ -482,10 +451,9 @@ export function AnalysePlotsDialog({
                     lineHeight: 1.4,
                   }}
                 >
-                  Sub-citra plot akan dipotong (<i>clipped</i>) dan dibagi
-                  menjadi ubin (<i>sliced</i>, maks. 1024×1024 px) secara
-                  otomatis dari orthomosaic untuk mencegah lonjakan memori RAM
-                  (OOM).
+                  Sub-citra plot akan dipotong (<i>clipped</i>) dan dibagi menjadi ubin (
+                  <i>sliced</i>, maks. 1024×1024 px) secara otomatis dari orthomosaic untuk mencegah
+                  lonjakan memori RAM (OOM).
                 </div>
               </>
             ) : (
@@ -495,7 +463,13 @@ export function AnalysePlotsDialog({
                   fill
                   value={projectId}
                   disabled={projects.length === 0 || isRunning}
-                  onChange={(event) => setProjectId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setProjectId(event.currentTarget.value);
+                    setSessions([]);
+                    setSessionId("");
+                    setImages([]);
+                    setImageId("");
+                  }}
                   options={projects.map((project) => ({
                     label: project.name,
                     value: project.id,
@@ -510,11 +484,13 @@ export function AnalysePlotsDialog({
                   value={sessionId}
                   disabled={sessions.length === 0 || isRunning}
                   placeholder="No sessions in this project"
-                  onChange={(event) => setSessionId(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setSessionId(event.currentTarget.value);
+                    setImages([]);
+                    setImageId("");
+                  }}
                   options={sessions.map((session) => ({
-                    label: `${session.name} (${
-                      session.dateStart?.slice(0, 10) || "no date"
-                    })`,
+                    label: `${session.name} (${session.dateStart?.slice(0, 10) || "no date"})`,
                     value: session.id,
                   }))}
                 />
@@ -529,8 +505,7 @@ export function AnalysePlotsDialog({
                   placeholder="No analysis-ready image"
                   onChange={(event) => setImageId(event.currentTarget.value)}
                   options={images.map((image) => ({
-                    label:
-                      image.filePath.split(/[/\\]/).pop() ?? image.filePath,
+                    label: image.filePath.split(/[/\\]/).pop() ?? image.filePath,
                     value: image.id,
                   }))}
                 />
@@ -539,11 +514,7 @@ export function AnalysePlotsDialog({
 
             {isRunning && (
               <div style={{ marginTop: 16 }}>
-                <ProgressBar
-                  value={percent / 100}
-                  intent={Intent.PRIMARY}
-                  animate={false}
-                />
+                <ProgressBar value={percent / 100} intent={Intent.PRIMARY} animate={false} />
                 <div
                   style={{
                     marginTop: 6,
@@ -552,18 +523,13 @@ export function AnalysePlotsDialog({
                   }}
                 >
                   {progressMessage ??
-                    `${done}/${plots.length} plots · ${
-                      currentPlot ?? "starting"
-                    }`}
+                    `${done}/${plots.length} plots · ${currentPlot ?? "starting"}`}
                 </div>
               </div>
             )}
 
             {finished && errors.length === 0 && (
-              <Callout
-                intent={Intent.SUCCESS}
-                style={{ marginTop: 16, borderRadius: 10 }}
-              >
+              <Callout intent={Intent.SUCCESS} style={{ marginTop: 16, borderRadius: 10 }}>
                 Indicators stored for {done} plot{done === 1 ? "" : "s"}.
               </Callout>
             )}
@@ -590,9 +556,8 @@ export function AnalysePlotsDialog({
                 color: "#64748b",
               }}
             >
-              The plugin runs once per selected plot with the plot boundary as
-              its area of interest. Existing indicator values for the same
-              plugin are replaced.
+              The plugin runs once per selected plot with the plot boundary as its area of interest.
+              Existing indicator values for the same plugin are replaced.
             </p>
           </>
         )}
@@ -642,9 +607,7 @@ export function AnalysePlotsDialog({
                   color: !canRun ? "#94a3b8" : "#ffffff",
                   fontWeight: 600,
                   padding: "6px 18px",
-                  boxShadow: !canRun
-                    ? "none"
-                    : "0 2px 8px rgba(15,23,42,0.15)",
+                  boxShadow: !canRun ? "none" : "0 2px 8px rgba(15,23,42,0.15)",
                 }}
               />
             </>

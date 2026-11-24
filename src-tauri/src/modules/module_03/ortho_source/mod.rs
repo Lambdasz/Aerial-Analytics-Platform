@@ -2,10 +2,6 @@
 
 // Modul dari main
 pub mod clipper;
-pub mod commands;
-pub mod constants;
-pub mod exif_reader;
-pub mod geotiff_reader;
 
 // Modul dari feat
 pub mod exif_metadata_io;
