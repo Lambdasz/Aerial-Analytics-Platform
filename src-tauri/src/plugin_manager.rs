@@ -36,6 +36,7 @@
 //! | [`models`] | Data models, DTOs, and schema-conforming types |
 //! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata` and execution preflight) |
 //! | [`registry`] | Plugin discovery, indexing, compatibility queries, and health checks |
+//! | [`registry_core`] | Pure plugin registry state, compatibility predicates, and manifest/subcontract validation |
 //! | [`result_handler`] | Compatibility shim for Module 9 (`ExecutionResult` and run history) |
 //!
 //! ## Fault Isolation
@@ -48,5 +49,6 @@ pub mod lifecycle;
 pub mod models;
 pub mod payload;
 pub mod registry;
+pub mod registry_core;
 pub mod result_handler;
 pub mod result_store;
