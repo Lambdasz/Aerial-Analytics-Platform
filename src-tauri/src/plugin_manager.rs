@@ -33,6 +33,7 @@
 //! | [`error`] | Domain error types and [`CommandError`](error::CommandError) DTO |
 //! | [`executor`] | Async subprocess supervision, timeout enforcement, and progress streaming |
 //! | [`lifecycle`] | Plugin installation, removal, enable/disable, and state persistence |
+//! | [`lifecycle_core`] | Pure plugin lifecycle validation, immutable state transitions, and removal planning |
 //! | [`models`] | Data models, DTOs, and schema-conforming types |
 //! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata` and execution preflight) |
 //! | [`registry`] | Plugin discovery, indexing, compatibility queries, and health checks |
@@ -46,6 +47,7 @@
 pub mod error;
 pub mod executor;
 pub mod lifecycle;
+pub mod lifecycle_core;
 pub mod models;
 pub mod payload;
 pub mod registry;

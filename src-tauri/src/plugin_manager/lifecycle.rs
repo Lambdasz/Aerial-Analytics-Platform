@@ -14,7 +14,12 @@
 use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};
-use super::models::{InputsSpec, PluginManifest, PluginStateStore, PluginSummaryDto};
+pub(crate) use super::lifecycle_core::{
+    assemble_user_plugin_bundle, is_valid_plugin_id, resolve_staged_plugin_root,
+    validate_custom_parameters, validate_installation_preconditions,
+};
+use super::lifecycle_core::{with_applied_state, with_install_update, with_status_update};
+use super::models::{PluginStateStore, PluginSummaryDto};
 
 // ---------------------------------------------------------------------------
 // 1. TAURI IPC COMMANDS (pub — registered in lib.rs invoke_handler)
@@ -81,9 +86,7 @@ pub async fn set_plugin_status(
         .map_err(Into::into)
 }
 
-/// Pure: Updates or inserts a plugin status toggle in the state store.
-///
-/// **Pure function** — deterministic in-memory mutation of `PluginStateStore` with zero I/O.
+/// Compatibility wrapper delegating to [`with_status_update`].
 pub(crate) fn update_state_store_for_status(
     store: &mut super::models::PluginStateStore,
     plugin_id: &str,
@@ -92,20 +95,7 @@ pub(crate) fn update_state_store_for_status(
     source: super::models::PluginSource,
     now_iso: &str,
 ) {
-    store.updated_at = now_iso.to_string();
-    let record = store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| super::models::PluginStateRecord {
-            version: version.to_string(),
-            source,
-            enabled,
-            installed_at: now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: Default::default(),
-        });
-    record.enabled = enabled;
+    *store = with_status_update(store, plugin_id, enabled, version, source, now_iso);
 }
 
 /// Internal helper for toggling plugin status and flushing changes to plugin_state.json.
@@ -154,32 +144,12 @@ pub(crate) async fn set_plugin_status_internal(
     Ok(())
 }
 
-/// Pure helper to validate plugin identifier format matching `^[a-z0-9-_]+$`.
-pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-}
-
-/// Applies persisted state records to an in-memory plugin registry.
+/// Compatibility wrapper delegating to [`with_applied_state`].
 pub(crate) fn apply_state_to_registry(
     registry: &mut super::registry::PluginRegistry,
     store: &PluginStateStore,
 ) {
-    for (id, record) in &store.plugins {
-        if let Some(bundle) = registry.plugins.get_mut(id) {
-            bundle.enabled = record.enabled;
-            bundle.source = match record.source {
-                super::models::PluginSource::Builtin => "builtin".to_string(),
-                super::models::PluginSource::User => "user".to_string(),
-            };
-            if let Some(ref hc) = record.last_healthcheck {
-                bundle.health_status = hc.status.clone();
-            }
-            bundle.custom_parameters = record.custom_parameters.clone();
-        }
-    }
+    *registry = with_applied_state(registry, store);
 }
 
 /// Fallback default path for plugin_state.json if none is specified in AppState.
@@ -214,129 +184,14 @@ pub async fn update_plugin_config(
         .map_err(Into::into)
 }
 
-/// Pure: Resolves the plugin root directory from staging inspection results.
-///
-/// **Pre-condition**: `has_root_manifest` indicates whether manifest.json exists directly in staging root.
-/// `candidates` contains subdirectories that contain a manifest.json.
-/// **Post-condition**: Returns the resolved plugin root or an error if missing or ambiguous.
-pub(crate) fn resolve_staged_plugin_root(
-    staging_root: &Path,
-    has_root_manifest: bool,
-    candidates: Vec<PathBuf>,
-) -> Result<PathBuf, PluginError> {
-    if has_root_manifest {
-        return Ok(staging_root.to_path_buf());
-    }
-    if candidates.is_empty() {
-        return Err(PluginError::ManifestInvalid {
-            path: "manifest.json".to_string(),
-            message: "manifest.json not found in archive root or subdirectory".to_string(),
-        });
-    }
-    if candidates.len() > 1 {
-        return Err(PluginError::ManifestInvalid {
-            path: "manifest.json".to_string(),
-            message: format!(
-                "Ambiguous archive: multiple plugin directories with manifest.json found ({})",
-                candidates.len()
-            ),
-        });
-    }
-    Ok(candidates.into_iter().next().unwrap())
-}
-
-/// Pure: Validates whether a plugin can be installed based on ID format, active job statuses, and existing source.
-///
-/// **Pre-condition**: None.
-/// **Post-condition**: Returns Ok(()) if the plugin installation is safe and permitted,
-/// or Err(PluginError) if the ID is invalid, a job is running for this plugin, or it attempts to overwrite a builtin.
-pub(crate) fn validate_installation_preconditions(
-    plugin_id: &str,
-    is_job_active: bool,
-    existing_registry_source: Option<&str>,
-    existing_state_source: Option<&super::models::PluginSource>,
-) -> Result<(), PluginError> {
-    if !is_valid_plugin_id(plugin_id) {
-        return Err(PluginError::SecurityViolation(format!(
-            "Invalid plugin id '{}': must match ^[a-z0-9-_]+$",
-            plugin_id
-        )));
-    }
-
-    if is_job_active {
-        return Err(PluginError::ExecutionError(format!(
-            "Cannot overwrite plugin '{}' because it is currently executing a job",
-            plugin_id
-        )));
-    }
-
-    if let Some("builtin") = existing_registry_source {
-        return Err(PluginError::SecurityViolation(format!(
-            "Cannot overwrite builtin plugin '{}'",
-            plugin_id
-        )));
-    }
-
-    if let Some(super::models::PluginSource::Builtin) = existing_state_source {
-        return Err(PluginError::SecurityViolation(format!(
-            "Cannot overwrite builtin plugin '{}'",
-            plugin_id
-        )));
-    }
-
-    Ok(())
-}
-
-/// Pure: Assembles a user-installed `PluginBundle` from validated components.
-///
-/// **Pure function** — deterministic, zero I/O, zero side effects.
-pub(crate) fn assemble_user_plugin_bundle(
-    target_dir: PathBuf,
-    manifest: PluginManifest,
-    inputs_spec: InputsSpec,
-    inputs_raw: serde_json::Value,
-    parameters_raw: serde_json::Value,
-    outputs_raw: serde_json::Value,
-) -> super::models::PluginBundle {
-    super::models::PluginBundle {
-        install_path: target_dir,
-        manifest,
-        inputs_spec,
-        inputs_raw,
-        parameters_raw,
-        outputs_raw,
-        enabled: true,
-        source: "user".to_string(),
-        health_status: "unknown".to_string(),
-        custom_parameters: serde_json::json!({}),
-    }
-}
-
-/// Pure: Updates or inserts a user plugin state record in the state store.
-///
-/// **Pure function** — modifies the in-memory data structure deterministically without touching disk.
+/// Compatibility wrapper delegating to [`with_install_update`].
 pub(crate) fn update_state_store_for_install(
     store: &mut super::models::PluginStateStore,
     plugin_id: &str,
     version: &str,
     now_iso: &str,
 ) {
-    store.updated_at = now_iso.to_string();
-    let record = store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| super::models::PluginStateRecord {
-            version: version.to_string(),
-            source: super::models::PluginSource::User,
-            enabled: true,
-            installed_at: now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: Default::default(),
-        });
-    record.version = version.to_string();
-    record.source = super::models::PluginSource::User;
-    record.enabled = true;
+    *store = with_install_update(store, plugin_id, version, now_iso);
 }
 
 /// Internal helper for installing a plugin from a .zip archive.
@@ -579,125 +434,6 @@ pub(crate) async fn remove_plugin_internal(
     store.updated_at = chrono::Utc::now().to_rfc3339();
     save_plugin_state(&state_path, &store)?;
 
-    Ok(())
-}
-
-/// Validates custom parameter values against constraints declared in parameters.json.
-pub(crate) fn validate_custom_parameters(
-    parameters_raw: &serde_json::Value,
-    custom_params: &serde_json::Value,
-) -> Result<(), PluginError> {
-    let custom_obj = custom_params
-        .as_object()
-        .ok_or_else(|| PluginError::SubcontractInvalid {
-            path: "parameters.json".to_string(),
-            message: "Custom parameters must be a JSON object".to_string(),
-        })?;
-
-    let empty_vec = vec![];
-    let defined_params = parameters_raw
-        .get("parameters")
-        .and_then(|p| p.as_array())
-        .unwrap_or(&empty_vec);
-
-    for (key, val) in custom_obj {
-        let param_def = defined_params
-            .iter()
-            .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(key))
-            .ok_or_else(|| PluginError::SubcontractInvalid {
-                path: "parameters.json".to_string(),
-                message: format!("Unknown parameter '{}'", key),
-            })?;
-
-        let param_type = param_def.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-        match param_type {
-            "boolean" => {
-                if !val.is_boolean() {
-                    return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.json".to_string(),
-                        message: format!("Parameter '{}' must be a boolean", key),
-                    });
-                }
-            }
-            "string" => {
-                if !val.is_string() {
-                    return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.json".to_string(),
-                        message: format!("Parameter '{}' must be a string", key),
-                    });
-                }
-            }
-            "select" => {
-                let str_val = val
-                    .as_str()
-                    .ok_or_else(|| PluginError::SubcontractInvalid {
-                        path: "parameters.json".to_string(),
-                        message: format!(
-                            "Parameter '{}' must be a string matching one of the options",
-                            key
-                        ),
-                    })?;
-                let options = param_def
-                    .get("options")
-                    .and_then(|o| o.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|item| item.as_str())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                if !options.contains(&str_val) {
-                    return Err(PluginError::SubcontractInvalid {
-                        path: "parameters.json".to_string(),
-                        message: format!(
-                            "Parameter '{}' value '{}' is not one of the allowed options: {:?}",
-                            key, str_val, options
-                        ),
-                    });
-                }
-            }
-            "number" => {
-                let num = val
-                    .as_f64()
-                    .ok_or_else(|| PluginError::SubcontractInvalid {
-                        path: "parameters.json".to_string(),
-                        message: format!("Parameter '{}' must be a number", key),
-                    })?;
-                if let Some(min) = param_def.get("min").and_then(|m| m.as_f64()) {
-                    if num < min {
-                        return Err(PluginError::SubcontractInvalid {
-                            path: "parameters.json".to_string(),
-                            message: format!(
-                                "Parameter '{}' value {} is below minimum {}",
-                                key, num, min
-                            ),
-                        });
-                    }
-                }
-                if let Some(max) = param_def.get("max").and_then(|m| m.as_f64()) {
-                    if num > max {
-                        return Err(PluginError::SubcontractInvalid {
-                            path: "parameters.json".to_string(),
-                            message: format!(
-                                "Parameter '{}' value {} exceeds maximum {}",
-                                key, num, max
-                            ),
-                        });
-                    }
-                }
-            }
-            other => {
-                return Err(PluginError::SubcontractInvalid {
-                    path: "parameters.json".to_string(),
-                    message: format!(
-                        "Unsupported parameter type '{}' for parameter '{}'",
-                        other, key
-                    ),
-                });
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1929,179 +1665,5 @@ mod tests {
             !reg.plugins.contains_key("rollback-plugin"),
             "Registry must not retain plugin on state save failure"
         );
-    }
-
-    #[test]
-    fn test_resolve_staged_plugin_root_pure() {
-        let root = PathBuf::from("/staging");
-
-        // 1. Root manifest exists
-        let res = resolve_staged_plugin_root(&root, true, vec![]);
-        assert_eq!(res.unwrap(), root);
-
-        // 2. Single subdirectory candidate
-        let sub = PathBuf::from("/staging/my-plugin");
-        let res = resolve_staged_plugin_root(&root, false, vec![sub.clone()]);
-        assert_eq!(res.unwrap(), sub);
-
-        // 3. No candidates
-        let res = resolve_staged_plugin_root(&root, false, vec![]);
-        assert!(matches!(res, Err(PluginError::ManifestInvalid { .. })));
-
-        // 4. Ambiguous candidates (>1)
-        let sub2 = PathBuf::from("/staging/other-plugin");
-        let res = resolve_staged_plugin_root(&root, false, vec![sub, sub2]);
-        assert!(matches!(res, Err(PluginError::ManifestInvalid { .. })));
-    }
-
-    #[test]
-    fn test_validate_installation_preconditions_pure() {
-        // 1. Invalid ID
-        let res = validate_installation_preconditions("INVALID_ID", false, None, None);
-        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
-
-        // 2. Active job running
-        let res = validate_installation_preconditions("valid-id", true, None, None);
-        assert!(matches!(res, Err(PluginError::ExecutionError(_))));
-
-        // 3. Cannot overwrite builtin in registry
-        let res = validate_installation_preconditions("valid-id", false, Some("builtin"), None);
-        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
-
-        // 4. Cannot overwrite builtin in state store
-        let res = validate_installation_preconditions(
-            "valid-id",
-            false,
-            None,
-            Some(&PluginSource::Builtin),
-        );
-        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
-
-        // 5. Valid installation (new user plugin or user plugin overwrite)
-        let res = validate_installation_preconditions(
-            "valid-id",
-            false,
-            Some("user"),
-            Some(&PluginSource::User),
-        );
-        assert!(res.is_ok());
-    }
-
-    #[test]
-    fn test_update_state_store_for_install_pure() {
-        let mut store = PluginStateStore::default();
-        let now_iso = "2026-11-02T12:00:00Z";
-
-        update_state_store_for_install(&mut store, "my-plugin", "1.2.3", now_iso);
-
-        assert_eq!(store.updated_at, now_iso);
-        let record = store.plugins.get("my-plugin").expect("record must exist");
-        assert_eq!(record.version, "1.2.3");
-        assert_eq!(record.source, PluginSource::User);
-        assert!(record.enabled);
-        assert_eq!(record.installed_at, now_iso);
-    }
-
-    #[test]
-    fn test_update_state_store_for_status_insert_new_record_pure() {
-        let mut store = PluginStateStore::default();
-        let now_iso = "2026-11-03T01:00:00Z";
-
-        update_state_store_for_status(
-            &mut store,
-            "new-plugin",
-            false,
-            "2.0.0",
-            PluginSource::Builtin,
-            now_iso,
-        );
-
-        assert_eq!(store.updated_at, now_iso);
-        let record = store.plugins.get("new-plugin").expect("record must exist");
-        assert_eq!(record.version, "2.0.0");
-        assert_eq!(record.source, PluginSource::Builtin);
-        assert!(!record.enabled);
-        assert_eq!(record.installed_at, now_iso);
-    }
-
-    #[test]
-    fn test_update_state_store_for_status_update_existing_record_pure() {
-        let mut store = PluginStateStore::default();
-        let initial_iso = "2026-11-01T00:00:00Z";
-        update_state_store_for_install(&mut store, "toggle-plugin", "1.0.0", initial_iso);
-        assert!(store.plugins.get("toggle-plugin").unwrap().enabled);
-
-        let update_iso = "2026-11-03T01:30:00Z";
-        update_state_store_for_status(
-            &mut store,
-            "toggle-plugin",
-            false,
-            "1.0.0",
-            PluginSource::User,
-            update_iso,
-        );
-
-        assert_eq!(store.updated_at, update_iso);
-        let record = store
-            .plugins
-            .get("toggle-plugin")
-            .expect("record must exist");
-        assert_eq!(record.version, "1.0.0");
-        assert_eq!(record.source, PluginSource::User);
-        assert!(!record.enabled);
-        assert_eq!(record.installed_at, initial_iso);
-    }
-
-    #[test]
-    fn test_assemble_user_plugin_bundle_pure() {
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "user-test".to_string(),
-                name: "User Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let inputs_spec = InputsSpec {
-            granularity: "single_image".to_string(),
-            supported_mime_types: vec!["image/jpeg".to_string()],
-            requires_metadata: vec![],
-            optional_metadata: vec![],
-            supports_aoi: false,
-            aoi_format: None,
-        };
-
-        let bundle = assemble_user_plugin_bundle(
-            PathBuf::from("/plugins/user-test"),
-            manifest,
-            inputs_spec,
-            serde_json::json!({}),
-            serde_json::json!({"parameters": []}),
-            serde_json::json!({}),
-        );
-
-        assert_eq!(bundle.manifest.metadata.id, "user-test");
-        assert_eq!(bundle.source, "user");
-        assert!(bundle.enabled);
-        assert_eq!(bundle.install_path, PathBuf::from("/plugins/user-test"));
     }
 }
