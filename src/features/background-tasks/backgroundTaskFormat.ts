@@ -57,28 +57,56 @@ export function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
+/**
+ * How many standalone DNGs a task skipped. Reads the field defensively so this
+ * file compiles even on a branch whose TaskSnapshot predates `skipped`.
+ * Once main is merged, this can simply become `task.skipped`.
+ */
+function skippedOf(task: TaskSnapshot): number {
+  return (task as TaskSnapshot & { skipped?: number }).skipped ?? 0;
+}
+
+/** ` · N DNG dilewati`, or `""` when nothing was skipped. */
+function skippedSuffix(task: TaskSnapshot): string {
+  const skipped = skippedOf(task);
+  return skipped > 0 ? ` · ${skipped} DNG dilewati` : "";
+}
+
 /** The one-line status under a task's title. `now` is the current time in ms. */
 export function metaText(task: TaskSnapshot, now: number): string {
   const scored = Math.max(0, task.done - task.unscorable);
   const took = formatDuration(elapsedMs(task, now));
+  const skipped = skippedSuffix(task);
+  // A skip-only pass (standalone DNGs only, nothing queued to score) has no
+  // scoring work at all, so it gets its own wording rather than "0 dari 0".
+  if (task.state === "done" && task.total === 0) {
+    return `Tidak ada citra untuk dinilai${skipped}`;
+  }
   switch (task.state) {
     case "queued":
       return "Menunggu giliran";
     case "running":
-      return `${task.done} dari ${task.total} citra dinilai · ${took}`;
+      return `${task.done} dari ${task.total} citra dinilai · ${took}${skipped}`;
     case "done":
-      return `${task.total} citra dinilai selama ${took} · selesai ${formatClock(task.finishedAt)}`;
+      return `${task.total} citra dinilai selama ${took} · selesai ${formatClock(task.finishedAt)}${skipped}`;
     case "warn":
-      return `${scored} dari ${task.total} citra dinilai selama ${took} · ${task.unscorable} tidak dapat dinilai`;
+      return `${scored} dari ${task.total} citra dinilai selama ${took} · ${task.unscorable} tidak dapat dinilai${skipped}`;
     case "cancelled":
-      return `Dibatalkan setelah ${took} · ${task.done} dari ${task.total} citra dinilai`;
+      return `Dibatalkan setelah ${took} · ${task.done} dari ${task.total} citra dinilai${skipped}`;
     case "failed":
       return `Gagal setelah ${took} · ${task.error ?? "kesalahan tidak diketahui"}`;
   }
 }
 
+/** Why standalone DNGs were skipped, for the expanded detail's sub line. */
+const SKIPPED_REASON =
+  "citra DNG tanpa pasangan JPEG tidak dinilai; ketajamannya tidak dapat diukur dari pratinjau.";
+
 /** The "Pekerjaan saat ini" strip shown when a task card is expanded. */
 export function currentWork(task: TaskSnapshot): { title: string; sub: string } {
+  const skipped = skippedOf(task);
+  const skippedNote = skipped > 0 ? `${skipped} ${SKIPPED_REASON}` : "";
+  const withSkipped = (sub: string) => (skippedNote ? `${sub} ${skippedNote}` : sub);
   switch (task.state) {
     case "queued":
       return { title: "Belum dimulai", sub: "Mulai otomatis setelah tugas sebelumnya selesai." };
@@ -88,16 +116,22 @@ export function currentWork(task: TaskSnapshot): { title: string; sub: string } 
         sub: `${task.done} dari ${task.total} citra`,
       };
     case "done":
-      return { title: "Tidak ada pekerjaan", sub: "Semua citra sudah dinilai." };
+      if (task.total === 0) {
+        // Skip-only pass: nothing was ever queued to score.
+        return { title: "Tidak ada pekerjaan", sub: skippedNote };
+      }
+      return { title: "Tidak ada pekerjaan", sub: withSkipped("Semua citra sudah dinilai.") };
     case "warn":
       return {
         title: "Tidak ada pekerjaan",
-        sub: "Beberapa citra terlalu kecil atau tidak dapat dibaca, sehingga tidak mendapat skor.",
+        sub: withSkipped(
+          "Beberapa citra terlalu kecil atau tidak dapat dibaca, sehingga tidak mendapat skor.",
+        ),
       };
     case "cancelled":
       return {
         title: "Tidak ada pekerjaan",
-        sub: "Penilaian dihentikan. Sisa citra dilanjutkan saat aplikasi dibuka lagi.",
+        sub: withSkipped("Penilaian dihentikan. Sisa citra dilanjutkan saat aplikasi dibuka lagi."),
       };
     case "failed":
       return { title: "Tidak ada pekerjaan", sub: task.error ?? "Penilaian gagal." };
