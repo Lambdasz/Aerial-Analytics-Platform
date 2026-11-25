@@ -105,16 +105,15 @@ pub fn plots_geojson(plots: &[PlotResult], rings: &[(String, Vec<(f64, f64)>)]) 
             let ring = rings
                 .iter()
                 .find(|(id, _)| id == &plot.plot_id)
-                .map(|(_, ring)| ring.clone())
-                .unwrap_or_default();
-            let mut coords: Vec<Vec<f64>> = ring.iter().map(|&(lon, lat)| vec![lon, lat]).collect();
-            let closed = coords
-                .first()
-                .zip(coords.last())
-                .is_some_and(|(f, l)| f == l);
-            if !closed && !coords.is_empty() {
-                coords.push(coords[0].clone());
-            }
+                .map(|(_, ring)| ring.as_slice())
+                .unwrap_or(&[]);
+            let closed = ring.first().zip(ring.last()).is_some_and(|(f, l)| f == l);
+            let closing_point = (!closed).then(|| ring.first()).flatten();
+            let coords: Vec<Vec<f64>> = ring
+                .iter()
+                .chain(closing_point)
+                .map(|&(lon, lat)| vec![lon, lat])
+                .collect();
             json!({
                 "type": "Feature",
                 "geometry": { "type": "Polygon", "coordinates": [coords] },
@@ -253,5 +252,37 @@ mod tests {
         let broken = json!({ "plots": "[{\"plot_id\":\"A\",\"polygon\":[[0,0]]}]" });
         assert!(parse_plots(&broken).is_err());
         assert!(parse_plots(&json!({ "plots": "" })).unwrap().is_empty());
+    }
+
+    #[test]
+    fn plots_geojson_closes_unclosed_rings() {
+        let plot = |id: &str| PlotResult {
+            plot_id: id.into(),
+            coverage: Coverage {
+                total_pixels: 4,
+                vegetation_pixels: 2,
+                coverage_percentage: 50.0,
+            },
+            vegetation_area_sqm: Some(2.0),
+            classification: "medium".into(),
+        };
+        let rings = vec![
+            ("open".into(), vec![(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]),
+            (
+                "closed".into(),
+                vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 0.0)],
+            ),
+        ];
+        let geo = plots_geojson(&[plot("open"), plot("closed")], &rings);
+        let features = geo["features"].as_array().unwrap();
+        let open_coords = features[0]["geometry"]["coordinates"][0]
+            .as_array()
+            .unwrap();
+        let closed_coords = features[1]["geometry"]["coordinates"][0]
+            .as_array()
+            .unwrap();
+        assert_eq!(open_coords.len(), 4);
+        assert_eq!(open_coords.first(), open_coords.last());
+        assert_eq!(closed_coords.len(), 4);
     }
 }

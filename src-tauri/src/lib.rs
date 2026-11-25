@@ -465,7 +465,7 @@
 //! **Status**: Implemented (`vegetation-coverage-analytics`): modular functional
 //! architecture (`types`, `indices`, `coverage`, `geo`, `zonation`, `plots`, `pipeline`),
 //! mask source `file` (Module 4 mask, primary) or `auto` (ExG/ExR/VARI fallback), zonation GeoJSON, plot
-//! comparison, GPS footprint georeferencing, 23 unit tests. Artefacts carry WGS 84
+//! comparison, GPS footprint georeferencing, 24 unit tests. Artefacts carry WGS 84
 //! bounds for the map.
 //!
 //! ---

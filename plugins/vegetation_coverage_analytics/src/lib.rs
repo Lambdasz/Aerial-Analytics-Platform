@@ -9,7 +9,7 @@
 //!   by Module 4 (Vegetation Detection).
 //! - Standalone fallback (`mask_source = "auto"`): derives mask directly from RGB
 //!   imagery using normalized spectral vegetation indices (ExG, ExR, VARI).
-//! - 23 pure unit tests covering indices, GSD resolution, coverage math, ray-casting
+//! - 24 pure unit tests covering indices, GSD resolution, coverage math, ray-casting
 //!   point-in-polygon, zonation, and pipeline boundary handling.
 //!
 //! Structure:
