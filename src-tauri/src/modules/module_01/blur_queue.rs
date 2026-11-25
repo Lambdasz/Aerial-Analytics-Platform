@@ -15,14 +15,19 @@
 //! image by id and takes the session from the **image row**, so an image
 //! moved to another session carries its pending state along. Rows whose
 //! image no longer exists are ignored and pruned by [`pending_sessions`].
+//!
+//! Only JPEGs are ever queued (see
+//! `flight_session::insert_images_and_recalculate`, which excludes every
+//! DNG from the `enqueue` call). A DNG row can still appear here from a
+//! database written before that exclusion existed; [`pending_for_session`]
+//! treats such a row the same as any other row that can never be scored —
+//! it is dequeued on the spot instead of being handed to the scorer.
 
 use std::path::PathBuf;
 
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use uuid::Uuid;
-
-use crate::models::image::ImageFormat;
 
 use super::error::SessionError;
 
@@ -31,7 +36,6 @@ use super::error::SessionError;
 pub(crate) struct PendingImage {
     pub image_id: Uuid,
     pub path: PathBuf,
-    pub format: ImageFormat,
 }
 
 /// Creates the `blur_queue` table if it does not exist.
@@ -75,22 +79,16 @@ pub(crate) fn enqueue(
     Ok(())
 }
 
-fn format_from_db(raw: Option<&str>) -> Option<ImageFormat> {
-    match raw {
-        Some("jpeg") => Some(ImageFormat::Jpeg),
-        Some("dng") => Some(ImageFormat::Dng),
-        _ => None,
-    }
-}
-
 /// The images of `session_id` that are still waiting for a score, oldest
 /// first.
 ///
 /// Matched through `image`, so a queue row whose image was deleted is not
 /// returned, and an image moved here from another session is. A row that can
-/// never be scored — an id that is not a UUID or an unknown format — is
-/// dequeued on the spot instead of being skipped, so it cannot keep a
-/// session "pending" forever or make a count disagree with the work list.
+/// never be scored — an id that is not a UUID, or a format other than
+/// `"jpeg"` (a DNG queued by a database from before DNGs were excluded at
+/// insert time, or an unknown/NULL format) — is dequeued on the spot instead
+/// of being skipped, so it cannot keep a session "pending" forever or make a
+/// count disagree with the work list.
 pub(crate) fn pending_for_session(
     conn: &Connection,
     session_id: Uuid,
@@ -113,11 +111,10 @@ pub(crate) fn pending_for_session(
         .collect::<Result<Vec<_>, _>>()?;
     let mut pending = Vec::new();
     for (id, path, format) in rows {
-        match (Uuid::parse_str(&id), format_from_db(format.as_deref())) {
-            (Ok(image_id), Some(format)) => pending.push(PendingImage {
+        match (Uuid::parse_str(&id), format.as_deref()) {
+            (Ok(image_id), Some("jpeg")) => pending.push(PendingImage {
                 image_id,
                 path: PathBuf::from(path),
-                format,
             }),
             _ => {
                 conn.execute("DELETE FROM blur_queue WHERE image_id = ?1", params![id])?;
@@ -179,4 +176,245 @@ pub(crate) fn record_score(
     )?;
     conn.execute("DELETE FROM blur_queue WHERE image_id = ?1", params![id])?;
     Ok(())
+}
+
+/// Copies a paired DNG's `blur_score` from its JPEG sibling.
+///
+/// A paired DNG is never queued (see `flight_session::insert_images_and_recalculate`,
+/// which excludes it from the `enqueue` call) — its preview is the same
+/// capture as its JPEG sibling, so decoding it a second time would be
+/// wasted work for a score that just gets mirrored here. Call once after
+/// the worker pool drains, before `reclassify_session_blur`.
+///
+/// Idempotent, and kept in sync rather than only filled once: every paired
+/// DNG whose sibling has a score is copied, even when the DNG already has
+/// one. A JPEG's score only ever changes by being rescored to the same
+/// value (scoring is deterministic for the same bytes), but if that ever
+/// changes, copying unconditionally means the DNG's score and its mirrored
+/// `is_blurry` flag (see `reclassify_session_blur`) can never drift apart. A
+/// sibling that is not yet scored itself (still queued, or its scoring
+/// failed) leaves the DNG's score `NULL`, consistent with how every other
+/// not-yet-scored image is represented.
+///
+/// # Purity
+///
+/// Impure — updates the `image` table.
+pub(crate) fn copy_paired_dng_scores(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<(), SessionError> {
+    conn.execute(
+        "UPDATE image SET blur_score =
+             (SELECT j.blur_score FROM image j WHERE j.id = image.raw_sibling_id)
+         WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NOT NULL
+           AND (SELECT j.blur_score FROM image j WHERE j.id = image.raw_sibling_id) IS NOT NULL",
+        params![session_id.to_string()],
+    )?;
+    Ok(())
+}
+
+/// Number of standalone DNGs (no same-stem JPEG sibling) in `session_id`.
+///
+/// A standalone DNG is never queued and never scored — see
+/// [`blur_score_for_copy`](super::blur_detection::blur_score_for_copy)'s
+/// module docs — so this is the count [`super::flight_session::reclassify_session_blur`]
+/// excludes from its baseline (and clears any stale flag on), reported to
+/// the background-task UI as deliberately skipped rather than silently
+/// dropped.
+///
+/// # Purity
+///
+/// Impure — reads the `image` table.
+pub(crate) fn standalone_dng_count(
+    conn: &Connection,
+    session_id: Uuid,
+) -> Result<usize, SessionError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM image
+         WHERE session_id = ?1 AND format = 'dng' AND raw_sibling_id IS NULL",
+        params![session_id.to_string()],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::session::Image;
+    use crate::modules::module_01::flight_session::{create_project, create_session, insert_image};
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        crate::modules::module_01::flight_session::init_schema(&conn).expect("init schema");
+        migrate_blur_queue_schema(&conn).expect("migrate blur_queue schema");
+        conn
+    }
+
+    fn image_row(session_id: Uuid, file_path: &str) -> Image {
+        Image {
+            id: Uuid::new_v4(),
+            session_id,
+            file_path: file_path.to_string(),
+            location_lat: None,
+            location_lon: None,
+            captured_at: None,
+            gps_altitude_m: None,
+            width: None,
+            height: None,
+            format: Some("jpeg".to_string()),
+            make: None,
+            camera_model: None,
+            source_path: None,
+            content_hash: None,
+            file_size: None,
+            raw_sibling_id: None,
+            analysis_ready: Some(true),
+            blur_score: None,
+            is_blurry: None,
+            heading_deg: None,
+        }
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_copies_a_scored_jpegs_score_to_its_dng() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.blur_score = Some(42.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(dng_row.blur_score, Some(42.0));
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_leaves_the_dng_null_when_the_jpeg_is_unscored() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(dng_row.blur_score, None);
+    }
+
+    #[test]
+    fn copy_paired_dng_scores_updates_an_already_copied_score_when_the_jpeg_is_rescored() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.blur_score = Some(42.0);
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut dng = image_row(session.id, "/photos/pair.dng");
+        dng.id = dng_id;
+        dng.format = Some("dng".to_string());
+        dng.raw_sibling_id = Some(jpeg_id);
+        // Already carries a (now stale) copied score from an earlier run.
+        dng.blur_score = Some(42.0);
+        insert_image(&conn, &dng).expect("insert dng");
+
+        conn.execute(
+            "UPDATE image SET blur_score = 10.0 WHERE id = ?1",
+            params![jpeg_id.to_string()],
+        )
+        .expect("rescore jpeg");
+
+        copy_paired_dng_scores(&conn, session.id).expect("copy scores");
+
+        let dng_row =
+            crate::modules::module_01::flight_session::get_image(&conn, dng_id).expect("get dng");
+        assert_eq!(
+            dng_row.blur_score,
+            Some(10.0),
+            "the dng's score must track a rescored jpeg, not just fill once"
+        );
+    }
+
+    #[test]
+    fn pending_for_session_dequeues_a_legacy_dng_row_instead_of_returning_it() {
+        // Simulates a `blur_queue` row written before DNGs were excluded at
+        // insert time (or a row left over from an older build) — it must be
+        // self-healed away rather than handed to a scorer that cannot
+        // produce a meaningful score from a raw file.
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let mut dng = image_row(session.id, "/photos/lone.dng");
+        dng.format = Some("dng".to_string());
+        let dng_id = dng.id;
+        insert_image(&conn, &dng).expect("insert dng");
+        enqueue(&conn, session.id, &[dng_id]).expect("enqueue");
+
+        let pending = pending_for_session(&conn, session.id).expect("pending");
+        assert!(pending.is_empty(), "the dng row must not be scored");
+        assert!(
+            !is_queued(&conn, dng_id).expect("is_queued"),
+            "the dng row must be dequeued, not merely skipped"
+        );
+    }
+
+    #[test]
+    fn standalone_dng_count_counts_only_dngs_without_a_sibling() {
+        let conn = memory_db();
+        let project = create_project(&conn, "proj".to_string(), None).expect("project");
+        let session = create_session(&conn, project.id, None).expect("session");
+
+        let dng_id = Uuid::new_v4();
+        let mut jpeg = image_row(session.id, "/photos/pair.jpg");
+        jpeg.raw_sibling_id = Some(dng_id);
+        let jpeg_id = jpeg.id;
+        insert_image(&conn, &jpeg).expect("insert jpeg");
+
+        let mut paired_dng = image_row(session.id, "/photos/pair.dng");
+        paired_dng.id = dng_id;
+        paired_dng.format = Some("dng".to_string());
+        paired_dng.raw_sibling_id = Some(jpeg_id);
+        insert_image(&conn, &paired_dng).expect("insert paired dng");
+
+        let mut standalone_dng = image_row(session.id, "/photos/lone.dng");
+        standalone_dng.format = Some("dng".to_string());
+        insert_image(&conn, &standalone_dng).expect("insert standalone dng");
+
+        let count = standalone_dng_count(&conn, session.id).expect("count");
+        assert_eq!(
+            count, 1,
+            "only the standalone dng counts; jpeg and paired dng do not"
+        );
+    }
 }

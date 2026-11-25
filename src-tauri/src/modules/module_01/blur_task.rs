@@ -17,7 +17,6 @@ use super::blur_detection;
 use super::blur_queue::{self, PendingImage};
 use super::error::SessionError;
 use super::flight_session::reclassify_session_blur;
-use crate::models::image::ImageFormat;
 
 /// Upper bound on concurrent scoring threads.
 ///
@@ -113,7 +112,7 @@ pub(crate) fn score_pending_with(
     db: &Mutex<Connection>,
     session_id: Uuid,
     cancel: &AtomicBool,
-    scorer: &(dyn Fn(&Path, ImageFormat) -> Option<f64> + Sync),
+    scorer: &(dyn Fn(&Path) -> Option<f64> + Sync),
     on_update: impl Fn(BlurProgress) + Sync,
 ) -> Result<BlurSummary, SessionError> {
     let work: Vec<PendingImage> = {
@@ -136,8 +135,8 @@ pub(crate) fn score_pending_with(
                 let Some(item) = work.get(index) else {
                     return;
                 };
-                let score = catch_unwind(AssertUnwindSafe(|| scorer(&item.path, item.format)))
-                    .unwrap_or_else(|_| {
+                let score =
+                    catch_unwind(AssertUnwindSafe(|| scorer(&item.path))).unwrap_or_else(|_| {
                         eprintln!(
                             "warning: blur scoring panicked; treating the image as unscorable"
                         );
@@ -174,6 +173,11 @@ pub(crate) fn score_pending_with(
     // rather than failing the run.
     match lock(db) {
         Ok(conn) => {
+            // A paired DNG was never queued (see `insert_images_and_recalculate`),
+            // so its score only exists once copied from its scored JPEG sibling.
+            if let Err(err) = blur_queue::copy_paired_dng_scores(&conn, session_id) {
+                eprintln!("warning: could not copy paired dng blur scores: {err}");
+            }
             if let Err(err) =
                 reclassify_session_blur(&conn, session_id, blur_detection::classify_with_stats)
             {

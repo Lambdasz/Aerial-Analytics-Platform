@@ -27,6 +27,12 @@ export type TaskSnapshot = {
   total: number;
   /** Finished items that produced no result (too small or undecodable). */
   unscorable: number;
+  /**
+   * Items deliberately not processed at all, outside of `total` (for blur
+   * scoring: standalone DNGs with no paired JPEG — unlike `unscorable`,
+   * which counts items that were attempted and failed).
+   */
+  skipped: number;
   /** Name of the item that most recently finished. */
   current: string | null;
   /** Failure message when `state` is `failed`. */
