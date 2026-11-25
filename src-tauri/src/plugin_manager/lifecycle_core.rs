@@ -345,7 +345,6 @@ pub(crate) fn with_install_update(
 }
 
 /// Borrowed input fields for [`with_config_update`].
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct ConfigUpdateInput<'a> {
     pub plugin_id: &'a str,
@@ -363,7 +362,6 @@ pub(crate) struct ConfigUpdateInput<'a> {
 /// # Purity
 /// Pure immutable state transition; clones `&PluginStateStore` without mutating the
 /// caller's value, performs no I/O, and reads no system clock (`now_iso` is explicit).
-#[allow(dead_code)]
 pub(crate) fn with_config_update(
     store: &PluginStateStore,
     input: &ConfigUpdateInput<'_>,
@@ -392,7 +390,6 @@ pub(crate) fn with_config_update(
 /// # Purity
 /// Pure immutable state transition; clones `&PluginStateStore` without mutating the
 /// caller's value, performs no I/O, and reads no system clock (`now_iso` is explicit).
-#[allow(dead_code)]
 pub(crate) fn with_removed_plugin(
     store: &PluginStateStore,
     plugin_id: &str,
@@ -434,7 +431,6 @@ pub(crate) fn with_applied_state(
 }
 
 /// Borrowed input fields for [`plan_plugin_removal`].
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct RemovalPlanInput<'a> {
     pub plugin_id: &'a str,
@@ -444,7 +440,6 @@ pub(crate) struct RemovalPlanInput<'a> {
 }
 
 /// Pure execution plan produced by [`plan_plugin_removal`] for removing a user plugin.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RemovalPlan {
     pub install_dir_to_remove: PathBuf,
@@ -461,7 +456,6 @@ pub(crate) struct RemovalPlan {
 /// # Purity
 /// Pure planner over immutable references; performs no filesystem deletion, state
 /// mutation, or clock access.
-#[allow(dead_code)]
 pub(crate) fn plan_plugin_removal(
     registry: &PluginRegistry,
     store: &PluginStateStore,

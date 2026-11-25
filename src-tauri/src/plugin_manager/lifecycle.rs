@@ -1,6 +1,6 @@
 //! # Domain 2: Lifecycle & State Persistence
 //!
-//! **Role**: Plugin Lifecycle & Package Manager (Lifecycle & State)
+//! **Role**: Plugin Lifecycle & Package Manager (Imperative Shell & Facade)
 //! **Deliverable**: `plugin_manager/lifecycle.rs`
 //!
 //! Responsible for:
@@ -9,17 +9,25 @@
 //! - Uninstallation and removal of user-installed plugins
 //! - Atomic persistence of mutable state (`plugin_state.json`)
 //!
+//! ## Purity Boundary
+//!
+//! This module is the **Imperative Shell** and public/crate facade over
+//! [`super::lifecycle_core`]. All filesystem I/O, ZIP archive extraction,
+//! Tauri IPC command handling, `tokio::sync::RwLock` state synchronization,
+//! `chrono::Utc::now()` clock reads, `uuid::Uuid::new_v4()` temporary naming,
+//! and blocking validation dispatch live here. Pure domain logic (plugin ID
+//! validation, staged root resolution, precondition checks, parallel parameter
+//! validation, immutable state transitions, and removal planning) is delegated
+//! to [`super::lifecycle_core`].
+//!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/02_DOMAIN_2_LIFECYCLE_STATE.md`
 
 use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};
-pub(crate) use super::lifecycle_core::{
-    assemble_user_plugin_bundle, is_valid_plugin_id, resolve_staged_plugin_root,
-    validate_custom_parameters, validate_installation_preconditions,
-};
-use super::lifecycle_core::{with_applied_state, with_install_update, with_status_update};
-use super::models::{PluginStateStore, PluginSummaryDto};
+#[allow(unused_imports)]
+pub(crate) use super::lifecycle_core::*;
+use super::models::{PluginSource, PluginStateStore, PluginSummaryDto};
 
 // ---------------------------------------------------------------------------
 // 1. TAURI IPC COMMANDS (pub — registered in lib.rs invoke_handler)
@@ -29,6 +37,10 @@ use super::models::{PluginStateStore, PluginSummaryDto};
 ///
 /// **Pre-condition**: `archive_path` points to a valid `.zip` file on disk.  
 /// **Post-condition**: Safely extracted into `plugins/<id>/`, validated, and registered in state.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates archive extraction, validation,
+/// persistence, and registry registration to [`install_plugin_internal`].
 #[tauri::command]
 pub async fn install_plugin(
     archive_path: String,
@@ -43,6 +55,10 @@ pub async fn install_plugin(
 ///
 /// **Pre-condition**: `plugin_id` exists; source is `user` (not `builtin`); plugin is not running.  
 /// **Post-condition**: Plugin folder deleted; entry purged from `plugin_state.json`.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates removal planning, disk cleanup,
+/// persistence, and registry mutation to [`remove_plugin_internal`].
 #[tauri::command]
 pub async fn remove_plugin(
     plugin_id: String,
@@ -60,21 +76,25 @@ pub async fn remove_plugin(
 /// preventing disabled plugins from being selected in analysis workflows or executed by the job supervisor.
 ///
 /// # Arguments
-/// * `_plugin_id` - Unique identifier string of the target plugin to toggle.
-/// * `_enabled` - Target status boolean (`true` to enable, `false` to disable).
-/// * `_state` - Injected Tauri application state containing plugin registry and state stores.
+/// * `plugin_id` - Unique identifier string of the target plugin to toggle.
+/// * `enabled` - Target status boolean (`true` to enable, `false` to disable).
+/// * `state` - Injected Tauri application state containing plugin registry and state stores.
 ///
 /// # Pre-condition
-/// - `_plugin_id` is registered in memory, and the OS AppData state directory is accessible for atomic file persistence.
+/// - `plugin_id` is registered in memory, and the OS AppData state directory is accessible for atomic file persistence.
 ///
 /// # Post-condition
 /// - Updates the in-memory `enabled` flag of the specified plugin and atomically flushes the updated `PluginStateStore` to `plugin_state.json` via a temporary file write and atomic rename.
 ///
 /// # Errors
-/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `_plugin_id` is not found in the registry or state, or `STATE_ERROR` if serializing and atomically persisting to `plugin_state.json` fails.
+/// - Returns `CommandError` with error code `PLUGIN_NOT_FOUND` if `plugin_id` is not found in the registry or state, or `STATE_ERROR` if serializing and atomically persisting to `plugin_state.json` fails.
 ///
 /// # Panics
 /// - This function does not panic.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates state persistence and registry
+/// status synchronization to [`set_plugin_status_internal`].
 #[tauri::command]
 pub async fn set_plugin_status(
     plugin_id: String,
@@ -86,93 +106,14 @@ pub async fn set_plugin_status(
         .map_err(Into::into)
 }
 
-/// Compatibility wrapper delegating to [`with_status_update`].
-pub(crate) fn update_state_store_for_status(
-    store: &mut super::models::PluginStateStore,
-    plugin_id: &str,
-    enabled: bool,
-    version: &str,
-    source: super::models::PluginSource,
-    now_iso: &str,
-) {
-    *store = with_status_update(store, plugin_id, enabled, version, source, now_iso);
-}
-
-/// Internal helper for toggling plugin status and flushing changes to plugin_state.json.
-///
-/// Acts as the **Imperative Shell** around registry synchronization and atomic disk persistence,
-/// delegating the deterministic state record updates to pure function `update_state_store_for_status`.
-pub(crate) async fn set_plugin_status_internal(
-    plugin_id: &str,
-    enabled: bool,
-    app_state: &crate::AppState,
-) -> Result<(), PluginError> {
-    let mut registry = app_state.plugins.write().await;
-    let (prev_enabled, version, source) = {
-        let bundle = registry
-            .plugins
-            .get(plugin_id)
-            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
-        let src = if bundle.source == "user" {
-            super::models::PluginSource::User
-        } else {
-            super::models::PluginSource::Builtin
-        };
-        (
-            bundle.enabled,
-            bundle.manifest.metadata.version.clone(),
-            src,
-        )
-    };
-
-    registry.set_status(plugin_id, enabled)?;
-
-    let state_path = app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path);
-    let mut store = load_plugin_state(&state_path).unwrap_or_default();
-    let now_iso = chrono::Utc::now().to_rfc3339();
-
-    update_state_store_for_status(&mut store, plugin_id, enabled, &version, source, &now_iso);
-
-    if let Err(err) = save_plugin_state(&state_path, &store) {
-        let _ = registry.set_status(plugin_id, prev_enabled);
-        return Err(err);
-    }
-
-    Ok(())
-}
-
-/// Compatibility wrapper delegating to [`with_applied_state`].
-pub(crate) fn apply_state_to_registry(
-    registry: &mut super::registry::PluginRegistry,
-    store: &PluginStateStore,
-) {
-    *registry = with_applied_state(registry, store);
-}
-
-/// Fallback default path for plugin_state.json if none is specified in AppState.
-pub(crate) fn default_state_path() -> PathBuf {
-    let candidate_dirs = [
-        PathBuf::from("plugins"),
-        PathBuf::from("../plugins"),
-        PathBuf::from("../../plugins"),
-    ];
-
-    for dir in &candidate_dirs {
-        if dir.is_dir() {
-            return dir.join("plugin_state.json");
-        }
-    }
-
-    PathBuf::from("plugins").join("plugin_state.json")
-}
-
 /// Updates and persists custom parameter overrides configured by the user.
 ///
 /// **Pre-condition**: `plugin_id` exists; parameters conform to plugin's `parameters.json`.  
 /// **Post-condition**: Overrides saved in state and persisted to disk.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates off-thread parameter validation,
+/// persistence, and registry mutation to [`update_plugin_config_internal`].
 #[tauri::command]
 pub async fn update_plugin_config(
     plugin_id: String,
@@ -184,26 +125,95 @@ pub async fn update_plugin_config(
         .map_err(Into::into)
 }
 
-/// Compatibility wrapper delegating to [`with_install_update`].
-pub(crate) fn update_state_store_for_install(
-    store: &mut super::models::PluginStateStore,
+// ---------------------------------------------------------------------------
+// 2. IMPERATIVE SHELL WORKFLOWS & REGISTRY COMPATIBILITY
+// ---------------------------------------------------------------------------
+
+/// Internal helper for toggling plugin status and flushing changes to `plugin_state.json`.
+///
+/// Reads a short `(version, source)` snapshot under `plugins.read().await`, computes
+/// the next state via [`with_status_update`], persists to disk first, and only then
+/// mutates the in-memory registry under `plugins.write().await` so persistence
+/// failures require no in-memory rollback.
+///
+/// # Purity
+/// Imperative shell: performs async `RwLock` synchronization, clock reads, and
+/// atomic disk persistence around pure [`with_status_update`].
+pub(crate) async fn set_plugin_status_internal(
     plugin_id: &str,
-    version: &str,
-    now_iso: &str,
-) {
-    *store = with_install_update(store, plugin_id, version, now_iso);
+    enabled: bool,
+    app_state: &crate::AppState,
+) -> Result<(), PluginError> {
+    let (version, source) = {
+        let registry = app_state.plugins.read().await;
+        let bundle = registry
+            .plugins
+            .get(plugin_id)
+            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+        let src = if bundle.source == "user" {
+            PluginSource::User
+        } else {
+            PluginSource::Builtin
+        };
+        (bundle.manifest.metadata.version.clone(), src)
+    };
+
+    let state_path = app_state
+        .state_path
+        .clone()
+        .unwrap_or_else(default_state_path);
+    let store = load_plugin_state(&state_path).unwrap_or_default();
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    let next_store = with_status_update(&store, plugin_id, enabled, &version, source, &now_iso);
+
+    save_plugin_state(&state_path, &next_store)?;
+
+    let mut registry = app_state.plugins.write().await;
+    registry.set_status(plugin_id, enabled)?;
+
+    Ok(())
 }
 
-/// Internal helper for installing a plugin from a .zip archive.
+/// Compatibility wrapper delegating to [`with_applied_state`].
 ///
-/// Acts as the **Imperative Shell** around archive extraction, staging filesystem I/O,
-/// directory moves, and persistence, delegating validation and data assembly to pure functions:
-/// - `resolve_staged_plugin_root`
-/// - `super::registry::parse_and_validate_manifest`
-/// - `validate_installation_preconditions`
-/// - `super::registry::validate_subcontracts`
-/// - `assemble_user_plugin_bundle`
-/// - `update_state_store_for_install`
+/// # Purity
+/// Impure in-place mutation facade over pure [`with_applied_state`].
+pub(crate) fn apply_state_to_registry(
+    registry: &mut super::registry::PluginRegistry,
+    store: &PluginStateStore,
+) {
+    *registry = with_applied_state(registry, store);
+}
+
+/// Fallback default path for `plugin_state.json` if none is specified in `AppState`.
+///
+/// # Purity
+/// Impure filesystem probe (`Path::is_dir`) over candidate plugin directories.
+pub(crate) fn default_state_path() -> PathBuf {
+    let candidate_dirs = [
+        PathBuf::from("plugins"),
+        PathBuf::from("../plugins"),
+        PathBuf::from("../../plugins"),
+    ];
+
+    candidate_dirs
+        .iter()
+        .find(|dir| dir.is_dir())
+        .map(|dir| dir.join("plugin_state.json"))
+        .unwrap_or_else(|| PathBuf::from("plugins").join("plugin_state.json"))
+}
+
+/// Internal helper for installing a plugin from a `.zip` archive.
+///
+/// Performs archive extraction, staging scan, manifest/subcontract validation,
+/// filesystem commit, and `plugin_state.json` persistence before taking a short
+/// write lock to register the assembled [`PluginBundle`] in memory. If state
+/// persistence fails, removes `target_dir` before returning the error.
+///
+/// # Purity
+/// Imperative shell: performs ZIP/filesystem I/O, clock reads, async `RwLock`
+/// synchronization, and error rollback around pure helpers in [`super::lifecycle_core`]
+/// and [`super::registry`].
 pub(crate) async fn install_plugin_internal(
     archive_path: &Path,
     app_state: &crate::AppState,
@@ -240,17 +250,18 @@ pub(crate) async fn install_plugin_internal(
     // Step 2: Locate plugin root (root or single top-level directory containing manifest.json)
     let staging_path = temp_dir.path();
     let has_root_manifest = staging_path.join("manifest.json").is_file();
-    let mut candidates = Vec::new();
-    if !has_root_manifest {
-        if let Ok(entries) = std::fs::read_dir(staging_path) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() && p.join("manifest.json").is_file() {
-                    candidates.push(p);
-                }
-            }
-        }
-    }
+    let candidates = if has_root_manifest {
+        Vec::new()
+    } else {
+        std::fs::read_dir(staging_path)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|p| p.is_dir() && p.join("manifest.json").is_file())
+            .collect()
+    };
     let plugin_source_dir =
         resolve_staged_plugin_root(staging_path, has_root_manifest, candidates)?;
 
@@ -263,13 +274,14 @@ pub(crate) async fn install_plugin_internal(
             }
         })?;
     let manifest = super::registry::parse_and_validate_manifest(&manifest_str)?;
-    let plugin_id = &manifest.metadata.id;
+    let plugin_id = manifest.metadata.id.clone();
+    let plugin_version = manifest.metadata.version.clone();
 
     // Step 4: Verify metadata.id is valid, does not overwrite builtin, and is not currently executing a job
     let is_job_active = {
         let tracker = app_state.jobs.read().await;
         tracker.jobs.values().any(|job| {
-            job.plugin_id == *plugin_id
+            job.plugin_id == plugin_id
                 && matches!(
                     job.status,
                     super::executor::JobStatusDto::Queued
@@ -280,14 +292,14 @@ pub(crate) async fn install_plugin_internal(
 
     let existing_reg_source = {
         let registry = app_state.plugins.read().await;
-        registry.plugins.get(plugin_id).map(|b| b.source.clone())
+        registry.plugins.get(&plugin_id).map(|b| b.source.clone())
     };
 
-    let mut store = load_plugin_state(&state_path).unwrap_or_default();
-    let existing_state_source = store.plugins.get(plugin_id).map(|r| r.source.clone());
+    let store = load_plugin_state(&state_path).unwrap_or_default();
+    let existing_state_source = store.plugins.get(&plugin_id).map(|r| r.source.clone());
 
     validate_installation_preconditions(
-        plugin_id,
+        &plugin_id,
         is_job_active,
         existing_reg_source.as_deref(),
         existing_state_source.as_ref(),
@@ -304,7 +316,7 @@ pub(crate) async fn install_plugin_internal(
         .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
 
     // Step 6: Atomic commit to plugins/<plugin_id>
-    let target_dir = plugins_dir.join(plugin_id);
+    let target_dir = plugins_dir.join(&plugin_id);
     if target_dir.exists() {
         std::fs::remove_dir_all(&target_dir).map_err(|e| {
             PluginError::Io(format!(
@@ -321,10 +333,10 @@ pub(crate) async fn install_plugin_internal(
         move_dir_all(&plugin_source_dir, &target_dir)?;
     }
 
-    // Step 7: In-memory registration using pure bundle assembler
+    // Step 7: Assemble bundle and persist plugin_state.json before registering in memory
     let bundle = assemble_user_plugin_bundle(
         target_dir.clone(),
-        manifest.clone(),
+        manifest,
         inputs_spec,
         inputs_raw,
         parameters_raw,
@@ -332,161 +344,162 @@ pub(crate) async fn install_plugin_internal(
     );
     let summary = bundle.to_summary();
 
-    let mut registry = app_state.plugins.write().await;
-    registry.register(bundle);
-    drop(registry);
-
-    // Step 8: Update and atomically persist plugin_state.json
     let now_iso = chrono::Utc::now().to_rfc3339();
-    update_state_store_for_install(&mut store, plugin_id, &manifest.metadata.version, &now_iso);
+    let next_store = with_install_update(&store, &plugin_id, &plugin_version, &now_iso);
 
-    if let Err(err) = save_plugin_state(&state_path, &store) {
-        // Rollback filesystem commit and in-memory registration on persistence failure
+    if let Err(err) = save_plugin_state(&state_path, &next_store) {
+        // Rollback filesystem commit on persistence failure; registry was not mutated yet
         let _ = std::fs::remove_dir_all(&target_dir);
-        let mut reg = app_state.plugins.write().await;
-        reg.plugins.remove(plugin_id);
         return Err(err);
     }
+
+    // Step 8: Short write lock to register the bundle only after state persistence succeeds
+    let mut registry = app_state.plugins.write().await;
+    registry.register(bundle);
 
     Ok(summary)
 }
 
 /// Internal helper for removing a user plugin and purging its state.
+///
+/// Snapshots active-job status and builds a [`RemovalPlan`] under short read locks,
+/// deletes the physical plugin directory and persists the updated state without
+/// holding registry locks, then removes the entry under a short write lock.
+///
+/// # Purity
+/// Imperative shell: performs async `RwLock` synchronization, clock reads,
+/// filesystem directory deletion, and atomic state persistence around pure
+/// [`plan_plugin_removal`].
 pub(crate) async fn remove_plugin_internal(
     plugin_id: &str,
     app_state: &crate::AppState,
 ) -> Result<(), PluginError> {
-    if !is_valid_plugin_id(plugin_id) {
-        return Err(PluginError::NotFound(plugin_id.to_string()));
-    }
-
-    // 1. Verify plugin is not currently running a job
-    {
+    let is_job_active = {
         let tracker = app_state.jobs.read().await;
-        for job in tracker.jobs.values() {
-            if job.plugin_id == plugin_id
+        tracker.jobs.values().any(|job| {
+            job.plugin_id == plugin_id
                 && matches!(
                     job.status,
                     super::executor::JobStatusDto::Queued
                         | super::executor::JobStatusDto::Running { .. }
                 )
-            {
-                return Err(PluginError::ExecutionError(format!(
-                    "Cannot remove plugin '{}' because it is currently executing a job",
-                    plugin_id
-                )));
-            }
-        }
-    }
+        })
+    };
 
     let state_path = app_state
         .state_path
         .clone()
         .unwrap_or_else(default_state_path);
-    let mut store = load_plugin_state(&state_path).unwrap_or_default();
+    let store = load_plugin_state(&state_path).unwrap_or_default();
+    let plugins_dir = match state_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("plugins"),
+    };
+    let now_iso = chrono::Utc::now().to_rfc3339();
 
-    let mut registry = app_state.plugins.write().await;
-    let bundle_opt = registry.plugins.get(plugin_id);
-    let store_rec_opt = store.plugins.get(plugin_id);
+    let (has_bundle, plan) = {
+        let registry = app_state.plugins.read().await;
+        let has_bundle = registry.plugins.contains_key(plugin_id);
+        let input = RemovalPlanInput {
+            plugin_id,
+            is_job_active,
+            plugins_dir: &plugins_dir,
+            now_iso: &now_iso,
+        };
+        let plan = plan_plugin_removal(&registry, &store, &input)?;
+        (has_bundle, plan)
+    };
 
-    if bundle_opt.is_none() && store_rec_opt.is_none() {
-        return Err(PluginError::NotFound(plugin_id.to_string()));
-    }
-
-    let is_builtin = bundle_opt
-        .map(|b| b.source.as_str() == "builtin")
-        .unwrap_or(false)
-        || store_rec_opt
-            .map(|r| r.source == super::models::PluginSource::Builtin)
-            .unwrap_or(false);
-
-    if is_builtin {
-        return Err(PluginError::SecurityViolation(format!(
-            "Cannot remove builtin plugin '{}'",
-            plugin_id
-        )));
-    }
-
-    // 2. Remove physical directory from filesystem
-    if let Some(bundle) = bundle_opt {
-        if bundle.install_path.exists() {
-            std::fs::remove_dir_all(&bundle.install_path).map_err(|e| {
+    if plan.install_dir_to_remove.exists() {
+        if has_bundle {
+            std::fs::remove_dir_all(&plan.install_dir_to_remove).map_err(|e| {
                 PluginError::Io(format!("Failed to delete plugin directory: {}", e))
             })?;
-        }
-    } else {
-        let plugins_dir = match state_path.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-            _ => PathBuf::from("plugins"),
-        };
-        let default_dir = plugins_dir.join(plugin_id);
-        if default_dir.exists() {
-            let _ = std::fs::remove_dir_all(default_dir);
+        } else {
+            let _ = std::fs::remove_dir_all(&plan.install_dir_to_remove);
         }
     }
 
-    // 3. Remove from in-memory registry
-    registry.plugins.remove(plugin_id);
-    drop(registry);
+    save_plugin_state(&state_path, &plan.updated_store)?;
 
-    // 4. Purge from plugin_state.json and flush
-    store.plugins.remove(plugin_id);
-    store.updated_at = chrono::Utc::now().to_rfc3339();
-    save_plugin_state(&state_path, &store)?;
+    let mut registry = app_state.plugins.write().await;
+    registry.plugins.remove(plugin_id);
 
     Ok(())
 }
 
 /// Internal helper for validating and saving custom parameter overrides.
+///
+/// Snapshots plugin metadata under a short read lock, drops the lock, runs
+/// [`validate_custom_parameters`] (`rayon::par_iter()`) inside
+/// `tokio::task::spawn_blocking`, persists the new state computed by
+/// [`with_config_update`], and finally updates the in-memory bundle under a
+/// short write lock.
+///
+/// # Purity
+/// Imperative shell: performs async `RwLock` synchronization, blocking worker
+/// dispatch, clock reads, and atomic state persistence around pure
+/// [`validate_custom_parameters`] and [`with_config_update`].
 pub(crate) async fn update_plugin_config_internal(
     plugin_id: &str,
     custom_params: serde_json::Value,
     app_state: &crate::AppState,
 ) -> Result<(), PluginError> {
-    let registry = app_state.plugins.read().await;
-    let bundle = registry
-        .plugins
-        .get(plugin_id)
-        .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+    let (version, source, enabled, parameters_raw) = {
+        let registry = app_state.plugins.read().await;
+        let bundle = registry
+            .plugins
+            .get(plugin_id)
+            .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
+        let src = if bundle.source == "user" {
+            PluginSource::User
+        } else {
+            PluginSource::Builtin
+        };
+        (
+            bundle.manifest.metadata.version.clone(),
+            src,
+            bundle.enabled,
+            bundle.parameters_raw.clone(),
+        )
+    };
 
-    validate_custom_parameters(&bundle.parameters_raw, &custom_params)?;
+    let params_clone = custom_params.clone();
+    tokio::task::spawn_blocking(move || validate_custom_parameters(&parameters_raw, &params_clone))
+        .await
+        .map_err(|e| {
+            PluginError::StateError(format!("Parameter validation task failed: {}", e))
+        })??;
 
     let state_path = app_state
         .state_path
         .clone()
         .unwrap_or_else(default_state_path);
-    let mut store = load_plugin_state(&state_path).unwrap_or_default();
-    store.updated_at = chrono::Utc::now().to_rfc3339();
+    let store = load_plugin_state(&state_path).unwrap_or_default();
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    let input = ConfigUpdateInput {
+        plugin_id,
+        version: &version,
+        source,
+        enabled,
+        custom_params: &custom_params,
+    };
+    let next_store = with_config_update(&store, &input, &now_iso);
 
-    let record = store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| super::models::PluginStateRecord {
-            version: bundle.manifest.metadata.version.clone(),
-            source: if bundle.source == "user" {
-                super::models::PluginSource::User
-            } else {
-                super::models::PluginSource::Builtin
-            },
-            enabled: bundle.enabled,
-            installed_at: chrono::Utc::now().to_rfc3339(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: Default::default(),
-        });
+    save_plugin_state(&state_path, &next_store)?;
 
-    record.custom_parameters = custom_params.clone();
-    save_plugin_state(&state_path, &store)?;
-
-    drop(registry);
-    let mut registry_mut = app_state.plugins.write().await;
-    if let Some(bundle_mut) = registry_mut.plugins.get_mut(plugin_id) {
+    let mut registry = app_state.plugins.write().await;
+    if let Some(bundle_mut) = registry.plugins.get_mut(plugin_id) {
         bundle_mut.custom_parameters = custom_params;
     }
 
     Ok(())
 }
 
+/// Moves a directory tree to `to`, falling back to recursive copy when rename fails across filesystems.
+///
+/// # Purity
+/// Impure filesystem mutation helper.
 fn move_dir_all(from: &Path, to: &Path) -> Result<(), PluginError> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -506,6 +519,10 @@ fn move_dir_all(from: &Path, to: &Path) -> Result<(), PluginError> {
     Ok(())
 }
 
+/// Recursively copies files and subdirectories from `src` to `dst`.
+///
+/// # Purity
+/// Impure filesystem I/O helper.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), PluginError> {
     std::fs::create_dir_all(dst)
         .map_err(|e| PluginError::Io(format!("Failed to create directory {:?}: {}", dst, e)))?;
@@ -530,12 +547,15 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), PluginError> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. STATE PERSISTENCE & SECURITY HELPERS (pub(crate))
+// 3. STATE PERSISTENCE & SECURITY HELPERS (pub(crate))
 // ---------------------------------------------------------------------------
 
 /// Reads and parses `plugin_state.json` from disk.
 ///
 /// Returns empty default store if the state file does not yet exist.
+///
+/// # Purity
+/// Impure filesystem read and JSON deserialization helper.
 pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, PluginError> {
     if !state_path.exists() {
         return Ok(PluginStateStore::default());
@@ -555,6 +575,9 @@ pub(crate) fn load_plugin_state(state_path: &Path) -> Result<PluginStateStore, P
 /// Atomically persists current plugin states to `plugin_state.json`.
 ///
 /// Writes to a temporary file (`.tmp`) first, then performs an atomic rename.
+///
+/// # Purity
+/// Impure filesystem write, `fsync`, UUID generation, and atomic rename helper.
 pub(crate) fn save_plugin_state(
     state_path: &Path,
     state: &PluginStateStore,
@@ -581,7 +604,9 @@ pub(crate) fn save_plugin_state(
 /// Verifies a ZIP entry path against Zip-Slip path traversal vulnerability.
 ///
 /// Enforces enclosed names and verifies the target path remains within `dest_dir`.
-#[allow(dead_code)]
+///
+/// # Purity
+/// Impure archive extraction and filesystem write/permission helper.
 pub(crate) fn verify_and_extract_entry(
     entry: &mut zip::read::ZipFile,
     dest_dir: &Path,
@@ -641,1029 +666,5 @@ pub(crate) fn verify_and_extract_entry(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plugin_manager::models::PluginSource;
-    use std::io::{Cursor, Write};
-    use tempfile::tempdir;
-    use zip::write::SimpleFileOptions;
-
-    #[test]
-    fn test_verify_and_extract_entry_safe() {
-        let mut buffer = Vec::new();
-        {
-            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
-            writer
-                .start_file("valid/file.txt", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"safe payload").unwrap();
-            writer.finish().unwrap();
-        }
-        let dir = tempdir().unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
-        let mut entry = archive.by_index(0).unwrap();
-        let res = verify_and_extract_entry(&mut entry, dir.path());
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap(), dir.path().join("valid/file.txt"));
-    }
-
-    #[test]
-    fn test_verify_and_extract_entry_zip_slip() {
-        let mut buffer = Vec::new();
-        {
-            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
-            writer
-                .start_file("../evil.sh", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"evil payload").unwrap();
-            writer.finish().unwrap();
-        }
-        let dir = tempdir().unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
-        let mut entry = archive.by_index(0).unwrap();
-        let res = verify_and_extract_entry(&mut entry, dir.path());
-        assert!(res.is_err());
-        match res.unwrap_err() {
-            PluginError::SecurityViolation(msg) => {
-                assert!(msg.contains("Zip-Slip") || msg.contains("escapes"));
-            }
-            other => panic!("Expected SecurityViolation, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_load_plugin_state_nonexistent_returns_default() {
-        let temp_dir = tempdir().unwrap();
-        let missing_path = temp_dir.path().join("plugin_state.json");
-        let store = load_plugin_state(&missing_path).expect("should return default on missing");
-        assert_eq!(store.schema_version, 1);
-        assert!(store.plugins.is_empty());
-    }
-
-    #[test]
-    fn test_save_plugin_state_atomic_and_load_roundtrip() {
-        let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("subdir").join("plugin_state.json");
-
-        let mut store = PluginStateStore::default();
-        store.plugins.insert(
-            "rgb-exg".to_string(),
-            crate::plugin_manager::models::PluginStateRecord {
-                version: "1.0.0".to_string(),
-                source: crate::plugin_manager::models::PluginSource::Builtin,
-                enabled: true,
-                installed_at: "2026-09-15T14:32:00Z".to_string(),
-                last_healthcheck: None,
-                custom_parameters: serde_json::json!({"threshold": 0.42}),
-                stats: Default::default(),
-            },
-        );
-
-        save_plugin_state(&state_path, &store).expect("save_plugin_state should succeed");
-        assert!(
-            state_path.exists(),
-            "State file should exist after atomic save"
-        );
-
-        let loaded = load_plugin_state(&state_path).expect("load_plugin_state should succeed");
-        assert_eq!(loaded.schema_version, store.schema_version);
-        assert!(loaded.plugins.contains_key("rgb-exg"));
-        assert!(loaded.plugins.get("rgb-exg").unwrap().enabled);
-        assert_eq!(
-            loaded.plugins.get("rgb-exg").unwrap().custom_parameters["threshold"],
-            0.42
-        );
-    }
-
-    #[test]
-    fn test_load_plugin_state_malformed_json_returns_state_error() {
-        let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("plugin_state.json");
-        std::fs::write(&state_path, "{ broken json").unwrap();
-
-        let err = load_plugin_state(&state_path).unwrap_err();
-        assert!(matches!(err, PluginError::StateError(_)));
-    }
-
-    #[tokio::test]
-    async fn test_set_plugin_status_updates_registry_and_flushes_state_file() {
-        let temp_dir = tempdir().unwrap();
-        let state_path = temp_dir.path().join("plugin_state.json");
-
-        let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
-        let bundle = crate::plugin_manager::models::PluginBundle {
-            install_path: temp_dir.path().to_path_buf(),
-            manifest: crate::plugin_manager::models::PluginManifest {
-                schema: None,
-                manifest_version: 1,
-                metadata: crate::plugin_manager::models::PluginMetadata {
-                    id: "test-plugin".to_string(),
-                    name: "Test".to_string(),
-                    version: "1.0.0".to_string(),
-                    author: None,
-                    license: None,
-                    description: "Test".to_string(),
-                    category: None,
-                    tags: vec![],
-                    min_core_version: None,
-                },
-                runtime: crate::plugin_manager::models::PluginRuntime {
-                    runtime_type: "python".to_string(),
-                    entrypoint: "main.py".to_string(),
-                    min_python_version: None,
-                    dependencies_file: None,
-                    healthcheck_flag: None,
-                },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
-                execution: None,
-            },
-            inputs_spec: crate::plugin_manager::models::InputsSpec {
-                granularity: "single_image".to_string(),
-                supported_mime_types: vec!["image/jpeg".to_string()],
-                requires_metadata: vec![],
-                optional_metadata: vec![],
-                supports_aoi: false,
-                aoi_format: None,
-            },
-            inputs_raw: serde_json::json!({}),
-            parameters_raw: serde_json::json!({}),
-            outputs_raw: serde_json::json!({}),
-            enabled: true,
-            source: "builtin".to_string(),
-            health_status: "unknown".to_string(),
-            custom_parameters: serde_json::json!({}),
-        };
-        registry.register(bundle);
-
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: Some(state_path.clone()),
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let res = set_plugin_status_internal("test-plugin", false, &app_state).await;
-        assert!(res.is_ok());
-
-        // In-memory check
-        let reg = app_state.plugins.read().await;
-        assert!(!reg.get_details("test-plugin").unwrap().enabled);
-        drop(reg);
-
-        // On-disk check
-        assert!(
-            state_path.exists(),
-            "State file must exist after set_plugin_status"
-        );
-        let store = load_plugin_state(&state_path).unwrap();
-        assert!(!store.plugins.get("test-plugin").unwrap().enabled);
-
-        // Re-enable
-        let res2 = set_plugin_status_internal("test-plugin", true, &app_state).await;
-        assert!(res2.is_ok());
-
-        let reg2 = app_state.plugins.read().await;
-        assert!(reg2.get_details("test-plugin").unwrap().enabled);
-        drop(reg2);
-
-        let store2 = load_plugin_state(&state_path).unwrap();
-        assert!(store2.plugins.get("test-plugin").unwrap().enabled);
-    }
-
-    #[tokio::test]
-    async fn test_set_plugin_status_missing_plugin_returns_not_found() {
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::registry::PluginRegistry::new(),
-            )),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let res = set_plugin_status_internal("missing-plugin", false, &app_state).await;
-        assert!(matches!(res, Err(PluginError::NotFound(_))));
-    }
-
-    fn create_test_app_state(temp_dir: &Path) -> crate::AppState {
-        let state_path = temp_dir.join("plugin_state.json");
-        crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::registry::PluginRegistry::new(),
-            )),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: Some(state_path),
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(temp_dir.join("library")),
-        }
-    }
-
-    fn create_valid_zip_archive(zip_path: &Path, plugin_id: &str) {
-        let file = std::fs::File::create(zip_path).unwrap();
-        let mut writer = zip::ZipWriter::new(file);
-
-        let manifest = format!(
-            r#"{{
-            "manifest_version": 1,
-            "metadata": {{
-                "id": "{plugin_id}",
-                "name": "Test User Plugin",
-                "version": "1.0.0",
-                "description": "User test plugin",
-                "category": "vegetation",
-                "tags": ["user", "test"]
-            }},
-            "runtime": {{
-                "type": "python",
-                "entrypoint": "main.py"
-            }},
-            "parameters": "parameters.json",
-            "inputs": "inputs.json",
-            "outputs": "outputs.json"
-        }}"#
-        );
-
-        let parameters = r#"{
-            "parameters": [
-                {
-                    "name": "threshold",
-                    "label": "Threshold",
-                    "type": "number",
-                    "default": 0.5,
-                    "min": 0.0,
-                    "max": 1.0
-                },
-                {
-                    "name": "mode",
-                    "label": "Mode",
-                    "type": "select",
-                    "options": ["FAST", "ACCURATE"],
-                    "default": "FAST"
-                }
-            ]
-        }"#;
-
-        let inputs = r#"{
-            "granularity": "single_image",
-            "supported_mime_types": ["image/jpeg"]
-        }"#;
-
-        let outputs = r#"{
-            "metrics": {},
-            "artifacts": {}
-        }"#;
-
-        writer
-            .start_file("manifest.json", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(manifest.as_bytes()).unwrap();
-
-        writer
-            .start_file("parameters.json", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(parameters.as_bytes()).unwrap();
-
-        writer
-            .start_file("inputs.json", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(inputs.as_bytes()).unwrap();
-
-        writer
-            .start_file("outputs.json", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(outputs.as_bytes()).unwrap();
-
-        writer
-            .start_file("main.py", SimpleFileOptions::default())
-            .unwrap();
-        writer.write_all(b"# entrypoint\nprint('hello')\n").unwrap();
-
-        writer.finish().unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_success() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let zip_path = temp_dir.path().join("user-plugin.zip");
-        create_valid_zip_archive(&zip_path, "user-test-plugin");
-
-        let summary = install_plugin_internal(&zip_path, &app_state)
-            .await
-            .expect("installation should succeed");
-        assert_eq!(summary.id, "user-test-plugin");
-        assert_eq!(summary.source, "user");
-        assert!(summary.enabled);
-
-        // Registry verification
-        let registry = app_state.plugins.read().await;
-        let details = registry.get_details("user-test-plugin").unwrap();
-        assert!(details.enabled);
-        drop(registry);
-
-        // Filesystem verification
-        let target_dir = temp_dir.path().join("user-test-plugin");
-        assert!(target_dir.join("manifest.json").exists());
-        assert!(target_dir.join("main.py").exists());
-
-        // State persistence verification
-        let state_path = temp_dir.path().join("plugin_state.json");
-        let store = load_plugin_state(&state_path).unwrap();
-        let rec = store.plugins.get("user-test-plugin").unwrap();
-        assert_eq!(rec.source, PluginSource::User);
-        assert!(rec.enabled);
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_zip_slip_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let zip_path = temp_dir.path().join("malicious.zip");
-
-        {
-            let file = std::fs::File::create(&zip_path).unwrap();
-            let mut writer = zip::ZipWriter::new(file);
-            writer
-                .start_file("../evil.sh", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"malicious").unwrap();
-            writer.finish().unwrap();
-        }
-
-        let res = install_plugin_internal(&zip_path, &app_state).await;
-        assert!(res.is_err());
-        match res.unwrap_err() {
-            PluginError::SecurityViolation(msg) => {
-                assert!(msg.contains("Zip-Slip") || msg.contains("escapes"));
-            }
-            other => panic!("Expected SecurityViolation, got {:?}", other),
-        }
-
-        // Verify zero disk remnants
-        assert!(!temp_dir.path().join("evil.sh").exists());
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_cannot_overwrite_builtin() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Pre-register builtin plugin
-        {
-            let mut reg = app_state.plugins.write().await;
-            let bundle = crate::plugin_manager::models::PluginBundle {
-                install_path: temp_dir.path().join("builtin-plugin"),
-                manifest: crate::plugin_manager::models::PluginManifest {
-                    schema: None,
-                    manifest_version: 1,
-                    metadata: crate::plugin_manager::models::PluginMetadata {
-                        id: "builtin-plugin".to_string(),
-                        name: "Builtin".to_string(),
-                        version: "1.0.0".to_string(),
-                        author: None,
-                        license: None,
-                        description: "Builtin".to_string(),
-                        category: Some("vegetation".to_string()),
-                        tags: vec![],
-                        min_core_version: None,
-                    },
-                    runtime: crate::plugin_manager::models::PluginRuntime {
-                        runtime_type: "python".to_string(),
-                        entrypoint: "main.py".to_string(),
-                        min_python_version: None,
-                        dependencies_file: None,
-                        healthcheck_flag: None,
-                    },
-                    parameters: "parameters.json".to_string(),
-                    inputs: "inputs.json".to_string(),
-                    outputs: "outputs.json".to_string(),
-                    execution: None,
-                },
-                inputs_spec: crate::plugin_manager::models::InputsSpec {
-                    granularity: "single_image".to_string(),
-                    supported_mime_types: vec!["image/jpeg".to_string()],
-                    requires_metadata: vec![],
-                    optional_metadata: vec![],
-                    supports_aoi: false,
-                    aoi_format: None,
-                },
-                inputs_raw: serde_json::json!({}),
-                parameters_raw: serde_json::json!({}),
-                outputs_raw: serde_json::json!({}),
-                enabled: true,
-                source: "builtin".to_string(),
-                health_status: "unknown".to_string(),
-                custom_parameters: serde_json::json!({}),
-            };
-            reg.register(bundle);
-        }
-
-        let zip_path = temp_dir.path().join("overwrite.zip");
-        create_valid_zip_archive(&zip_path, "builtin-plugin");
-
-        let res = install_plugin_internal(&zip_path, &app_state).await;
-        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_corrupt_archive_no_remnants() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let bad_zip = temp_dir.path().join("corrupt.zip");
-        std::fs::write(&bad_zip, b"this is not a zip file").unwrap();
-
-        let res = install_plugin_internal(&bad_zip, &app_state).await;
-        assert!(matches!(res, Err(PluginError::ArchiveError(_))));
-    }
-
-    #[tokio::test]
-    async fn test_remove_user_plugin_success() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let zip_path = temp_dir.path().join("plugin.zip");
-        create_valid_zip_archive(&zip_path, "removable-plugin");
-
-        // Install first
-        let _ = install_plugin_internal(&zip_path, &app_state)
-            .await
-            .unwrap();
-        let target_dir = temp_dir.path().join("removable-plugin");
-        assert!(target_dir.exists());
-
-        // Remove
-        let remove_res = remove_plugin_internal("removable-plugin", &app_state).await;
-        assert!(remove_res.is_ok());
-
-        // Assert directory deleted
-        assert!(!target_dir.exists());
-
-        // Assert removed from registry
-        let reg = app_state.plugins.read().await;
-        assert!(!reg.plugins.contains_key("removable-plugin"));
-        drop(reg);
-
-        // Assert purged from state store
-        let state_path = temp_dir.path().join("plugin_state.json");
-        let store = load_plugin_state(&state_path).unwrap();
-        assert!(!store.plugins.contains_key("removable-plugin"));
-    }
-
-    #[tokio::test]
-    async fn test_remove_builtin_plugin_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Register builtin
-        {
-            let mut reg = app_state.plugins.write().await;
-            let bundle = crate::plugin_manager::models::PluginBundle {
-                install_path: temp_dir.path().join("core-builtin"),
-                manifest: crate::plugin_manager::models::PluginManifest {
-                    schema: None,
-                    manifest_version: 1,
-                    metadata: crate::plugin_manager::models::PluginMetadata {
-                        id: "core-builtin".to_string(),
-                        name: "Core Builtin".to_string(),
-                        version: "1.0.0".to_string(),
-                        author: None,
-                        license: None,
-                        description: "Core Builtin".to_string(),
-                        category: Some("vegetation".to_string()),
-                        tags: vec![],
-                        min_core_version: None,
-                    },
-                    runtime: crate::plugin_manager::models::PluginRuntime {
-                        runtime_type: "python".to_string(),
-                        entrypoint: "main.py".to_string(),
-                        min_python_version: None,
-                        dependencies_file: None,
-                        healthcheck_flag: None,
-                    },
-                    parameters: "parameters.json".to_string(),
-                    inputs: "inputs.json".to_string(),
-                    outputs: "outputs.json".to_string(),
-                    execution: None,
-                },
-                inputs_spec: crate::plugin_manager::models::InputsSpec {
-                    granularity: "single_image".to_string(),
-                    supported_mime_types: vec!["image/jpeg".to_string()],
-                    requires_metadata: vec![],
-                    optional_metadata: vec![],
-                    supports_aoi: false,
-                    aoi_format: None,
-                },
-                inputs_raw: serde_json::json!({}),
-                parameters_raw: serde_json::json!({}),
-                outputs_raw: serde_json::json!({}),
-                enabled: true,
-                source: "builtin".to_string(),
-                health_status: "unknown".to_string(),
-                custom_parameters: serde_json::json!({}),
-            };
-            reg.register(bundle);
-        }
-
-        let res = remove_plugin_internal("core-builtin", &app_state).await;
-        assert!(matches!(res, Err(PluginError::SecurityViolation(_))));
-
-        // Verify still in registry
-        let reg = app_state.plugins.read().await;
-        assert!(reg.plugins.contains_key("core-builtin"));
-    }
-
-    #[tokio::test]
-    async fn test_remove_plugin_running_job_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Register user plugin
-        {
-            let mut reg = app_state.plugins.write().await;
-            let bundle = crate::plugin_manager::models::PluginBundle {
-                install_path: temp_dir.path().join("busy-user-plugin"),
-                manifest: crate::plugin_manager::models::PluginManifest {
-                    schema: None,
-                    manifest_version: 1,
-                    metadata: crate::plugin_manager::models::PluginMetadata {
-                        id: "busy-user-plugin".to_string(),
-                        name: "Busy".to_string(),
-                        version: "1.0.0".to_string(),
-                        author: None,
-                        license: None,
-                        description: "Busy".to_string(),
-                        category: Some("vegetation".to_string()),
-                        tags: vec![],
-                        min_core_version: None,
-                    },
-                    runtime: crate::plugin_manager::models::PluginRuntime {
-                        runtime_type: "python".to_string(),
-                        entrypoint: "main.py".to_string(),
-                        min_python_version: None,
-                        dependencies_file: None,
-                        healthcheck_flag: None,
-                    },
-                    parameters: "parameters.json".to_string(),
-                    inputs: "inputs.json".to_string(),
-                    outputs: "outputs.json".to_string(),
-                    execution: None,
-                },
-                inputs_spec: crate::plugin_manager::models::InputsSpec {
-                    granularity: "single_image".to_string(),
-                    supported_mime_types: vec!["image/jpeg".to_string()],
-                    requires_metadata: vec![],
-                    optional_metadata: vec![],
-                    supports_aoi: false,
-                    aoi_format: None,
-                },
-                inputs_raw: serde_json::json!({}),
-                parameters_raw: serde_json::json!({}),
-                outputs_raw: serde_json::json!({}),
-                enabled: true,
-                source: "user".to_string(),
-                health_status: "unknown".to_string(),
-                custom_parameters: serde_json::json!({}),
-            };
-            reg.register(bundle);
-        }
-
-        // Add running job to active tracker
-        {
-            let mut tracker = app_state.jobs.write().await;
-            tracker.jobs.insert(
-                "job-123".to_string(),
-                crate::plugin_manager::executor::JobRecord {
-                    job_id: "job-123".to_string(),
-                    plugin_id: "busy-user-plugin".to_string(),
-                    status: crate::plugin_manager::executor::JobStatusDto::Running {
-                        progress_pct: 50,
-                        stage: "processing".to_string(),
-                    },
-                    result: None,
-                    started_at: "2026-10-25T12:00:00Z".to_string(),
-                    abort_handle: None,
-                    child_pid: None,
-                    output_dir: None,
-                },
-            );
-        }
-
-        let res = remove_plugin_internal("busy-user-plugin", &app_state).await;
-        assert!(matches!(res, Err(PluginError::ExecutionError(_))));
-    }
-
-    #[tokio::test]
-    async fn test_remove_nonexistent_plugin_returns_not_found() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let res = remove_plugin_internal("ghost-plugin", &app_state).await;
-        assert!(matches!(res, Err(PluginError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_update_plugin_config_success() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Register plugin with parameters
-        {
-            let mut reg = app_state.plugins.write().await;
-            let bundle = crate::plugin_manager::models::PluginBundle {
-                install_path: temp_dir.path().join("config-plugin"),
-                manifest: crate::plugin_manager::models::PluginManifest {
-                    schema: None,
-                    manifest_version: 1,
-                    metadata: crate::plugin_manager::models::PluginMetadata {
-                        id: "config-plugin".to_string(),
-                        name: "Config Plugin".to_string(),
-                        version: "1.0.0".to_string(),
-                        author: None,
-                        license: None,
-                        description: "Config Plugin".to_string(),
-                        category: Some("vegetation".to_string()),
-                        tags: vec![],
-                        min_core_version: None,
-                    },
-                    runtime: crate::plugin_manager::models::PluginRuntime {
-                        runtime_type: "python".to_string(),
-                        entrypoint: "main.py".to_string(),
-                        min_python_version: None,
-                        dependencies_file: None,
-                        healthcheck_flag: None,
-                    },
-                    parameters: "parameters.json".to_string(),
-                    inputs: "inputs.json".to_string(),
-                    outputs: "outputs.json".to_string(),
-                    execution: None,
-                },
-                inputs_spec: crate::plugin_manager::models::InputsSpec {
-                    granularity: "single_image".to_string(),
-                    supported_mime_types: vec!["image/jpeg".to_string()],
-                    requires_metadata: vec![],
-                    optional_metadata: vec![],
-                    supports_aoi: false,
-                    aoi_format: None,
-                },
-                inputs_raw: serde_json::json!({}),
-                parameters_raw: serde_json::json!({
-                    "parameters": [
-                        {
-                            "name": "threshold",
-                            "label": "Threshold",
-                            "type": "number",
-                            "default": 0.5,
-                            "min": 0.0,
-                            "max": 1.0
-                        },
-                        {
-                            "name": "mode",
-                            "label": "Mode",
-                            "type": "select",
-                            "options": ["FAST", "ACCURATE"],
-                            "default": "FAST"
-                        }
-                    ]
-                }),
-                outputs_raw: serde_json::json!({}),
-                enabled: true,
-                source: "user".to_string(),
-                health_status: "unknown".to_string(),
-                custom_parameters: serde_json::json!({}),
-            };
-            reg.register(bundle);
-        }
-
-        let custom_params = serde_json::json!({
-            "threshold": 0.85,
-            "mode": "ACCURATE"
-        });
-
-        let res =
-            update_plugin_config_internal("config-plugin", custom_params.clone(), &app_state).await;
-        assert!(res.is_ok());
-
-        // Check state file on disk
-        let state_path = temp_dir.path().join("plugin_state.json");
-        let store = load_plugin_state(&state_path).unwrap();
-        let rec = store.plugins.get("config-plugin").unwrap();
-        assert_eq!(rec.custom_parameters["threshold"], 0.85);
-        assert_eq!(rec.custom_parameters["mode"], "ACCURATE");
-
-        // Check in-memory bundle updated as well
-        let reg = app_state.plugins.read().await;
-        let in_memory = reg.plugins.get("config-plugin").unwrap();
-        assert_eq!(in_memory.custom_parameters["threshold"], 0.85);
-        assert_eq!(in_memory.custom_parameters["mode"], "ACCURATE");
-
-        // Also check get_details reflects custom_parameters
-        let details = reg.get_details("config-plugin").unwrap();
-        assert_eq!(details.custom_parameters["threshold"], 0.85);
-        assert_eq!(details.custom_parameters["mode"], "ACCURATE");
-    }
-
-    #[tokio::test]
-    async fn test_update_plugin_config_missing_plugin_returns_not_found() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let res = update_plugin_config_internal(
-            "missing-plugin",
-            serde_json::json!({"foo": "bar"}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res, Err(PluginError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_update_plugin_config_invalid_parameter_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Register plugin
-        {
-            let mut reg = app_state.plugins.write().await;
-            let bundle = crate::plugin_manager::models::PluginBundle {
-                install_path: temp_dir.path().join("strict-plugin"),
-                manifest: crate::plugin_manager::models::PluginManifest {
-                    schema: None,
-                    manifest_version: 1,
-                    metadata: crate::plugin_manager::models::PluginMetadata {
-                        id: "strict-plugin".to_string(),
-                        name: "Strict".to_string(),
-                        version: "1.0.0".to_string(),
-                        author: None,
-                        license: None,
-                        description: "Strict".to_string(),
-                        category: Some("vegetation".to_string()),
-                        tags: vec![],
-                        min_core_version: None,
-                    },
-                    runtime: crate::plugin_manager::models::PluginRuntime {
-                        runtime_type: "python".to_string(),
-                        entrypoint: "main.py".to_string(),
-                        min_python_version: None,
-                        dependencies_file: None,
-                        healthcheck_flag: None,
-                    },
-                    parameters: "parameters.json".to_string(),
-                    inputs: "inputs.json".to_string(),
-                    outputs: "outputs.json".to_string(),
-                    execution: None,
-                },
-                inputs_spec: crate::plugin_manager::models::InputsSpec {
-                    granularity: "single_image".to_string(),
-                    supported_mime_types: vec!["image/jpeg".to_string()],
-                    requires_metadata: vec![],
-                    optional_metadata: vec![],
-                    supports_aoi: false,
-                    aoi_format: None,
-                },
-                inputs_raw: serde_json::json!({}),
-                parameters_raw: serde_json::json!({
-                    "parameters": [
-                        {
-                            "name": "threshold",
-                            "label": "Threshold",
-                            "type": "number",
-                            "default": 0.5,
-                            "min": 0.0,
-                            "max": 1.0
-                        },
-                        {
-                            "name": "mode",
-                            "label": "Mode",
-                            "type": "select",
-                            "options": ["FAST", "ACCURATE"],
-                            "default": "FAST"
-                        }
-                    ]
-                }),
-                outputs_raw: serde_json::json!({}),
-                enabled: true,
-                source: "user".to_string(),
-                health_status: "unknown".to_string(),
-                custom_parameters: serde_json::json!({}),
-            };
-            reg.register(bundle);
-        }
-
-        // 1. Unknown param
-        let res1 = update_plugin_config_internal(
-            "strict-plugin",
-            serde_json::json!({"unknown_param": 10}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res1, Err(PluginError::SubcontractInvalid { .. })));
-
-        // 2. Number exceeds max
-        let res2 = update_plugin_config_internal(
-            "strict-plugin",
-            serde_json::json!({"threshold": 1.5}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res2, Err(PluginError::SubcontractInvalid { .. })));
-
-        // 3. Number below min
-        let res3 = update_plugin_config_internal(
-            "strict-plugin",
-            serde_json::json!({"threshold": -0.1}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res3, Err(PluginError::SubcontractInvalid { .. })));
-
-        // 4. Invalid select option
-        let res4 = update_plugin_config_internal(
-            "strict-plugin",
-            serde_json::json!({"mode": "ULTRA_FAST"}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res4, Err(PluginError::SubcontractInvalid { .. })));
-
-        // 5. Wrong type (string for number)
-        let res5 = update_plugin_config_internal(
-            "strict-plugin",
-            serde_json::json!({"threshold": "not_a_number"}),
-            &app_state,
-        )
-        .await;
-        assert!(matches!(res5, Err(PluginError::SubcontractInvalid { .. })));
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_cannot_overwrite_running_job() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let zip_path = temp_dir.path().join("busy.zip");
-        create_valid_zip_archive(&zip_path, "busy-user-plugin");
-
-        // Install first
-        install_plugin_internal(&zip_path, &app_state)
-            .await
-            .unwrap();
-
-        // Mark running job
-        {
-            let mut tracker = app_state.jobs.write().await;
-            tracker.jobs.insert(
-                "job-123".to_string(),
-                crate::plugin_manager::executor::JobRecord {
-                    job_id: "job-123".to_string(),
-                    plugin_id: "busy-user-plugin".to_string(),
-                    status: crate::plugin_manager::executor::JobStatusDto::Running {
-                        progress_pct: 50,
-                        stage: "processing".to_string(),
-                    },
-                    result: None,
-                    started_at: "2026-10-25T12:00:00Z".to_string(),
-                    abort_handle: None,
-                    child_pid: None,
-                    output_dir: None,
-                },
-            );
-        }
-
-        // Attempt reinstall while running
-        let res = install_plugin_internal(&zip_path, &app_state).await;
-        assert!(
-            matches!(res, Err(PluginError::ExecutionError(_))),
-            "Expected ExecutionError when overwriting active running job, got {:?}",
-            res
-        );
-    }
-
-    #[test]
-    fn test_verify_and_extract_entry_rejects_symlinks() {
-        let mut buffer = Vec::new();
-        {
-            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
-            writer
-                .add_symlink(
-                    "malicious_symlink",
-                    "/etc/passwd",
-                    SimpleFileOptions::default(),
-                )
-                .unwrap();
-            writer.finish().unwrap();
-        }
-        let dir = tempdir().unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
-        let mut entry = archive.by_index(0).unwrap();
-        let res = verify_and_extract_entry(&mut entry, dir.path());
-        assert!(res.is_err(), "Symlinks in zip must be rejected");
-        assert!(matches!(
-            res.unwrap_err(),
-            PluginError::SecurityViolation(_)
-        ));
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn test_verify_and_extract_entry_preserves_executable_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        let mut buffer = Vec::new();
-        {
-            let mut writer = zip::ZipWriter::new(Cursor::new(&mut buffer));
-            let options = SimpleFileOptions::default().unix_permissions(0o755);
-            writer.start_file("bin/run.sh", options).unwrap();
-            writer.write_all(b"#!/bin/sh\necho ok\n").unwrap();
-            writer.finish().unwrap();
-        }
-        let dir = tempdir().unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(buffer)).unwrap();
-        let mut entry = archive.by_index(0).unwrap();
-        let extracted = verify_and_extract_entry(&mut entry, dir.path()).unwrap();
-        let meta = std::fs::metadata(&extracted).unwrap();
-        assert_eq!(
-            meta.permissions().mode() & 0o111,
-            0o111,
-            "Executable bits must be preserved"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_remove_plugin_invalid_id_path_traversal_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let res = remove_plugin_internal("../../etc/passwd", &app_state).await;
-        assert!(matches!(res, Err(PluginError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_ambiguous_multiple_manifests_rejected() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-        let zip_path = temp_dir.path().join("ambiguous.zip");
-
-        {
-            let file = std::fs::File::create(&zip_path).unwrap();
-            let mut writer = zip::ZipWriter::new(file);
-
-            writer
-                .start_file("plugin-a/manifest.json", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"{\"manifest_version\": 1}").unwrap();
-
-            writer
-                .start_file("plugin-b/manifest.json", SimpleFileOptions::default())
-                .unwrap();
-            writer.write_all(b"{\"manifest_version\": 1}").unwrap();
-
-            writer.finish().unwrap();
-        }
-
-        let res = install_plugin_internal(&zip_path, &app_state).await;
-        assert!(matches!(res, Err(PluginError::ManifestInvalid { .. })));
-    }
-
-    #[tokio::test]
-    async fn test_install_plugin_state_save_failure_rolls_back_filesystem_and_registry() {
-        let temp_dir = tempdir().unwrap();
-        let app_state = create_test_app_state(temp_dir.path());
-
-        // Make state_path a directory so rename(&temp_file_path, state_path) fails with EISDIR
-        let state_path = temp_dir.path().join("plugin_state.json");
-        std::fs::create_dir_all(&state_path).unwrap();
-
-        let zip_path = temp_dir.path().join("rollback.zip");
-        create_valid_zip_archive(&zip_path, "rollback-plugin");
-
-        let res = install_plugin_internal(&zip_path, &app_state).await;
-        assert!(
-            res.is_err(),
-            "Installation must fail when state saving fails"
-        );
-
-        // Verify rollback: target directory must NOT exist on disk
-        let target_dir = temp_dir.path().join("rollback-plugin");
-        assert!(
-            !target_dir.exists(),
-            "Target directory must be deleted/rolled back on state save failure"
-        );
-
-        // Verify rollback: in-memory registry must NOT contain the plugin
-        let reg = app_state.plugins.read().await;
-        assert!(
-            !reg.plugins.contains_key("rollback-plugin"),
-            "Registry must not retain plugin on state save failure"
-        );
-    }
-}
+#[path = "lifecycle_tests.rs"]
+mod tests;
