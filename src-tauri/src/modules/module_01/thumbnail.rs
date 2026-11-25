@@ -114,6 +114,19 @@ pub(crate) fn discard_thumbnail(path: &Path, cache_dir: &Path) {
     }
 }
 
+/// Builds a thumbnail for `path` without reading or writing the cache.
+///
+/// For a file that is not in the library yet — the import dialog previews the
+/// files a user picked before anything is copied. Caching those would leave a
+/// `.thumbs` entry behind for every file that is never imported.
+///
+/// # Errors
+///
+/// The same as [`thumbnail_jpeg`].
+pub(crate) fn thumbnail_jpeg_uncached(path: &Path) -> Result<Vec<u8>, MetadataError> {
+    build_thumbnail(path)
+}
+
 /// Builds the thumbnail bytes for one image without consulting the cache.
 fn build_thumbnail(path: &Path) -> Result<Vec<u8>, MetadataError> {
     let extension = path

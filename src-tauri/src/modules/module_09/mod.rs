@@ -12,7 +12,9 @@
 //! `crate::commands::plots`.
 
 pub mod indicators;
+pub mod ortho_analysis;
 pub mod plots;
 
 pub use indicators::IndicatorRecord;
+pub use ortho_analysis::*;
 pub use plots::{migrate_plot_schema, PlotRecord};

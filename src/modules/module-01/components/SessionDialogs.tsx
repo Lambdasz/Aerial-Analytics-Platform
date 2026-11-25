@@ -5,6 +5,7 @@ import {
   Dialog,
   FormGroup,
   HTMLSelect,
+  Icon,
   InputGroup,
   Intent,
 } from "@blueprintjs/core";
@@ -14,7 +15,7 @@ import type { Session, StoredImage } from "../sessionCommands";
 import { commandErrorMessage } from "../sessionCommands";
 import { shortId } from "../sessionStats";
 import { importErrorCode, importImages, type ImportReport } from "../../../lib/imageImport";
-import { loadImagePreview } from "../../../lib/imagePreview";
+import { loadSourceThumbnail } from "../../../lib/imagePreview";
 
 /* ── Create Session Dialog ────────────────────────────────────────────── */
 
@@ -224,7 +225,22 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pickedRef = useRef<PickedSource[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
   const busy = parentBusy || importing;
+
+  // The dialog remounts for every open, so unmounting is "the dialog was
+  // closed": drop thumbnail requests still waiting and free the object URLs
+  // (the backend keeps no cache for these, so nothing else shares them).
+  useEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    return () => {
+      controller.abort();
+      for (const row of pickedRef.current) {
+        if (row.preview) URL.revokeObjectURL(row.preview);
+      }
+    };
+  }, []);
 
   const addPaths = async (paths: string[], force?: "file" | "folder") => {
     const known = new Set(pickedRef.current.map((item) => item.path));
@@ -238,12 +254,19 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
     pickedRef.current = [...pickedRef.current, ...next];
     setPicked(pickedRef.current);
     setError(null);
+    // Thumbnails, not previews: a batch can be hundreds of full frames. The
+    // loader runs a few at a time and off the main thread.
     await Promise.all(
       next
         .filter((item) => item.kind === "file")
         .map(async (item) => {
           try {
-            const preview = await loadImagePreview(item.path);
+            const preview = await loadSourceThumbnail(item.path, abortRef.current?.signal);
+            if (!pickedRef.current.some((row) => row.path === item.path)) {
+              // Removed while it was loading.
+              URL.revokeObjectURL(preview);
+              return;
+            }
             pickedRef.current = pickedRef.current.map((row) =>
               row.path === item.path ? { ...row, preview } : row,
             );
@@ -287,8 +310,8 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
   }, [isOpen]);
 
   const removePath = (path: string) => {
-    // The preview URL belongs to the session-wide thumbnail cache; it is
-    // shared with other views, so it is deliberately not revoked here.
+    const removed = pickedRef.current.find((row) => row.path === path);
+    if (removed?.preview) URL.revokeObjectURL(removed.preview);
     pickedRef.current = pickedRef.current.filter((row) => row.path !== path);
     setPicked(pickedRef.current);
   };
@@ -408,10 +431,16 @@ export const AssignImageDialog: FC<AssignImageDialogProps> = ({
                   {item.preview ? (
                     <img src={item.preview} alt="" className="m1-import-preview__img" />
                   ) : (
-                    <span className="m1-import-preview__fallback">
-                      {item.kind === "folder"
-                        ? "DIR"
-                        : extensionOf(item.path).toUpperCase() || "FILE"}
+                    <span
+                      className={`m1-import-preview__fallback${
+                        item.kind === "folder" ? " m1-import-preview__fallback--folder" : ""
+                      }`}
+                    >
+                      {item.kind === "folder" ? (
+                        <Icon icon="folder-close" size={28} title="Folder" />
+                      ) : (
+                        extensionOf(item.path).toUpperCase() || "FILE"
+                      )}
                     </span>
                   )}
                   <span className="m1-import-preview__name" title={item.path}>

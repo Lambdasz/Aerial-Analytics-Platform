@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Alert,
   Button,
   Card,
   Elevation,
@@ -14,6 +15,7 @@ import {
   Callout,
   Dialog,
 } from "@blueprintjs/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { listProjects, type Project } from "../modules/module-01/projectCommands";
 import {
   getSessionsByProject,
@@ -24,12 +26,18 @@ import {
 } from "../modules/module-01/sessionCommands";
 import {
   getInstalledPlugins,
+  reloadPlugins,
   setPluginStatus,
   checkPluginHealth,
   getPluginDetails,
+  installPlugin,
+  removePlugin,
   formatErrorMessage,
 } from "./pluginCommands";
 import { PluginExecutionModal, type PluginExecutionTarget } from "./PluginExecutionModal";
+import { PluginContractModal } from "./PluginContractModal";
+import { PluginConfigModal } from "./PluginConfigModal";
+import { PluginResultCard } from "./PluginResultCard";
 import type {
   PluginSummary,
   HealthStatusDto,
@@ -41,7 +49,11 @@ import "./PluginManager.css";
 export function PluginManager() {
   const [plugins, setPlugins] = useState<PluginSummary[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isInstalling, setIsInstalling] = useState<boolean>(false);
+  const [isRemoving, setIsRemoving] = useState<boolean>(false);
+  const [isConfirmRemoveOpen, setIsConfirmRemoveOpen] = useState<boolean>(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ENABLED" | "DISABLED">("ALL");
@@ -74,15 +86,24 @@ export function PluginManager() {
   const [isLoadingDetails, setIsLoadingDetails] = useState<boolean>(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState<boolean>(false);
 
-  // 1. Fetch installed plugins on mount
-  const loadPlugins = useCallback(async () => {
+  // Configure defaults modal state
+  const [configPluginId, setConfigPluginId] = useState<string | null>(null);
+
+  // 1. Fetch installed plugins (rescan = true rescans plugins directory from disk)
+  const loadPlugins = useCallback(async (selectId?: string, rescan?: boolean) => {
     setIsLoading(true);
     setErrorNotice(null);
     try {
-      const data = await getInstalledPlugins();
+      const data = rescan ? await reloadPlugins() : await getInstalledPlugins();
       setPlugins(data);
-      if (data.length > 0) {
-        setSelectedPluginId((prev) => prev ?? data[0].id);
+      if (selectId) {
+        setSelectedPluginId(selectId);
+      } else if (data.length > 0) {
+        setSelectedPluginId((prev) =>
+          prev && data.some((p) => p.id === prev) ? prev : data[0].id,
+        );
+      } else {
+        setSelectedPluginId(null);
       }
     } catch (err) {
       setErrorNotice(formatErrorMessage(err));
@@ -203,7 +224,57 @@ export function PluginManager() {
     }
   };
 
-  // 4. View Plugin Details / Inspect schemas
+  // 4. Install Plugin from .zip archive via system dialog
+  const handleInstallPlugin = async () => {
+    setErrorNotice(null);
+    setSuccessNotice(null);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Plugin Archive", extensions: ["zip"] }],
+      });
+
+      if (!selected) return;
+
+      const archivePath = typeof selected === "string" ? selected : selected[0];
+      if (!archivePath) return;
+
+      setIsInstalling(true);
+      const installed = await installPlugin(archivePath);
+      setSuccessNotice(
+        `Plugin "${installed.name}" (v${installed.version}) installed successfully.`,
+      );
+      await loadPlugins(installed.id, true);
+    } catch (err) {
+      setErrorNotice(`Failed to install plugin: ${formatErrorMessage(err)}`);
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  // 5. Remove Plugin with confirmation
+  const handleConfirmRemove = async () => {
+    if (!selectedPlugin) return;
+    const pluginToRemove = selectedPlugin;
+    setIsConfirmRemoveOpen(false);
+    setIsRemoving(true);
+    setErrorNotice(null);
+    setSuccessNotice(null);
+    try {
+      await removePlugin(pluginToRemove.id);
+      setSuccessNotice(`Plugin "${pluginToRemove.name}" has been uninstalled.`);
+      await loadPlugins(undefined, true);
+    } catch (err) {
+      setErrorNotice(
+        `Failed to remove plugin "${pluginToRemove.name}": ${formatErrorMessage(err)}`,
+      );
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
+  // 6. View Plugin Details / Inspect schemas
   const handleInspectDetails = async (pluginId: string) => {
     setIsLoadingDetails(true);
     setIsDetailsOpen(true);
@@ -381,13 +452,29 @@ export function PluginManager() {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Button
+              icon="cloud-upload"
+              intent={Intent.PRIMARY}
+              text="Install Plugin"
+              onClick={() => void handleInstallPlugin()}
+              loading={isInstalling}
+            />
+            <Button
               icon="refresh"
               text="Reload Plugins"
-              onClick={() => void loadPlugins()}
+              onClick={() => void loadPlugins(undefined, true)}
               loading={isLoading}
             />
           </div>
         </header>
+
+        {successNotice && (
+          <Callout intent={Intent.SUCCESS} title="Success" style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{successNotice}</span>
+              <Button small minimal icon="cross" onClick={() => setSuccessNotice(null)} />
+            </div>
+          </Callout>
+        )}
 
         {errorNotice && (
           <Callout intent={Intent.DANGER} title="Notice" style={{ marginBottom: 16 }}>
@@ -500,7 +587,22 @@ export function PluginManager() {
             icon="box"
             title="No Plugins Installed"
             description="No analytical plugins were found in the workspace plugins directory."
-            action={<Button icon="refresh" text="Scan Again" onClick={() => void loadPlugins()} />}
+            action={
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button
+                  icon="cloud-upload"
+                  intent={Intent.PRIMARY}
+                  text="Install Plugin"
+                  onClick={() => void handleInstallPlugin()}
+                  loading={isInstalling}
+                />
+                <Button
+                  icon="refresh"
+                  text="Scan Again"
+                  onClick={() => void loadPlugins(undefined, true)}
+                />
+              </div>
+            }
           />
         ) : (
           <section className="manager-grid">
@@ -674,37 +776,7 @@ export function PluginManager() {
                 )}
 
                 {lastResult && (
-                  <Callout
-                    intent={
-                      lastResult.status === "failure"
-                        ? Intent.DANGER
-                        : lastResult.status === "warning"
-                          ? Intent.WARNING
-                          : Intent.SUCCESS
-                    }
-                    title={`Last run: ${lastResult.status.toUpperCase()} · ${lastResult.execution_time_ms} ms`}
-                    style={{ marginBottom: 16 }}
-                  >
-                    <pre
-                      style={{
-                        margin: 0,
-                        fontSize: "0.78em",
-                        maxHeight: 160,
-                        overflow: "auto",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {JSON.stringify(
-                        {
-                          metrics: lastResult.metrics,
-                          artifacts: lastResult.artifacts,
-                          error: lastResult.error ?? null,
-                        },
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </Callout>
+                  <PluginResultCard result={lastResult} onClear={() => setLastResult(null)} />
                 )}
 
                 <div style={{ display: "flex", gap: 8, marginTop: "auto" }}>
@@ -731,6 +803,26 @@ export function PluginManager() {
                   fill
                   style={{ marginTop: 8 }}
                 />
+                <Button
+                  intent={Intent.NONE}
+                  text="Configure Defaults"
+                  icon="cog"
+                  onClick={() => setConfigPluginId(selectedPlugin.id)}
+                  fill
+                  style={{ marginTop: 8 }}
+                />
+
+                {selectedPlugin.source === "user" && (
+                  <Button
+                    intent={Intent.DANGER}
+                    icon="trash"
+                    text="Uninstall Plugin"
+                    onClick={() => setIsConfirmRemoveOpen(true)}
+                    loading={isRemoving}
+                    fill
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </aside>
             )}
           </section>
@@ -882,69 +974,43 @@ export function PluginManager() {
         )}
 
         {/* Contract Inspection Modal */}
-        <Dialog
+        <PluginContractModal
           isOpen={isDetailsOpen}
           onClose={() => setIsDetailsOpen(false)}
-          title={`Contract Specifications: ${detailsPlugin?.manifest.metadata.name ?? ""}`}
-          style={{ width: 680 }}
+          details={detailsPlugin}
+          isLoading={isLoadingDetails}
+        />
+
+        {/* Configure Defaults Modal */}
+        {configPluginId !== null && (
+          <PluginConfigModal
+            isOpen
+            pluginId={configPluginId}
+            pluginName={plugins.find((p) => p.id === configPluginId)?.name}
+            onClose={() => setConfigPluginId(null)}
+            onSaved={() => {
+              void loadPlugins();
+            }}
+          />
+        )}
+
+        {/* Confirm Remove Alert Dialog */}
+        <Alert
+          isOpen={isConfirmRemoveOpen}
+          cancelButtonText="Cancel"
+          confirmButtonText="Uninstall Plugin"
+          intent={Intent.DANGER}
+          icon="trash"
+          onCancel={() => setIsConfirmRemoveOpen(false)}
+          onConfirm={() => {
+            void handleConfirmRemove();
+          }}
         >
-          <div className="bp6-dialog-body" style={{ maxHeight: 500, overflowY: "auto" }}>
-            {isLoadingDetails || !detailsPlugin ? (
-              <div style={{ textAlign: "center", padding: "32px 0" }}>
-                <Spinner size={32} />
-              </div>
-            ) : (
-              <div>
-                <h4>Parameters Specification (parameters.json)</h4>
-                <pre
-                  style={{
-                    background: "var(--color-paper-frost, #fafafc)",
-                    color: "var(--color-ink, #1d1d1f)",
-                    padding: 12,
-                    borderRadius: 4,
-                    maxHeight: 180,
-                    overflow: "auto",
-                  }}
-                >
-                  {JSON.stringify(detailsPlugin.parameters, null, 2)}
-                </pre>
-
-                <h4>Inputs Specification (inputs.json)</h4>
-                <pre
-                  style={{
-                    background: "var(--color-paper-frost, #fafafc)",
-                    color: "var(--color-ink, #1d1d1f)",
-                    padding: 12,
-                    borderRadius: 4,
-                    maxHeight: 140,
-                    overflow: "auto",
-                  }}
-                >
-                  {JSON.stringify(detailsPlugin.inputs, null, 2)}
-                </pre>
-
-                <h4>Outputs Specification (outputs.json)</h4>
-                <pre
-                  style={{
-                    background: "var(--color-paper-frost, #fafafc)",
-                    color: "var(--color-ink, #1d1d1f)",
-                    padding: 12,
-                    borderRadius: 4,
-                    maxHeight: 140,
-                    overflow: "auto",
-                  }}
-                >
-                  {JSON.stringify(detailsPlugin.outputs, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-          <div className="bp6-dialog-footer">
-            <div className="bp6-dialog-footer-actions">
-              <Button text="Close" onClick={() => setIsDetailsOpen(false)} />
-            </div>
-          </div>
-        </Dialog>
+          <p>
+            Are you sure you want to permanently uninstall <strong>{selectedPlugin?.name}</strong>?
+            This action will remove the plugin package and its configuration.
+          </p>
+        </Alert>
       </section>
     </main>
   );

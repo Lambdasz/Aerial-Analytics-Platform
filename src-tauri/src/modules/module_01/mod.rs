@@ -19,6 +19,8 @@
 //! [`metadata_extractor`], [`dng_preview`] and [`image_importer`]).
 
 pub mod blur_detection;
+pub mod blur_queue;
+pub mod blur_task;
 pub mod dng_preview;
 pub mod error;
 pub mod flight_session;

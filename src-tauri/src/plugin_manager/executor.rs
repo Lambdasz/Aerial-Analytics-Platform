@@ -1376,6 +1376,7 @@ mod tests {
             enabled: false,
             source: "builtin".to_string(),
             health_status: "unknown".to_string(),
+            custom_parameters: serde_json::json!({}),
         };
         registry.register(bundle);
 
@@ -1428,6 +1429,7 @@ mod tests {
             enabled: true,
             source: "builtin".to_string(),
             health_status: "unknown".to_string(),
+            custom_parameters: serde_json::json!({}),
         };
         registry.register(bundle);
 

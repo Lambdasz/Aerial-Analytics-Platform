@@ -60,8 +60,9 @@ class PipelineTest(unittest.TestCase):
         self.assertIsNone(result["error"])
 
     def test_stub_detector_is_reported_as_warning(self) -> None:
+        # The fixture payload asks for the real detector, so the stub is requested here.
         request = parse_payload(self.payload)
-        detection = detect_trees(request.detection_input, model_config_of(request.parameters))
+        detection = detect_trees(request.detection_input, {"detector": "stub"})
         output = analyze(request, detection, NOW, "0.1.0")
         self.assertEqual(output.status, "partial")
         result = to_execution_result(output, "exec_1", 10, {})

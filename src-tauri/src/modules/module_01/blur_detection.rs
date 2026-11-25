@@ -15,10 +15,19 @@
 //! Interpolating a small source up to [`BLUR_SCORE_LONG_EDGE_PX`] smooths
 //! away exactly the high-frequency edges the Laplacian measures, so an
 //! upscaled image scores as falsely blurry regardless of its real
-//! sharpness. A DNG's embedded preview ([`super::dng_preview`]) is often
-//! smaller than the scoring cap, and small JPEGs hit this too. A source
-//! already below the cap is therefore left unscored (`None`) rather than
-//! upscaled into a misleading number.
+//! sharpness. Small JPEGs hit this. A source already below the cap is
+//! therefore left unscored (`None`) rather than upscaled into a misleading
+//! number.
+//!
+//! # DNG is never decoded here
+//!
+//! Only JPEGs reach [`blur_score_for_copy`]: no raw decoder exists in this
+//! codebase, so a DNG's score is either mirrored from its paired JPEG
+//! sibling ([`super::blur_queue::copy_paired_dng_scores`]) or, for a
+//! standalone DNG with no sibling, left absent entirely — see
+//! [`super::flight_session::reclassify_session_blur`] and
+//! [`super::blur_queue::standalone_dng_count`], which reports the skip to
+//! the background-task UI.
 //!
 //! # Why session-relative, not a single global threshold
 //!
@@ -54,9 +63,6 @@
 use std::path::Path;
 
 use image::GrayImage;
-
-use super::error::MetadataError;
-use crate::models::image::ImageFormat;
 
 /// Long edge (px) images are downscaled to before scoring, so raw variance
 /// is comparable across source resolutions. Sources smaller than this are
@@ -197,13 +203,11 @@ impl Welford {
     }
 }
 
-/// Reads, decodes, and scores one imported copy, downscaling first when the
-/// source is larger than [`BLUR_SCORE_LONG_EDGE_PX`].
+/// Reads, decodes, and scores one imported JPEG copy, downscaling first when
+/// the source is larger than [`BLUR_SCORE_LONG_EDGE_PX`].
 ///
 /// Never fails its caller: any read or decode error is logged and yields
-/// `None` so import always proceeds. DNG is scored from its embedded
-/// preview ([`super::dng_preview::read_dng_preview`]) since no raw decoder
-/// exists in this codebase; JPEG decodes directly.
+/// `None` so import always proceeds.
 ///
 /// A source whose long edge is already below the cap is left unscored
 /// (`None`) rather than upscaled — see the module-level "why only
@@ -212,18 +216,12 @@ impl Welford {
 /// # Purity
 ///
 /// Impure — reads a file from disk.
-pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f64> {
+pub(crate) fn blur_score_for_copy(path: &Path) -> Option<f64> {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let bytes = match format {
-        ImageFormat::Jpeg => std::fs::read(path).map_err(|err| err.to_string()),
-        ImageFormat::Dng => {
-            super::dng_preview::read_dng_preview(path).map_err(|err| describe_dng_read_error(&err))
-        }
-    };
-    let bytes = match bytes {
+    let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(reason) => {
-            eprintln!("warning: could not read '{name}' for blur scoring: {reason}");
+        Err(err) => {
+            eprintln!("warning: could not read '{name}' for blur scoring: {err}");
             return None;
         }
     };
@@ -231,7 +229,7 @@ pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f6
         Ok(decoded) => decoded,
         Err(err) => {
             // `load_from_memory` was never given a path, so `err` cannot
-            // carry one — safe to log as-is, unlike the DNG branch above.
+            // carry one — safe to log as-is.
             eprintln!("warning: could not decode '{name}' for blur scoring: {err}");
             return None;
         }
@@ -245,23 +243,6 @@ pub(crate) fn blur_score_for_copy(path: &Path, format: ImageFormat) -> Option<f6
         image::imageops::FilterType::Triangle,
     );
     Some(compute_blur_score(&resized.to_luma8()))
-}
-
-/// A path-safe description of a DNG preview-read failure.
-///
-/// [`MetadataError`]'s `Display` embeds the full file path for several
-/// variants (`UnsupportedFormat`, `MagicMismatch`, `PreviewUnavailable`,
-/// `NotImplemented`), and that path is inside the app-owned library
-/// (`<library_root>/projects/<project_id>/sessions/<session_id>/images/`) —
-/// logging it would leak project/session ids into stderr, the same concern
-/// [`super::import_io::remove_copy`] documents. The I/O variant never
-/// carries a path, so its reason is safe to show directly; everything else
-/// falls back to the error's stable short code.
-fn describe_dng_read_error(err: &MetadataError) -> String {
-    match err {
-        MetadataError::Io(io_err) => io_err.to_string(),
-        other => other.code().to_string(),
-    }
 }
 
 /// Whether a decoded image's long edge is already at or above
@@ -355,8 +336,10 @@ pub(crate) fn leave_one_out_stats(scores: &[f64]) -> Vec<SessionBlurStats> {
 /// sessions.
 ///
 /// With fewer than [`MIN_SESSION_SAMPLE_FOR_RELATIVE`] other samples or a
-/// zero stddev, there is no meaningful baseline yet, so classification falls
-/// back to `hard_floor` alone. Once a baseline exists, `hard_floor` is
+/// near-zero stddev (relative to the mean — catches floating-point rounding
+/// noise on near-identical scores, not just an exact `0.0`), there is no
+/// meaningful baseline yet, so classification falls back to `hard_floor`
+/// alone. Once a baseline exists, `hard_floor` is
 /// *not* consulted — only a z-score below `z_threshold` standard deviations
 /// under the session mean counts as blurry. See [`HARD_FLOOR_BLUR_SCORE`]
 /// for why the floor must not override the relative check once there is a
@@ -371,7 +354,9 @@ pub(crate) fn classify_blur(
     hard_floor: f64,
     z_threshold: f64,
 ) -> bool {
-    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE || stats.stddev == 0.0 {
+    if stats.sample_count < MIN_SESSION_SAMPLE_FOR_RELATIVE
+        || stats.stddev <= stats.mean.abs() * 1e-9
+    {
         // No meaningful baseline yet: the absolute floor is the only signal
         // available.
         return raw_score < hard_floor;
@@ -629,6 +614,19 @@ mod tests {
     }
 
     #[test]
+    fn classify_blur_near_zero_stddev_falls_back_to_hard_floor_only() {
+        let stats = SessionBlurStats {
+            mean: 50.0,
+            stddev: 1e-10,
+            sample_count: 10,
+        };
+        // Floor path, not a z-score computed off a near-zero stddev (which
+        // would read as an enormous |z| and wrongly flag almost everything).
+        assert!(classify_blur(3.0, &stats, 5.0, -1.5));
+        assert!(!classify_blur(8.0, &stats, 5.0, -1.5));
+    }
+
+    #[test]
     fn classify_blur_z_score_outlier_is_blurry() {
         let stats = SessionBlurStats {
             mean: 100.0,
@@ -690,7 +688,7 @@ mod tests {
     fn sources_below_the_long_edge_are_not_scored() {
         let dir = tempfile::tempdir().expect("tempdir");
         let small = textured_jpeg(dir.path(), "small.jpg", 640, 480);
-        assert_eq!(blur_score_for_copy(&small, ImageFormat::Jpeg), None);
+        assert_eq!(blur_score_for_copy(&small), None);
     }
 
     #[test]
@@ -698,8 +696,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let exact = textured_jpeg(dir.path(), "exact.jpg", 1280, 960);
         let large = textured_jpeg(dir.path(), "large.jpg", 2560, 1920);
-        assert!(blur_score_for_copy(&exact, ImageFormat::Jpeg).is_some());
-        assert!(blur_score_for_copy(&large, ImageFormat::Jpeg).is_some());
+        assert!(blur_score_for_copy(&exact).is_some());
+        assert!(blur_score_for_copy(&large).is_some());
     }
 
     #[test]
