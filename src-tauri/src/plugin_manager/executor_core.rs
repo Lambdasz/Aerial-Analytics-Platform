@@ -146,7 +146,6 @@ pub(crate) fn verify_plugin_executable(
 ///
 /// # Purity
 /// Pure deterministic projection over `&PluginRegistry`; zero I/O, zero mutation.
-#[allow(dead_code)]
 pub(crate) fn extract_execution_target(
     plugin_id: &str,
     registry: &PluginRegistry,
@@ -274,7 +273,6 @@ pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> 
 /// # Purity
 /// Pure deterministic JSON parsing and parallel path resolution via `rayon`;
 /// zero filesystem I/O, zero clock reads, zero side effects.
-#[allow(dead_code)]
 pub(crate) fn parse_result_json(
     raw_json: &str,
     result_path: &Path,

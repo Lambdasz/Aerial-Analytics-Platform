@@ -1,6 +1,6 @@
 //! # Domain 3: Async Execution, Progress & Output Resolution
 //!
-//! **Role**: Subprocess Supervisor & Isolation Engineer
+//! **Role**: Subprocess Supervisor & Isolation Engineer (Imperative Shell & Facade)
 //! **Deliverable**: `plugin_manager/executor.rs`
 //!
 //! Responsible for:
@@ -12,6 +12,19 @@
 //! never block. A plugin that hangs, panics, or exhausts memory MUST be killed
 //! and its failure surfaced as a `JobStatusDto::Failed` — never a host panic.
 //!
+//! ## Purity Boundary
+//!
+//! This module is the **Imperative Shell** and public/crate facade over
+//! [`super::executor_core`]. All Tauri IPC command handling, `AppState` /
+//! `tokio::sync::RwLock` state synchronization, `rusqlite` metadata lookups,
+//! filesystem I/O, sandbox directory creation, subprocess spawning and
+//! supervision, OS process-tree signaling, `chrono::Utc::now()` clock reads,
+//! `uuid::Uuid::new_v4()` ID generation, and `tokio::task::spawn_blocking`
+//! dispatch live here. Pure domain logic (execution gating, target extraction,
+//! payload construction, progress parsing/throttling, kill-target guards, and
+//! parallel JSON result/artifact parsing) is delegated to
+//! [`super::executor_core`].
+//!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/03_DOMAIN_3_EXECUTION_SUPERVISOR.md`
 
 use std::collections::HashMap;
@@ -21,12 +34,14 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::error::{CommandError, PluginError};
+#[allow(unused_imports)]
 pub(crate) use super::executor_core::{
-    build_execution_payload, kill_target, parse_progress_line, should_emit_progress,
-    verify_plugin_executable, KillTarget, PluginExecutionTarget,
+    build_execution_payload, extract_execution_target, kill_target, parse_progress_line,
+    parse_result_json, should_emit_progress, verify_plugin_executable, KillTarget,
+    PluginExecutionTarget,
 };
 pub use super::executor_core::{JobHandleDto, JobProgress, JobStatusDto, StartJobRequestDto};
-use super::models::{StandardJobResultDto, VerifiedArtifactDto};
+use super::models::StandardJobResultDto;
 
 // ---------------------------------------------------------------------------
 // 2. DATA TRANSFER OBJECTS (re-exported from `executor_core`)
@@ -70,6 +85,10 @@ pub struct ActiveJobTracker {
 }
 
 impl ActiveJobTracker {
+    /// Creates an empty active-job tracker map.
+    ///
+    /// # Purity
+    /// Pure constructor for an empty in-memory map.
     pub fn new() -> Self {
         Self::default()
     }
@@ -84,85 +103,23 @@ impl ActiveJobTracker {
 /// Serves as the primary execution launcher exposed to the frontend via Tauri IPC (`invoke("start_plugin_job", { request })`).
 /// Invoked by Module 1 (Image Management), Module 3 (Geospatial Map Explorer), and Module 10 (Temporal Change Analysis)
 /// to kick off compute-intensive analysis workflows in an isolated child process without blocking the main Tauri desktop runtime.
+///
+/// # Purity
+/// Impure Tauri IPC command handler: orchestrates registry read locks, SQLite
+/// metadata autofill, sandbox filesystem I/O, subprocess spawning, and tracker mutation.
 #[tauri::command]
 pub async fn start_plugin_job(
     mut request: StartJobRequestDto,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
-    // 1. Verify plugin is registered and enabled (Execution Gating)
-    let target = {
-        let registry = state.plugins.read().await;
-        verify_plugin_executable(&request.plugin_id, &registry)?;
-        let bundle = registry
-            .plugins
-            .get(&request.plugin_id)
-            .ok_or_else(|| PluginError::PluginUnavailable(request.plugin_id.clone()))?;
-        PluginExecutionTarget {
-            plugin_dir: bundle.install_path.clone(),
-            entrypoint: bundle.manifest.runtime.entrypoint.clone(),
-            runtime_type: bundle.manifest.runtime.runtime_type.clone(),
-            timeout_seconds: bundle
-                .manifest
-                .execution
-                .as_ref()
-                .map(|e| e.timeout_seconds)
-                .unwrap_or(60),
-        }
-    };
+    let target = resolve_plugin_target(&request.plugin_id, &state).await?;
+    validate_and_autofill_request(&mut request, &state).await?;
 
-    // 2. Verify target image exists on physical disk
-    let target_img = PathBuf::from(&request.target_image_path);
-    if !target_img.exists() {
-        return Err(CommandError {
-            code: "IMAGE_NOT_FOUND".to_string(),
-            message: format!("Target image file not found: {:?}", target_img),
-        });
-    }
-
-    // 2b. Callers that did not decode EXIF can still get complete payloads:
-    // fill resolution/GPS/altitude/timestamp from the imported image row.
-    if request.metadata.is_none() {
-        request.metadata = {
-            let conn = state.db.lock().map_err(|_| CommandError {
-                code: "STATE_ERROR".to_string(),
-                message: "Database lock poisoned while resolving image metadata".to_string(),
-            })?;
-            autofill_image_metadata(&conn, &request.target_image_path)
-        };
-    }
-
-    // 3. Generate unique execution ID
     let job_id = generate_job_id();
+    let (output_dir, payload_path, result_path) =
+        prepare_sandbox_payload(&job_id, &request).await?;
 
-    // 4. Create sandboxed output directory
-    let temp_dir = tempfile::Builder::new()
-        .prefix(&format!("{}_", job_id))
-        .tempdir()
-        .map_err(|e| CommandError {
-            code: "IO_ERROR".to_string(),
-            message: format!("Failed to create sandboxed output directory: {}", e),
-        })?;
-    let output_dir = temp_dir.keep();
-
-    // 5. Build canonical execution payload and write to payload.json
-    let payload = build_execution_payload(&job_id, &output_dir, &request)?;
-    let payload_path = output_dir.join("payload.json");
-    let result_path = output_dir.join("result.json");
-
-    let payload_str = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
-        code: "SERIALIZATION_ERROR".to_string(),
-        message: format!("Failed to serialize execution payload: {}", e),
-    })?;
-
-    tokio::fs::write(&payload_path, payload_str)
-        .await
-        .map_err(|e| CommandError {
-            code: "IO_ERROR".to_string(),
-            message: format!("Failed to write payload.json: {}", e),
-        })?;
-
-    // 6. Resolve executable and command configuration
     let mut cmd = resolve_executable(
         &target.plugin_dir,
         &target.entrypoint,
@@ -176,72 +133,18 @@ pub async fn start_plugin_job(
         code: "SPAWN_FAILED".to_string(),
         message: format!("Failed to spawn plugin subprocess: {}", e),
     })?;
-
     let child_pid = child.id();
 
-    // 7. Spawn async supervisor background task
-    let tracker_arc = state.jobs.clone();
-    let app_handle = app.clone();
-    let job_id_clone = job_id.clone();
-    let timeout_secs = target.timeout_seconds;
-    let result_path_clone = result_path.clone();
-    let output_dir_clone = output_dir.clone();
+    let supervisor_task = spawn_supervisor_task(
+        child,
+        job_id.clone(),
+        result_path,
+        output_dir.clone(),
+        target.timeout_seconds,
+        app,
+        state.jobs.clone(),
+    );
 
-    let supervisor_task = tokio::spawn(async move {
-        let res = supervise_execution(
-            child,
-            job_id_clone.clone(),
-            result_path_clone,
-            output_dir_clone,
-            timeout_secs,
-            app_handle.clone(),
-            tracker_arc.clone(),
-        )
-        .await;
-
-        let mut tracker = tracker_arc.write().await;
-        if let Some(record) = tracker.jobs.get_mut(&job_id_clone) {
-            match res {
-                Ok(dto) => {
-                    if dto.status == "failure" {
-                        record.status = JobStatusDto::Failed {
-                            error: dto
-                                .error
-                                .clone()
-                                .unwrap_or_else(|| "Plugin reported execution failure".to_string()),
-                        };
-                    } else {
-                        record.status = JobStatusDto::Completed {
-                            execution_time_ms: dto.execution_time_ms,
-                        };
-                    }
-                    record.result = Some(dto.clone());
-                    // The pid is stale from now on: never signal it again.
-                    record.child_pid = None;
-                    use tauri::Emitter;
-                    let _ = app_handle.emit("plugin://completed", &dto);
-                }
-                Err(err) => {
-                    let err_msg = err.to_string();
-                    record.status = JobStatusDto::Failed {
-                        error: err_msg.clone(),
-                    };
-                    record.child_pid = None;
-                    use tauri::Emitter;
-                    let _ = app_handle.emit(
-                        "plugin://completed",
-                        serde_json::json!({
-                            "job_id": job_id_clone,
-                            "status": "failure",
-                            "error": err_msg,
-                        }),
-                    );
-                }
-            }
-        }
-    });
-
-    // 8. Register job in ActiveJobTracker
     {
         let mut tracker = state.jobs.write().await;
         tracker.jobs.insert(
@@ -262,11 +165,162 @@ pub async fn start_plugin_job(
         );
     }
 
-    // 9. Return JobHandleDto immediately (non-blocking)
     Ok(JobHandleDto {
         job_id,
         plugin_id: request.plugin_id,
         status: "running".to_string(),
+    })
+}
+
+/// Acquires a short read lock on `state.plugins` and delegates pure execution
+/// gating + target extraction to [`extract_execution_target`].
+///
+/// # Purity
+/// Imperative shell: acquires async read lock on `state.plugins`, drops it
+/// immediately, and delegates target extraction to pure [`extract_execution_target`].
+async fn resolve_plugin_target(
+    plugin_id: &str,
+    state: &crate::AppState,
+) -> Result<PluginExecutionTarget, CommandError> {
+    let registry = state.plugins.read().await;
+    extract_execution_target(plugin_id, &registry).map_err(Into::into)
+}
+
+/// Validates target image existence on disk and backfills missing EXIF/image
+/// metadata from SQLite when the caller omitted `request.metadata`.
+///
+/// # Purity
+/// Imperative shell: checks filesystem existence and reads SQLite under `state.db` lock.
+async fn validate_and_autofill_request(
+    request: &mut StartJobRequestDto,
+    state: &crate::AppState,
+) -> Result<(), CommandError> {
+    let target_img = PathBuf::from(&request.target_image_path);
+    if !tokio::fs::try_exists(&target_img).await.unwrap_or(false) {
+        return Err(CommandError {
+            code: "IMAGE_NOT_FOUND".to_string(),
+            message: format!("Target image file not found: {:?}", target_img),
+        });
+    }
+
+    // Callers that did not decode EXIF can still get complete payloads:
+    // fill resolution/GPS/altitude/timestamp from the imported image row.
+    if request.metadata.is_none() {
+        request.metadata = {
+            let conn = state.db.lock().map_err(|_| CommandError {
+                code: "STATE_ERROR".to_string(),
+                message: "Database lock poisoned while resolving image metadata".to_string(),
+            })?;
+            autofill_image_metadata(&conn, &request.target_image_path)
+        };
+    }
+
+    Ok(())
+}
+
+/// Creates a sandboxed output directory, constructs the canonical execution
+/// payload via [`build_execution_payload`], and writes `payload.json` to disk.
+///
+/// # Purity
+/// Imperative shell: creates temporary directory and writes `payload.json` via `tokio::fs`.
+async fn prepare_sandbox_payload(
+    job_id: &str,
+    request: &StartJobRequestDto,
+) -> Result<(PathBuf, PathBuf, PathBuf), CommandError> {
+    let temp_dir = tempfile::Builder::new()
+        .prefix(&format!("{}_", job_id))
+        .tempdir()
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: format!("Failed to create sandboxed output directory: {}", e),
+        })?;
+    let output_dir = temp_dir.keep();
+
+    let payload = build_execution_payload(job_id, &output_dir, request)?;
+    let payload_path = output_dir.join("payload.json");
+    let result_path = output_dir.join("result.json");
+
+    let payload_str = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
+        code: "SERIALIZATION_ERROR".to_string(),
+        message: format!("Failed to serialize execution payload: {}", e),
+    })?;
+
+    tokio::fs::write(&payload_path, payload_str)
+        .await
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: format!("Failed to write payload.json: {}", e),
+        })?;
+
+    Ok((output_dir, payload_path, result_path))
+}
+
+/// Spawns the asynchronous supervisor task that awaits subprocess completion,
+/// updates `ActiveJobTracker`, and emits `plugin://completed` IPC events.
+///
+/// # Purity
+/// Imperative shell: spawns a Tokio background task mutating shared job state
+/// and emitting Tauri IPC events.
+fn spawn_supervisor_task(
+    child: tokio::process::Child,
+    job_id: String,
+    result_path: PathBuf,
+    output_dir: PathBuf,
+    timeout_secs: u64,
+    app: tauri::AppHandle,
+    tracker_arc: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let res = supervise_execution(
+            child,
+            job_id.clone(),
+            result_path,
+            output_dir,
+            timeout_secs,
+            app.clone(),
+            tracker_arc.clone(),
+        )
+        .await;
+
+        let mut tracker = tracker_arc.write().await;
+        if let Some(record) = tracker.jobs.get_mut(&job_id) {
+            use tauri::Emitter;
+            match res {
+                Ok(dto) => {
+                    if dto.status == "failure" {
+                        record.status = JobStatusDto::Failed {
+                            error: dto
+                                .error
+                                .clone()
+                                .unwrap_or_else(|| "Plugin reported execution failure".to_string()),
+                        };
+                    } else {
+                        record.status = JobStatusDto::Completed {
+                            execution_time_ms: dto.execution_time_ms,
+                        };
+                    }
+                    record.result = Some(dto.clone());
+                    // The pid is stale from now on: never signal it again.
+                    record.child_pid = None;
+                    let _ = app.emit("plugin://completed", &dto);
+                }
+                Err(err) => {
+                    let err_msg = err.to_string();
+                    record.status = JobStatusDto::Failed {
+                        error: err_msg.clone(),
+                    };
+                    record.child_pid = None;
+                    let _ = app.emit(
+                        "plugin://completed",
+                        serde_json::json!({
+                            "job_id": job_id,
+                            "status": "failure",
+                            "error": err_msg,
+                        }),
+                    );
+                }
+            }
+        }
     })
 }
 
@@ -275,6 +329,10 @@ pub async fn start_plugin_job(
 /// Provides user-cancellation capabilities exposed to the frontend via Tauri IPC (`invoke("abort_plugin_job", { jobId })`).
 /// Invoked by Module 3 (Map Explorer task drawer) and Module 11 (Task Monitor) when a user cancels an active analysis,
 /// ensuring runaway or stalled subprocesses are cleanly killed.
+///
+/// # Purity
+/// Impure Tauri IPC command handler: acquires write lock on `state.jobs`,
+/// aborts the Tokio task, kills the OS process tree, and deletes sandbox output.
 #[tauri::command]
 pub async fn abort_plugin_job(
     job_id: String,
@@ -316,6 +374,9 @@ pub async fn abort_plugin_job(
 /// Polls the current lifecycle state of a job.
 ///
 /// Exposes read-only job status polling to the frontend via Tauri IPC (`invoke("get_job_status", { jobId })`).
+///
+/// # Purity
+/// Impure Tauri IPC command handler: reads shared async `AppState.jobs` lock.
 #[tauri::command]
 pub async fn get_job_status(
     job_id: String,
@@ -332,6 +393,9 @@ pub async fn get_job_status(
 /// Delivers the full analytical result to downstream modules.
 ///
 /// Exposes validated execution outputs to downstream modules via Tauri IPC (`invoke("get_job_result", { jobId })`).
+///
+/// # Purity
+/// Impure Tauri IPC command handler: reads shared async `AppState.jobs` lock.
 #[tauri::command]
 pub async fn get_job_result(
     job_id: String,
@@ -355,6 +419,9 @@ pub async fn get_job_result(
 /// Emits a real-time job progress event to the frontend over Tauri IPC.
 ///
 /// Streams progress payloads emitted by child subprocesses to listening UI components via Tauri's event bus.
+///
+/// # Purity
+/// Impure IPC side effect: emits `"plugin://progress"` over Tauri's `AppHandle`.
 pub fn emit_job_progress(
     app: &tauri::AppHandle,
     progress: &JobProgress,
@@ -371,16 +438,18 @@ pub fn emit_job_progress(
 // 5. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
 // ---------------------------------------------------------------------------
 //
-// Pure functions (`verify_plugin_executable`, `build_execution_payload`,
-// `parse_progress_line`, `should_emit_progress`, `kill_target`) and
-// `PluginExecutionTarget` / `KillTarget` live in `super::executor_core` and are
-// re-exported above.
+// Pure functions (`verify_plugin_executable`, `extract_execution_target`,
+// `build_execution_payload`, `parse_progress_line`, `should_emit_progress`,
+// `kill_target`, `parse_result_json`) and `PluginExecutionTarget` /
+// `KillTarget` live in `super::executor_core` and are re-exported above.
 
 /// Builds plugin payload metadata from the imported image row.
 ///
-/// Pure aside from the already-open connection read: returns `None` when the
-/// path is not a tracked library image or when the row carries no usable
-/// values, so plugins keep their own fallbacks.
+/// Returns `None` when the path is not a tracked library image or when the row
+/// carries no usable values, so plugins keep their own fallbacks.
+///
+/// # Purity
+/// Impure: performs a synchronous SQLite query against an already-open `&rusqlite::Connection`.
 pub(crate) fn autofill_image_metadata(
     conn: &rusqlite::Connection,
     image_path: &str,
@@ -416,7 +485,41 @@ pub(crate) fn autofill_image_metadata(
     }
 }
 
+/// Attempts to read and parse `dir/manifest.json`, returning a [`PluginExecutionTarget`]
+/// if `metadata.id` matches `plugin_id`.
+///
+/// # Purity
+/// Impure filesystem I/O: checks `dir.is_dir()` and reads `manifest.json` from disk.
+fn try_load_target_from_dir(dir: &Path, plugin_id: &str) -> Option<PluginExecutionTarget> {
+    if !dir.is_dir() {
+        return None;
+    }
+    let manifest_path = dir.join("manifest.json");
+    let content = std::fs::read_to_string(&manifest_path).ok()?;
+    let val = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let id = val["metadata"]["id"].as_str().unwrap_or_default();
+    if id != plugin_id {
+        return None;
+    }
+
+    Some(PluginExecutionTarget {
+        plugin_dir: dir.to_path_buf(),
+        entrypoint: val["runtime"]["entrypoint"]
+            .as_str()
+            .unwrap_or("main.py")
+            .to_string(),
+        runtime_type: val["runtime"]["type"]
+            .as_str()
+            .unwrap_or("python")
+            .to_string(),
+        timeout_seconds: val["execution"]["timeout_seconds"].as_u64().unwrap_or(60),
+    })
+}
+
 /// Locates a plugin's directory and manifest by `plugin_id`.
+///
+/// # Purity
+/// Impure filesystem I/O: scans candidate plugin directories and reads `manifest.json`.
 #[allow(dead_code)]
 pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget, PluginError> {
     let possible_roots = [
@@ -431,69 +534,15 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
         }
 
         // Direct directory name check: plugins/<plugin_id>/manifest.json
-        let direct_dir = root.join(plugin_id);
-        if direct_dir.is_dir() {
-            let manifest_path = direct_dir.join("manifest.json");
-            if manifest_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                        let id = val["metadata"]["id"].as_str().unwrap_or_default();
-                        if id == plugin_id {
-                            let entrypoint = val["runtime"]["entrypoint"]
-                                .as_str()
-                                .unwrap_or("main.py")
-                                .to_string();
-                            let runtime_type = val["runtime"]["type"]
-                                .as_str()
-                                .unwrap_or("python")
-                                .to_string();
-                            let timeout_seconds =
-                                val["execution"]["timeout_seconds"].as_u64().unwrap_or(60);
-
-                            return Ok(PluginExecutionTarget {
-                                plugin_dir: direct_dir,
-                                entrypoint,
-                                runtime_type,
-                                timeout_seconds,
-                            });
-                        }
-                    }
-                }
-            }
+        if let Some(target) = try_load_target_from_dir(&root.join(plugin_id), plugin_id) {
+            return Ok(target);
         }
 
         // Search subdirectories for matching manifest ID
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let manifest_path = path.join("manifest.json");
-                    if manifest_path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                                let id = val["metadata"]["id"].as_str().unwrap_or_default();
-                                if id == plugin_id {
-                                    let entrypoint = val["runtime"]["entrypoint"]
-                                        .as_str()
-                                        .unwrap_or("main.py")
-                                        .to_string();
-                                    let runtime_type = val["runtime"]["type"]
-                                        .as_str()
-                                        .unwrap_or("python")
-                                        .to_string();
-                                    let timeout_seconds =
-                                        val["execution"]["timeout_seconds"].as_u64().unwrap_or(60);
-
-                                    return Ok(PluginExecutionTarget {
-                                        plugin_dir: path,
-                                        entrypoint,
-                                        runtime_type,
-                                        timeout_seconds,
-                                    });
-                                }
-                            }
-                        }
-                    }
+                if let Some(target) = try_load_target_from_dir(&entry.path(), plugin_id) {
+                    return Ok(target);
                 }
             }
         }
@@ -510,6 +559,10 @@ pub(crate) fn find_plugin_info(plugin_id: &str) -> Result<PluginExecutionTarget,
 /// or OpenCV thread pools) that would otherwise survive as orphaned
 /// zombies if only the direct child PID were signaled. On Windows,
 /// `taskkill /T` already walks the process tree.
+///
+/// # Purity
+/// Impure OS process-control side effect: reads `/proc`, emits `eprintln!`,
+/// and sends `SIGKILL` (Unix) or spawns `taskkill` (Windows).
 pub(crate) fn kill_process_tree(pid: u32) {
     match kill_target(pid, process_group_of(pid), std::process::id()) {
         KillTarget::Refuse(reason) => {
@@ -546,7 +599,10 @@ pub(crate) fn kill_process_tree(pid: u32) {
     }
 }
 
-/// Process group id read from `/proc/<pid>/stat`, when available. I/O read.
+/// Process group id read from `/proc/<pid>/stat`, when available.
+///
+/// # Purity
+/// Impure OS/filesystem read of `/proc/<pid>/stat`.
 #[cfg(unix)]
 fn process_group_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -558,12 +614,47 @@ fn process_group_of(pid: u32) -> Option<u32> {
     fields.next()?.parse().ok()
 }
 
+/// Non-Unix stub for process group lookup.
+///
+/// # Purity
+/// Pure constant stub returning `None` on non-Unix targets.
 #[cfg(not(unix))]
 fn process_group_of(_pid: u32) -> Option<u32> {
     None
 }
 
+/// Configures standard plugin CLI flags, working directory, piped stdio, and
+/// Unix process-group isolation on a `tokio::process::Command`.
+///
+/// # Purity
+/// Impure command builder configuration (sets OS process-group isolation on Unix).
+fn configure_plugin_command(
+    mut cmd: tokio::process::Command,
+    plugin_dir: &Path,
+    payload_path: &Path,
+    result_path: &Path,
+) -> tokio::process::Command {
+    cmd.arg("--input")
+        .arg(payload_path)
+        .arg("--output")
+        .arg(result_path)
+        .current_dir(plugin_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        // Make the child its own process group leader so kill_process_tree()
+        // can signal the whole group (covers grandchild workers) instead of
+        // only this direct PID.
+        cmd.process_group(0);
+    }
+    cmd
+}
+
 /// Prepares the cross-platform Tokio process command for the plugin entrypoint.
+///
+/// # Purity
+/// Impure filesystem I/O: resolves absolute paths and checks entrypoint existence on disk.
 pub(crate) async fn resolve_executable(
     plugin_dir: &Path,
     entrypoint: &str,
@@ -602,23 +693,13 @@ pub(crate) async fn resolve_executable(
             }
 
             let mut cmd = tokio::process::Command::new(interpreter);
-            cmd.arg(&script_path)
-                .arg("--input")
-                .arg(payload_path)
-                .arg("--output")
-                .arg(result_path)
-                .current_dir(plugin_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(unix)]
-            {
-                // Make the child its own process group leader so
-                // kill_process_tree() can signal the whole group (covers
-                // grandchild workers) instead of only this direct PID.
-                cmd.process_group(0);
-            }
-
-            Ok(cmd)
+            cmd.arg(&script_path);
+            Ok(configure_plugin_command(
+                cmd,
+                plugin_dir,
+                payload_path,
+                result_path,
+            ))
         }
         "binary" => {
             let mut bin_path = plugin_dir.join(entrypoint);
@@ -636,22 +717,13 @@ pub(crate) async fn resolve_executable(
                 )));
             }
 
-            let mut cmd = tokio::process::Command::new(&bin_path);
-            cmd.arg("--input")
-                .arg(payload_path)
-                .arg("--output")
-                .arg(result_path)
-                .current_dir(plugin_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(unix)]
-            {
-                // See the python branch above: new process group so the
-                // full tree can be signaled on abort/timeout.
-                cmd.process_group(0);
-            }
-
-            Ok(cmd)
+            let cmd = tokio::process::Command::new(&bin_path);
+            Ok(configure_plugin_command(
+                cmd,
+                plugin_dir,
+                payload_path,
+                result_path,
+            ))
         }
         other => Err(PluginError::SpawnFailed(format!(
             "Unsupported runtime type: '{}'",
@@ -661,6 +733,12 @@ pub(crate) async fn resolve_executable(
 }
 
 /// Supervises an already-spawned child process to completion while streaming progress events.
+///
+/// # Purity
+/// Impure async subprocess supervision: drains stdout/stderr pipes, reads the
+/// monotonic clock (`Instant::now()`), mutates `jobs_tracker` under async write
+/// locks, emits IPC progress events, enforces timeouts via `kill_process_tree`,
+/// and offloads [`read_and_validate_result`] onto `tokio::task::spawn_blocking`.
 pub(crate) async fn supervise_execution(
     mut child: tokio::process::Child,
     job_id: String,
@@ -746,11 +824,15 @@ pub(crate) async fn supervise_execution(
         Ok(Err(io_err)) => Err(PluginError::Io(io_err.to_string())),
         Ok(Ok(status)) => {
             let stderr_output = stderr_handle.await.unwrap_or_default();
-            if status.success() {
-                read_and_validate_result(&result_path, &output_dir)
-            } else if result_path.exists() {
-                // Plugin may have written a structured failure execution_result.json before exit 1
-                read_and_validate_result(&result_path, &output_dir)
+            let has_result_file = tokio::fs::try_exists(&result_path).await.unwrap_or(false);
+            if status.success() || has_result_file {
+                // Plugin may have written a structured failure result.json before exit 1.
+                // Offload rayon parallel parsing and synchronous fs checks off the Tokio worker.
+                let rp = result_path.clone();
+                let od = output_dir.clone();
+                tokio::task::spawn_blocking(move || read_and_validate_result(&rp, &od))
+                    .await
+                    .map_err(|e| PluginError::Io(format!("Result validation task failed: {}", e)))?
             } else {
                 Err(PluginError::SpawnFailed(format!(
                     "Plugin process failed with status {}. Stderr: {}",
@@ -762,7 +844,47 @@ pub(crate) async fn supervise_execution(
     }
 }
 
+/// Validates that a single artifact exists on disk and resides strictly inside `output_dir`.
+///
+/// # Purity
+/// Impure filesystem I/O: checks `exists()` and canonicalizes paths to enforce
+/// sandbox containment.
+fn verify_artifact_sandbox(
+    output_dir: &Path,
+    key: &str,
+    file_path: &str,
+) -> Result<(), PluginError> {
+    let fp = Path::new(file_path);
+    if !fp.exists() {
+        return Err(PluginError::ArtifactMissing(format!(
+            "Artifact '{}' file not found at: {:?}",
+            key, fp
+        )));
+    }
+
+    match (output_dir.canonicalize(), fp.canonicalize()) {
+        (Ok(canonical_dir), Ok(canonical_art)) => {
+            if !canonical_art.starts_with(&canonical_dir) {
+                return Err(PluginError::SecurityViolation(format!(
+                    "Artifact '{}' escapes sandboxed output directory: {:?}",
+                    key, fp
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(PluginError::SecurityViolation(format!(
+            "Failed to verify sandbox canonical boundaries for artifact '{}': {:?}",
+            key, fp
+        ))),
+    }
+}
+
 /// Reads the plugin output file and validates it against the execution result schema.
+///
+/// # Purity
+/// Impure filesystem I/O: reads `result_path` from disk, delegates pure parallel
+/// JSON parsing to [`parse_result_json`], and validates artifact paths on disk
+/// via [`verify_artifact_sandbox`].
 pub(crate) fn read_and_validate_result(
     result_path: &Path,
     output_dir: &Path,
@@ -775,83 +897,13 @@ pub(crate) fn read_and_validate_result(
     }
 
     let raw = std::fs::read_to_string(result_path)?;
-    let val: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-        PluginError::Serialization(format!(
-            "Failed to parse result artifact at {:?}: {}",
-            result_path, e
-        ))
-    })?;
+    let dto = parse_result_json(&raw, result_path, output_dir)?;
 
-    let job_id = val["execution_id"].as_str().unwrap_or_default().to_string();
-    let status = val["status"].as_str().unwrap_or("failure").to_string();
-    let execution_time_ms = val["execution_time_ms"].as_u64().unwrap_or(0);
-
-    let metrics = val["metrics"]
-        .as_object()
-        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default();
-
-    let mut artifacts: HashMap<String, VerifiedArtifactDto> = HashMap::new();
-    if let Some(arts) = val["artifacts"].as_object() {
-        for (key, art) in arts {
-            let fp_str = art["file_path"].as_str().unwrap_or_default();
-            let fp = if Path::new(fp_str).is_absolute() {
-                PathBuf::from(fp_str)
-            } else {
-                output_dir.join(fp_str)
-            };
-
-            if !fp.exists() {
-                return Err(PluginError::ArtifactMissing(format!(
-                    "Artifact '{}' file not found at: {:?}",
-                    key, fp
-                )));
-            }
-
-            // Sandbox security check: ensure artifact resides strictly within output_dir
-            match (output_dir.canonicalize(), fp.canonicalize()) {
-                (Ok(canonical_dir), Ok(canonical_art)) => {
-                    if !canonical_art.starts_with(&canonical_dir) {
-                        return Err(PluginError::SecurityViolation(format!(
-                            "Artifact '{}' escapes sandboxed output directory: {:?}",
-                            key, fp
-                        )));
-                    }
-                }
-                _ => {
-                    return Err(PluginError::SecurityViolation(format!(
-                        "Failed to verify sandbox canonical boundaries for artifact '{}': {:?}",
-                        key, fp
-                    )));
-                }
-            }
-
-            let format_str = art["format"].as_str().unwrap_or_default().to_string();
-            let bounds = art["bounds"]
-                .as_array()
-                .map(|arr| arr.iter().filter_map(|b| b.as_f64()).collect::<Vec<f64>>());
-
-            artifacts.insert(
-                key.clone(),
-                VerifiedArtifactDto {
-                    file_path: fp.to_string_lossy().into_owned(),
-                    format: format_str,
-                    bounds,
-                },
-            );
-        }
+    for (key, artifact) in &dto.artifacts {
+        verify_artifact_sandbox(output_dir, key, &artifact.file_path)?;
     }
 
-    let error = val["error"].as_str().map(|s| s.to_string());
-
-    Ok(StandardJobResultDto {
-        job_id,
-        execution_time_ms,
-        status,
-        metrics,
-        artifacts,
-        error,
-    })
+    Ok(dto)
 }
 
 // ---------------------------------------------------------------------------
@@ -862,7 +914,8 @@ pub(crate) fn read_and_validate_result(
 ///
 /// Format: `exec_<YYYYMMDD>_<uuid_v4_short>`
 ///
-/// **Pure function** — only uses system time and UUID RNG.
+/// # Purity
+/// Impure: reads the `Utc::now()` system clock and `Uuid::new_v4()` RNG.
 pub(crate) fn generate_job_id() -> String {
     let date = Utc::now().format("%Y%m%d");
     let uid = &Uuid::new_v4().to_string()[..8];
