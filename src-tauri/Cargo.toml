@@ -38,6 +38,7 @@ sha2 = "0.10"
 dunce = "1"
 tempfile = "3"
 chrono = { version = "0.4", features = ["serde"] }
+rayon = "1"
 
 # Module 9 Dependencies
 geojson = "1"
