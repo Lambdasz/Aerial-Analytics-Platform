@@ -172,3 +172,64 @@ export function formatPerimeter(meters: number): string {
   }
   return `${meters.toLocaleString("id-ID", { maximumFractionDigits: 1 })} m`;
 }
+
+/**
+ * Memeriksa apakah sebuah titik koordinat berada di dalam cincin poligon
+ * menggunakan algoritma Ray-Casting (Jordan Curve Theorem).
+ *
+ * @param point Titik koordinat dalam format GeoJSON `[longitude, latitude]`.
+ * @param ring Cincin batas poligon GeoJSON `[longitude, latitude][]`.
+ * @returns `true` jika titik berada di dalam cincin poligon, sebaliknya `false``.
+ */
+export function isPointInPolygonRing(point: [number, number], ring: [number, number][]): boolean {
+  if (!ring || ring.length < 3) return false;
+  const [px, py] = point;
+  let isInside = false;
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+
+    // Evaluasi perpotongan sinar horizontal dari titik ke arah kanan
+    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+
+    if (intersect) {
+      isInside = !isInside;
+    }
+  }
+
+  return isInside;
+}
+
+/**
+ * Memeriksa apakah sebuah titik koordinat `[lng, lat]` berada di dalam poligon GeoJSON
+ * (memverifikasi outer ring dan mengecualikan jika berada di dalam lubang/inner ring).
+ *
+ * @param point Titik koordinat GeoJSON `[longitude, latitude]`.
+ * @param polygon Poligon GeoJSON (array of rings, di mana index 0 adalah outer ring).
+ * @returns `true` jika titik berada di dalam area poligon, sebaliknya `false``.
+ */
+export function isPointInPolygon(
+  point: [number, number],
+  polygon: [number, number][][] | number[][][],
+): boolean {
+  if (!polygon || polygon.length === 0 || polygon[0].length < 3) {
+    return false;
+  }
+
+  // 1. Cek cincin luar (outer ring)
+  const outerRing = polygon[0] as [number, number][];
+  if (!isPointInPolygonRing(point, outerRing)) {
+    return false;
+  }
+
+  // 2. Jika ada cincin dalam (holes), titik tidak boleh berada di dalam lubang mana pun
+  for (let i = 1; i < polygon.length; i++) {
+    const holeRing = polygon[i] as [number, number][];
+    if (isPointInPolygonRing(point, holeRing)) {
+      return false;
+    }
+  }
+
+  return true;
+}

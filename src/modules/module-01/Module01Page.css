@@ -1353,6 +1353,11 @@
   color: var(--m1-dlg-muted);
 }
 
+.m1-dialog-portal .m1-import-preview__fallback--folder {
+  color: #b7791f;
+  background: #fdf3dc;
+}
+
 .m1-dialog-portal .m1-import-preview__name {
   font-size: 11px;
   overflow: hidden;

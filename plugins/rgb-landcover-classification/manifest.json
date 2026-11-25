@@ -7,13 +7,7 @@
     "author": "Aerial Analytics Platform",
     "description": "Classify visible land-cover types from RGB aerial imagery.",
     "category": "land_cover",
-    "tags": [
-      "rgb",
-      "land-cover",
-      "classification",
-      "semantic-segmentation",
-      "deeplabv3plus"
-    ],
+    "tags": ["rgb", "land-cover", "classification", "semantic-segmentation", "deeplabv3plus"],
     "min_core_version": "0.1.0"
   },
   "runtime": {

@@ -1,3 +1,4 @@
+pub mod background_tasks;
 #[allow(unused_imports)]
 pub mod dashboard;
 #[cfg(test)]

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { BackgroundTasks } from "../features/background-tasks/BackgroundTasks";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_MODULE_ID, findModule, findModuleBySlug, moduleHash } from "./modules";
 
@@ -69,6 +70,8 @@ export function AppShell() {
           <ActivePage />
         </main>
       </div>
+
+      <BackgroundTasks />
     </div>
   );
 }

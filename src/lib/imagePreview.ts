@@ -18,20 +18,52 @@ export type ImagePreview = {
 export const PREVIEW_UNAVAILABLE = "PREVIEW_UNAVAILABLE";
 
 /**
+ * How many image requests may be in flight at once.
+ *
+ * Every image command decodes or reads a multi-megabyte file in the backend.
+ * A list that fires one request per row (or a dialog previewing a few hundred
+ * picked files) would otherwise start them all at the same moment, which
+ * saturates every core and starves the UI. Requests beyond the limit wait
+ * their turn in the order they were made.
+ */
+const MAX_CONCURRENT_IMAGE_REQUESTS = 4;
+
+let activeRequests = 0;
+const waitingRequests: Array<() => void> = [];
+
+function runLimited<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const start = () => {
+      activeRequests += 1;
+      Promise.resolve()
+        .then(task)
+        .then(resolve, reject)
+        .finally(() => {
+          activeRequests -= 1;
+          waitingRequests.shift()?.();
+        });
+    };
+    if (activeRequests < MAX_CONCURRENT_IMAGE_REQUESTS) start();
+    else waitingRequests.push(start);
+  });
+}
+
+/**
  * Reads a displayable preview of an aerial image.
  *
  * A browser cannot put a raw `.dng` in an `<img>` tag, so the backend serves
  * the JPEG the DNG already stores. A `.jpg` is served as it is.
  *
  * This is the viewer: it may return the whole frame. List views and small
- * boxes should use {@link loadImageThumbnail} instead.
+ * boxes should use {@link loadImageThumbnail} instead, and a file that is not
+ * in the library yet should use {@link loadSourceThumbnail}.
  *
  * @param path - Absolute path of the image on disk.
  * @returns The preview as an object URL, ready for an `<img src>`.
  * @throws The backend error. Check `code` for `PREVIEW_UNAVAILABLE`.
  */
 export async function loadImagePreview(path: string): Promise<string> {
-  const preview = await invoke<ImagePreview>("preview_image", { path });
+  const preview = await runLimited(() => invoke<ImagePreview>("preview_image", { path }));
   const bytes = decodeBase64(preview.base64);
   return URL.createObjectURL(new Blob([bytes.buffer], { type: preview.mime }));
 }
@@ -66,7 +98,7 @@ export function loadImageThumbnail(path: string, fileSize?: number | null): Prom
   const key = `${path}\u0000${fileSize ?? ""}`;
   const cached = thumbnailUrls.get(key);
   if (cached) return cached;
-  const pending = invoke<ImagePreview>("thumbnail_image", { path })
+  const pending = runLimited(() => invoke<ImagePreview>("thumbnail_image", { path }))
     .then((preview) => {
       const bytes = decodeBase64(preview.base64);
       return URL.createObjectURL(new Blob([bytes.buffer], { type: preview.mime }));
@@ -78,6 +110,30 @@ export function loadImageThumbnail(path: string, fileSize?: number | null): Prom
     });
   thumbnailUrls.set(key, pending);
   return pending;
+}
+
+/**
+ * Reads a small thumbnail of a file that is not in the library yet, such as
+ * one picked in the import dialog.
+ *
+ * Unlike {@link loadImageThumbnail} the backend accepts any path and keeps no
+ * cache, so the result is not shared: the caller owns the object URL and must
+ * `URL.revokeObjectURL` it when the image leaves the screen.
+ *
+ * @param path - Absolute path of the picked file.
+ * @param signal - Abort to drop the request while it is still waiting its
+ *   turn; a request already running is left to finish.
+ * @returns The thumbnail as an object URL.
+ * @throws The backend error (`PREVIEW_UNAVAILABLE` for a DNG that stores no
+ *   JPEG), or an `AbortError` when aborted before it started.
+ */
+export function loadSourceThumbnail(path: string, signal?: AbortSignal): Promise<string> {
+  return runLimited(async () => {
+    signal?.throwIfAborted();
+    const preview = await invoke<ImagePreview>("thumbnail_source_image", { path });
+    const bytes = decodeBase64(preview.base64);
+    return URL.createObjectURL(new Blob([bytes.buffer], { type: preview.mime }));
+  });
 }
 
 /**
