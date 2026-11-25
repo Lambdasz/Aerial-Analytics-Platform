@@ -3,6 +3,12 @@
 //! This module is maintained as a compatibility bridge for Module 1 (Image Import & Session Management).
 //! Canonical execution payloads and targets are defined in [`crate::plugin_manager::models`]
 //! and executed via [`crate::plugin_manager::executor`].
+//!
+//! ## Purity Boundary
+//!
+//! Data models, `From` conversions, and [`preflight_check`] are strictly pure and
+//! perform no I/O or mutation. [`assemble_payload`] is an impure filesystem I/O
+//! boundary that creates directories and writes `payload.json` to disk.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -21,6 +27,10 @@ pub struct ImageMetadata {
 }
 
 impl From<&ImageMetadata> for crate::plugin_manager::models::ExecutionTarget {
+    /// Converts a borrowed [`ImageMetadata`] into a canonical [`ExecutionTarget`](crate::plugin_manager::models::ExecutionTarget).
+    ///
+    /// # Purity
+    /// Pure transformation over immutable input; performs no I/O or external side effects.
     fn from(meta: &ImageMetadata) -> Self {
         let mime_type = match meta.format.to_lowercase().as_str() {
             "jpeg" | "jpg" => "image/jpeg",
@@ -29,30 +39,23 @@ impl From<&ImageMetadata> for crate::plugin_manager::models::ExecutionTarget {
             _ => "application/octet-stream",
         };
 
-        let mut metadata_map = serde_json::Map::new();
-        if meta.width > 0 && meta.height > 0 {
-            metadata_map.insert(
-                "resolution".to_string(),
-                serde_json::json!([meta.width, meta.height]),
-            );
-        }
-
-        let metadata_val = if metadata_map.is_empty() {
-            None
-        } else {
-            Some(serde_json::Value::Object(metadata_map))
-        };
+        let metadata = (meta.width > 0 && meta.height > 0)
+            .then(|| serde_json::json!({ "resolution": [meta.width, meta.height] }));
 
         Self {
             granularity: "single_image".to_string(),
             image_path: meta.path.clone(),
             mime_type: mime_type.to_string(),
-            metadata: metadata_val,
+            metadata,
         }
     }
 }
 
 impl From<ImageMetadata> for crate::plugin_manager::models::ExecutionTarget {
+    /// Converts an owned [`ImageMetadata`] into a canonical [`ExecutionTarget`](crate::plugin_manager::models::ExecutionTarget).
+    ///
+    /// # Purity
+    /// Pure transformation; delegates to [`From<&ImageMetadata>`](From::from) with no I/O or side effects.
     fn from(meta: ImageMetadata) -> Self {
         crate::plugin_manager::models::ExecutionTarget::from(&meta)
     }
@@ -81,6 +84,10 @@ pub struct InputsRequirement {
     pub allowed_formats: Option<Vec<String>>,
 }
 
+/// Validates image metadata against plugin input requirements prior to execution.
+///
+/// # Purity
+/// Pure deterministic validation over immutable references; performs no I/O or mutation.
 pub fn preflight_check(
     image_meta: &ImageMetadata,
     inputs_req: &InputsRequirement,
@@ -107,6 +114,10 @@ pub fn preflight_check(
     Ok(())
 }
 
+/// Serialises an [`ExecutionPayload`] and writes `payload.json` into `output_dir`.
+///
+/// # Purity
+/// Impure filesystem I/O: creates `output_dir` if absent and writes `payload.json` to disk.
 pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result<PathBuf, String> {
     if !output_dir.exists() {
         fs::create_dir_all(output_dir)

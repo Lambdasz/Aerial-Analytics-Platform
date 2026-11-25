@@ -3,6 +3,12 @@
 //! Maintained as a compatibility bridge for Module 9 (Area & Plot Analytics).
 //! Canonical execution result handling is performed by [`crate::plugin_manager::executor::get_job_result`],
 //! which returns [`crate::plugin_manager::models::StandardJobResultDto`].
+//!
+//! ## Purity Boundary
+//!
+//! Data models and `From` conversions are strictly pure and perform no I/O or
+//! mutation. [`parse_execution_result`] and [`record_run_history`] are impure
+//! filesystem I/O boundaries that read and write JSON files on disk.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -20,6 +26,10 @@ pub struct ExecutionResult {
 }
 
 impl From<&crate::plugin_manager::models::StandardJobResultDto> for ExecutionResult {
+    /// Converts a borrowed [`StandardJobResultDto`](crate::plugin_manager::models::StandardJobResultDto) into a legacy [`ExecutionResult`].
+    ///
+    /// # Purity
+    /// Pure transformation over immutable input; performs no I/O or side effects.
     fn from(dto: &crate::plugin_manager::models::StandardJobResultDto) -> Self {
         Self {
             status: dto.status.clone(),
@@ -40,12 +50,20 @@ impl From<&crate::plugin_manager::models::StandardJobResultDto> for ExecutionRes
 }
 
 impl From<crate::plugin_manager::models::StandardJobResultDto> for ExecutionResult {
+    /// Converts an owned [`StandardJobResultDto`](crate::plugin_manager::models::StandardJobResultDto) into a legacy [`ExecutionResult`].
+    ///
+    /// # Purity
+    /// Pure transformation; delegates to [`From<&StandardJobResultDto>`](From::from) with no I/O or side effects.
     fn from(dto: crate::plugin_manager::models::StandardJobResultDto) -> Self {
         Self::from(&dto)
     }
 }
 
 impl From<&ExecutionResult> for crate::plugin_manager::models::StandardJobResultDto {
+    /// Converts a borrowed legacy [`ExecutionResult`] into a canonical [`StandardJobResultDto`](crate::plugin_manager::models::StandardJobResultDto).
+    ///
+    /// # Purity
+    /// Pure transformation over immutable input; performs no I/O or side effects.
     fn from(res: &ExecutionResult) -> Self {
         let metrics_map = match &res.metrics {
             serde_json::Value::Object(map) => {
@@ -54,18 +72,21 @@ impl From<&ExecutionResult> for crate::plugin_manager::models::StandardJobResult
             _ => std::collections::HashMap::new(),
         };
 
-        let mut artifacts_map = std::collections::HashMap::new();
-        for (idx, path) in res.output_files.iter().enumerate() {
-            let key = format!("artifact_{idx}");
-            artifacts_map.insert(
-                key,
-                crate::plugin_manager::models::VerifiedArtifactDto {
-                    file_path: path.clone(),
-                    format: "application/octet-stream".to_string(),
-                    bounds: None,
-                },
-            );
-        }
+        let artifacts_map = res
+            .output_files
+            .iter()
+            .enumerate()
+            .map(|(idx, path)| {
+                (
+                    format!("artifact_{idx}"),
+                    crate::plugin_manager::models::VerifiedArtifactDto {
+                        file_path: path.clone(),
+                        format: "application/octet-stream".to_string(),
+                        bounds: None,
+                    },
+                )
+            })
+            .collect();
 
         Self {
             job_id: String::new(),
@@ -79,6 +100,10 @@ impl From<&ExecutionResult> for crate::plugin_manager::models::StandardJobResult
 }
 
 impl From<ExecutionResult> for crate::plugin_manager::models::StandardJobResultDto {
+    /// Converts an owned legacy [`ExecutionResult`] into a canonical [`StandardJobResultDto`](crate::plugin_manager::models::StandardJobResultDto).
+    ///
+    /// # Purity
+    /// Pure transformation; delegates to [`From<&ExecutionResult>`](From::from) with no I/O or side effects.
     fn from(res: ExecutionResult) -> Self {
         Self::from(&res)
     }
@@ -94,6 +119,10 @@ pub struct RunHistoryEntry {
     pub output_files: Vec<String>,
 }
 
+/// Reads and parses `result.json` from `output_dir` into an [`ExecutionResult`].
+///
+/// # Purity
+/// Impure filesystem I/O: checks for and reads `result.json` from `output_dir`.
 pub fn parse_execution_result(output_dir: &Path) -> Result<ExecutionResult, String> {
     let result_file = output_dir.join("result.json");
     if !result_file.exists() {
@@ -116,6 +145,10 @@ pub fn parse_execution_result(output_dir: &Path) -> Result<ExecutionResult, Stri
     Ok(result)
 }
 
+/// Appends a [`RunHistoryEntry`] to the JSON run history file at `history_file_path`.
+///
+/// # Purity
+/// Impure filesystem I/O: reads existing history JSON if present and writes updated JSON to disk.
 pub fn record_run_history(history_file_path: &Path, entry: RunHistoryEntry) -> Result<(), String> {
     let mut history: Vec<RunHistoryEntry> = if history_file_path.exists() {
         let content = fs::read_to_string(history_file_path)

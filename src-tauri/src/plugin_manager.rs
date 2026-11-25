@@ -31,15 +31,28 @@
 //! | Submodule | Responsibility |
 //! |-----------|----------------|
 //! | [`error`] | Domain error types and [`CommandError`](error::CommandError) DTO |
-//! | [`executor`] | Async subprocess supervision, timeout enforcement, and progress streaming |
-//! | [`executor_core`] | Pure execution DTOs, gating, payload construction, progress parsing, and result parsing |
-//! | [`lifecycle`] | Plugin installation, removal, enable/disable, and state persistence |
-//! | [`lifecycle_core`] | Pure plugin lifecycle validation, immutable state transitions, and removal planning |
-//! | [`models`] | Data models, DTOs, and schema-conforming types |
-//! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata` and execution preflight) |
-//! | [`registry`] | Plugin discovery, indexing, compatibility queries, and health checks |
-//! | [`registry_core`] | Pure plugin registry state, compatibility predicates, and manifest/subcontract validation |
-//! | [`result_handler`] | Compatibility shim for Module 9 (`ExecutionResult` and run history) |
+//! | [`executor`] | Imperative shell for async subprocess supervision, timeout enforcement, and progress streaming |
+//! | [`executor_core`] | Pure core for execution DTOs, gating, payload construction, progress parsing, and result parsing |
+//! | [`lifecycle`] | Imperative shell for plugin installation, removal, enable/disable, and state persistence |
+//! | [`lifecycle_core`] | Pure core for plugin lifecycle validation, immutable state transitions, and removal planning |
+//! | [`models`] | Pure data models, DTOs, and schema-conforming types |
+//! | [`payload`] | Compatibility shim for Module 1 (`ImageMetadata`, preflight checks, and `payload.json` assembly) |
+//! | [`registry`] | Imperative shell for plugin discovery, indexing, compatibility queries, and health checks |
+//! | [`registry_core`] | Pure core for plugin registry state, compatibility predicates, and manifest/subcontract validation |
+//! | [`result_handler`] | Compatibility shim for Module 9 (`ExecutionResult`, `result.json` parsing, and run history) |
+//! | [`result_store`] | Impure SQLite persistence for per-image plugin metrics and artifact paths (`plugin_image_result`) |
+//!
+//! ## Purity Boundary
+//!
+//! Each domain separates a **Pure Core** (`*_core` modules and [`models`]) from an
+//! **Imperative Shell** ([`registry`], [`lifecycle`], [`executor`], [`result_store`]):
+//!
+//! - **Pure Cores** (`registry_core`, `lifecycle_core`, `executor_core`) contain
+//!   deterministic validation, state transitions, DTO transforms, and parallel
+//!   parsing with zero I/O, clock, RNG, or Tauri state access.
+//! - **Imperative Shells** (`registry`, `lifecycle`, `executor`, `result_store`)
+//!   own filesystem I/O, ZIP extraction, async Tokio subprocesses, SQLite queries,
+//!   and Tauri IPC / `RwLock` synchronization, delegating domain logic to their cores.
 //!
 //! ## Fault Isolation
 //!
