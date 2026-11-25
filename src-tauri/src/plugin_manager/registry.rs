@@ -33,8 +33,23 @@ pub use super::registry_core::{is_compatible, PluginRegistry};
 pub async fn get_installed_plugins(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
-    let registry = state.plugins.read().await;
-    Ok(registry.get_summaries())
+    get_installed_plugins_internal(&state)
+        .await
+        .map_err(Into::into)
+}
+
+/// Internal helper that snapshots the registry under a short read lock and computes
+/// summaries off the Tokio async runtime thread via `spawn_blocking`.
+pub(crate) async fn get_installed_plugins_internal(
+    app_state: &crate::AppState,
+) -> Result<Vec<PluginSummaryDto>, PluginError> {
+    let snapshot = {
+        let registry = app_state.plugins.read().await;
+        registry.clone()
+    };
+    tokio::task::spawn_blocking(move || snapshot.get_summaries())
+        .await
+        .map_err(|e| PluginError::StateError(format!("Failed to compute plugin summaries: {}", e)))
 }
 
 /// Rescans the plugins directory from disk and updates the in-memory registry.
@@ -61,15 +76,33 @@ pub async fn get_installed_plugins(
 pub async fn reload_plugins(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
-    let new_registry = rescan_plugins_internal(&state);
-    let mut registry = state.plugins.write().await;
-    *registry = new_registry;
-    Ok(registry.get_summaries())
+    reload_plugins_internal(&state).await.map_err(Into::into)
 }
 
-/// Internal helper to rescan the plugins directory, honoring custom `state_path` if configured.
-pub(crate) fn rescan_plugins_internal(app_state: &crate::AppState) -> PluginRegistry {
-    if let Some(state_path) = &app_state.state_path {
+/// Internal helper that rescans plugins and computes summaries in `spawn_blocking`
+/// before acquiring the registry write lock to swap the new registry in.
+pub(crate) async fn reload_plugins_internal(
+    app_state: &crate::AppState,
+) -> Result<Vec<PluginSummaryDto>, PluginError> {
+    let state_path = app_state.state_path.clone();
+    let (new_registry, summaries) = tokio::task::spawn_blocking(move || {
+        let new_registry = rescan_plugins_from_state_path(state_path.as_deref());
+        let summaries = new_registry.get_summaries();
+        (new_registry, summaries)
+    })
+    .await
+    .map_err(|e| PluginError::StateError(format!("Failed to reload plugins: {}", e)))?;
+
+    {
+        let mut registry = app_state.plugins.write().await;
+        *registry = new_registry;
+    }
+
+    Ok(summaries)
+}
+
+fn rescan_plugins_from_state_path(state_path: Option<&Path>) -> PluginRegistry {
+    if let Some(state_path) = state_path {
         if let Some(parent) = state_path.parent() {
             if parent.is_dir() {
                 return crate::init_plugin_registry_from_dir(parent);
@@ -77,6 +110,12 @@ pub(crate) fn rescan_plugins_internal(app_state: &crate::AppState) -> PluginRegi
         }
     }
     crate::init_plugin_registry()
+}
+
+/// Internal helper to rescan the plugins directory, honoring custom `state_path` if configured.
+#[cfg(test)]
+pub(crate) fn rescan_plugins_internal(app_state: &crate::AppState) -> PluginRegistry {
+    rescan_plugins_from_state_path(app_state.state_path.as_deref())
 }
 
 /// Returns the fully resolved bundle including manifest and sub-contracts for a specific plugin.
@@ -97,8 +136,24 @@ pub async fn query_compatible_plugins(
     target: TargetDescriptorDto,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<Vec<PluginSummaryDto>, CommandError> {
-    let registry = state.plugins.read().await;
-    Ok(registry.query_compatible(&target))
+    query_compatible_plugins_internal(target, &state)
+        .await
+        .map_err(Into::into)
+}
+
+/// Internal helper that snapshots the registry under a short read lock and evaluates
+/// compatible plugins off the Tokio async runtime thread via `spawn_blocking`.
+pub(crate) async fn query_compatible_plugins_internal(
+    target: TargetDescriptorDto,
+    app_state: &crate::AppState,
+) -> Result<Vec<PluginSummaryDto>, PluginError> {
+    let snapshot = {
+        let registry = app_state.plugins.read().await;
+        registry.clone()
+    };
+    tokio::task::spawn_blocking(move || snapshot.query_compatible(&target))
+        .await
+        .map_err(|e| PluginError::StateError(format!("Failed to query compatible plugins: {}", e)))
 }
 
 /// Runs a fast pre-flight liveness and dependency health check on a plugin entrypoint.
@@ -593,7 +648,7 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_manager::models::InputsSpec;
+    use crate::plugin_manager::models::{InputsSpec, TargetDescriptorDto};
     use std::path::PathBuf;
 
     fn mock_bundle(id: &str) -> PluginBundle {
@@ -1304,5 +1359,116 @@ if "--healthcheck" in sys.argv:
         assert_eq!(rescanned.plugins.len(), 2);
         assert!(rescanned.plugins.contains_key("plugin-a"));
         assert!(rescanned.plugins.contains_key("plugin-b"));
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_plugins_internal_returns_summaries() {
+        let mut registry = PluginRegistry::new();
+        registry.register(mock_bundle("rgb-exg"));
+        registry.register(mock_bundle("tree-count"));
+
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: None,
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
+        };
+
+        let mut summaries = get_installed_plugins_internal(&app_state).await.unwrap();
+        summaries.sort_by(|a, b| a.id.cmp(&b.id));
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].id, "rgb-exg");
+        assert_eq!(summaries[1].id, "tree-count");
+    }
+
+    #[tokio::test]
+    async fn test_query_compatible_plugins_internal_filters_targets() {
+        let mut registry = PluginRegistry::new();
+        let mut jpeg_only = mock_bundle("jpeg-only");
+        jpeg_only.inputs_spec.supported_mime_types = vec!["image/jpeg".to_string()];
+        registry.register(jpeg_only);
+
+        let mut tiff_only = mock_bundle("tiff-only");
+        tiff_only.inputs_spec.supported_mime_types = vec!["image/tiff".to_string()];
+        registry.register(tiff_only);
+
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: None,
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
+        };
+
+        let target = TargetDescriptorDto {
+            granularity: "single_image".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            has_gps: true,
+            has_altitude: true,
+            has_aoi: false,
+            has_resolution: true,
+        };
+
+        let matches = query_compatible_plugins_internal(target, &app_state)
+            .await
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "jpeg-only");
+    }
+
+    #[tokio::test]
+    async fn test_reload_plugins_internal_updates_registry_and_returns_summaries() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugins_root = temp_dir.path();
+
+        let dir_a = plugins_root.join("plugin-a");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::write(
+            dir_a.join("manifest.json"),
+            r#"{
+                "manifest_version": 1,
+                "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
+                "runtime": {"type": "python", "entrypoint": "main.py"},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
+        std::fs::write(
+            dir_a.join("inputs.json"),
+            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
+
+        let app_state = crate::AppState {
+            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
+            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::plugin_manager::executor::ActiveJobTracker::new(),
+            )),
+            state_path: Some(plugins_root.join("plugin_state.json")),
+            db: std::sync::Arc::new(std::sync::Mutex::new(
+                rusqlite::Connection::open_in_memory().unwrap(),
+            )),
+            library_root: std::sync::Arc::new(temp_dir.path().join("library")),
+        };
+
+        let summaries = reload_plugins_internal(&app_state).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "plugin-a");
+
+        let reg = app_state.plugins.read().await;
+        assert!(reg.plugins.contains_key("plugin-a"));
     }
 }

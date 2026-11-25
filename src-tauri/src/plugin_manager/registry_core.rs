@@ -27,7 +27,7 @@ use super::models::{
 // ---------------------------------------------------------------------------
 
 /// In-memory storage for discovered and validated plugin bundles.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PluginRegistry {
     pub plugins: HashMap<String, PluginBundle>,
 }
