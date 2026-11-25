@@ -533,11 +533,23 @@ pub(crate) fn assemble_plugin_bundle(
     }
 }
 
+/// Extracts the declared relative subcontract paths (`parameters`, `inputs`, `outputs`)
+/// from a raw manifest JSON string without performing full schema validation.
+///
+/// # Purity
+/// Pure deterministic JSON field extraction; zero I/O, zero side effects.
+pub(crate) fn extract_subcontract_paths(raw_json: &str) -> Option<(String, String, String)> {
+    let val: serde_json::Value = serde_json::from_str(raw_json).ok()?;
+    let parameters = val.get("parameters")?.as_str()?.to_string();
+    let inputs = val.get("inputs")?.as_str()?.to_string();
+    let outputs = val.get("outputs")?.as_str()?.to_string();
+    Some((parameters, inputs, outputs))
+}
+
 /// Raw pre-read files for a single plugin directory entry discovered on disk.
 ///
 /// Used as the pure input boundary between [`super::registry`] (filesystem I/O)
 /// and [`build_discovery_output`] (parallel validation & bundle assembly).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveredPluginCandidate {
     pub plugin_dir: PathBuf,
@@ -548,14 +560,12 @@ pub(crate) struct DiscoveredPluginCandidate {
 }
 
 /// Deterministic output of pure parallel plugin discovery validation.
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct DiscoveryOutput {
     pub bundles: Vec<PluginBundle>,
     pub warnings: Vec<String>,
 }
 
-#[allow(dead_code)]
 fn validate_discovered_candidate(
     candidate: DiscoveredPluginCandidate,
 ) -> Result<PluginBundle, String> {
@@ -567,44 +577,23 @@ fn validate_discovered_candidate(
         )
     })?;
 
-    let parameters_str = candidate.parameters_result.map_err(|e| {
+    let sub_err = |err: &dyn std::fmt::Display| {
         format!(
             "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-            candidate.plugin_dir, e
+            candidate.plugin_dir, err
         )
-    })?;
-    let inputs_str = candidate.inputs_result.map_err(|e| {
-        format!(
-            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-            candidate.plugin_dir, e
-        )
-    })?;
-    let outputs_str = candidate.outputs_result.map_err(|e| {
-        format!(
-            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-            candidate.plugin_dir, e
-        )
-    })?;
+    };
+
+    let parameters_str = candidate.parameters_result.map_err(|e| sub_err(&e))?;
+    let inputs_str = candidate.inputs_result.map_err(|e| sub_err(&e))?;
+    let outputs_str = candidate.outputs_result.map_err(|e| sub_err(&e))?;
 
     let parameters_raw = parse_and_validate_parameters(&parameters_str, &manifest.parameters)
-        .map_err(|e| {
-            format!(
-                "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-                candidate.plugin_dir, e
-            )
-        })?;
-    let inputs_spec = parse_and_validate_inputs(&inputs_str, &manifest.inputs).map_err(|e| {
-        format!(
-            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-            candidate.plugin_dir, e
-        )
-    })?;
-    let outputs_raw = parse_and_validate_outputs(&outputs_str, &manifest.outputs).map_err(|e| {
-        format!(
-            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-            candidate.plugin_dir, e
-        )
-    })?;
+        .map_err(|e| sub_err(&e))?;
+    let inputs_spec =
+        parse_and_validate_inputs(&inputs_str, &manifest.inputs).map_err(|e| sub_err(&e))?;
+    let outputs_raw =
+        parse_and_validate_outputs(&outputs_str, &manifest.outputs).map_err(|e| sub_err(&e))?;
 
     let inputs_raw = serde_json::from_str(&inputs_str)
         .unwrap_or_else(|_| serde_json::to_value(&inputs_spec).unwrap_or_default());
@@ -627,7 +616,6 @@ fn validate_discovered_candidate(
 ///
 /// # Purity
 /// Pure parallel computation via `rayon`; zero I/O, zero logging side effects, zero mutation of external state.
-#[allow(dead_code)]
 pub(crate) fn build_discovery_output(
     candidates: Vec<DiscoveredPluginCandidate>,
 ) -> DiscoveryOutput {
@@ -653,6 +641,18 @@ pub(crate) fn build_discovery_output(
     DiscoveryOutput { bundles, warnings }
 }
 
+/// Input fields describing a completed plugin health check for [`with_healthcheck_state`].
+#[derive(Debug, Clone)]
+pub(crate) struct HealthcheckStateInput<'a> {
+    pub plugin_id: &'a str,
+    pub bundle_version: &'a str,
+    pub source: PluginSource,
+    pub enabled: bool,
+    pub status: &'a str,
+    pub error_msg: Option<&'a str>,
+    pub now_iso: &'a str,
+}
+
 /// Returns a new [`PluginStateStore`] with the plugin's latest health check recorded.
 ///
 /// Creates a [`PluginStateRecord`] if `plugin_id` is absent, or updates `last_healthcheck`
@@ -661,36 +661,28 @@ pub(crate) fn build_discovery_output(
 /// # Purity
 /// Pure immutable state transition; clones `&PluginStateStore` without mutating the caller's
 /// value, performs no I/O, and reads no system clock (`now_iso` is passed explicitly).
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn with_healthcheck_state(
     store: &PluginStateStore,
-    plugin_id: &str,
-    bundle_version: &str,
-    source: PluginSource,
-    enabled: bool,
-    status: &str,
-    error_msg: Option<&str>,
-    now_iso: &str,
+    input: &HealthcheckStateInput<'_>,
 ) -> PluginStateStore {
     let mut next_store = store.clone();
-    next_store.updated_at = now_iso.to_string();
+    next_store.updated_at = input.now_iso.to_string();
     let record = next_store
         .plugins
-        .entry(plugin_id.to_string())
+        .entry(input.plugin_id.to_string())
         .or_insert_with(|| PluginStateRecord {
-            version: bundle_version.to_string(),
-            source,
-            enabled,
-            installed_at: now_iso.to_string(),
+            version: input.bundle_version.to_string(),
+            source: input.source.clone(),
+            enabled: input.enabled,
+            installed_at: input.now_iso.to_string(),
             last_healthcheck: None,
             custom_parameters: serde_json::json!({}),
             stats: PluginStats::default(),
         });
     record.last_healthcheck = Some(CachedHealthcheck {
-        status: status.to_string(),
-        checked_at: now_iso.to_string(),
-        message: error_msg.map(ToString::to_string),
+        status: input.status.to_string(),
+        checked_at: input.now_iso.to_string(),
+        message: input.error_msg.map(ToString::to_string),
     });
     next_store
 }
@@ -1559,6 +1551,25 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_subcontract_paths() {
+        let valid = valid_manifest_json("extract-ok", "1.0.0");
+        assert_eq!(
+            extract_subcontract_paths(&valid),
+            Some((
+                "parameters.json".to_string(),
+                "inputs.json".to_string(),
+                "outputs.json".to_string()
+            ))
+        );
+
+        assert_eq!(extract_subcontract_paths("{ broken"), None);
+        assert_eq!(
+            extract_subcontract_paths(r#"{"parameters": "p.json"}"#),
+            None
+        );
+    }
+
+    #[test]
     fn test_with_healthcheck_state_creates_updates_and_preserves_original() {
         let initial_store = PluginStateStore {
             schema_version: 1,
@@ -1568,13 +1579,15 @@ mod tests {
 
         let created_store = with_healthcheck_state(
             &initial_store,
-            "rgb-exg",
-            "1.2.3",
-            PluginSource::Builtin,
-            true,
-            "healthy",
-            None,
-            "2026-02-01T10:00:00Z",
+            &HealthcheckStateInput {
+                plugin_id: "rgb-exg",
+                bundle_version: "1.2.3",
+                source: PluginSource::Builtin,
+                enabled: true,
+                status: "healthy",
+                error_msg: None,
+                now_iso: "2026-02-01T10:00:00Z",
+            },
         );
 
         // Original store must remain unchanged
@@ -1612,13 +1625,15 @@ mod tests {
 
         let updated_store = with_healthcheck_state(
             &store_with_existing,
-            "rgb-exg",
-            "2.0.0",
-            PluginSource::User,
-            false,
-            "unhealthy",
-            Some("missing numpy"),
-            "2026-03-01T12:00:00Z",
+            &HealthcheckStateInput {
+                plugin_id: "rgb-exg",
+                bundle_version: "2.0.0",
+                source: PluginSource::User,
+                enabled: false,
+                status: "unhealthy",
+                error_msg: Some("missing numpy"),
+                now_iso: "2026-03-01T12:00:00Z",
+            },
         );
 
         // Caller's store_with_existing must remain untouched

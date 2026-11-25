@@ -1,6 +1,6 @@
 //! # Domain 1: Discovery, Registry & Health Check
 //!
-//! **Role**: Plugin Lifecycle & Package Manager (Discovery & Registry)
+//! **Role**: Plugin Lifecycle & Package Manager (Imperative Shell & Facade)
 //! **Deliverable**: `plugin_manager/registry.rs`
 //!
 //! Responsible for:
@@ -9,26 +9,45 @@
 //! - Querying compatible plugins based on image/AOI target
 //! - Running fast environment/dependency healthcheck
 //!
+//! ## Purity Boundary
+//!
+//! This module is the **Imperative Shell** and public/crate facade over
+//! [`super::registry_core`]. All filesystem I/O, Tauri IPC command handling,
+//! `tokio::sync::RwLock` state synchronization, `chrono::Utc::now()` clock
+//! reads, `eprintln!` diagnostics, and async subprocess health checks live here.
+//! Pure domain logic (manifest/subcontract validation, compatibility predicates,
+//! parallel candidate assembly, and immutable state transitions) is delegated to
+//! [`super::registry_core`].
+//!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/01_DOMAIN_1_DISCOVERY_REGISTRY.md`
 
 use std::path::Path;
 
 use super::error::{CommandError, PluginError};
 use super::models::{
-    HealthStatusDto, InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSummaryDto,
-    TargetDescriptorDto,
+    HealthStatusDto, InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSource,
+    PluginSummaryDto, TargetDescriptorDto,
 };
-pub(crate) use super::registry_core::{
-    assemble_plugin_bundle, is_safe_relative_path, parse_and_validate_inputs,
-    parse_and_validate_manifest, parse_and_validate_outputs, parse_and_validate_parameters,
+#[allow(unused_imports)]
+pub(crate) use super::registry_core::assemble_plugin_bundle;
+use super::registry_core::{
+    build_discovery_output, extract_subcontract_paths, with_healthcheck_state,
+    DiscoveredPluginCandidate, HealthcheckStateInput,
 };
 pub use super::registry_core::{is_compatible, PluginRegistry};
+pub(crate) use super::registry_core::{
+    is_safe_relative_path, parse_and_validate_inputs, parse_and_validate_manifest,
+    parse_and_validate_outputs, parse_and_validate_parameters,
+};
 
 // ---------------------------------------------------------------------------
 // 1. TAURI IPC COMMANDS (pub — registered in lib.rs invoke_handler)
 // ---------------------------------------------------------------------------
 
 /// Returns a lightweight summary list of all installed plugins for UI cards and menus.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates async `AppState` access to [`get_installed_plugins_internal`].
 #[tauri::command]
 pub async fn get_installed_plugins(
     state: tauri::State<'_, crate::AppState>,
@@ -40,6 +59,10 @@ pub async fn get_installed_plugins(
 
 /// Internal helper that snapshots the registry under a short read lock and computes
 /// summaries off the Tokio async runtime thread via `spawn_blocking`.
+///
+/// # Purity
+/// Imperative shell: acquires async read lock on `app_state.plugins` and dispatches
+/// pure [`PluginRegistry::get_summaries`] work onto `tokio::task::spawn_blocking`.
 pub(crate) async fn get_installed_plugins_internal(
     app_state: &crate::AppState,
 ) -> Result<Vec<PluginSummaryDto>, PluginError> {
@@ -72,6 +95,9 @@ pub(crate) async fn get_installed_plugins_internal(
 ///
 /// # Panics
 /// - This function does not panic.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates disk rescan and registry mutation to [`reload_plugins_internal`].
 #[tauri::command]
 pub async fn reload_plugins(
     state: tauri::State<'_, crate::AppState>,
@@ -81,6 +107,10 @@ pub async fn reload_plugins(
 
 /// Internal helper that rescans plugins and computes summaries in `spawn_blocking`
 /// before acquiring the registry write lock to swap the new registry in.
+///
+/// # Purity
+/// Imperative shell: performs blocking filesystem discovery via `tokio::task::spawn_blocking`
+/// and mutates `app_state.plugins` under a write lock.
 pub(crate) async fn reload_plugins_internal(
     app_state: &crate::AppState,
 ) -> Result<Vec<PluginSummaryDto>, PluginError> {
@@ -101,6 +131,10 @@ pub(crate) async fn reload_plugins_internal(
     Ok(summaries)
 }
 
+/// Resolves the plugins directory from an optional `state_path` and rebuilds the registry.
+///
+/// # Purity
+/// Impure filesystem I/O: inspects parent directory and scans plugin bundles on disk.
 fn rescan_plugins_from_state_path(state_path: Option<&Path>) -> PluginRegistry {
     if let Some(state_path) = state_path {
         if let Some(parent) = state_path.parent() {
@@ -113,12 +147,19 @@ fn rescan_plugins_from_state_path(state_path: Option<&Path>) -> PluginRegistry {
 }
 
 /// Internal helper to rescan the plugins directory, honoring custom `state_path` if configured.
+///
+/// # Purity
+/// Impure test facade wrapping [`rescan_plugins_from_state_path`].
 #[cfg(test)]
 pub(crate) fn rescan_plugins_internal(app_state: &crate::AppState) -> PluginRegistry {
     rescan_plugins_from_state_path(app_state.state_path.as_deref())
 }
 
 /// Returns the fully resolved bundle including manifest and sub-contracts for a specific plugin.
+///
+/// # Purity
+/// Impure Tauri IPC command handler: acquires async read lock on `state.plugins` and delegates
+/// DTO projection to pure [`PluginRegistry::get_details`].
 #[tauri::command]
 pub async fn get_plugin_details(
     plugin_id: String,
@@ -131,6 +172,9 @@ pub async fn get_plugin_details(
 }
 
 /// Filters and returns only installed plugins capable of processing the given image or AOI target.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates async `AppState` access to [`query_compatible_plugins_internal`].
 #[tauri::command]
 pub async fn query_compatible_plugins(
     target: TargetDescriptorDto,
@@ -143,6 +187,10 @@ pub async fn query_compatible_plugins(
 
 /// Internal helper that snapshots the registry under a short read lock and evaluates
 /// compatible plugins off the Tokio async runtime thread via `spawn_blocking`.
+///
+/// # Purity
+/// Imperative shell: acquires async read lock on `app_state.plugins` and dispatches
+/// pure [`PluginRegistry::query_compatible`] work onto `tokio::task::spawn_blocking`.
 pub(crate) async fn query_compatible_plugins_internal(
     target: TargetDescriptorDto,
     app_state: &crate::AppState,
@@ -157,6 +205,10 @@ pub(crate) async fn query_compatible_plugins_internal(
 }
 
 /// Runs a fast pre-flight liveness and dependency health check on a plugin entrypoint.
+///
+/// # Purity
+/// Impure Tauri IPC command handler; delegates subprocess check and state persistence to
+/// [`check_plugin_health_internal`].
 #[tauri::command]
 pub async fn check_plugin_health(
     plugin_id: String,
@@ -167,7 +219,14 @@ pub async fn check_plugin_health(
         .map_err(Into::into)
 }
 
-/// Internal helper for running health checks against a plugin entrypoint and updating in-memory status.
+/// Internal helper for running health checks against a plugin entrypoint and updating in-memory
+/// and persisted plugin state.
+///
+/// # Purity
+/// Imperative shell: reads bundle snapshot under lock, runs async [`execute_healthcheck`]
+/// subprocess (no `rayon`), reads `chrono::Utc::now()`, delegates pure state transition to
+/// [`with_healthcheck_state`], persists `plugin_state.json`, and updates `app_state.plugins`
+/// under a short write lock.
 pub(crate) async fn check_plugin_health_internal(
     plugin_id: &str,
     app_state: &crate::AppState,
@@ -183,14 +242,6 @@ pub(crate) async fn check_plugin_health_internal(
 
     let result = execute_healthcheck(&bundle).await;
 
-    // Update in-memory health status
-    {
-        let mut registry = app_state.plugins.write().await;
-        if let Some(b) = registry.plugins.get_mut(plugin_id) {
-            b.health_status = result.status.clone();
-        }
-    }
-
     // Persist healthcheck status to plugin_state.json if state_path is configured or default exists
     let state_path_opt = app_state.state_path.clone().or_else(|| {
         let candidate = crate::plugin_manager::lifecycle::default_state_path();
@@ -202,37 +253,45 @@ pub(crate) async fn check_plugin_health_internal(
     });
 
     if let Some(state_path) = state_path_opt {
-        let mut store =
+        let store =
             crate::plugin_manager::lifecycle::load_plugin_state(&state_path).unwrap_or_default();
-        store.updated_at = chrono::Utc::now().to_rfc3339();
-        let record = store
-            .plugins
-            .entry(plugin_id.to_string())
-            .or_insert_with(|| crate::plugin_manager::models::PluginStateRecord {
-                version: bundle.manifest.metadata.version.clone(),
-                source: if bundle.source == "user" {
-                    crate::plugin_manager::models::PluginSource::User
-                } else {
-                    crate::plugin_manager::models::PluginSource::Builtin
-                },
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let source = if bundle.source == "user" {
+            PluginSource::User
+        } else {
+            PluginSource::Builtin
+        };
+        let next_store = with_healthcheck_state(
+            &store,
+            &HealthcheckStateInput {
+                plugin_id,
+                bundle_version: &bundle.manifest.metadata.version,
+                source,
                 enabled: bundle.enabled,
-                installed_at: chrono::Utc::now().to_rfc3339(),
-                last_healthcheck: None,
-                custom_parameters: serde_json::json!({}),
-                stats: Default::default(),
-            });
-        record.last_healthcheck = Some(crate::plugin_manager::models::CachedHealthcheck {
-            status: result.status.clone(),
-            checked_at: chrono::Utc::now().to_rfc3339(),
-            message: result.error.clone(),
-        });
-        let _ = crate::plugin_manager::lifecycle::save_plugin_state(&state_path, &store);
+                status: &result.status,
+                error_msg: result.error.as_deref(),
+                now_iso: &now_iso,
+            },
+        );
+        let _ = crate::plugin_manager::lifecycle::save_plugin_state(&state_path, &next_store);
+    }
+
+    // Update in-memory health status under short write lock
+    {
+        let mut registry = app_state.plugins.write().await;
+        if let Some(b) = registry.plugins.get_mut(plugin_id) {
+            b.health_status = result.status.clone();
+        }
     }
 
     Ok(result)
 }
 
 /// Executes the pre-flight entrypoint health check subprocess (`<entrypoint> --healthcheck`) with a 10s timeout.
+///
+/// # Purity
+/// Impure async process I/O: probes filesystem paths, spawns child subprocesses, reads stdout/stderr
+/// pipes, and enforces a Tokio timeout.
 pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDto {
     let plugin_id = bundle.manifest.metadata.id.clone();
     let version = bundle.manifest.metadata.version.clone();
@@ -482,76 +541,53 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
 // 2. DISCOVERY & SUBCONTRACT I/O (Imperative Shell)
 // ---------------------------------------------------------------------------
 
+/// Reads a single subcontract JSON file inside `dir` after checking relative sandbox safety.
+///
+/// # Purity
+/// Impure filesystem I/O (`Path::exists`, `std::fs::read_to_string`) guarded by pure
+/// [`is_safe_relative_path`].
+fn read_subcontract_file(dir: &Path, rel_path: &str, label: &str) -> Result<String, PluginError> {
+    if !is_safe_relative_path(rel_path) {
+        return Err(PluginError::SubcontractInvalid {
+            path: rel_path.to_string(),
+            message: format!("{} path escapes sandbox", label),
+        });
+    }
+    let full_path = dir.join(rel_path);
+    if !full_path.exists() {
+        return Err(PluginError::SubcontractInvalid {
+            path: rel_path.to_string(),
+            message: format!("{} file not found at {:?}", label, full_path),
+        });
+    }
+    std::fs::read_to_string(&full_path).map_err(|e| PluginError::SubcontractInvalid {
+        path: rel_path.to_string(),
+        message: e.to_string(),
+    })
+}
+
 /// Reads and schema-validates the three sub-contracts (`parameters.json`, `inputs.json`, `outputs.json`).
 ///
 /// Acts as the **Imperative Shell** around the pure functions `parse_and_validate_parameters`,
 /// `parse_and_validate_inputs`, and `parse_and_validate_outputs`.
 ///
-/// **Pre-condition**: Files referenced in manifest exist within `dir`.  
+/// **Pre-condition**: Files referenced in manifest exist within `dir`.
 /// **Post-condition**: All 3 sub-contracts parsed and schema-validated.
-#[allow(dead_code)]
+///
+/// # Purity
+/// Imperative shell: reads subcontract files from disk via [`read_subcontract_file`] and
+/// delegates validation to pure parsers in [`super::registry_core`].
 pub(crate) fn validate_subcontracts(
     dir: &Path,
     manifest: &PluginManifest,
 ) -> Result<(serde_json::Value, InputsSpec, serde_json::Value), PluginError> {
-    if !is_safe_relative_path(&manifest.parameters) {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.parameters.clone(),
-            message: "Parameters path escapes sandbox".to_string(),
-        });
-    }
-    let params_path = dir.join(&manifest.parameters);
-    if !params_path.exists() {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.parameters.clone(),
-            message: format!("Parameters file not found at {:?}", params_path),
-        });
-    }
-    let params_raw_str =
-        std::fs::read_to_string(&params_path).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.parameters.clone(),
-            message: e.to_string(),
-        })?;
+    let params_raw_str = read_subcontract_file(dir, &manifest.parameters, "Parameters")?;
     let params_val = parse_and_validate_parameters(&params_raw_str, &manifest.parameters)?;
 
-    if !is_safe_relative_path(&manifest.inputs) {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: "Inputs path escapes sandbox".to_string(),
-        });
-    }
-    let inputs_path = dir.join(&manifest.inputs);
-    if !inputs_path.exists() {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: format!("Inputs file not found at {:?}", inputs_path),
-        });
-    }
-    let inputs_raw_str =
-        std::fs::read_to_string(&inputs_path).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.inputs.clone(),
-            message: e.to_string(),
-        })?;
+    let inputs_raw_str = read_subcontract_file(dir, &manifest.inputs, "Inputs")?;
     let inputs_spec = parse_and_validate_inputs(&inputs_raw_str, &manifest.inputs)?;
 
-    if !is_safe_relative_path(&manifest.outputs) {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.outputs.clone(),
-            message: "Outputs path escapes sandbox".to_string(),
-        });
-    }
-    let outputs_path = dir.join(&manifest.outputs);
-    if !outputs_path.exists() {
-        return Err(PluginError::SubcontractInvalid {
-            path: manifest.outputs.clone(),
-            message: format!("Outputs file not found at {:?}", outputs_path),
-        });
-    }
-    let outputs_raw_str =
-        std::fs::read_to_string(&outputs_path).map_err(|e| PluginError::SubcontractInvalid {
-            path: manifest.outputs.clone(),
-            message: e.to_string(),
-        })?;
+    let outputs_raw_str = read_subcontract_file(dir, &manifest.outputs, "Outputs")?;
     let outputs_val = parse_and_validate_outputs(&outputs_raw_str, &manifest.outputs)?;
 
     Ok((params_val, inputs_spec, outputs_val))
@@ -560,14 +596,18 @@ pub(crate) fn validate_subcontracts(
 /// Scans the `plugins/` directory and builds a vector of valid `PluginBundle`s.
 ///
 /// Fault-tolerant: Corrupt or unreadable plugin folders are logged and skipped.
-#[allow(dead_code)]
+///
+/// # Purity
+/// Imperative shell: scans `plugins_dir`, reads manifests and subcontract files into
+/// [`DiscoveredPluginCandidate`] values, delegates parallel validation and deterministic
+/// sorting to pure [`build_discovery_output`], and logs warnings via `eprintln!`.
 pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, PluginError> {
     if !plugins_dir.exists() {
         return Ok(Vec::new());
     }
 
     let entries = std::fs::read_dir(plugins_dir).map_err(|e| PluginError::Io(e.to_string()))?;
-    let mut bundles = Vec::new();
+    let mut candidates = Vec::new();
 
     for entry_res in entries {
         let entry = match entry_res {
@@ -591,7 +631,7 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
             continue;
         }
 
-        let manifest_str = match std::fs::read_to_string(&manifest_path) {
+        let manifest_raw = match std::fs::read_to_string(&manifest_path) {
             Ok(content) => content,
             Err(e) => {
                 eprintln!(
@@ -602,873 +642,38 @@ pub(crate) fn discover_plugins(plugins_dir: &Path) -> Result<Vec<PluginBundle>, 
             }
         };
 
-        let manifest = match parse_and_validate_manifest(&manifest_str) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!(
-                    "Warning: skipping invalid manifest at {:?}: {}",
-                    manifest_path, e
-                );
-                continue;
-            }
-        };
-
-        let (parameters_raw, inputs_spec, outputs_raw) =
-            match validate_subcontracts(&path, &manifest) {
-                Ok(subs) => subs,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
-                        path, e
-                    );
-                    continue;
+        let (parameters_result, inputs_result, outputs_result) =
+            match extract_subcontract_paths(&manifest_raw) {
+                Some((params_rel, inputs_rel, outputs_rel)) => (
+                    read_subcontract_file(&path, &params_rel, "Parameters")
+                        .map_err(|e| e.to_string()),
+                    read_subcontract_file(&path, &inputs_rel, "Inputs").map_err(|e| e.to_string()),
+                    read_subcontract_file(&path, &outputs_rel, "Outputs")
+                        .map_err(|e| e.to_string()),
+                ),
+                None => {
+                    let msg = "Manifest missing subcontract paths".to_string();
+                    (Err(msg.clone()), Err(msg.clone()), Err(msg))
                 }
             };
 
-        let inputs_path = path.join(&manifest.inputs);
-        let inputs_raw = std::fs::read_to_string(&inputs_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
-
-        bundles.push(assemble_plugin_bundle(
-            path,
-            manifest,
-            inputs_spec,
-            inputs_raw,
-            parameters_raw,
-            outputs_raw,
-        ));
+        candidates.push(DiscoveredPluginCandidate {
+            plugin_dir: path,
+            manifest_raw,
+            parameters_result,
+            inputs_result,
+            outputs_result,
+        });
     }
 
-    bundles.sort_by(|a, b| a.manifest.metadata.id.cmp(&b.manifest.metadata.id));
-    Ok(bundles)
+    let output = build_discovery_output(candidates);
+    for warning in output.warnings {
+        eprintln!("{}", warning);
+    }
+
+    Ok(output.bundles)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::plugin_manager::models::{InputsSpec, TargetDescriptorDto};
-    use std::path::PathBuf;
-
-    fn mock_bundle(id: &str) -> PluginBundle {
-        PluginBundle {
-            install_path: PathBuf::from("/mock/plugins").join(id),
-            manifest: PluginManifest {
-                schema: None,
-                manifest_version: 1,
-                metadata: crate::plugin_manager::models::PluginMetadata {
-                    id: id.to_string(),
-                    name: format!("Plugin {}", id),
-                    version: "1.0.0".to_string(),
-                    author: Some("Author".to_string()),
-                    license: Some("MIT".to_string()),
-                    description: "Description".to_string(),
-                    category: Some("Vegetation".to_string()),
-                    tags: vec!["vegetation".to_string()],
-                    min_core_version: None,
-                },
-                runtime: crate::plugin_manager::models::PluginRuntime {
-                    runtime_type: "python".to_string(),
-                    entrypoint: "main.py".to_string(),
-                    min_python_version: None,
-                    dependencies_file: None,
-                    healthcheck_flag: None,
-                },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
-                execution: Some(crate::plugin_manager::models::PluginExecutionConfig {
-                    timeout_seconds: 60,
-                    provides_output_dir_arg: true,
-                    concurrency: "sequential".to_string(),
-                    gpu: None,
-                }),
-            },
-            inputs_spec: InputsSpec {
-                granularity: "single_image".to_string(),
-                supported_mime_types: vec!["image/jpeg".to_string(), "image/tiff".to_string()],
-                requires_metadata: Vec::new(),
-                optional_metadata: Vec::new(),
-                supports_aoi: true,
-                aoi_format: None,
-            },
-            inputs_raw: serde_json::json!({
-                "granularity": "single_image",
-                "supported_mime_types": ["image/jpeg", "image/tiff"],
-                "supports_aoi": true
-            }),
-            parameters_raw: serde_json::json!({}),
-            outputs_raw: serde_json::json!({}),
-            enabled: true,
-            source: "builtin".to_string(),
-            health_status: "healthy".to_string(),
-            custom_parameters: serde_json::json!({}),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_app_state_has_plugins_and_concurrent_access() {
-        let state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        {
-            let mut reg = state.plugins.write().await;
-            reg.register(mock_bundle("rgb-exg"));
-        }
-
-        let reg = state.plugins.read().await;
-        assert_eq!(reg.get_summaries().len(), 1);
-    }
-
-    #[test]
-    fn test_validate_subcontracts_valid() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-
-        std::fs::write(
-            plugin_dir.join("parameters.json"),
-            r#"{"parameters": [{"name": "thresh", "label": "Threshold", "type": "number", "default": 0.5}]}"#,
-        ).unwrap();
-
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-
-        std::fs::write(
-            plugin_dir.join("outputs.json"),
-            r#"{"metrics": [], "artifacts": []}"#,
-        )
-        .unwrap();
-
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "test-plugin".to_string(),
-                name: "Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let res = validate_subcontracts(plugin_dir, &manifest);
-        assert!(res.is_ok());
-        let (params, inputs_spec, outputs) = res.unwrap();
-        assert!(params.get("parameters").is_some());
-        assert_eq!(inputs_spec.granularity, "single_image");
-        assert!(outputs.get("metrics").is_some());
-    }
-
-    #[test]
-    fn test_validate_subcontracts_missing_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-
-        // only create inputs.json, omitting parameters.json and outputs.json
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "test-plugin".to_string(),
-                name: "Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
-        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
-    }
-
-    #[test]
-    fn test_validate_subcontracts_empty_mime_types() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-
-        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": []}"#,
-        )
-        .unwrap();
-
-        std::fs::write(plugin_dir.join("outputs.json"), r#"{"metrics": []}"#).unwrap();
-
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "test-plugin".to_string(),
-                name: "Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
-        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
-    }
-
-    #[test]
-    fn test_discover_plugins_success_and_fault_tolerance() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugins_root = temp_dir.path();
-
-        // 1. Valid plugin A
-        let dir_a = plugins_root.join("plugin-a");
-        std::fs::create_dir_all(&dir_a).unwrap();
-        std::fs::write(
-            dir_a.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
-                "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        ).unwrap();
-        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        std::fs::write(
-            dir_a.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
-
-        // 2. Corrupt plugin B (invalid manifest JSON)
-        let dir_b = plugins_root.join("plugin-b");
-        std::fs::create_dir_all(&dir_b).unwrap();
-        std::fs::write(dir_b.join("manifest.json"), "{ broken").unwrap();
-
-        // 3. Plugin C (missing subcontracts)
-        let dir_c = plugins_root.join("plugin-c");
-        std::fs::create_dir_all(&dir_c).unwrap();
-        std::fs::write(
-            dir_c.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-c", "name": "Plugin C", "version": "1.0.0", "description": "C"},
-                "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "missing_params.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        ).unwrap();
-
-        // 4. Valid plugin D
-        let dir_d = plugins_root.join("plugin-d");
-        std::fs::create_dir_all(&dir_d).unwrap();
-        std::fs::write(
-            dir_d.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-d", "name": "Plugin D", "version": "2.0.0", "description": "D"},
-                "runtime": {"type": "binary", "entrypoint": "detector"},
-                "parameters": "parameters.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        ).unwrap();
-        std::fs::write(dir_d.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        std::fs::write(
-            dir_d.join("inputs.json"),
-            r#"{"granularity": "batch", "supported_mime_types": ["image/tiff"]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir_d.join("outputs.json"), r#"{}"#).unwrap();
-
-        let discovered = discover_plugins(plugins_root).expect("discover_plugins should succeed");
-        assert_eq!(
-            discovered.len(),
-            2,
-            "Fault-tolerant discovery must skip corrupted plugins"
-        );
-        let ids: Vec<&str> = discovered
-            .iter()
-            .map(|b| b.manifest.metadata.id.as_str())
-            .collect();
-        assert_eq!(ids, vec!["plugin-a", "plugin-d"]);
-    }
-
-    #[test]
-    fn test_discover_plugins_nonexistent_dir() {
-        let fake_path = Path::new("/path/that/does/not/exist/definitely_not");
-        let res = discover_plugins(fake_path);
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_check_plugin_health_internal_missing_plugin() {
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let err = check_plugin_health_internal("missing-plugin", &app_state)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, PluginError::NotFound(_)));
-    }
-
-    #[tokio::test]
-    async fn test_execute_healthcheck_python_healthy() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-        let script_path = plugin_dir.join("main.py");
-        std::fs::write(
-            &script_path,
-            r#"
-import sys, json
-if "--healthcheck" in sys.argv:
-    print(json.dumps({"status": "healthy", "python_version": "3.10"}))
-    sys.exit(0)
-sys.exit(1)
-"#,
-        )
-        .unwrap();
-
-        let mut bundle = mock_bundle("test-health");
-        bundle.install_path = plugin_dir.to_path_buf();
-        bundle.manifest.runtime.entrypoint = "main.py".to_string();
-
-        let status = execute_healthcheck(&bundle).await;
-        assert_eq!(status.status, "healthy");
-        assert_eq!(status.plugin_id, "test-health");
-        assert!(status.details.is_some());
-        assert!(status.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_execute_healthcheck_python_unhealthy() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-        let script_path = plugin_dir.join("main.py");
-        std::fs::write(
-            &script_path,
-            r#"
-import sys
-if "--healthcheck" in sys.argv:
-    sys.stderr.write("Missing OpenCV dependency\n")
-    sys.exit(1)
-sys.exit(1)
-"#,
-        )
-        .unwrap();
-
-        let mut bundle = mock_bundle("test-unhealthy");
-        bundle.install_path = plugin_dir.to_path_buf();
-        bundle.manifest.runtime.entrypoint = "main.py".to_string();
-
-        let status = execute_healthcheck(&bundle).await;
-        assert_eq!(status.status, "unhealthy");
-        assert!(status.error.is_some());
-        assert!(status.error.unwrap().contains("Missing OpenCV"));
-    }
-
-    #[tokio::test]
-    async fn test_execute_healthcheck_missing_entrypoint() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut bundle = mock_bundle("test-missing-entry");
-        bundle.install_path = temp_dir.path().to_path_buf();
-        bundle.manifest.runtime.entrypoint = "nonexistent.py".to_string();
-
-        let status = execute_healthcheck(&bundle).await;
-        assert_eq!(status.status, "unhealthy");
-        assert!(status.error.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_check_plugin_health_updates_in_memory_bundle_status() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-        let script_path = plugin_dir.join("main.py");
-        std::fs::write(
-            &script_path,
-            r#"
-import sys, json
-if "--healthcheck" in sys.argv:
-    print(json.dumps({"status": "healthy"}))
-    sys.exit(0)
-"#,
-        )
-        .unwrap();
-
-        let mut bundle = mock_bundle("test-update-health");
-        bundle.install_path = plugin_dir.to_path_buf();
-        bundle.manifest.runtime.entrypoint = "main.py".to_string();
-        bundle.health_status = "unknown".to_string();
-
-        let mut registry = PluginRegistry::new();
-        registry.register(bundle);
-
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let res = check_plugin_health_internal("test-update-health", &app_state).await;
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap().status, "healthy");
-
-        let reg = app_state.plugins.read().await;
-        assert_eq!(
-            reg.plugins.get("test-update-health").unwrap().health_status,
-            "healthy"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_execute_healthcheck_parses_json_error_on_success_status() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-        let script_path = plugin_dir.join("main.py");
-        std::fs::write(
-            &script_path,
-            r#"
-import sys, json
-if "--healthcheck" in sys.argv:
-    print(json.dumps({"status": "unhealthy", "error": "Model weights missing"}))
-    sys.exit(0)
-"#,
-        )
-        .unwrap();
-
-        let mut bundle = mock_bundle("test-unhealthy-zero-exit");
-        bundle.install_path = plugin_dir.to_path_buf();
-        bundle.manifest.runtime.entrypoint = "main.py".to_string();
-
-        let status = execute_healthcheck(&bundle).await;
-        assert_eq!(status.status, "unhealthy");
-        assert_eq!(status.error.as_deref(), Some("Model weights missing"));
-    }
-
-    #[tokio::test]
-    async fn test_check_plugin_health_flushes_to_state_store() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-        let script_path = plugin_dir.join("main.py");
-        std::fs::write(
-            &script_path,
-            r#"
-import sys, json
-if "--healthcheck" in sys.argv:
-    print(json.dumps({"status": "healthy"}))
-    sys.exit(0)
-"#,
-        )
-        .unwrap();
-
-        let mut bundle = mock_bundle("test-health-persist");
-        bundle.install_path = plugin_dir.to_path_buf();
-        bundle.manifest.runtime.entrypoint = "main.py".to_string();
-
-        let mut registry = PluginRegistry::new();
-        registry.register(bundle);
-
-        let state_path = temp_dir.path().join("plugin_state.json");
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: Some(state_path.clone()),
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let res = check_plugin_health_internal("test-health-persist", &app_state).await;
-        assert!(res.is_ok());
-
-        assert!(
-            state_path.exists(),
-            "State file must exist after health check"
-        );
-        let store = crate::plugin_manager::lifecycle::load_plugin_state(&state_path).unwrap();
-        let record = store
-            .plugins
-            .get("test-health-persist")
-            .expect("record should exist");
-        let hc = record
-            .last_healthcheck
-            .as_ref()
-            .expect("last_healthcheck should be set");
-        assert_eq!(hc.status, "healthy");
-    }
-
-    #[test]
-    fn test_validate_subcontracts_enforces_parameters_schema() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-
-        // Parameter missing required 'type' and 'default'
-        std::fs::write(
-            plugin_dir.join("parameters.json"),
-            r#"{"parameters": [{"name": "thresh", "label": "Threshold"}]}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
-
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "test-plugin".to_string(),
-                name: "Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
-        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
-    }
-
-    #[test]
-    fn test_validate_subcontracts_enforces_inputs_granularity_and_mime() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugin_dir = temp_dir.path();
-
-        std::fs::write(plugin_dir.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        // Invalid granularity
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "invalid_granularity", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(plugin_dir.join("outputs.json"), r#"{}"#).unwrap();
-
-        let manifest = PluginManifest {
-            schema: None,
-            manifest_version: 1,
-            metadata: crate::plugin_manager::models::PluginMetadata {
-                id: "test-plugin".to_string(),
-                name: "Test".to_string(),
-                version: "1.0.0".to_string(),
-                author: None,
-                license: None,
-                description: "Test".to_string(),
-                category: None,
-                tags: vec![],
-                min_core_version: None,
-            },
-            runtime: crate::plugin_manager::models::PluginRuntime {
-                runtime_type: "python".to_string(),
-                entrypoint: "main.py".to_string(),
-                min_python_version: None,
-                dependencies_file: None,
-                healthcheck_flag: None,
-            },
-            parameters: "parameters.json".to_string(),
-            inputs: "inputs.json".to_string(),
-            outputs: "outputs.json".to_string(),
-            execution: None,
-        };
-
-        let err = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
-        assert!(matches!(err, PluginError::SubcontractInvalid { .. }));
-
-        // Invalid MIME type
-        std::fs::write(
-            plugin_dir.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["text/plain"]}"#,
-        )
-        .unwrap();
-        let err_mime = validate_subcontracts(plugin_dir, &manifest).unwrap_err();
-        assert!(matches!(err_mime, PluginError::SubcontractInvalid { .. }));
-    }
-
-    #[test]
-    fn test_rescan_plugins_discovers_new_plugin_on_disk() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugins_root = temp_dir.path();
-
-        // 1. Initially create plugin A
-        let dir_a = plugins_root.join("plugin-a");
-        std::fs::create_dir_all(&dir_a).unwrap();
-        std::fs::write(
-            dir_a.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
-                "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        )
-        .unwrap();
-        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        std::fs::write(
-            dir_a.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
-
-        let state_path = plugins_root.join("plugin_state.json");
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::init_plugin_registry_from_dir(plugins_root),
-            )),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: Some(state_path),
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(temp_dir.path().join("library")),
-        };
-
-        // Initially only plugin A
-        let initial_reg = rescan_plugins_internal(&app_state);
-        assert_eq!(initial_reg.plugins.len(), 1);
-        assert!(initial_reg.plugins.contains_key("plugin-a"));
-
-        // 2. Add plugin B to disk while app is running
-        let dir_b = plugins_root.join("plugin-b");
-        std::fs::create_dir_all(&dir_b).unwrap();
-        std::fs::write(
-            dir_b.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-b", "name": "Plugin B", "version": "1.0.0", "description": "B"},
-                "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        )
-        .unwrap();
-        std::fs::write(dir_b.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        std::fs::write(
-            dir_b.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir_b.join("outputs.json"), r#"{}"#).unwrap();
-
-        // 3. Rescan discovers plugin B
-        let rescanned = rescan_plugins_internal(&app_state);
-        assert_eq!(rescanned.plugins.len(), 2);
-        assert!(rescanned.plugins.contains_key("plugin-a"));
-        assert!(rescanned.plugins.contains_key("plugin-b"));
-    }
-
-    #[tokio::test]
-    async fn test_get_installed_plugins_internal_returns_summaries() {
-        let mut registry = PluginRegistry::new();
-        registry.register(mock_bundle("rgb-exg"));
-        registry.register(mock_bundle("tree-count"));
-
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let mut summaries = get_installed_plugins_internal(&app_state).await.unwrap();
-        summaries.sort_by(|a, b| a.id.cmp(&b.id));
-        assert_eq!(summaries.len(), 2);
-        assert_eq!(summaries[0].id, "rgb-exg");
-        assert_eq!(summaries[1].id, "tree-count");
-    }
-
-    #[tokio::test]
-    async fn test_query_compatible_plugins_internal_filters_targets() {
-        let mut registry = PluginRegistry::new();
-        let mut jpeg_only = mock_bundle("jpeg-only");
-        jpeg_only.inputs_spec.supported_mime_types = vec!["image/jpeg".to_string()];
-        registry.register(jpeg_only);
-
-        let mut tiff_only = mock_bundle("tiff-only");
-        tiff_only.inputs_spec.supported_mime_types = vec!["image/tiff".to_string()];
-        registry.register(tiff_only);
-
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(registry)),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: None,
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(std::path::PathBuf::from("/tmp")),
-        };
-
-        let target = TargetDescriptorDto {
-            granularity: "single_image".to_string(),
-            mime_type: "image/jpeg".to_string(),
-            has_gps: true,
-            has_altitude: true,
-            has_aoi: false,
-            has_resolution: true,
-        };
-
-        let matches = query_compatible_plugins_internal(target, &app_state)
-            .await
-            .unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].id, "jpeg-only");
-    }
-
-    #[tokio::test]
-    async fn test_reload_plugins_internal_updates_registry_and_returns_summaries() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let plugins_root = temp_dir.path();
-
-        let dir_a = plugins_root.join("plugin-a");
-        std::fs::create_dir_all(&dir_a).unwrap();
-        std::fs::write(
-            dir_a.join("manifest.json"),
-            r#"{
-                "manifest_version": 1,
-                "metadata": {"id": "plugin-a", "name": "Plugin A", "version": "1.0.0", "description": "A"},
-                "runtime": {"type": "python", "entrypoint": "main.py"},
-                "parameters": "parameters.json",
-                "inputs": "inputs.json",
-                "outputs": "outputs.json"
-            }"#,
-        )
-        .unwrap();
-        std::fs::write(dir_a.join("parameters.json"), r#"{"parameters": []}"#).unwrap();
-        std::fs::write(
-            dir_a.join("inputs.json"),
-            r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir_a.join("outputs.json"), r#"{}"#).unwrap();
-
-        let app_state = crate::AppState {
-            plugins: std::sync::Arc::new(tokio::sync::RwLock::new(PluginRegistry::new())),
-            jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
-                crate::plugin_manager::executor::ActiveJobTracker::new(),
-            )),
-            state_path: Some(plugins_root.join("plugin_state.json")),
-            db: std::sync::Arc::new(std::sync::Mutex::new(
-                rusqlite::Connection::open_in_memory().unwrap(),
-            )),
-            library_root: std::sync::Arc::new(temp_dir.path().join("library")),
-        };
-
-        let summaries = reload_plugins_internal(&app_state).await.unwrap();
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].id, "plugin-a");
-
-        let reg = app_state.plugins.read().await;
-        assert!(reg.plugins.contains_key("plugin-a"));
-    }
-}
+#[path = "registry_tests.rs"]
+mod tests;
