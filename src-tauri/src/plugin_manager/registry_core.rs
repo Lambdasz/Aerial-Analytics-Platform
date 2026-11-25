@@ -18,8 +18,8 @@ use rayon::prelude::*;
 
 use super::error::PluginError;
 use super::models::{
-    InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSummaryDto,
-    TargetDescriptorDto,
+    CachedHealthcheck, InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSource,
+    PluginStateRecord, PluginStateStore, PluginStats, PluginSummaryDto, TargetDescriptorDto,
 };
 
 // ---------------------------------------------------------------------------
@@ -194,12 +194,14 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     }
 
     let version = &manifest.metadata.version;
-    let parts: Vec<&str> = version.split('.').collect();
-    if parts.len() != 3
-        || !parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-    {
+    let valid_semver = version.split('.').try_fold(0usize, |count, part| {
+        if !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) {
+            Some(count + 1)
+        } else {
+            None
+        }
+    }) == Some(3);
+    if !valid_semver {
         return Err(PluginError::ManifestInvalid {
             path: "manifest.json".to_string(),
             message: format!(
@@ -255,11 +257,13 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
         });
     }
 
-    for (name, path_str) in [
+    [
         ("parameters", &manifest.parameters),
         ("inputs", &manifest.inputs),
         ("outputs", &manifest.outputs),
-    ] {
+    ]
+    .into_iter()
+    .try_for_each(|(name, path_str)| {
         if path_str.trim().is_empty() || !is_safe_relative_path(path_str) {
             return Err(PluginError::ManifestInvalid {
                 path: "manifest.json".to_string(),
@@ -269,7 +273,8 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
                 ),
             });
         }
-    }
+        Ok(())
+    })?;
 
     Ok(manifest)
 }
@@ -301,68 +306,73 @@ pub(crate) fn parse_and_validate_parameters(
         })?;
 
     const VALID_PARAM_TYPES: &[&str] = &["number", "boolean", "select", "string"];
-    for (idx, p) in params_arr.iter().enumerate() {
-        let p_obj = p
-            .as_object()
-            .ok_or_else(|| PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter at index {} must be an object", idx),
+    params_arr
+        .iter()
+        .enumerate()
+        .try_for_each(|(idx, p)| -> Result<(), PluginError> {
+            let p_obj = p
+                .as_object()
+                .ok_or_else(|| PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter at index {} must be an object", idx),
+                })?;
+
+            let name = p_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter at index {} missing required 'name'", idx),
+                }
             })?;
 
-        let name = p_obj.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-            PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter at index {} missing required 'name'", idx),
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            {
+                return Err(PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter '{}' must match pattern ^[a-z0-9_]+$", name),
+                });
             }
-        })?;
 
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
-            return Err(PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter '{}' must match pattern ^[a-z0-9_]+$", name),
-            });
-        }
-
-        if p_obj
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
-        {
-            return Err(PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter '{}' missing required non-empty 'label'", name),
-            });
-        }
-
-        let p_type = p_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-            PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter '{}' missing required 'type'", name),
+            if p_obj
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err(PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter '{}' missing required non-empty 'label'", name),
+                });
             }
+
+            let p_type = p_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter '{}' missing required 'type'", name),
+                }
+            })?;
+
+            if !VALID_PARAM_TYPES.contains(&p_type) {
+                return Err(PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!(
+                        "Parameter '{}' has invalid type '{}', expected one of: {:?}",
+                        name, p_type, VALID_PARAM_TYPES
+                    ),
+                });
+            }
+
+            if !p_obj.contains_key("default") {
+                return Err(PluginError::SubcontractInvalid {
+                    path: path_label.to_string(),
+                    message: format!("Parameter '{}' missing required 'default' value", name),
+                });
+            }
+
+            Ok(())
         })?;
-
-        if !VALID_PARAM_TYPES.contains(&p_type) {
-            return Err(PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!(
-                    "Parameter '{}' has invalid type '{}', expected one of: {:?}",
-                    name, p_type, VALID_PARAM_TYPES
-                ),
-            });
-        }
-
-        if !p_obj.contains_key("default") {
-            return Err(PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!("Parameter '{}' missing required 'default' value", name),
-            });
-        }
-    }
 
     Ok(params_val)
 }
@@ -416,16 +426,18 @@ pub(crate) fn parse_and_validate_inputs(
         "image/tiff",
         "application/x-geotiff",
     ];
-    for mime in &inputs_spec.supported_mime_types {
-        if !VALID_MIME_TYPES.contains(&mime.to_ascii_lowercase().as_str()) {
-            return Err(PluginError::SubcontractInvalid {
-                path: path_label.to_string(),
-                message: format!(
-                    "Unsupported MIME type '{}', expected one of: {:?}",
-                    mime, VALID_MIME_TYPES
-                ),
-            });
-        }
+    if let Some(invalid_mime) = inputs_spec
+        .supported_mime_types
+        .iter()
+        .find(|mime| !VALID_MIME_TYPES.contains(&mime.to_ascii_lowercase().as_str()))
+    {
+        return Err(PluginError::SubcontractInvalid {
+            path: path_label.to_string(),
+            message: format!(
+                "Unsupported MIME type '{}', expected one of: {:?}",
+                invalid_mime, VALID_MIME_TYPES
+            ),
+        });
     }
 
     Ok(inputs_spec)
@@ -457,35 +469,39 @@ pub(crate) fn parse_and_validate_outputs(
 
     if let Some(metrics_arr) = outputs_val.get("metrics").and_then(|m| m.as_array()) {
         const VALID_METRIC_TYPES: &[&str] = &["float", "integer", "string", "boolean"];
-        for (idx, m) in metrics_arr.iter().enumerate() {
-            let m_obj = m
-                .as_object()
-                .ok_or_else(|| PluginError::SubcontractInvalid {
-                    path: path_label.to_string(),
-                    message: format!("Metric at index {} must be an object", idx),
+        metrics_arr
+            .iter()
+            .enumerate()
+            .try_for_each(|(idx, m)| -> Result<(), PluginError> {
+                let m_obj = m
+                    .as_object()
+                    .ok_or_else(|| PluginError::SubcontractInvalid {
+                        path: path_label.to_string(),
+                        message: format!("Metric at index {} must be an object", idx),
+                    })?;
+                let key = m_obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                    PluginError::SubcontractInvalid {
+                        path: path_label.to_string(),
+                        message: format!("Metric at index {} missing required 'key'", idx),
+                    }
                 })?;
-            let key = m_obj.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
-                PluginError::SubcontractInvalid {
-                    path: path_label.to_string(),
-                    message: format!("Metric at index {} missing required 'key'", idx),
+                let m_type = m_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+                    PluginError::SubcontractInvalid {
+                        path: path_label.to_string(),
+                        message: format!("Metric '{}' missing required 'type'", key),
+                    }
+                })?;
+                if !VALID_METRIC_TYPES.contains(&m_type) {
+                    return Err(PluginError::SubcontractInvalid {
+                        path: path_label.to_string(),
+                        message: format!(
+                            "Metric '{}' has invalid type '{}', expected one of: {:?}",
+                            key, m_type, VALID_METRIC_TYPES
+                        ),
+                    });
                 }
+                Ok(())
             })?;
-            let m_type = m_obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
-                PluginError::SubcontractInvalid {
-                    path: path_label.to_string(),
-                    message: format!("Metric '{}' missing required 'type'", key),
-                }
-            })?;
-            if !VALID_METRIC_TYPES.contains(&m_type) {
-                return Err(PluginError::SubcontractInvalid {
-                    path: path_label.to_string(),
-                    message: format!(
-                        "Metric '{}' has invalid type '{}', expected one of: {:?}",
-                        key, m_type, VALID_METRIC_TYPES
-                    ),
-                });
-            }
-        }
     }
 
     Ok(outputs_val)
@@ -515,6 +531,168 @@ pub(crate) fn assemble_plugin_bundle(
         health_status: "unknown".to_string(),
         custom_parameters: serde_json::json!({}),
     }
+}
+
+/// Raw pre-read files for a single plugin directory entry discovered on disk.
+///
+/// Used as the pure input boundary between [`super::registry`] (filesystem I/O)
+/// and [`build_discovery_output`] (parallel validation & bundle assembly).
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct DiscoveredPluginCandidate {
+    pub plugin_dir: PathBuf,
+    pub manifest_raw: String,
+    pub parameters_result: Result<String, String>,
+    pub inputs_result: Result<String, String>,
+    pub outputs_result: Result<String, String>,
+}
+
+/// Deterministic output of pure parallel plugin discovery validation.
+#[allow(dead_code)]
+#[derive(Debug, Default, Clone)]
+pub(crate) struct DiscoveryOutput {
+    pub bundles: Vec<PluginBundle>,
+    pub warnings: Vec<String>,
+}
+
+#[allow(dead_code)]
+fn validate_discovered_candidate(
+    candidate: DiscoveredPluginCandidate,
+) -> Result<PluginBundle, String> {
+    let manifest = parse_and_validate_manifest(&candidate.manifest_raw).map_err(|e| {
+        format!(
+            "Warning: skipping invalid manifest at {:?}: {}",
+            candidate.plugin_dir.join("manifest.json"),
+            e
+        )
+    })?;
+
+    let parameters_str = candidate.parameters_result.map_err(|e| {
+        format!(
+            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+            candidate.plugin_dir, e
+        )
+    })?;
+    let inputs_str = candidate.inputs_result.map_err(|e| {
+        format!(
+            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+            candidate.plugin_dir, e
+        )
+    })?;
+    let outputs_str = candidate.outputs_result.map_err(|e| {
+        format!(
+            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+            candidate.plugin_dir, e
+        )
+    })?;
+
+    let parameters_raw = parse_and_validate_parameters(&parameters_str, &manifest.parameters)
+        .map_err(|e| {
+            format!(
+                "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+                candidate.plugin_dir, e
+            )
+        })?;
+    let inputs_spec = parse_and_validate_inputs(&inputs_str, &manifest.inputs).map_err(|e| {
+        format!(
+            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+            candidate.plugin_dir, e
+        )
+    })?;
+    let outputs_raw = parse_and_validate_outputs(&outputs_str, &manifest.outputs).map_err(|e| {
+        format!(
+            "Warning: skipping plugin at {:?} due to invalid subcontracts: {}",
+            candidate.plugin_dir, e
+        )
+    })?;
+
+    let inputs_raw = serde_json::from_str(&inputs_str)
+        .unwrap_or_else(|_| serde_json::to_value(&inputs_spec).unwrap_or_default());
+
+    Ok(assemble_plugin_bundle(
+        candidate.plugin_dir,
+        manifest,
+        inputs_spec,
+        inputs_raw,
+        parameters_raw,
+        outputs_raw,
+    ))
+}
+
+/// Validates pre-read plugin candidates in parallel and assembles a deterministic [`DiscoveryOutput`].
+///
+/// Invalid candidates are converted into warning strings rather than failing the batch or
+/// printing to stderr. Both `bundles` (sorted by `manifest.metadata.id`) and `warnings`
+/// (lexicographically sorted) are deterministic regardless of input ordering.
+///
+/// # Purity
+/// Pure parallel computation via `rayon`; zero I/O, zero logging side effects, zero mutation of external state.
+#[allow(dead_code)]
+pub(crate) fn build_discovery_output(
+    candidates: Vec<DiscoveredPluginCandidate>,
+) -> DiscoveryOutput {
+    let results: Vec<Result<PluginBundle, String>> = candidates
+        .into_par_iter()
+        .map(validate_discovered_candidate)
+        .collect();
+
+    let (mut bundles, mut warnings) = results.into_iter().fold(
+        (Vec::new(), Vec::new()),
+        |(mut bundles, mut warnings), res| {
+            match res {
+                Ok(bundle) => bundles.push(bundle),
+                Err(warning) => warnings.push(warning),
+            }
+            (bundles, warnings)
+        },
+    );
+
+    bundles.par_sort_unstable_by(|a, b| a.manifest.metadata.id.cmp(&b.manifest.metadata.id));
+    warnings.sort();
+
+    DiscoveryOutput { bundles, warnings }
+}
+
+/// Returns a new [`PluginStateStore`] with the plugin's latest health check recorded.
+///
+/// Creates a [`PluginStateRecord`] if `plugin_id` is absent, or updates `last_healthcheck`
+/// on the existing record while preserving its `installed_at`, `custom_parameters`, and `stats`.
+///
+/// # Purity
+/// Pure immutable state transition; clones `&PluginStateStore` without mutating the caller's
+/// value, performs no I/O, and reads no system clock (`now_iso` is passed explicitly).
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_healthcheck_state(
+    store: &PluginStateStore,
+    plugin_id: &str,
+    bundle_version: &str,
+    source: PluginSource,
+    enabled: bool,
+    status: &str,
+    error_msg: Option<&str>,
+    now_iso: &str,
+) -> PluginStateStore {
+    let mut next_store = store.clone();
+    next_store.updated_at = now_iso.to_string();
+    let record = next_store
+        .plugins
+        .entry(plugin_id.to_string())
+        .or_insert_with(|| PluginStateRecord {
+            version: bundle_version.to_string(),
+            source,
+            enabled,
+            installed_at: now_iso.to_string(),
+            last_healthcheck: None,
+            custom_parameters: serde_json::json!({}),
+            stats: PluginStats::default(),
+        });
+    record.last_healthcheck = Some(CachedHealthcheck {
+        status: status.to_string(),
+        checked_at: now_iso.to_string(),
+        message: error_msg.map(ToString::to_string),
+    });
+    next_store
 }
 
 #[cfg(test)]
@@ -1239,5 +1417,240 @@ mod tests {
         assert!(bundle.enabled);
         assert_eq!(bundle.source, "builtin");
         assert_eq!(bundle.install_path, PathBuf::from("/path/to/plugin"));
+    }
+
+    fn valid_manifest_json(id: &str, version: &str) -> String {
+        format!(
+            r#"{{
+                "manifest_version": 1,
+                "metadata": {{
+                    "id": "{id}",
+                    "name": "Plugin {id}",
+                    "version": "{version}",
+                    "description": "Test plugin description"
+                }},
+                "runtime": {{
+                    "type": "python",
+                    "entrypoint": "main.py"
+                }},
+                "parameters": "parameters.json",
+                "inputs": "inputs.json",
+                "outputs": "outputs.json"
+            }}"#
+        )
+    }
+
+    fn valid_candidate(id: &str) -> DiscoveredPluginCandidate {
+        DiscoveredPluginCandidate {
+            plugin_dir: PathBuf::from("/mock/plugins").join(id),
+            manifest_raw: valid_manifest_json(id, "1.0.0"),
+            parameters_result: Ok(r#"{"parameters": []}"#.to_string()),
+            inputs_result: Ok(
+                r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#
+                    .to_string(),
+            ),
+            outputs_result: Ok(r#"{"metrics": [], "artifacts": []}"#.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_parse_and_validate_manifest_lazy_semver_edge_cases() {
+        for valid in ["0.0.0", "1.2.3", "12.345.6789"] {
+            let res = parse_and_validate_manifest(&valid_manifest_json("semver-ok", valid));
+            assert!(res.is_ok(), "Expected '{}' to be valid semver", valid);
+        }
+
+        for invalid in [
+            "",
+            "1",
+            "1.2",
+            "1.2.3.4",
+            "1..3",
+            ".1.2",
+            "1.2.",
+            "v1.2.3",
+            "1.2.3-alpha",
+            "1.2.a",
+        ] {
+            let err = parse_and_validate_manifest(&valid_manifest_json("semver-bad", invalid))
+                .unwrap_err();
+            assert!(
+                matches!(err, PluginError::ManifestInvalid { .. }),
+                "Expected '{}' to fail ManifestInvalid, got {:?}",
+                invalid,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_discovery_output_filters_invalid_and_sorts_deterministically() {
+        let bad_manifest = DiscoveredPluginCandidate {
+            plugin_dir: PathBuf::from("/mock/plugins/bad-manifest"),
+            manifest_raw: "{ not json".to_string(),
+            parameters_result: Ok(r#"{"parameters": []}"#.to_string()),
+            inputs_result: Ok(
+                r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#
+                    .to_string(),
+            ),
+            outputs_result: Ok(r#"{"metrics": []}"#.to_string()),
+        };
+
+        let unreadable_subcontract = DiscoveredPluginCandidate {
+            plugin_dir: PathBuf::from("/mock/plugins/unreadable-sub"),
+            manifest_raw: valid_manifest_json("unreadable-sub", "1.0.0"),
+            parameters_result: Err("file not found".to_string()),
+            inputs_result: Ok(
+                r#"{"granularity": "single_image", "supported_mime_types": ["image/jpeg"]}"#
+                    .to_string(),
+            ),
+            outputs_result: Ok(r#"{"metrics": []}"#.to_string()),
+        };
+
+        let invalid_subcontract = DiscoveredPluginCandidate {
+            plugin_dir: PathBuf::from("/mock/plugins/invalid-sub"),
+            manifest_raw: valid_manifest_json("invalid-sub", "1.0.0"),
+            parameters_result: Ok(r#"{"parameters": []}"#.to_string()),
+            inputs_result: Ok(
+                r#"{"granularity": "single_image", "supported_mime_types": []}"#.to_string(),
+            ),
+            outputs_result: Ok(r#"{"metrics": []}"#.to_string()),
+        };
+
+        let order_a = vec![
+            valid_candidate("zeta-plugin"),
+            invalid_subcontract.clone(),
+            valid_candidate("alpha-plugin"),
+            bad_manifest.clone(),
+            valid_candidate("mid-plugin"),
+            unreadable_subcontract.clone(),
+        ];
+
+        let order_b = vec![
+            unreadable_subcontract,
+            valid_candidate("mid-plugin"),
+            bad_manifest,
+            valid_candidate("alpha-plugin"),
+            valid_candidate("zeta-plugin"),
+            invalid_subcontract,
+        ];
+
+        let out_a = build_discovery_output(order_a);
+        let out_b = build_discovery_output(order_b);
+
+        let ids_a: Vec<&str> = out_a
+            .bundles
+            .iter()
+            .map(|b| b.manifest.metadata.id.as_str())
+            .collect();
+        let ids_b: Vec<&str> = out_b
+            .bundles
+            .iter()
+            .map(|b| b.manifest.metadata.id.as_str())
+            .collect();
+
+        assert_eq!(ids_a, vec!["alpha-plugin", "mid-plugin", "zeta-plugin"]);
+        assert_eq!(ids_a, ids_b);
+        assert_eq!(out_a.warnings.len(), 3);
+        assert_eq!(out_a.warnings, out_b.warnings);
+        let mut sorted_warnings = out_a.warnings.clone();
+        sorted_warnings.sort();
+        assert_eq!(out_a.warnings, sorted_warnings);
+    }
+
+    #[test]
+    fn test_with_healthcheck_state_creates_updates_and_preserves_original() {
+        let initial_store = PluginStateStore {
+            schema_version: 1,
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            plugins: HashMap::new(),
+        };
+
+        let created_store = with_healthcheck_state(
+            &initial_store,
+            "rgb-exg",
+            "1.2.3",
+            PluginSource::Builtin,
+            true,
+            "healthy",
+            None,
+            "2026-02-01T10:00:00Z",
+        );
+
+        // Original store must remain unchanged
+        assert!(initial_store.plugins.is_empty());
+        assert_eq!(initial_store.updated_at, "2026-01-01T00:00:00Z");
+
+        // Created entry checks
+        assert_eq!(created_store.updated_at, "2026-02-01T10:00:00Z");
+        let created_record = created_store
+            .plugins
+            .get("rgb-exg")
+            .expect("record created");
+        assert_eq!(created_record.version, "1.2.3");
+        assert_eq!(created_record.source, PluginSource::Builtin);
+        assert!(created_record.enabled);
+        assert_eq!(created_record.installed_at, "2026-02-01T10:00:00Z");
+        assert_eq!(
+            created_record.last_healthcheck,
+            Some(CachedHealthcheck {
+                status: "healthy".to_string(),
+                checked_at: "2026-02-01T10:00:00Z".to_string(),
+                message: None,
+            })
+        );
+
+        // Prepare existing record with custom parameters and stats to verify preservation on update
+        let mut store_with_existing = created_store.clone();
+        if let Some(rec) = store_with_existing.plugins.get_mut("rgb-exg") {
+            rec.custom_parameters = serde_json::json!({"threshold": 0.42});
+            rec.stats = PluginStats {
+                execution_count: 7,
+                last_executed_at: Some("2026-02-01T11:00:00Z".to_string()),
+            };
+        }
+
+        let updated_store = with_healthcheck_state(
+            &store_with_existing,
+            "rgb-exg",
+            "2.0.0",
+            PluginSource::User,
+            false,
+            "unhealthy",
+            Some("missing numpy"),
+            "2026-03-01T12:00:00Z",
+        );
+
+        // Caller's store_with_existing must remain untouched
+        assert_eq!(store_with_existing.updated_at, "2026-02-01T10:00:00Z");
+        assert_eq!(
+            store_with_existing
+                .plugins
+                .get("rgb-exg")
+                .unwrap()
+                .last_healthcheck
+                .as_ref()
+                .unwrap()
+                .status,
+            "healthy"
+        );
+
+        // Updated record updates last_healthcheck and preserves existing fields
+        assert_eq!(updated_store.updated_at, "2026-03-01T12:00:00Z");
+        let updated_record = updated_store.plugins.get("rgb-exg").expect("record exists");
+        assert_eq!(updated_record.installed_at, "2026-02-01T10:00:00Z");
+        assert_eq!(
+            updated_record.custom_parameters,
+            serde_json::json!({"threshold": 0.42})
+        );
+        assert_eq!(updated_record.stats.execution_count, 7);
+        assert_eq!(
+            updated_record.last_healthcheck,
+            Some(CachedHealthcheck {
+                status: "unhealthy".to_string(),
+                checked_at: "2026-03-01T12:00:00Z".to_string(),
+                message: Some("missing numpy".to_string()),
+            })
+        );
     }
 }
