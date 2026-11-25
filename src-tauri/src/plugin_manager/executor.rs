@@ -18,84 +18,22 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::error::{CommandError, PluginError};
-use super::models::{ExecutionPayload, ExecutionTarget, StandardJobResultDto, VerifiedArtifactDto};
+pub(crate) use super::executor_core::{
+    build_execution_payload, kill_target, parse_progress_line, should_emit_progress,
+    verify_plugin_executable, KillTarget, PluginExecutionTarget,
+};
+pub use super::executor_core::{JobHandleDto, JobProgress, JobStatusDto, StartJobRequestDto};
+use super::models::{StandardJobResultDto, VerifiedArtifactDto};
 
 // ---------------------------------------------------------------------------
-// 2. DATA TRANSFER OBJECTS (DTOs)
+// 2. DATA TRANSFER OBJECTS (re-exported from `executor_core`)
 // ---------------------------------------------------------------------------
-
-/// Analysis request delivered by the Frontend or Modules 1 & 3.
-///
-/// Passed as the argument to `start_plugin_job`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StartJobRequestDto {
-    /// Unique plugin slug, e.g. `"rgb-vegetation-exg"`.
-    pub plugin_id: String,
-    /// Optional parent flight session / project ID.
-    pub session_id: Option<String>,
-    /// Absolute filesystem path to the source aerial RGB image.
-    pub target_image_path: String,
-    /// MIME type of the source image (`"image/jpeg"`, `"image/png"`, `"image/tiff"`).
-    pub mime_type: String,
-    /// Optional user-selected bounding geometry (RFC 7946 GeoJSON).
-    pub aoi: Option<serde_json::Value>,
-    /// User-configured parameter values corresponding to the plugin's `parameters.json`.
-    pub parameters: HashMap<String, serde_json::Value>,
-    /// Optional decoded metadata (resolution, GPS, altitude, timestamp) conforming to `execution_payload.schema.json`.
-    #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Instant return handle from `start_plugin_job`.
-///
-/// Returned immediately (non-blocking) so the UI can track the job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobHandleDto {
-    /// Unique execution ID, e.g. `"exec_20260916_<uuid>"`.
-    pub job_id: String,
-    /// Plugin that was invoked.
-    pub plugin_id: String,
-    /// Initial state: `"queued"` or `"running"`.
-    pub status: String,
-}
-
-/// Real-time progress event streamed from the plugin's stdout over Tauri IPC.
-///
-/// Emitted as: `app.emit("plugin://progress", JobProgress { ... })`
-///
-/// Plugins signal progress by writing to stdout:
-/// ```text
-/// PROGRESS: {"job_id":"...", "percent": 45, "stage": "evaluating_index"}
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobProgress {
-    /// Matches the `job_id` returned by `start_plugin_job`.
-    pub job_id: String,
-    /// Completion percentage: 0–100.
-    pub percent: u8,
-    /// Human-readable stage label, e.g. `"preprocessing"`, `"saving_mask"`.
-    pub stage: String,
-}
-
-/// Current lifecycle state of a job — returned by `get_job_status`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "state", content = "data")]
-pub enum JobStatusDto {
-    /// Queued, not yet spawned.
-    Queued,
-    /// Subprocess is running; streaming progress.
-    Running { progress_pct: u8, stage: String },
-    /// Subprocess exited successfully; result is ready.
-    Completed { execution_time_ms: u64 },
-    /// Subprocess exited with an error or produced invalid output.
-    Failed { error: String },
-    /// Job was killed by `abort_plugin_job`.
-    Aborted,
-}
+//
+// `StartJobRequestDto`, `JobHandleDto`, `JobProgress`, and `JobStatusDto`
+// live in `super::executor_core` and are re-exported above.
 
 // ---------------------------------------------------------------------------
 // 3. ACTIVE JOB TRACKER (Shared State)
@@ -430,25 +368,13 @@ pub fn emit_job_progress(
 }
 
 // ---------------------------------------------------------------------------
-// 5. PURE FUNCTIONS (pub(crate) — no side effects, fully unit-testable)
+// 5. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
 // ---------------------------------------------------------------------------
-
-/// Execution gating predicate verifying that a plugin is both registered in the registry and currently enabled.
-pub(crate) fn verify_plugin_executable(
-    plugin_id: &str,
-    registry: &crate::plugin_manager::registry::PluginRegistry,
-) -> Result<(), PluginError> {
-    let bundle = registry
-        .plugins
-        .get(plugin_id)
-        .ok_or_else(|| PluginError::PluginUnavailable(plugin_id.to_string()))?;
-
-    if !bundle.enabled {
-        return Err(PluginError::PluginUnavailable(plugin_id.to_string()));
-    }
-
-    Ok(())
-}
+//
+// Pure functions (`verify_plugin_executable`, `build_execution_payload`,
+// `parse_progress_line`, `should_emit_progress`, `kill_target`) and
+// `PluginExecutionTarget` / `KillTarget` live in `super::executor_core` and are
+// re-exported above.
 
 /// Builds plugin payload metadata from the imported image row.
 ///
@@ -488,84 +414,6 @@ pub(crate) fn autofill_image_metadata(
     } else {
         Some(serde_json::Value::Object(metadata))
     }
-}
-
-/// Constructs the `ExecutionPayload` struct for a given job request.
-///
-/// **Pure function** — no filesystem I/O, no subprocess interaction.
-/// Caller is responsible for serializing and writing the result to disk.
-pub(crate) fn build_execution_payload(
-    job_id: &str,
-    output_dir: &Path,
-    req: &StartJobRequestDto,
-) -> Result<ExecutionPayload, PluginError> {
-    let target = ExecutionTarget {
-        granularity: "single_image".to_string(),
-        image_path: req.target_image_path.clone(),
-        mime_type: req.mime_type.clone(),
-        metadata: req.metadata.clone(),
-    };
-
-    Ok(ExecutionPayload {
-        execution_id: job_id.to_string(),
-        session_id: req.session_id.clone(),
-        output_dir: output_dir.to_string_lossy().into_owned(),
-        target,
-        aoi: req.aoi.clone(),
-        parameters: req.parameters.clone(),
-    })
-}
-
-/// Extracts a `JobProgress` update from a single line of plugin stdout.
-///
-/// **Pure function** — only string parsing, zero I/O.
-///
-/// Plugins signal progress by writing to stdout:
-/// ```text
-/// PROGRESS: {"job_id":"exec_...", "percent": 45, "stage": "evaluating_index"}
-/// ```
-pub(crate) fn parse_progress_line(line: &str) -> Option<JobProgress> {
-    let trimmed = line.trim();
-    let json_slice = trimmed
-        .strip_prefix("PROGRESS:")
-        .or_else(|| trimmed.strip_prefix("progress:"))?;
-    serde_json::from_str::<JobProgress>(json_slice.trim()).ok()
-}
-
-/// Decides whether a newly parsed progress update should be emitted.
-///
-/// **Pure function** — no I/O, no locking, no clock reads of its own
-/// (`now` is passed in). Emits when the `(percent, stage)` pair differs
-/// from the last emitted update, or when at least `min_interval` has
-/// elapsed since the last emission — whichever comes first. This keeps a
-/// chatty plugin from flooding the shared `jobs_tracker` write-lock and
-/// the Tauri IPC channel with redundant or high-frequency progress lines.
-pub(crate) fn should_emit_progress(
-    last: Option<(u8, &str, std::time::Instant)>,
-    next: &JobProgress,
-    now: std::time::Instant,
-    min_interval: std::time::Duration,
-) -> bool {
-    match last {
-        None => true,
-        Some((last_pct, last_stage, last_at)) => {
-            (last_pct, last_stage) != (next.percent, next.stage.as_str())
-                || now.duration_since(last_at) >= min_interval
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 6. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
-// ---------------------------------------------------------------------------
-
-/// Resolved plugin execution metadata discovered from manifest.
-#[derive(Debug, Clone)]
-pub(crate) struct PluginExecutionTarget {
-    pub plugin_dir: PathBuf,
-    pub entrypoint: String,
-    pub runtime_type: String,
-    pub timeout_seconds: u64,
 }
 
 /// Locates a plugin's directory and manifest by `plugin_id`.
@@ -695,34 +543,6 @@ pub(crate) fn kill_process_tree(pid: u32) {
                     .output();
             }
         }
-    }
-}
-
-/// What a cancellation is allowed to signal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KillTarget {
-    /// Signal only the process itself.
-    Process,
-    /// Signal the whole process group (the child is its leader).
-    Group,
-    /// Do not signal anything; the reason is logged.
-    Refuse(&'static str),
-}
-
-/// Decides how a cancellation may signal `pid`.
-///
-/// Guards the cases that can take down more than the plugin: PID 0 and 1, our
-/// own process, and a process group that is not actually the child's. Pure.
-pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> KillTarget {
-    if pid <= 1 {
-        return KillTarget::Refuse("reserved pid");
-    }
-    if pid == own_pid {
-        return KillTarget::Refuse("would signal the app itself");
-    }
-    match group_of_pid {
-        Some(group) if group == pid => KillTarget::Group,
-        _ => KillTarget::Process,
     }
 }
 
@@ -1050,36 +870,8 @@ pub(crate) fn generate_job_id() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 8. UNIT TESTS
+// 8. UNIT TESTS (Imperative Shell / I/O tests; pure tests live in `executor_core`)
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod kill_guard_tests {
-    use super::{kill_target, KillTarget};
-
-    #[test]
-    fn refuses_reserved_and_own_pids() {
-        assert_eq!(
-            kill_target(0, Some(0), 4242),
-            KillTarget::Refuse("reserved pid")
-        );
-        assert_eq!(
-            kill_target(1, Some(1), 4242),
-            KillTarget::Refuse("reserved pid")
-        );
-        assert_eq!(
-            kill_target(4242, Some(4242), 4242),
-            KillTarget::Refuse("would signal the app itself")
-        );
-    }
-
-    #[test]
-    fn signals_group_only_when_child_is_leader() {
-        assert_eq!(kill_target(1234, Some(1234), 4242), KillTarget::Group);
-        assert_eq!(kill_target(1234, Some(77), 4242), KillTarget::Process);
-        assert_eq!(kill_target(1234, None, 4242), KillTarget::Process);
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1092,133 +884,6 @@ mod tests {
         let parts: Vec<&str> = id.splitn(3, '_').collect();
         assert_eq!(parts.len(), 3, "job_id must have 3 segments");
         assert_eq!(parts[1].len(), 8, "date segment must be 8 digits");
-    }
-
-    #[test]
-    fn test_parse_progress_line_valid() {
-        let line = r#"PROGRESS: {"job_id":"exec_20260916_abc","percent":45,"stage":"evaluating"}"#;
-        let result = parse_progress_line(line);
-        assert!(result.is_some());
-        let p = result.unwrap();
-        assert_eq!(p.percent, 45);
-        assert_eq!(p.stage, "evaluating");
-        assert_eq!(p.job_id, "exec_20260916_abc");
-    }
-
-    #[test]
-    fn test_parse_progress_line_lowercase() {
-        let line = r#"progress: {"job_id":"exec_20260916_abc","percent":60,"stage":"masking"}"#;
-        let result = parse_progress_line(line);
-        assert!(result.is_some());
-        let p = result.unwrap();
-        assert_eq!(p.percent, 60);
-        assert_eq!(p.stage, "masking");
-    }
-
-    #[test]
-    fn test_parse_progress_line_non_progress() {
-        let line = "INFO: Loading image from /tmp/drone_001.jpg";
-        assert!(parse_progress_line(line).is_none());
-    }
-
-    #[test]
-    fn test_parse_progress_line_malformed_json() {
-        let line = "PROGRESS: {broken json}";
-        assert!(parse_progress_line(line).is_none());
-    }
-
-    #[test]
-    fn test_should_emit_progress_first_update_always_emits() {
-        let next = JobProgress {
-            job_id: "exec_test".to_string(),
-            percent: 10,
-            stage: "preprocessing".to_string(),
-        };
-        assert!(should_emit_progress(
-            None,
-            &next,
-            std::time::Instant::now(),
-            std::time::Duration::from_millis(200)
-        ));
-    }
-
-    #[test]
-    fn test_should_emit_progress_suppresses_duplicate_within_interval() {
-        let last_at = std::time::Instant::now();
-        let same = JobProgress {
-            job_id: "exec_test".to_string(),
-            percent: 45,
-            stage: "evaluating".to_string(),
-        };
-        let now = last_at; // zero elapsed time, well within the interval
-        assert!(!should_emit_progress(
-            Some((45, "evaluating", last_at)),
-            &same,
-            now,
-            std::time::Duration::from_millis(200)
-        ));
-    }
-
-    #[test]
-    fn test_should_emit_progress_emits_on_changed_stage_even_within_interval() {
-        let last_at = std::time::Instant::now();
-        let changed = JobProgress {
-            job_id: "exec_test".to_string(),
-            percent: 46,
-            stage: "saving_mask".to_string(),
-        };
-        assert!(should_emit_progress(
-            Some((45, "evaluating", last_at)),
-            &changed,
-            last_at,
-            std::time::Duration::from_millis(200)
-        ));
-    }
-
-    #[test]
-    fn test_should_emit_progress_emits_after_interval_elapses_even_if_unchanged() {
-        let last_at = std::time::Instant::now();
-        let same = JobProgress {
-            job_id: "exec_test".to_string(),
-            percent: 45,
-            stage: "evaluating".to_string(),
-        };
-        let later = last_at + std::time::Duration::from_millis(250);
-        assert!(should_emit_progress(
-            Some((45, "evaluating", last_at)),
-            &same,
-            later,
-            std::time::Duration::from_millis(200)
-        ));
-    }
-
-    #[test]
-    fn test_build_execution_payload_conforms_to_schema() {
-        let req = StartJobRequestDto {
-            plugin_id: "rgb-vegetation-exg".to_string(),
-            session_id: Some("session_001".to_string()),
-            target_image_path: "/data/images/drone_01.jpg".to_string(),
-            mime_type: "image/jpeg".to_string(),
-            aoi: None,
-            parameters: HashMap::from([("threshold".to_string(), serde_json::json!(0.35))]),
-            metadata: Some(serde_json::json!({ "resolution": [4000, 3000] })),
-        };
-        let output_dir = Path::new("/tmp/test_output");
-        let payload = build_execution_payload("exec_test_123", output_dir, &req).unwrap();
-
-        assert_eq!(payload.execution_id, "exec_test_123");
-        assert_eq!(payload.session_id, Some("session_001".to_string()));
-        assert_eq!(payload.target.granularity, "single_image");
-        assert_eq!(payload.target.image_path, "/data/images/drone_01.jpg");
-        assert_eq!(payload.target.mime_type, "image/jpeg");
-        assert_eq!(
-            payload.target.metadata,
-            Some(serde_json::json!({ "resolution": [4000, 3000] }))
-        );
-        assert_eq!(
-            payload.parameters.get("threshold"),
-            Some(&serde_json::json!(0.35))
-        );
     }
 
     #[test]
@@ -1322,118 +987,5 @@ mod tests {
         let err = read_and_validate_result(&result_path, out_dir);
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().code(), "SECURITY_VIOLATION");
-    }
-
-    #[test]
-    fn test_execution_gating_unregistered_plugin_rejected() {
-        let registry = crate::plugin_manager::registry::PluginRegistry::new();
-        let err = verify_plugin_executable("nonexistent-plugin", &registry).unwrap_err();
-        assert_eq!(err.code(), "PLUGIN_UNAVAILABLE");
-    }
-
-    #[test]
-    fn test_execution_gating_disabled_plugin_rejected() {
-        let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
-        let bundle = crate::plugin_manager::models::PluginBundle {
-            install_path: PathBuf::from("/mock/test"),
-            manifest: crate::plugin_manager::models::PluginManifest {
-                schema: None,
-                manifest_version: 1,
-                metadata: crate::plugin_manager::models::PluginMetadata {
-                    id: "disabled-plugin".to_string(),
-                    name: "Disabled".to_string(),
-                    version: "1.0.0".to_string(),
-                    author: None,
-                    license: None,
-                    description: "Desc".to_string(),
-                    category: None,
-                    tags: vec![],
-                    min_core_version: None,
-                },
-                runtime: crate::plugin_manager::models::PluginRuntime {
-                    runtime_type: "python".to_string(),
-                    entrypoint: "main.py".to_string(),
-                    min_python_version: None,
-                    dependencies_file: None,
-                    healthcheck_flag: None,
-                },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
-                execution: None,
-            },
-            inputs_spec: crate::plugin_manager::models::InputsSpec {
-                granularity: "single_image".to_string(),
-                supported_mime_types: vec!["image/jpeg".to_string()],
-                requires_metadata: vec![],
-                optional_metadata: vec![],
-                supports_aoi: false,
-                aoi_format: None,
-            },
-            inputs_raw: serde_json::json!({}),
-            parameters_raw: serde_json::json!({}),
-            outputs_raw: serde_json::json!({}),
-            enabled: false,
-            source: "builtin".to_string(),
-            health_status: "unknown".to_string(),
-            custom_parameters: serde_json::json!({}),
-        };
-        registry.register(bundle);
-
-        let err = verify_plugin_executable("disabled-plugin", &registry).unwrap_err();
-        assert_eq!(err.code(), "PLUGIN_UNAVAILABLE");
-    }
-
-    #[test]
-    fn test_execution_gating_enabled_plugin_accepted() {
-        let mut registry = crate::plugin_manager::registry::PluginRegistry::new();
-        let bundle = crate::plugin_manager::models::PluginBundle {
-            install_path: PathBuf::from("/mock/test"),
-            manifest: crate::plugin_manager::models::PluginManifest {
-                schema: None,
-                manifest_version: 1,
-                metadata: crate::plugin_manager::models::PluginMetadata {
-                    id: "enabled-plugin".to_string(),
-                    name: "Enabled".to_string(),
-                    version: "1.0.0".to_string(),
-                    author: None,
-                    license: None,
-                    description: "Desc".to_string(),
-                    category: None,
-                    tags: vec![],
-                    min_core_version: None,
-                },
-                runtime: crate::plugin_manager::models::PluginRuntime {
-                    runtime_type: "python".to_string(),
-                    entrypoint: "main.py".to_string(),
-                    min_python_version: None,
-                    dependencies_file: None,
-                    healthcheck_flag: None,
-                },
-                parameters: "parameters.json".to_string(),
-                inputs: "inputs.json".to_string(),
-                outputs: "outputs.json".to_string(),
-                execution: None,
-            },
-            inputs_spec: crate::plugin_manager::models::InputsSpec {
-                granularity: "single_image".to_string(),
-                supported_mime_types: vec!["image/jpeg".to_string()],
-                requires_metadata: vec![],
-                optional_metadata: vec![],
-                supports_aoi: false,
-                aoi_format: None,
-            },
-            inputs_raw: serde_json::json!({}),
-            parameters_raw: serde_json::json!({}),
-            outputs_raw: serde_json::json!({}),
-            enabled: true,
-            source: "builtin".to_string(),
-            health_status: "unknown".to_string(),
-            custom_parameters: serde_json::json!({}),
-        };
-        registry.register(bundle);
-
-        let res = verify_plugin_executable("enabled-plugin", &registry);
-        assert!(res.is_ok());
     }
 }

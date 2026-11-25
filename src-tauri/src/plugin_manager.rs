@@ -32,6 +32,7 @@
 //! |-----------|----------------|
 //! | [`error`] | Domain error types and [`CommandError`](error::CommandError) DTO |
 //! | [`executor`] | Async subprocess supervision, timeout enforcement, and progress streaming |
+//! | [`executor_core`] | Pure execution DTOs, gating, payload construction, progress parsing, and result parsing |
 //! | [`lifecycle`] | Plugin installation, removal, enable/disable, and state persistence |
 //! | [`lifecycle_core`] | Pure plugin lifecycle validation, immutable state transitions, and removal planning |
 //! | [`models`] | Data models, DTOs, and schema-conforming types |
@@ -46,6 +47,7 @@
 //! are async (Tokio) and the Tauri main thread is never blocked.
 pub mod error;
 pub mod executor;
+pub mod executor_core;
 pub mod lifecycle;
 pub mod lifecycle_core;
 pub mod models;
