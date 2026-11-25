@@ -34,11 +34,9 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::error::{CommandError, PluginError};
-#[allow(unused_imports)]
 pub(crate) use super::executor_core::{
     build_execution_payload, extract_execution_target, kill_target, parse_progress_line,
-    parse_result_json, should_emit_progress, verify_plugin_executable, KillTarget,
-    PluginExecutionTarget,
+    parse_result_json, should_emit_progress, KillTarget, PluginExecutionTarget,
 };
 pub use super::executor_core::{JobHandleDto, JobProgress, JobStatusDto, StartJobRequestDto};
 use super::models::StandardJobResultDto;
@@ -438,10 +436,10 @@ pub fn emit_job_progress(
 // 5. INTERNAL HELPERS (pub(crate) — I/O, called from the background task)
 // ---------------------------------------------------------------------------
 //
-// Pure functions (`verify_plugin_executable`, `extract_execution_target`,
-// `build_execution_payload`, `parse_progress_line`, `should_emit_progress`,
-// `kill_target`, `parse_result_json`) and `PluginExecutionTarget` /
-// `KillTarget` live in `super::executor_core` and are re-exported above.
+// Pure functions (`extract_execution_target`, `build_execution_payload`,
+// `parse_progress_line`, `should_emit_progress`, `kill_target`,
+// `parse_result_json`) and `PluginExecutionTarget` / `KillTarget` live in
+// `super::executor_core` and are re-exported above.
 
 /// Builds plugin payload metadata from the imported image row.
 ///

@@ -114,8 +114,12 @@ async fn test_app_state_has_plugins_and_concurrent_access() {
         reg.register(mock_bundle("rgb-exg"));
     }
 
-    let reg = state.plugins.read().await;
-    assert_eq!(reg.get_summaries().len(), 1);
+    let snapshot = {
+        let reg = state.plugins.read().await;
+        assert_eq!(reg.plugins.len(), 1);
+        reg.clone()
+    };
+    assert_eq!(snapshot.get_summaries().len(), 1);
 }
 
 #[test]

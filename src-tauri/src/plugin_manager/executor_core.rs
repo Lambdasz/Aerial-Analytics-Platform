@@ -320,9 +320,7 @@ pub(crate) fn parse_result_json(
                         },
                     )
                 })
-                .collect::<Vec<(String, VerifiedArtifactDto)>>()
-                .into_iter()
-                .collect()
+                .collect::<HashMap<_, _>>()
         }
         None => HashMap::new(),
     };

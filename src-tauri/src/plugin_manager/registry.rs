@@ -28,8 +28,6 @@ use super::models::{
     HealthStatusDto, InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSource,
     PluginSummaryDto, TargetDescriptorDto,
 };
-#[allow(unused_imports)]
-pub(crate) use super::registry_core::assemble_plugin_bundle;
 use super::registry_core::{
     build_discovery_output, extract_subcontract_paths, with_healthcheck_state,
     DiscoveredPluginCandidate, HealthcheckStateInput,
@@ -47,7 +45,7 @@ pub(crate) use super::registry_core::{
 /// Returns a lightweight summary list of all installed plugins for UI cards and menus.
 ///
 /// # Purity
-/// Impure Tauri IPC command handler; delegates async `AppState` access to [`get_installed_plugins_internal`].
+/// Impure Tauri IPC command handler; delegates async `AppState` access to `get_installed_plugins_internal`.
 #[tauri::command]
 pub async fn get_installed_plugins(
     state: tauri::State<'_, crate::AppState>,
@@ -97,7 +95,7 @@ pub(crate) async fn get_installed_plugins_internal(
 /// - This function does not panic.
 ///
 /// # Purity
-/// Impure Tauri IPC command handler; delegates disk rescan and registry mutation to [`reload_plugins_internal`].
+/// Impure Tauri IPC command handler; delegates disk rescan and registry mutation to `reload_plugins_internal`.
 #[tauri::command]
 pub async fn reload_plugins(
     state: tauri::State<'_, crate::AppState>,
@@ -174,7 +172,7 @@ pub async fn get_plugin_details(
 /// Filters and returns only installed plugins capable of processing the given image or AOI target.
 ///
 /// # Purity
-/// Impure Tauri IPC command handler; delegates async `AppState` access to [`query_compatible_plugins_internal`].
+/// Impure Tauri IPC command handler; delegates async `AppState` access to `query_compatible_plugins_internal`.
 #[tauri::command]
 pub async fn query_compatible_plugins(
     target: TargetDescriptorDto,
@@ -208,7 +206,7 @@ pub(crate) async fn query_compatible_plugins_internal(
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates subprocess check and state persistence to
-/// [`check_plugin_health_internal`].
+/// `check_plugin_health_internal`.
 #[tauri::command]
 pub async fn check_plugin_health(
     plugin_id: String,

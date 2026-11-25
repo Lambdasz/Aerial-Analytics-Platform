@@ -25,8 +25,12 @@
 use std::path::{Path, PathBuf};
 
 use super::error::{CommandError, PluginError};
-#[allow(unused_imports)]
-pub(crate) use super::lifecycle_core::*;
+use super::lifecycle_core::{
+    assemble_user_plugin_bundle, plan_plugin_removal, resolve_staged_plugin_root,
+    validate_custom_parameters, validate_installation_preconditions, with_applied_state,
+    with_config_update, with_install_update, with_status_update, ConfigUpdateInput,
+    RemovalPlanInput,
+};
 use super::models::{PluginSource, PluginStateStore, PluginSummaryDto};
 
 // ---------------------------------------------------------------------------
@@ -40,7 +44,7 @@ use super::models::{PluginSource, PluginStateStore, PluginSummaryDto};
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates archive extraction, validation,
-/// persistence, and registry registration to [`install_plugin_internal`].
+/// persistence, and registry registration to `install_plugin_internal`.
 #[tauri::command]
 pub async fn install_plugin(
     archive_path: String,
@@ -58,7 +62,7 @@ pub async fn install_plugin(
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates removal planning, disk cleanup,
-/// persistence, and registry mutation to [`remove_plugin_internal`].
+/// persistence, and registry mutation to `remove_plugin_internal`.
 #[tauri::command]
 pub async fn remove_plugin(
     plugin_id: String,
@@ -94,7 +98,7 @@ pub async fn remove_plugin(
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates state persistence and registry
-/// status synchronization to [`set_plugin_status_internal`].
+/// status synchronization to `set_plugin_status_internal`.
 #[tauri::command]
 pub async fn set_plugin_status(
     plugin_id: String,
@@ -113,7 +117,7 @@ pub async fn set_plugin_status(
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates off-thread parameter validation,
-/// persistence, and registry mutation to [`update_plugin_config_internal`].
+/// persistence, and registry mutation to `update_plugin_config_internal`.
 #[tauri::command]
 pub async fn update_plugin_config(
     plugin_id: String,
@@ -150,18 +154,13 @@ pub(crate) async fn set_plugin_status_internal(
             .plugins
             .get(plugin_id)
             .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
-        let src = if bundle.source == "user" {
-            PluginSource::User
-        } else {
-            PluginSource::Builtin
-        };
-        (bundle.manifest.metadata.version.clone(), src)
+        (
+            bundle.manifest.metadata.version.clone(),
+            plugin_source_from_label(&bundle.source),
+        )
     };
 
-    let state_path = app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path);
+    let state_path = state_path_or_default(app_state);
     let store = load_plugin_state(&state_path).unwrap_or_default();
     let now_iso = chrono::Utc::now().to_rfc3339();
     let next_store = with_status_update(&store, plugin_id, enabled, &version, source, &now_iso);
@@ -203,11 +202,61 @@ pub(crate) fn default_state_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("plugins").join("plugin_state.json"))
 }
 
+/// Resolves the configured `plugin_state.json` path or falls back to [`default_state_path`].
+///
+/// # Purity
+/// Impure when `app_state.state_path` is `None` (delegates to [`default_state_path`]).
+fn state_path_or_default(app_state: &crate::AppState) -> PathBuf {
+    app_state
+        .state_path
+        .clone()
+        .unwrap_or_else(default_state_path)
+}
+
+/// Derives the plugins root directory from a `plugin_state.json` path.
+///
+/// # Purity
+/// Pure deterministic path projection over `&Path`.
+fn plugins_dir_from_state_path(state_path: &Path) -> PathBuf {
+    match state_path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("plugins"),
+    }
+}
+
+/// Maps a bundle source label (`"user"` vs `"builtin"`) to [`PluginSource`].
+///
+/// # Purity
+/// Pure deterministic mapping over `&str`.
+fn plugin_source_from_label(source: &str) -> PluginSource {
+    if source == "user" {
+        PluginSource::User
+    } else {
+        PluginSource::Builtin
+    }
+}
+
+/// Checks whether `plugin_id` currently has a queued or running job in `app_state.jobs`.
+///
+/// # Purity
+/// Imperative shell: acquires async read lock on `app_state.jobs`.
+async fn is_plugin_job_active(app_state: &crate::AppState, plugin_id: &str) -> bool {
+    let tracker = app_state.jobs.read().await;
+    tracker.jobs.values().any(|job| {
+        job.plugin_id == plugin_id
+            && matches!(
+                job.status,
+                super::executor::JobStatusDto::Queued
+                    | super::executor::JobStatusDto::Running { .. }
+            )
+    })
+}
+
 /// Internal helper for installing a plugin from a `.zip` archive.
 ///
 /// Performs archive extraction, staging scan, manifest/subcontract validation,
 /// filesystem commit, and `plugin_state.json` persistence before taking a short
-/// write lock to register the assembled [`PluginBundle`] in memory. If state
+/// write lock to register the assembled [`PluginBundle`](super::models::PluginBundle) in memory. If state
 /// persistence fails, removes `target_dir` before returning the error.
 ///
 /// # Purity
@@ -223,14 +272,8 @@ pub(crate) async fn install_plugin_internal(
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| PluginError::ArchiveError(format!("Invalid zip archive: {}", e)))?;
 
-    let state_path = app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path);
-    let plugins_dir = match state_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("plugins"),
-    };
+    let state_path = state_path_or_default(app_state);
+    let plugins_dir = plugins_dir_from_state_path(&state_path);
     std::fs::create_dir_all(&plugins_dir)
         .map_err(|e| PluginError::Io(format!("Cannot create plugins directory: {}", e)))?;
 
@@ -278,17 +321,7 @@ pub(crate) async fn install_plugin_internal(
     let plugin_version = manifest.metadata.version.clone();
 
     // Step 4: Verify metadata.id is valid, does not overwrite builtin, and is not currently executing a job
-    let is_job_active = {
-        let tracker = app_state.jobs.read().await;
-        tracker.jobs.values().any(|job| {
-            job.plugin_id == plugin_id
-                && matches!(
-                    job.status,
-                    super::executor::JobStatusDto::Queued
-                        | super::executor::JobStatusDto::Running { .. }
-                )
-        })
-    };
+    let is_job_active = is_plugin_job_active(app_state, &plugin_id).await;
 
     let existing_reg_source = {
         let registry = app_state.plugins.read().await;
@@ -362,7 +395,7 @@ pub(crate) async fn install_plugin_internal(
 
 /// Internal helper for removing a user plugin and purging its state.
 ///
-/// Snapshots active-job status and builds a [`RemovalPlan`] under short read locks,
+/// Snapshots active-job status and builds a [`RemovalPlan`](super::lifecycle_core::RemovalPlan) under short read locks,
 /// deletes the physical plugin directory and persists the updated state without
 /// holding registry locks, then removes the entry under a short write lock.
 ///
@@ -374,27 +407,11 @@ pub(crate) async fn remove_plugin_internal(
     plugin_id: &str,
     app_state: &crate::AppState,
 ) -> Result<(), PluginError> {
-    let is_job_active = {
-        let tracker = app_state.jobs.read().await;
-        tracker.jobs.values().any(|job| {
-            job.plugin_id == plugin_id
-                && matches!(
-                    job.status,
-                    super::executor::JobStatusDto::Queued
-                        | super::executor::JobStatusDto::Running { .. }
-                )
-        })
-    };
+    let is_job_active = is_plugin_job_active(app_state, plugin_id).await;
 
-    let state_path = app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path);
+    let state_path = state_path_or_default(app_state);
     let store = load_plugin_state(&state_path).unwrap_or_default();
-    let plugins_dir = match state_path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => PathBuf::from("plugins"),
-    };
+    let plugins_dir = plugins_dir_from_state_path(&state_path);
     let now_iso = chrono::Utc::now().to_rfc3339();
 
     let (has_bundle, plan) = {
@@ -451,14 +468,9 @@ pub(crate) async fn update_plugin_config_internal(
             .plugins
             .get(plugin_id)
             .ok_or_else(|| PluginError::NotFound(plugin_id.to_string()))?;
-        let src = if bundle.source == "user" {
-            PluginSource::User
-        } else {
-            PluginSource::Builtin
-        };
         (
             bundle.manifest.metadata.version.clone(),
-            src,
+            plugin_source_from_label(&bundle.source),
             bundle.enabled,
             bundle.parameters_raw.clone(),
         )
@@ -471,10 +483,7 @@ pub(crate) async fn update_plugin_config_internal(
             PluginError::StateError(format!("Parameter validation task failed: {}", e))
         })??;
 
-    let state_path = app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path);
+    let state_path = state_path_or_default(app_state);
     let store = load_plugin_state(&state_path).unwrap_or_default();
     let now_iso = chrono::Utc::now().to_rfc3339();
     let input = ConfigUpdateInput {
