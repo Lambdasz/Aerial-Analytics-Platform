@@ -118,14 +118,27 @@ pub async fn start_plugin_job(
     let (output_dir, payload_path, result_path) =
         prepare_sandbox_payload(&job_id, &request).await?;
 
-    let mut cmd = resolve_executable(
-        &target.plugin_dir,
-        &target.entrypoint,
-        &target.runtime_type,
-        &payload_path,
-        &result_path,
-    )
-    .await?;
+    let mut cmd = {
+        let plugin_dir = target.plugin_dir.clone();
+        let entrypoint = target.entrypoint.clone();
+        let runtime_type = target.runtime_type.clone();
+        let payload_path_owned = payload_path.clone();
+        let result_path_owned = result_path.clone();
+        tokio::task::spawn_blocking(move || {
+            resolve_executable(
+                &plugin_dir,
+                &entrypoint,
+                &runtime_type,
+                &payload_path_owned,
+                &result_path_owned,
+            )
+        })
+        .await
+        .map_err(|e| CommandError {
+            code: "SPAWN_FAILED".to_string(),
+            message: format!("Plugin executable resolution task failed: {}", e),
+        })??
+    };
 
     let child = cmd.spawn().map_err(|e| CommandError {
         code: "SPAWN_FAILED".to_string(),
@@ -188,7 +201,8 @@ async fn resolve_plugin_target(
 /// metadata from SQLite when the caller omitted `request.metadata`.
 ///
 /// # Purity
-/// Imperative shell: checks filesystem existence and reads SQLite under `state.db` lock.
+/// Imperative shell: checks filesystem existence via `tokio::fs` and reads SQLite
+/// under `state.db` lock inside `tokio::task::spawn_blocking`.
 async fn validate_and_autofill_request(
     request: &mut StartJobRequestDto,
     state: &crate::AppState,
@@ -204,13 +218,20 @@ async fn validate_and_autofill_request(
     // Callers that did not decode EXIF can still get complete payloads:
     // fill resolution/GPS/altitude/timestamp from the imported image row.
     if request.metadata.is_none() {
-        request.metadata = {
-            let conn = state.db.lock().map_err(|_| CommandError {
+        let db = state.db.clone();
+        let target_path = request.target_image_path.clone();
+        request.metadata = tokio::task::spawn_blocking(move || {
+            let conn = db.lock().map_err(|_| CommandError {
                 code: "STATE_ERROR".to_string(),
                 message: "Database lock poisoned while resolving image metadata".to_string(),
             })?;
-            autofill_image_metadata(&conn, &request.target_image_path)
-        };
+            Ok::<_, CommandError>(autofill_image_metadata(&conn, &target_path))
+        })
+        .await
+        .map_err(|e| CommandError {
+            code: "STATE_ERROR".to_string(),
+            message: format!("Image metadata lookup task failed: {}", e),
+        })??;
     }
 
     Ok(())
@@ -220,19 +241,28 @@ async fn validate_and_autofill_request(
 /// payload via [`build_execution_payload`], and writes `payload.json` to disk.
 ///
 /// # Purity
-/// Imperative shell: creates temporary directory and writes `payload.json` via `tokio::fs`.
+/// Imperative shell: creates temporary directory on `tokio::task::spawn_blocking`
+/// and writes `payload.json` via `tokio::fs`.
 async fn prepare_sandbox_payload(
     job_id: &str,
     request: &StartJobRequestDto,
 ) -> Result<(PathBuf, PathBuf, PathBuf), CommandError> {
-    let temp_dir = tempfile::Builder::new()
-        .prefix(&format!("{}_", job_id))
-        .tempdir()
-        .map_err(|e| CommandError {
-            code: "IO_ERROR".to_string(),
-            message: format!("Failed to create sandboxed output directory: {}", e),
-        })?;
-    let output_dir = temp_dir.keep();
+    let prefix = format!("{}_", job_id);
+    let output_dir = tokio::task::spawn_blocking(move || {
+        tempfile::Builder::new()
+            .prefix(&prefix)
+            .tempdir()
+            .map(|dir| dir.keep())
+            .map_err(|e| CommandError {
+                code: "IO_ERROR".to_string(),
+                message: format!("Failed to create sandboxed output directory: {}", e),
+            })
+    })
+    .await
+    .map_err(|e| CommandError {
+        code: "IO_ERROR".to_string(),
+        message: format!("Sandbox setup task failed: {}", e),
+    })??;
 
     let payload = build_execution_payload(job_id, &output_dir, request)?;
     let payload_path = output_dir.join("payload.json");
@@ -329,43 +359,69 @@ fn spawn_supervisor_task(
 /// ensuring runaway or stalled subprocesses are cleanly killed.
 ///
 /// # Purity
-/// Impure Tauri IPC command handler: acquires write lock on `state.jobs`,
-/// aborts the Tokio task, kills the OS process tree, and deletes sandbox output.
+/// Impure Tauri IPC command handler; delegates tracker mutation and blocking
+/// cleanup to [`abort_plugin_job_internal`].
 #[tauri::command]
 pub async fn abort_plugin_job(
     job_id: String,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), CommandError> {
-    let mut tracker = state.jobs.write().await;
-    let record = tracker
-        .jobs
-        .get_mut(&job_id)
-        .ok_or_else(|| PluginError::JobNotFound(job_id.clone()))?;
+    abort_plugin_job_internal(&job_id, &state).await
+}
 
-    // Abort async supervisor task
-    if let Some(ref handle) = record.abort_handle {
-        handle.abort();
+/// Internal helper that aborts an in-flight job, releases `state.jobs` before
+/// blocking cleanup, and kills the OS process tree + removes sandbox outputs on
+/// `tokio::task::spawn_blocking`.
+///
+/// # Purity
+/// Imperative shell: mutates shared job tracker under short async write lock and
+/// offloads OS process termination and filesystem cleanup to blocking threads.
+pub(crate) async fn abort_plugin_job_internal(
+    job_id: &str,
+    state: &crate::AppState,
+) -> Result<(), CommandError> {
+    let (pid_to_kill, output_dir_to_remove) = {
+        let mut tracker = state.jobs.write().await;
+        let record = tracker
+            .jobs
+            .get_mut(job_id)
+            .ok_or_else(|| PluginError::JobNotFound(job_id.to_string()))?;
+
+        // Abort async supervisor task
+        if let Some(ref handle) = record.abort_handle {
+            handle.abort();
+        }
+
+        // Forcibly terminate child OS process tree. Only for jobs that can still
+        // be running: finished jobs keep no pid, and a stale pid could now belong
+        // to an unrelated process (a negated pid would target its whole group).
+        let finished = matches!(
+            record.status,
+            JobStatusDto::Completed { .. } | JobStatusDto::Failed { .. } | JobStatusDto::Aborted
+        );
+        let pid = if finished {
+            record.child_pid = None;
+            None
+        } else {
+            record.child_pid.take()
+        };
+        let dir = record.output_dir.clone();
+        record.status = JobStatusDto::Aborted;
+        (pid, dir)
+    };
+
+    if pid_to_kill.is_some() || output_dir_to_remove.is_some() {
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Some(pid) = pid_to_kill {
+                kill_process_tree(pid);
+            }
+            if let Some(dir) = output_dir_to_remove {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        })
+        .await;
     }
 
-    // Forcibly terminate child OS process tree. Only for jobs that can still
-    // be running: finished jobs keep no pid, and a stale pid could now belong
-    // to an unrelated process (a negated pid would target its whole group).
-    let finished = matches!(
-        record.status,
-        JobStatusDto::Completed { .. } | JobStatusDto::Failed { .. } | JobStatusDto::Aborted
-    );
-    if finished {
-        record.child_pid = None;
-    } else if let Some(pid) = record.child_pid.take() {
-        kill_process_tree(pid);
-    }
-
-    // Clean up partial sandboxed output files
-    if let Some(ref dir) = record.output_dir {
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    record.status = JobStatusDto::Aborted;
     Ok(())
 }
 
@@ -712,8 +768,9 @@ pub(crate) fn build_plugin_command(
 /// Prepares the cross-platform Tokio process command for plugin execution (`--input <payload> --output <result>`).
 ///
 /// # Purity
-/// Impure filesystem I/O: resolves absolute paths and checks entrypoint existence on disk.
-pub(crate) async fn resolve_executable(
+/// Impure synchronous filesystem I/O: resolves absolute paths and checks entrypoint existence on disk
+/// (callers inside async contexts should offload via `tokio::task::spawn_blocking`).
+pub(crate) fn resolve_executable(
     plugin_dir: &Path,
     entrypoint: &str,
     runtime_type: &str,
@@ -818,7 +875,10 @@ pub(crate) async fn supervise_execution(
             // Execution timed out: forcibly kill child process
             let _ = child.kill().await;
             if let Some(pid) = child_pid {
-                kill_process_tree(pid);
+                let _ = tokio::task::spawn_blocking(move || {
+                    kill_process_tree(pid);
+                })
+                .await;
             }
             Err(PluginError::Timeout(timeout_secs))
         }
@@ -828,7 +888,7 @@ pub(crate) async fn supervise_execution(
             let has_result_file = tokio::fs::try_exists(&result_path).await.unwrap_or(false);
             if status.success() || has_result_file {
                 // Plugin may have written a structured failure result.json before exit 1.
-                // Offload rayon parallel parsing and synchronous fs checks off the Tokio worker.
+                // Offload synchronous fs checks and result.json parsing off the Tokio worker.
                 let rp = result_path.clone();
                 let od = output_dir.clone();
                 tokio::task::spawn_blocking(move || read_and_validate_result(&rp, &od))
