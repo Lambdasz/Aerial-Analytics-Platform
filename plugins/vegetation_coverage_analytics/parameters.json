@@ -5,9 +5,9 @@
       "name": "mask_source",
       "label": "Vegetation Mask Source",
       "type": "select",
-      "options": ["file", "auto"],
-      "default": "file",
-      "description": "'file' (primary pipeline): consumes the vegetation mask produced by Module 4 (Vegetation Detection); 'auto' (standalone fallback): derives the mask directly from the image with an RGB vegetation index."
+      "options": ["auto", "file"],
+      "default": "auto",
+      "description": "'auto' derives the mask from the input image with an RGB vegetation index; 'file' reads the mask_path produced by the Module 4 plugin."
     },
     {
       "name": "mask_path",

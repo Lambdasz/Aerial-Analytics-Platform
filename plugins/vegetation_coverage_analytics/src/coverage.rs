@@ -4,15 +4,14 @@
 
 use crate::types::{BinaryMask, Coverage, PluginError, Result};
 
-/// Counts coverage over the whole mask, or only where `keep` is true (AOI). Pure function.
+/// Counts coverage over the whole mask, or only where `keep` is true (AOI). Pure.
 pub fn calculate_coverage(mask: &BinaryMask, keep: Option<&[bool]>) -> Coverage {
-    let (total, vegetation) = mask //declaring total & vegetation var
+    let (total, vegetation) = mask
         .data
         .iter()
         .enumerate()
-        // filtering, apakah area yang dihitung adalah semua area?(keep.map_or(true)) atau hanya yang piksel yang bernilai true
-        // misal di dalam plot (keep.map_or(|selector|))
-        .filter(|&(i, _)| keep.is_none_or(|selector| selector.get(i).copied().unwrap_or(false))) // filter disini nge gantiin blok if let Some(selector) == keep {continue}
+        // Keep all pixels when no selector is provided; otherwise retain only true entries.
+        .filter(|&(i, _)| keep.is_none_or(|selector| selector.get(i).copied().unwrap_or(false)))
         .fold((0usize, 0usize), |(tot, veg), (_, &flag)| {
             (tot + 1, veg + flag as usize)
         });
@@ -27,31 +26,7 @@ pub fn calculate_coverage(mask: &BinaryMask, keep: Option<&[bool]>) -> Coverage 
     }
 }
 
-// ========== OLD calculate_coverage code ============================================================
-// Counts coverage over the whole mask, or only where `keep` is true (AOI). Pure function.
-// pub fn calculate_coverage(mask: &BinaryMask, keep: Option<&[bool]>) -> Coverage {
-//     let (mut total, mut vegetation) = (0usize, 0usize);
-//     for (i, &flag) in mask.data.iter().enumerate() {
-//         if let Some(selector) = keep {
-//             if !selector.get(i).copied().unwrap_or(false) {
-//                 continue;
-//             }
-//         }
-//         total += 1;
-//         vegetation += flag as usize;
-//     }
-//     Coverage {
-//         total_pixels: total,
-//         vegetation_pixels: vegetation,
-//         coverage_percentage: if total == 0 {
-//             0.0
-//         } else {
-//             (vegetation as f64 / total as f64) * 100.0
-//         },
-//     }
-// }
-
-/// Vegetation and total ground area in m²; both `None` without a GSD. Pure function.
+/// Vegetation and total ground area in m²; both `None` without a GSD. Pure.
 pub fn area_metrics(coverage: &Coverage, gsd_m: Option<f64>) -> (Option<f64>, Option<f64>) {
     match gsd_m {
         Some(gsd) if gsd > 0.0 => {

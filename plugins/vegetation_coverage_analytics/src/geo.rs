@@ -174,7 +174,7 @@ pub fn parse_bounds_override(parameters: &Value) -> Option<[f64; 4]> {
     Some([values[0], values[1], values[2], values[3]])
 }
 
-/// Bounds from the explicit override, else GPS + GSD, else AOI. Pure.
+/// Bounds from the explicit override, else AOI, else GPS + GSD. Pure.
 pub fn resolve_bounds(
     payload: &Value,
     parameters: &Value,
@@ -186,13 +186,17 @@ pub fn resolve_bounds(
     if let Some(bounds) = parse_bounds_override(parameters) {
         return Some(bounds);
     }
-    let gps = &metadata["gps"];
-    if let (Some(lat), Some(lon), Some(gsd)) = (gps["lat"].as_f64(), gps["lon"].as_f64(), gsd_m) {
-        if let Some(bounds) = bounds_from_gps(lat, lon, gsd, width, height) {
-            return Some(bounds);
-        }
+    if let Some(bounds) = bounds_from_aoi(payload) {
+        return Some(bounds);
     }
-    bounds_from_aoi(payload)
+    let gps = &metadata["gps"];
+    bounds_from_gps(
+        gps["lat"].as_f64()?,
+        gps["lon"].as_f64()?,
+        gsd_m?,
+        width,
+        height,
+    )
 }
 
 #[cfg(test)]
@@ -219,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_bounds_prefers_gps_over_aoi() {
+    fn resolve_bounds_prefers_aoi_over_gps() {
         let payload = json!({
             "aoi": {
                 "type": "geojson_polygon",
@@ -234,8 +238,11 @@ mod tests {
             "gps": { "lat": 0.0, "lon": 0.0 }
         });
         let bounds = resolve_bounds(&payload, &parameters, &metadata, Some(1.0), 100, 50).unwrap();
-        // Bounds should be centered on GPS (0, 0), not AOI (10..11)
-        assert!(bounds[0] < 0.0 && bounds[2] > 0.0);
-        assert!(bounds[1] < 0.0 && bounds[3] > 0.0);
+        // AOI bounds take precedence over GPS footprint; GPS is used when AOI is absent.
+        assert_eq!(bounds, [10.0, 10.0, 11.0, 11.0]);
+        let gps_only =
+            resolve_bounds(&json!({}), &parameters, &metadata, Some(1.0), 100, 50).unwrap();
+        assert!(gps_only[0] < 0.0 && gps_only[2] > 0.0);
+        assert!(gps_only[1] < 0.0 && gps_only[3] > 0.0);
     }
 }

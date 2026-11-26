@@ -5,10 +5,10 @@
 //! artifact writing) partitioned into distinct functional modules.
 //!
 //! Key Contracts:
-//! - Primary pipeline (`mask_source = "file"`): consumes vegetation mask produced
-//!   by Module 4 (Vegetation Detection).
-//! - Standalone fallback (`mask_source = "auto"`): derives mask directly from RGB
-//!   imagery using normalized spectral vegetation indices (ExG, ExR, VARI).
+//! - Default standalone mode (`mask_source = "auto"`): derives mask directly from
+//!   RGB imagery using normalized spectral vegetation indices (ExG, ExR, VARI).
+//! - File mode (`mask_source = "file"`): consumes vegetation mask PNG produced
+//!   by Module 4 (Vegetation Detection) via `mask_path`.
 //! - 24 pure unit tests covering indices, GSD resolution, coverage math, ray-casting
 //!   point-in-polygon, zonation, and pipeline boundary handling.
 //!

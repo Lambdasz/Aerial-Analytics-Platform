@@ -252,9 +252,7 @@ pub fn analyze(payload: &Value, output_path: &Path, start: Instant) -> Result<Va
     // Areas must follow the extent actually used: with an explicit bounds
     // override the pixel scale comes from that rectangle, not from altitude.
     let area_gsd = bounds
-        .filter(|_| {
-            parse_bounds_override(parameters).is_some() || metadata["gps"]["lat"].as_f64().is_none()
-        })
+        .filter(|_| parse_bounds_override(parameters).is_some())
         .and_then(|b| {
             let center_lat = (b[1] + b[3]) / 2.0;
             let width_m = (b[2] - b[0]) * METERS_PER_DEGREE_LAT * center_lat.to_radians().cos();
