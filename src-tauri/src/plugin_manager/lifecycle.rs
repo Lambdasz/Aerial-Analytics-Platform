@@ -16,7 +16,7 @@
 //! Tauri IPC command handling, `tokio::sync::RwLock` state synchronization,
 //! `chrono::Utc::now()` clock reads, `uuid::Uuid::new_v4()` temporary naming,
 //! and blocking validation dispatch live here. Pure domain logic (plugin ID
-//! validation, staged root resolution, precondition checks, parallel parameter
+//! validation, staged root resolution, precondition checks, parameter
 //! validation, immutable state transitions, and removal planning) is delegated
 //! to [`super::lifecycle_core`].
 //!
@@ -31,7 +31,9 @@ use super::lifecycle_core::{
     with_config_update, with_install_update, with_status_update, ConfigUpdateInput,
     RemovalPlanInput,
 };
-use super::models::{PluginSource, PluginStateStore, PluginSummaryDto};
+use super::models::{
+    PluginBundle, PluginManifest, PluginSource, PluginStateStore, PluginSummaryDto,
+};
 
 // ---------------------------------------------------------------------------
 // 1. TAURI IPC COMMANDS (pub — registered in lib.rs invoke_handler)
@@ -133,16 +135,48 @@ pub async fn update_plugin_config(
 // 2. IMPERATIVE SHELL WORKFLOWS & REGISTRY COMPATIBILITY
 // ---------------------------------------------------------------------------
 
+/// Offloads synchronous filesystem/ZIP/persistence work onto Tokio's blocking pool.
+async fn run_blocking_io<T, F>(label: &str, f: F) -> Result<T, PluginError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, PluginError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| PluginError::StateError(format!("{} task failed: {}", label, e)))?
+}
+
+/// Resolves the state path from optional config, loads `plugin_state.json`, applies `update_fn`,
+/// and persists atomically on Tokio's blocking thread pool.
+async fn persist_state_update_blocking<F>(
+    label: &str,
+    app_state: &crate::AppState,
+    update_fn: F,
+) -> Result<(), PluginError>
+where
+    F: FnOnce(&PluginStateStore, &str) -> PluginStateStore + Send + 'static,
+{
+    let configured_state_path = app_state.state_path.clone();
+    let now_iso = chrono::Utc::now().to_rfc3339();
+    run_blocking_io(label, move || {
+        let state_path = resolve_state_path(configured_state_path);
+        let store = load_plugin_state(&state_path).unwrap_or_default();
+        let next_store = update_fn(&store, &now_iso);
+        save_plugin_state(&state_path, &next_store)
+    })
+    .await
+}
+
 /// Internal helper for toggling plugin status and flushing changes to `plugin_state.json`.
 ///
 /// Reads a short `(version, source)` snapshot under `plugins.read().await`, computes
-/// the next state via [`with_status_update`], persists to disk first, and only then
-/// mutates the in-memory registry under `plugins.write().await` so persistence
+/// the next state via [`with_status_update`] and persists inside `tokio::task::spawn_blocking`,
+/// and only then mutates the in-memory registry under `plugins.write().await` so persistence
 /// failures require no in-memory rollback.
 ///
 /// # Purity
 /// Imperative shell: performs async `RwLock` synchronization, clock reads, and
-/// atomic disk persistence around pure [`with_status_update`].
+/// blocking-pool atomic disk persistence around pure [`with_status_update`].
 pub(crate) async fn set_plugin_status_internal(
     plugin_id: &str,
     enabled: bool,
@@ -160,12 +194,11 @@ pub(crate) async fn set_plugin_status_internal(
         )
     };
 
-    let state_path = state_path_or_default(app_state);
-    let store = load_plugin_state(&state_path).unwrap_or_default();
-    let now_iso = chrono::Utc::now().to_rfc3339();
-    let next_store = with_status_update(&store, plugin_id, enabled, &version, source, &now_iso);
-
-    save_plugin_state(&state_path, &next_store)?;
+    let plugin_id_owned = plugin_id.to_string();
+    persist_state_update_blocking("Status update", app_state, move |store, now_iso| {
+        with_status_update(store, &plugin_id_owned, enabled, &version, source, now_iso)
+    })
+    .await?;
 
     let mut registry = app_state.plugins.write().await;
     registry.set_status(plugin_id, enabled)?;
@@ -205,12 +238,9 @@ pub(crate) fn default_state_path() -> PathBuf {
 /// Resolves the configured `plugin_state.json` path or falls back to [`default_state_path`].
 ///
 /// # Purity
-/// Impure when `app_state.state_path` is `None` (delegates to [`default_state_path`]).
-fn state_path_or_default(app_state: &crate::AppState) -> PathBuf {
-    app_state
-        .state_path
-        .clone()
-        .unwrap_or_else(default_state_path)
+/// Impure when `configured_state_path` is `None` (delegates to [`default_state_path`]).
+fn resolve_state_path(configured_state_path: Option<PathBuf>) -> PathBuf {
+    configured_state_path.unwrap_or_else(default_state_path)
 }
 
 /// Derives the plugins root directory from a `plugin_state.json` path.
@@ -252,32 +282,31 @@ async fn is_plugin_job_active(app_state: &crate::AppState, plugin_id: &str) -> b
     })
 }
 
-/// Internal helper for installing a plugin from a `.zip` archive.
-///
-/// Performs archive extraction, staging scan, manifest/subcontract validation,
-/// filesystem commit, and `plugin_state.json` persistence before taking a short
-/// write lock to register the assembled [`PluginBundle`](super::models::PluginBundle) in memory. If state
-/// persistence fails, removes `target_dir` before returning the error.
-///
-/// # Purity
-/// Imperative shell: performs ZIP/filesystem I/O, clock reads, async `RwLock`
-/// synchronization, and error rollback around pure helpers in [`super::lifecycle_core`]
-/// and [`super::registry`].
-pub(crate) async fn install_plugin_internal(
+/// Staged archive extraction payload passed from staging to commit inside blocking workers.
+struct StagedPluginArchive {
+    temp_dir: tempfile::TempDir,
+    state_path: PathBuf,
+    plugins_dir: PathBuf,
+    plugin_source_dir: PathBuf,
+    manifest: PluginManifest,
+}
+
+/// Extracts `archive_path` into a staging directory under `plugins_dir` and parses `manifest.json`.
+fn stage_plugin_archive(
     archive_path: &Path,
-    app_state: &crate::AppState,
-) -> Result<PluginSummaryDto, PluginError> {
+    configured_state_path: Option<PathBuf>,
+) -> Result<StagedPluginArchive, PluginError> {
     let file = std::fs::File::open(archive_path)
         .map_err(|e| PluginError::ArchiveError(format!("Cannot open archive file: {}", e)))?;
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| PluginError::ArchiveError(format!("Invalid zip archive: {}", e)))?;
 
-    let state_path = state_path_or_default(app_state);
+    let state_path = resolve_state_path(configured_state_path);
     let plugins_dir = plugins_dir_from_state_path(&state_path);
     std::fs::create_dir_all(&plugins_dir)
         .map_err(|e| PluginError::Io(format!("Cannot create plugins directory: {}", e)))?;
 
-    // Step 1: Extract into a temporary staging folder within plugins_dir (Zero disk remnants on failure)
+    // Extract into a temporary staging folder within plugins_dir (Zero disk remnants on failure)
     let temp_dir = tempfile::Builder::new()
         .prefix("staging_plugin_")
         .tempdir_in(&plugins_dir)
@@ -290,7 +319,6 @@ pub(crate) async fn install_plugin_internal(
         verify_and_extract_entry(&mut entry, temp_dir.path())?;
     }
 
-    // Step 2: Locate plugin root (root or single top-level directory containing manifest.json)
     let staging_path = temp_dir.path();
     let has_root_manifest = staging_path.join("manifest.json").is_file();
     let candidates = if has_root_manifest {
@@ -308,7 +336,6 @@ pub(crate) async fn install_plugin_internal(
     let plugin_source_dir =
         resolve_staged_plugin_root(staging_path, has_root_manifest, candidates)?;
 
-    // Step 3: Parse and validate manifest
     let manifest_str =
         std::fs::read_to_string(plugin_source_dir.join("manifest.json")).map_err(|e| {
             PluginError::ManifestInvalid {
@@ -317,39 +344,46 @@ pub(crate) async fn install_plugin_internal(
             }
         })?;
     let manifest = super::registry::parse_and_validate_manifest(&manifest_str)?;
-    let plugin_id = manifest.metadata.id.clone();
-    let plugin_version = manifest.metadata.version.clone();
 
-    // Step 4: Verify metadata.id is valid, does not overwrite builtin, and is not currently executing a job
-    let is_job_active = is_plugin_job_active(app_state, &plugin_id).await;
+    Ok(StagedPluginArchive {
+        temp_dir,
+        state_path,
+        plugins_dir,
+        plugin_source_dir,
+        manifest,
+    })
+}
 
-    let existing_reg_source = {
-        let registry = app_state.plugins.read().await;
-        registry.plugins.get(&plugin_id).map(|b| b.source.clone())
-    };
+/// Validates preconditions/sub-contracts, commits staged files to `plugins/<id>`, and saves state.
+fn commit_staged_plugin(
+    staged: StagedPluginArchive,
+    is_job_active: bool,
+    existing_reg_source: Option<&str>,
+    now_iso: &str,
+) -> Result<PluginBundle, PluginError> {
+    let plugin_id = staged.manifest.metadata.id.clone();
+    let plugin_version = staged.manifest.metadata.version.clone();
 
-    let store = load_plugin_state(&state_path).unwrap_or_default();
+    let store = load_plugin_state(&staged.state_path).unwrap_or_default();
     let existing_state_source = store.plugins.get(&plugin_id).map(|r| r.source.clone());
 
     validate_installation_preconditions(
         &plugin_id,
         is_job_active,
-        existing_reg_source.as_deref(),
+        existing_reg_source,
         existing_state_source.as_ref(),
     )?;
 
-    // Step 5: Validate sub-contracts (parameters.json, inputs.json, outputs.json)
     let (parameters_raw, inputs_spec, outputs_raw) =
-        super::registry::validate_subcontracts(&plugin_source_dir, &manifest)?;
+        super::registry::validate_subcontracts(&staged.plugin_source_dir, &staged.manifest)?;
 
-    let inputs_path = plugin_source_dir.join(&manifest.inputs);
+    let inputs_path = staged.plugin_source_dir.join(&staged.manifest.inputs);
     let inputs_raw = std::fs::read_to_string(&inputs_path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| serde_json::to_value(&inputs_spec).unwrap_or_default());
 
-    // Step 6: Atomic commit to plugins/<plugin_id>
-    let target_dir = plugins_dir.join(&plugin_id);
+    let target_dir = staged.plugins_dir.join(&plugin_id);
     if target_dir.exists() {
         std::fs::remove_dir_all(&target_dir).map_err(|e| {
             PluginError::Io(format!(
@@ -359,34 +393,78 @@ pub(crate) async fn install_plugin_internal(
         })?;
     }
 
-    if plugin_source_dir == staging_path {
-        let staging_path_buf = temp_dir.path().to_path_buf();
+    let staging_path = staged.temp_dir.path();
+    if staged.plugin_source_dir == staging_path {
+        let staging_path_buf = staging_path.to_path_buf();
         move_dir_all(&staging_path_buf, &target_dir)?;
     } else {
-        move_dir_all(&plugin_source_dir, &target_dir)?;
+        move_dir_all(&staged.plugin_source_dir, &target_dir)?;
     }
 
-    // Step 7: Assemble bundle and persist plugin_state.json before registering in memory
     let bundle = assemble_user_plugin_bundle(
         target_dir.clone(),
-        manifest,
+        staged.manifest,
         inputs_spec,
         inputs_raw,
         parameters_raw,
         outputs_raw,
     );
-    let summary = bundle.to_summary();
 
-    let now_iso = chrono::Utc::now().to_rfc3339();
-    let next_store = with_install_update(&store, &plugin_id, &plugin_version, &now_iso);
-
-    if let Err(err) = save_plugin_state(&state_path, &next_store) {
+    let next_store = with_install_update(&store, &plugin_id, &plugin_version, now_iso);
+    if let Err(err) = save_plugin_state(&staged.state_path, &next_store) {
         // Rollback filesystem commit on persistence failure; registry was not mutated yet
         let _ = std::fs::remove_dir_all(&target_dir);
         return Err(err);
     }
 
-    // Step 8: Short write lock to register the bundle only after state persistence succeeds
+    Ok(bundle)
+}
+
+/// Internal helper for installing a plugin from a `.zip` archive.
+///
+/// Offloads archive extraction, staging scan, manifest/subcontract validation,
+/// filesystem commit, and `plugin_state.json` persistence onto `tokio::task::spawn_blocking`,
+/// reading `jobs` / `plugins` snapshots between staging and commit under short async read locks
+/// before acquiring a short write lock to register the assembled [`PluginBundle`]. If state
+/// persistence fails, removes `target_dir` before returning the error.
+///
+/// # Purity
+/// Imperative shell: performs blocking-pool ZIP/filesystem I/O, clock reads, async `RwLock`
+/// synchronization, and error rollback around pure helpers in [`super::lifecycle_core`]
+/// and [`super::registry`].
+pub(crate) async fn install_plugin_internal(
+    archive_path: &Path,
+    app_state: &crate::AppState,
+) -> Result<PluginSummaryDto, PluginError> {
+    let archive_path_owned = archive_path.to_path_buf();
+    let configured_state_path = app_state.state_path.clone();
+
+    let staged = run_blocking_io("Archive staging", move || {
+        stage_plugin_archive(&archive_path_owned, configured_state_path)
+    })
+    .await?;
+
+    let plugin_id = staged.manifest.metadata.id.clone();
+    let is_job_active = is_plugin_job_active(app_state, &plugin_id).await;
+    let existing_reg_source = {
+        let registry = app_state.plugins.read().await;
+        registry.plugins.get(&plugin_id).map(|b| b.source.clone())
+    };
+    let now_iso = chrono::Utc::now().to_rfc3339();
+
+    let bundle = run_blocking_io("Plugin install commit", move || {
+        commit_staged_plugin(
+            staged,
+            is_job_active,
+            existing_reg_source.as_deref(),
+            &now_iso,
+        )
+    })
+    .await?;
+
+    let summary = bundle.to_summary();
+
+    // Short write lock to register the bundle only after state persistence succeeds
     let mut registry = app_state.plugins.write().await;
     registry.register(bundle);
 
@@ -395,25 +473,30 @@ pub(crate) async fn install_plugin_internal(
 
 /// Internal helper for removing a user plugin and purging its state.
 ///
-/// Snapshots active-job status and builds a [`RemovalPlan`](super::lifecycle_core::RemovalPlan) under short read locks,
-/// deletes the physical plugin directory and persists the updated state without
-/// holding registry locks, then removes the entry under a short write lock.
+/// Snapshots active-job status, loads `plugin_state.json` on `spawn_blocking`, computes
+/// a [`RemovalPlan`](super::lifecycle_core::RemovalPlan) under a short read lock, deletes the
+/// physical plugin directory and persists updated state on `spawn_blocking` without holding
+/// registry locks, then removes the entry under a short write lock.
 ///
 /// # Purity
-/// Imperative shell: performs async `RwLock` synchronization, clock reads,
-/// filesystem directory deletion, and atomic state persistence around pure
-/// [`plan_plugin_removal`].
+/// Imperative shell: performs async `RwLock` synchronization, clock reads, blocking-pool
+/// filesystem deletion, and atomic state persistence around pure [`plan_plugin_removal`].
 pub(crate) async fn remove_plugin_internal(
     plugin_id: &str,
     app_state: &crate::AppState,
 ) -> Result<(), PluginError> {
     let is_job_active = is_plugin_job_active(app_state, plugin_id).await;
 
-    let state_path = state_path_or_default(app_state);
-    let store = load_plugin_state(&state_path).unwrap_or_default();
-    let plugins_dir = plugins_dir_from_state_path(&state_path);
-    let now_iso = chrono::Utc::now().to_rfc3339();
+    let configured_state_path = app_state.state_path.clone();
+    let (state_path, plugins_dir, store) = run_blocking_io("State load", move || {
+        let state_path = resolve_state_path(configured_state_path);
+        let store = load_plugin_state(&state_path).unwrap_or_default();
+        let plugins_dir = plugins_dir_from_state_path(&state_path);
+        Ok((state_path, plugins_dir, store))
+    })
+    .await?;
 
+    let now_iso = chrono::Utc::now().to_rfc3339();
     let (has_bundle, plan) = {
         let registry = app_state.plugins.read().await;
         let has_bundle = registry.plugins.contains_key(plugin_id);
@@ -427,17 +510,20 @@ pub(crate) async fn remove_plugin_internal(
         (has_bundle, plan)
     };
 
-    if plan.install_dir_to_remove.exists() {
-        if has_bundle {
-            std::fs::remove_dir_all(&plan.install_dir_to_remove).map_err(|e| {
-                PluginError::Io(format!("Failed to delete plugin directory: {}", e))
-            })?;
-        } else {
-            let _ = std::fs::remove_dir_all(&plan.install_dir_to_remove);
+    run_blocking_io("Plugin removal cleanup", move || {
+        if plan.install_dir_to_remove.exists() {
+            if has_bundle {
+                std::fs::remove_dir_all(&plan.install_dir_to_remove).map_err(|e| {
+                    PluginError::Io(format!("Failed to delete plugin directory: {}", e))
+                })?;
+            } else {
+                let _ = std::fs::remove_dir_all(&plan.install_dir_to_remove);
+            }
         }
-    }
 
-    save_plugin_state(&state_path, &plan.updated_store)?;
+        save_plugin_state(&state_path, &plan.updated_store)
+    })
+    .await?;
 
     let mut registry = app_state.plugins.write().await;
     registry.plugins.remove(plugin_id);
@@ -447,16 +533,15 @@ pub(crate) async fn remove_plugin_internal(
 
 /// Internal helper for validating and saving custom parameter overrides.
 ///
-/// Snapshots plugin metadata under a short read lock, drops the lock, runs
-/// [`validate_custom_parameters`] (`rayon::par_iter()`) inside
-/// `tokio::task::spawn_blocking`, persists the new state computed by
-/// [`with_config_update`], and finally updates the in-memory bundle under a
+/// Snapshots plugin metadata under a short read lock, drops the lock, runs pure
+/// [`validate_custom_parameters`], persists the new state computed by [`with_config_update`]
+/// inside `tokio::task::spawn_blocking`, and finally updates the in-memory bundle under a
 /// short write lock.
 ///
 /// # Purity
-/// Imperative shell: performs async `RwLock` synchronization, blocking worker
-/// dispatch, clock reads, and atomic state persistence around pure
-/// [`validate_custom_parameters`] and [`with_config_update`].
+/// Imperative shell: performs async `RwLock` synchronization, clock reads, and
+/// blocking-pool atomic state persistence around pure [`validate_custom_parameters`]
+/// and [`with_config_update`].
 pub(crate) async fn update_plugin_config_internal(
     plugin_id: &str,
     custom_params: serde_json::Value,
@@ -476,26 +561,21 @@ pub(crate) async fn update_plugin_config_internal(
         )
     };
 
-    let params_clone = custom_params.clone();
-    tokio::task::spawn_blocking(move || validate_custom_parameters(&parameters_raw, &params_clone))
-        .await
-        .map_err(|e| {
-            PluginError::StateError(format!("Parameter validation task failed: {}", e))
-        })??;
+    validate_custom_parameters(&parameters_raw, &custom_params)?;
 
-    let state_path = state_path_or_default(app_state);
-    let store = load_plugin_state(&state_path).unwrap_or_default();
-    let now_iso = chrono::Utc::now().to_rfc3339();
-    let input = ConfigUpdateInput {
-        plugin_id,
-        version: &version,
-        source,
-        enabled,
-        custom_params: &custom_params,
-    };
-    let next_store = with_config_update(&store, &input, &now_iso);
-
-    save_plugin_state(&state_path, &next_store)?;
+    let plugin_id_owned = plugin_id.to_string();
+    let params_for_state = custom_params.clone();
+    persist_state_update_blocking("Config persistence", app_state, move |store, now_iso| {
+        let input = ConfigUpdateInput {
+            plugin_id: &plugin_id_owned,
+            version: &version,
+            source,
+            enabled,
+            custom_params: &params_for_state,
+        };
+        with_config_update(store, &input, now_iso)
+    })
+    .await?;
 
     let mut registry = app_state.plugins.write().await;
     if let Some(bundle_mut) = registry.plugins.get_mut(plugin_id) {

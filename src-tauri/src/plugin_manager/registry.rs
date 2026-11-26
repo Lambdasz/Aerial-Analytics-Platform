@@ -228,39 +228,50 @@ pub(crate) async fn check_plugin_health_internal(
 
     let result = execute_healthcheck(&bundle).await;
 
-    // Persist healthcheck status to plugin_state.json if state_path is configured or default exists
-    let state_path_opt = app_state.state_path.clone().or_else(|| {
-        let candidate = crate::plugin_manager::lifecycle::default_state_path();
-        if candidate.exists() {
-            Some(candidate)
-        } else {
-            None
-        }
-    });
+    // Persist healthcheck status to plugin_state.json on blocking pool if state_path is configured or default exists
+    let configured_state_path = app_state.state_path.clone();
+    let plugin_id_owned = plugin_id.to_string();
+    let bundle_version = bundle.manifest.metadata.version.clone();
+    let bundle_source = bundle.source.clone();
+    let bundle_enabled = bundle.enabled;
+    let result_status = result.status.clone();
+    let result_error = result.error.clone();
+    let now_iso = chrono::Utc::now().to_rfc3339();
 
-    if let Some(state_path) = state_path_opt {
-        let store =
-            crate::plugin_manager::lifecycle::load_plugin_state(&state_path).unwrap_or_default();
-        let now_iso = chrono::Utc::now().to_rfc3339();
-        let source = if bundle.source == "user" {
-            PluginSource::User
-        } else {
-            PluginSource::Builtin
-        };
-        let next_store = with_healthcheck_state(
-            &store,
-            &HealthcheckStateInput {
-                plugin_id,
-                bundle_version: &bundle.manifest.metadata.version,
-                source,
-                enabled: bundle.enabled,
-                status: &result.status,
-                error_msg: result.error.as_deref(),
-                now_iso: &now_iso,
-            },
-        );
-        let _ = crate::plugin_manager::lifecycle::save_plugin_state(&state_path, &next_store);
-    }
+    let _ = tokio::task::spawn_blocking(move || {
+        let state_path_opt = configured_state_path.or_else(|| {
+            let candidate = crate::plugin_manager::lifecycle::default_state_path();
+            if candidate.exists() {
+                Some(candidate)
+            } else {
+                None
+            }
+        });
+
+        if let Some(state_path) = state_path_opt {
+            let store = crate::plugin_manager::lifecycle::load_plugin_state(&state_path)
+                .unwrap_or_default();
+            let source = if bundle_source == "user" {
+                PluginSource::User
+            } else {
+                PluginSource::Builtin
+            };
+            let next_store = with_healthcheck_state(
+                &store,
+                &HealthcheckStateInput {
+                    plugin_id: &plugin_id_owned,
+                    bundle_version: &bundle_version,
+                    source,
+                    enabled: bundle_enabled,
+                    status: &result_status,
+                    error_msg: result_error.as_deref(),
+                    now_iso: &now_iso,
+                },
+            );
+            let _ = crate::plugin_manager::lifecycle::save_plugin_state(&state_path, &next_store);
+        }
+    })
+    .await;
 
     // Update in-memory health status under short write lock
     {
@@ -276,33 +287,50 @@ pub(crate) async fn check_plugin_health_internal(
 /// Executes the pre-flight entrypoint health check subprocess (`<entrypoint> --healthcheck`) with a 10s timeout.
 ///
 /// # Purity
-/// Impure async process I/O: probes filesystem paths, spawns child subprocesses, reads stdout/stderr
-/// pipes, and enforces a Tokio timeout.
+/// Impure async process I/O: probes filesystem paths via `tokio::task::spawn_blocking`,
+/// spawns child subprocesses, reads stdout/stderr pipes, and enforces a Tokio timeout.
 pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDto {
     let plugin_id = bundle.manifest.metadata.id.clone();
     let version = bundle.manifest.metadata.version.clone();
-    let entrypoint = &bundle.manifest.runtime.entrypoint;
+    let install_path = bundle.install_path.clone();
+    let entrypoint = bundle.manifest.runtime.entrypoint.clone();
+    let runtime_type = bundle.manifest.runtime.runtime_type.clone();
     let healthcheck_flag = bundle
         .manifest
         .runtime
         .healthcheck_flag
         .as_deref()
-        .unwrap_or("--healthcheck");
+        .unwrap_or("--healthcheck")
+        .to_string();
 
-    let mut cmd = match super::executor::build_plugin_command(
-        &bundle.install_path,
-        entrypoint,
-        bundle.manifest.runtime.runtime_type.as_str(),
-        &[std::ffi::OsStr::new(healthcheck_flag)],
-    ) {
-        Ok(c) => c,
-        Err(err) => {
+    let cmd_res = tokio::task::spawn_blocking(move || {
+        super::executor::build_plugin_command(
+            &install_path,
+            &entrypoint,
+            &runtime_type,
+            &[std::ffi::OsStr::new(&healthcheck_flag)],
+        )
+    })
+    .await;
+
+    let mut cmd = match cmd_res {
+        Ok(Ok(c)) => c,
+        Ok(Err(err)) => {
             return HealthStatusDto {
                 status: "unhealthy".to_string(),
                 plugin_id,
                 version,
                 details: None,
                 error: Some(err.to_string()),
+            };
+        }
+        Err(join_err) => {
+            return HealthStatusDto {
+                status: "unhealthy".to_string(),
+                plugin_id,
+                version,
+                details: None,
+                error: Some(format!("Healthcheck setup task failed: {}", join_err)),
             };
         }
     };
@@ -352,7 +380,10 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
         Err(_) => {
             let _ = child.kill().await;
             if let Some(pid) = child_pid {
-                crate::plugin_manager::executor::kill_process_tree(pid);
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::plugin_manager::executor::kill_process_tree(pid);
+                })
+                .await;
             }
             stdout_task.abort();
             stderr_task.abort();
