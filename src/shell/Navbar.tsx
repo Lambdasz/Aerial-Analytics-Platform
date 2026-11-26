@@ -1,4 +1,3 @@
-import { NavbarSearch } from "./NavbarSearch";
 import { NewMenu } from "./NewMenu";
 
 import "./style.css";
@@ -12,7 +11,6 @@ export function Navbar() {
       </div>
 
       <div className="app-shell_navbar-end">
-        <NavbarSearch />
         <NewMenu />
       </div>
     </header>

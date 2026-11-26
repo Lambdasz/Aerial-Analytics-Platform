@@ -101,9 +101,9 @@ async function countImagesPerSession(
       counts[session.id] = count;
       if (count !== undefined) cache.set(session.id, { key: countKey(session), count });
     });
+    onProgress({ ...counts });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
-  if (!isCancelled()) onProgress({ ...counts });
 }
 
 function Module01PageInner() {
@@ -377,14 +377,6 @@ function Module01PageInner() {
       switch (intent.kind) {
         case "select-project":
           handleSelectProject(intent.project);
-          break;
-        case "open-session":
-          handleSelectProject(intent.project);
-          setView({ kind: "detail", sessionId: intent.sessionId });
-          break;
-        case "create-session":
-          handleSelectProject(intent.project);
-          setIsCreateOpen(true);
           break;
         case "create-project":
           setView({ kind: "list" });

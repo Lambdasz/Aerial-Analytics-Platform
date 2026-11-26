@@ -1,10 +1,6 @@
 import type { Project } from "./projectCommands";
 
-export type M1Intent =
-  | { kind: "select-project"; project: Project }
-  | { kind: "open-session"; project: Project; sessionId: string }
-  | { kind: "create-session"; project: Project }
-  | { kind: "create-project" };
+export type M1Intent = { kind: "select-project"; project: Project } | { kind: "create-project" };
 
 export const M1_INTENT_EVENT = "m1-intent";
 

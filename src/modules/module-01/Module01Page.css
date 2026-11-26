@@ -2,7 +2,7 @@
    Module 01: Sesi Penerbangan (Flight Sessions)
    Design accurately adapted from TaskFlow reference layout & palette.
    ========================================================================== */ /* App shell content alignment for Module 01 to eliminate edge gaps */
-.app-shell_content:has(> .m1-page) {
+.app-shell__content:has(> .m1-page) {
   padding: 0;
   background-color: #f6f7f9;
 }
