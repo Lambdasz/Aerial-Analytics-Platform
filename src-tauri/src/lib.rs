@@ -462,9 +462,10 @@
 //! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
 //! ```
 //!
-//! **Status**: Implemented (`vegetation-coverage-analytics`): mask source
-//! `auto` (ExG/ExR/VARI) or `file` (Module 4 mask), zonation GeoJSON, plot
-//! comparison, 16 unit tests. Artefacts carry WGS 84 bounds for the map.
+//! **Status**: Implemented (`vegetation-coverage-analytics`): modular functional
+//! architecture (`types`, `indices`, `coverage`, `geo`, `zonation`, `plots`, `pipeline`),
+//! mask source `auto` (ExG/ExR/VARI, default) or `file` (Module 4 mask), zonation GeoJSON, plot
+//! comparison, 24 unit tests. Artefacts carry WGS 84 bounds for the map.
 //!
 //! ---
 //!
