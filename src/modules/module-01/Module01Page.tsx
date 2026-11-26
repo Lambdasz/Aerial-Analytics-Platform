@@ -25,6 +25,7 @@ import {
 
 import { type Project, countImagesByProject } from "./projectCommands";
 import { M1_INTENT_EVENT, type M1Intent, takeM1Intent } from "./navIntent";
+import { useCurrentProject } from "../../shell/currentProject";
 
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
@@ -43,7 +44,6 @@ import {
 import "./Module01Page.css";
 
 const PAGE_SIZE = 9;
-const STORAGE_KEY = "m1_last_project_id";
 
 type StatusFilter = "all" | "active" | "archived";
 const DEFAULT_STATUS_FILTER: StatusFilter = "active";
@@ -107,34 +107,18 @@ async function countImagesPerSession(
 }
 
 function Module01PageInner() {
-  const [selectedProject, setSelectedProject] = useState<Project | null>(() => {
-    try {
-      const savedJson = localStorage.getItem(STORAGE_KEY);
-      if (savedJson) {
-        const parsed = JSON.parse(savedJson) as Project;
-        if (parsed && parsed.id && isValidUuid(parsed.id)) return parsed;
-      }
-    } catch {
-      // Ignore
-    }
-    return null;
-  });
+  const {
+    currentProject: selectedProject,
+    setCurrentProject,
+    clearCurrentProject,
+  } = useCurrentProject();
 
   const projectId = selectedProject?.id ?? "";
 
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState<boolean>(() => {
-    try {
-      const savedJson = localStorage.getItem(STORAGE_KEY);
-      if (savedJson) {
-        const parsed = JSON.parse(savedJson) as Project;
-        return Boolean(parsed && parsed.id && isValidUuid(parsed.id));
-      }
-    } catch {
-      // Ignore
-    }
-    return false;
-  });
+  const [loading, setLoading] = useState<boolean>(() =>
+    Boolean(projectId && isValidUuid(projectId)),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalImages, setTotalImages] = useState<number | undefined>(undefined);
@@ -190,6 +174,24 @@ function Module01PageInner() {
 
   // In-page navigation (no router): list screen or a session's detail screen
   const [view, setView] = useState<View>({ kind: "list" });
+
+  // Reset list/filter/view state whenever the globally active project changes
+  // (whether selected via the navbar or via Module 1's ProjectPicker).
+  const [prevProjectId, setPrevProjectId] = useState(projectId);
+  if (prevProjectId !== projectId) {
+    setPrevProjectId(projectId);
+    setLoading(Boolean(projectId && isValidUuid(projectId)));
+    setError(null);
+    setSearchQuery("");
+    setStatusFilter(DEFAULT_STATUS_FILTER);
+    setCurrentPage(1);
+    setView({ kind: "list" });
+    if (!projectId) {
+      setSessions([]);
+      setTotalImages(undefined);
+      setImageCounts({});
+    }
+  }
 
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -334,42 +336,22 @@ function Module01PageInner() {
   // Handle Project selection
   const handleSelectProject = useCallback(
     (project: Project) => {
-      setSelectedProject(project);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-      } catch {
-        // Ignore localStorage errors
-      }
-      // Re-picking the open project does not re-run the load effect, so don't wait on it.
-      setLoading(project.id !== projectId);
+      setCurrentProject(project);
       setSearchQuery("");
       setStatusFilter(DEFAULT_STATUS_FILTER);
       setCurrentPage(1);
       setView({ kind: "list" });
     },
-    [projectId],
+    [setCurrentProject],
   );
 
   // Project deleted from the picker: clear the selection if it was the active project
   const handleProjectDeleted = useCallback(
     (deletedId: string) => {
       if (selectedProject?.id !== deletedId) return;
-      setSelectedProject(null);
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch {
-        // Ignore localStorage errors
-      }
-      setSessions([]);
-      setTotalImages(undefined);
-      setImageCounts({});
-      setLoading(false);
-      setSearchQuery("");
-      setStatusFilter(DEFAULT_STATUS_FILTER);
-      setCurrentPage(1);
-      setView({ kind: "list" });
+      clearCurrentProject();
     },
-    [selectedProject],
+    [selectedProject, clearCurrentProject],
   );
 
   const applyIntent = useCallback(

@@ -4,8 +4,8 @@ import { LuCheck, LuChevronDown, LuFolder, LuFolderPlus, LuSearch } from "react-
 import { type Project, listProjects } from "../modules/module-01/projectCommands";
 import { sendM1Intent } from "../modules/module-01/navIntent";
 import { shortId } from "../modules/module-01/sessionStats";
+import { useCurrentProject } from "./currentProject";
 
-const ACTIVE_PROJECT_KEY = "m1_last_project_id";
 const IDLE_LIMIT = 5;
 
 type PickerStatus = "loading" | "error" | "ready";
@@ -246,28 +246,11 @@ function ProjectSearchList<T extends PickerItem>({
   );
 }
 
-interface ActiveProject {
-  id: string;
-  name: string;
-}
-
-function readActiveProject(): ActiveProject | null {
-  try {
-    const raw = window.localStorage.getItem(ACTIVE_PROJECT_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { id?: unknown; name?: unknown };
-    if (typeof parsed.id !== "string") return null;
-    return { id: parsed.id, name: typeof parsed.name === "string" ? parsed.name : "" };
-  } catch {
-    return null;
-  }
-}
-
-export function NewMenu() {
+export function ProjectSwitcher() {
+  const { currentProject, setCurrentProject } = useCurrentProject();
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [failed, setFailed] = useState(false);
-  const [active, setActive] = useState<ActiveProject | null>(() => readActiveProject());
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -299,7 +282,6 @@ export function NewMenu() {
       close(false);
       return;
     }
-    setActive(readActiveProject());
     setOpen(true);
     load();
   };
@@ -320,24 +302,11 @@ export function NewMenu() {
     };
   }, [open, close]);
 
-  useEffect(() => {
-    const sync = () => {
-      const next = readActiveProject();
-      setActive((prev) => (prev?.id === next?.id && prev?.name === next?.name ? prev : next));
-    };
-    document.addEventListener("click", sync);
-    document.addEventListener("keyup", sync);
-    return () => {
-      document.removeEventListener("click", sync);
-      document.removeEventListener("keyup", sync);
-    };
-  }, []);
-
   const items = useMemo(() => projects ?? [], [projects]);
   const status: PickerStatus = failed ? "error" : projects === null ? "loading" : "ready";
 
   const selectProject = (project: Project) => {
-    sendM1Intent({ kind: "select-project", project });
+    setCurrentProject(project);
     close(false);
   };
 
@@ -348,7 +317,7 @@ export function NewMenu() {
 
   return (
     <div
-      className="app-shell_new"
+      className="app-shell_project"
       ref={wrapperRef}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) close(false);
@@ -357,33 +326,38 @@ export function NewMenu() {
       <button
         ref={triggerRef}
         type="button"
-        className="app-shell_new-trigger"
+        className="app-shell_project-trigger"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        aria-label={active?.name ? `Proyek aktif: ${active.name}` : "Pilih proyek"}
-        title={active?.name || "Pilih proyek"}
+        aria-label={currentProject?.name ? `Proyek aktif: ${currentProject.name}` : "Pilih proyek"}
+        title={currentProject?.name || "Pilih proyek"}
         onClick={toggle}
       >
         <LuFolder size={16} aria-hidden="true" />
-        <span className="app-shell_new-name">{active?.name || "Pilih proyek"}</span>
+        <span className="app-shell_project-name">{currentProject?.name || "Pilih proyek"}</span>
         <LuChevronDown size={12} aria-hidden="true" />
       </button>
 
       {open && (
-        <div id={panelId} className="app-shell_new-menu" role="dialog" aria-label="Pilih proyek">
+        <div
+          id={panelId}
+          className="app-shell_project-menu"
+          role="dialog"
+          aria-label="Pilih proyek"
+        >
           <ProjectSearchList
             items={items}
             status={status}
-            selectedId={active?.id ?? null}
+            selectedId={currentProject?.id ?? null}
             limit={IDLE_LIMIT}
             onSelect={selectProject}
             onRetry={load}
             renderMeta={(project) => `ID ${shortId(project.id)}`}
             focusOnMount
           />
-          <div className="app-shell_new-footer">
-            <button type="button" className="app-shell_new-create" onClick={addProject}>
+          <div className="app-shell_project-footer">
+            <button type="button" className="app-shell_project-create" onClick={addProject}>
               <LuFolderPlus size={16} aria-hidden="true" />
               Proyek baru
             </button>

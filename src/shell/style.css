@@ -266,11 +266,11 @@
   font-family: "DM Sans", sans-serif;
 }
 
-.app-shell_new {
+.app-shell_project {
   position: relative;
 }
 
-.app-shell_new-trigger {
+.app-shell_project-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -288,7 +288,7 @@
     border-color 0.15s ease;
 }
 
-.app-shell_new-name {
+.app-shell_project-name {
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -297,13 +297,13 @@
   font-weight: 600;
 }
 
-.app-shell_new-trigger:hover,
-.app-shell_new-trigger[aria-expanded="true"] {
+.app-shell_project-trigger:hover,
+.app-shell_project-trigger[aria-expanded="true"] {
   background: #f6f7f9;
   border-color: rgba(17, 20, 24, 0.26);
 }
 
-.app-shell_new-menu {
+.app-shell_project-menu {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -317,13 +317,13 @@
   box-shadow: 0 12px 32px rgba(17, 20, 24, 0.14);
 }
 
-.app-shell_new-footer {
+.app-shell_project-footer {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid rgba(17, 20, 24, 0.07);
 }
 
-.app-shell_new-create {
+.app-shell_project-create {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -339,7 +339,7 @@
   cursor: pointer;
 }
 
-.app-shell_new-create:hover {
+.app-shell_project-create:hover {
   background: #f4f6fa;
 }
 

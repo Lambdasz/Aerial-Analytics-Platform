@@ -1,4 +1,4 @@
-import { NewMenu } from "./NewMenu";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 
 import "./style.css";
 
@@ -11,7 +11,7 @@ export function Navbar() {
       </div>
 
       <div className="app-shell_navbar-end">
-        <NewMenu />
+        <ProjectSwitcher />
       </div>
     </header>
   );
