@@ -30,7 +30,6 @@ import { useCurrentProject } from "../../shell/currentProject";
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
 import { SummaryBoxes } from "./components/SummaryBoxes";
-import { ProjectPicker } from "./components/ProjectPicker";
 import { CreateProjectDialog } from "./components/CreateProjectDialog";
 import { SessionCard } from "./components/SessionCard";
 import { SessionDetail } from "./components/SessionDetail";
@@ -107,11 +106,7 @@ async function countImagesPerSession(
 }
 
 function Module01PageInner() {
-  const {
-    currentProject: selectedProject,
-    setCurrentProject,
-    clearCurrentProject,
-  } = useCurrentProject();
+  const { currentProject: selectedProject, setCurrentProject } = useCurrentProject();
 
   const projectId = selectedProject?.id ?? "";
 
@@ -196,7 +191,6 @@ function Module01PageInner() {
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
-  const [projectsVersion, setProjectsVersion] = useState(0);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [assignTarget, setAssignTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
@@ -345,20 +339,32 @@ function Module01PageInner() {
     [setCurrentProject],
   );
 
-  // Project deleted from the picker: clear the selection if it was the active project
-  const handleProjectDeleted = useCallback(
-    (deletedId: string) => {
-      if (selectedProject?.id !== deletedId) return;
-      clearCurrentProject();
-    },
-    [selectedProject, clearCurrentProject],
-  );
-
   const applyIntent = useCallback(
     (intent: M1Intent) => {
       switch (intent.kind) {
         case "select-project":
           handleSelectProject(intent.project);
+          break;
+        case "open-session":
+          setCurrentProject(intent.project);
+          setPrevProjectId(intent.project.id);
+          setLoading(intent.project.id !== projectId);
+          setError(null);
+          setSearchQuery("");
+          setStatusFilter(DEFAULT_STATUS_FILTER);
+          setCurrentPage(1);
+          setView({ kind: "detail", sessionId: intent.sessionId });
+          break;
+        case "create-session":
+          setCurrentProject(intent.project);
+          setPrevProjectId(intent.project.id);
+          setLoading(intent.project.id !== projectId);
+          setError(null);
+          setSearchQuery("");
+          setStatusFilter(DEFAULT_STATUS_FILTER);
+          setCurrentPage(1);
+          setView({ kind: "list" });
+          setIsCreateOpen(true);
           break;
         case "create-project":
           setView({ kind: "list" });
@@ -366,7 +372,7 @@ function Module01PageInner() {
           break;
       }
     },
-    [handleSelectProject],
+    [handleSelectProject, setCurrentProject, projectId],
   );
 
   useEffect(() => {
@@ -624,14 +630,6 @@ function Module01PageInner() {
             </div>
 
             <div className="m1-header__actions">
-              <ProjectPicker
-                selectedProject={selectedProject}
-                onSelect={handleSelectProject}
-                onProjectDeleted={handleProjectDeleted}
-                onError={setError}
-                onToast={showToast}
-                refreshKey={projectsVersion}
-              />
               <button
                 type="button"
                 className="m1-primary-pill-btn"
@@ -1105,7 +1103,6 @@ function Module01PageInner() {
         isOpen={isCreateProjectOpen}
         onClose={() => setIsCreateProjectOpen(false)}
         onCreated={(project) => {
-          setProjectsVersion((v) => v + 1);
           handleSelectProject(project);
           showToast(`Proyek "${project.name}" dibuat.`);
         }}
