@@ -245,7 +245,7 @@ fn test_resolve_executable_python_binary_missing_and_unsupported() {
         resolve_executable(dir.path(), "worker", "binary", &payload_path, &result_path).unwrap();
     assert_eq!(
         PathBuf::from(bin_cmd.as_std().get_program()),
-        bin_path.canonicalize().unwrap_or_else(|_| bin_path.clone())
+        std::path::absolute(&bin_path).unwrap_or_else(|_| bin_path.clone())
     );
 
     let missing = resolve_executable(
@@ -726,4 +726,101 @@ async fn test_abort_plugin_job_internal_missing_finished_and_running_cleanup() {
     let rec = &guard.jobs[&handle.job_id];
     assert!(matches!(rec.status, JobStatusDto::Aborted));
     assert_eq!(rec.child_pid, None);
+}
+
+#[tokio::test]
+async fn test_start_plugin_job_missing_entrypoint_and_fast_exit_no_race() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = temp_dir.path().join("plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+
+    // Missing entrypoint triggers resolve_executable failure and cleans up jobs map
+    let image_path = temp_dir.path().join("img.jpg");
+    std::fs::write(&image_path, b"jpg").unwrap();
+    let image_str = image_path.to_string_lossy().into_owned();
+
+    let mut registry = PluginRegistry::new();
+    registry.register(mock_plugin_bundle(
+        "broken-plugin",
+        plugin_dir.clone(),
+        "python",
+        "nonexistent.py",
+        true,
+        10,
+    ));
+
+    // Fast-exiting script finishes immediately to stress-test job registration ordering
+    std::fs::write(
+        plugin_dir.join("fast.py"),
+        "import sys\nsys.stderr.write('fast fail\\n')\nsys.exit(1)\n",
+    )
+    .unwrap();
+    registry.register(mock_plugin_bundle(
+        "fast-plugin",
+        plugin_dir,
+        "python",
+        "fast.py",
+        true,
+        10,
+    ));
+
+    let state = test_app_state(registry, rusqlite::Connection::open_in_memory().unwrap());
+
+    let missing_err = start_plugin_job_internal(
+        StartJobRequestDto {
+            plugin_id: "broken-plugin".to_string(),
+            session_id: None,
+            target_image_path: image_str.clone(),
+            mime_type: "image/jpeg".to_string(),
+            aoi: None,
+            metadata: Some(serde_json::json!({})),
+            parameters: HashMap::new(),
+        },
+        None,
+        &state,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(missing_err.code, "SPAWN_FAILED");
+    assert!(state.jobs.read().await.jobs.is_empty());
+
+    let handle = start_plugin_job_internal(
+        StartJobRequestDto {
+            plugin_id: "fast-plugin".to_string(),
+            session_id: None,
+            target_image_path: image_str,
+            mime_type: "image/jpeg".to_string(),
+            aoi: None,
+            metadata: Some(serde_json::json!({})),
+            parameters: HashMap::new(),
+        },
+        None,
+        &state,
+    )
+    .await
+    .unwrap();
+
+    let mut reached_failed = false;
+    let mut output_dir_to_clean = None;
+    for _ in 0..50 {
+        {
+            let guard = state.jobs.read().await;
+            let rec = &guard.jobs[&handle.job_id];
+            output_dir_to_clean = rec.output_dir.clone();
+            if matches!(rec.status, JobStatusDto::Failed { .. }) {
+                reached_failed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    if let Some(dir) = output_dir_to_clean {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    assert!(
+        reached_failed,
+        "fast-exiting plugin must transition to Failed rather than remaining stuck in Running"
+    );
 }

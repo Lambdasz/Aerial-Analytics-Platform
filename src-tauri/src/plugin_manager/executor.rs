@@ -22,7 +22,7 @@
 //! `uuid::Uuid::new_v4()` ID generation, and `tokio::task::spawn_blocking`
 //! dispatch live here. Pure domain logic (execution gating, target extraction,
 //! payload construction, progress parsing/throttling, kill-target guards, and
-//! parallel JSON result/artifact parsing) is delegated to
+//! JSON result/artifact parsing) is delegated to
 //! [`super::executor_core`].
 //!
 //! Refer to: `src-tauri/src/plugin_manager/DOCS/03_DOMAIN_3_EXECUTION_SUPERVISOR.md`
@@ -142,7 +142,7 @@ pub(crate) async fn start_plugin_job_internal(
         let runtime_type = target.runtime_type.clone();
         let payload_path_owned = payload_path.clone();
         let result_path_owned = result_path.clone();
-        tokio::task::spawn_blocking(move || {
+        let cmd_res = tokio::task::spawn_blocking(move || {
             resolve_executable(
                 &plugin_dir,
                 &entrypoint,
@@ -155,25 +155,34 @@ pub(crate) async fn start_plugin_job_internal(
         .map_err(|e| CommandError {
             code: "SPAWN_FAILED".to_string(),
             message: format!("Plugin executable resolution task failed: {}", e),
-        })??
+        });
+        match cmd_res {
+            Ok(Ok(c)) => c,
+            Ok(Err(err)) => {
+                let _ = tokio::fs::remove_dir_all(&output_dir).await;
+                return Err(err.into());
+            }
+            Err(err) => {
+                let _ = tokio::fs::remove_dir_all(&output_dir).await;
+                return Err(err);
+            }
+        }
     };
 
-    let child = cmd.spawn().map_err(|e| CommandError {
-        code: "SPAWN_FAILED".to_string(),
-        message: format!("Failed to spawn plugin subprocess: {}", e),
-    })?;
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tokio::fs::remove_dir_all(&output_dir).await;
+            return Err(CommandError {
+                code: "SPAWN_FAILED".to_string(),
+                message: format!("Failed to spawn plugin subprocess: {}", e),
+            });
+        }
+    };
     let child_pid = child.id();
 
-    let supervisor_task = spawn_supervisor_task(
-        child,
-        job_id.clone(),
-        result_path,
-        output_dir.clone(),
-        target.timeout_seconds,
-        app,
-        state.jobs.clone(),
-    );
-
+    // Register JobRecord before spawning supervisor_task so fast-exiting plugins
+    // always find their entry in state.jobs and never lose completion state.
     {
         let mut tracker = state.jobs.write().await;
         tracker.jobs.insert(
@@ -187,11 +196,28 @@ pub(crate) async fn start_plugin_job_internal(
                 },
                 result: None,
                 started_at: Utc::now().to_rfc3339(),
-                abort_handle: Some(supervisor_task.abort_handle()),
+                abort_handle: None,
                 child_pid,
-                output_dir: Some(output_dir),
+                output_dir: Some(output_dir.clone()),
             },
         );
+    }
+
+    let supervisor_task = spawn_supervisor_task(
+        child,
+        job_id.clone(),
+        result_path,
+        output_dir,
+        target.timeout_seconds,
+        app,
+        state.jobs.clone(),
+    );
+
+    {
+        let mut tracker = state.jobs.write().await;
+        if let Some(record) = tracker.jobs.get_mut(&job_id) {
+            record.abort_handle = Some(supervisor_task.abort_handle());
+        }
     }
 
     Ok(JobHandleDto {
@@ -699,7 +725,6 @@ fn process_group_of(_pid: u32) -> Option<u32> {
     None
 }
 
-/// Configures standard plugin CLI flags, working directory, piped stdio, and
 /// Builds a cross-platform `tokio::process::Command` for a Python or native binary plugin
 /// entrypoint with piped stdout/stderr, working directory `plugin_dir`, and Unix
 /// process-group isolation (`process_group(0)`).
@@ -927,17 +952,22 @@ where
 
     match execution_result {
         Err(_) => {
-            // Execution timed out: forcibly kill child process
-            let _ = child.kill().await;
+            // Kill the process group while the child is still unreaped so /proc/<pid>/stat
+            // retains its pgrp and grandchild workers are terminated cleanly before wait().
             if let Some(pid) = child_pid {
                 let _ = tokio::task::spawn_blocking(move || {
                     kill_process_tree(pid);
                 })
                 .await;
             }
+            let _ = child.kill().await;
+            stderr_handle.abort();
             Err(PluginError::Timeout(timeout_secs))
         }
-        Ok(Err(io_err)) => Err(PluginError::Io(io_err.to_string())),
+        Ok(Err(io_err)) => {
+            stderr_handle.abort();
+            Err(PluginError::Io(io_err.to_string()))
+        }
         Ok(Ok(status)) => {
             let stderr_output = stderr_handle.await.unwrap_or_default();
             let has_result_file = tokio::fs::try_exists(&result_path).await.unwrap_or(false);
@@ -998,7 +1028,7 @@ fn verify_artifact_sandbox(
 /// Reads the plugin output file and validates it against the execution result schema.
 ///
 /// # Purity
-/// Impure filesystem I/O: reads `result_path` from disk, delegates pure parallel
+/// Impure filesystem I/O: reads `result_path` from disk, delegates pure
 /// JSON parsing to [`parse_result_json`], and validates artifact paths on disk
 /// via [`verify_artifact_sandbox`].
 pub(crate) fn read_and_validate_result(

@@ -262,7 +262,7 @@ pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> 
 }
 
 // ---------------------------------------------------------------------------
-// 3. PURE JSON RESULT & PARALLEL ARTIFACT PARSING
+// 3. PURE JSON RESULT & LAZY ARTIFACT PARSING
 // ---------------------------------------------------------------------------
 
 /// Parses a plugin's raw `result.json` payload into a [`StandardJobResultDto`],

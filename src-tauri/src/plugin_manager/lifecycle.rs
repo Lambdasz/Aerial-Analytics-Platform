@@ -136,6 +136,9 @@ pub async fn update_plugin_config(
 // ---------------------------------------------------------------------------
 
 /// Offloads synchronous filesystem/ZIP/persistence work onto Tokio's blocking pool.
+///
+/// # Purity
+/// Imperative shell: dispatches an impure blocking closure via `tokio::task::spawn_blocking`.
 async fn run_blocking_io<T, F>(label: &str, f: F) -> Result<T, PluginError>
 where
     T: Send + 'static,
@@ -148,6 +151,9 @@ where
 
 /// Resolves the state path from optional config, loads `plugin_state.json`, applies `update_fn`,
 /// and persists atomically on Tokio's blocking thread pool.
+///
+/// # Purity
+/// Imperative shell: reads `Utc::now()` clock and dispatches state load/save on `spawn_blocking`.
 async fn persist_state_update_blocking<F>(
     label: &str,
     app_state: &crate::AppState,
@@ -257,13 +263,9 @@ fn plugins_dir_from_state_path(state_path: &Path) -> PathBuf {
 /// Maps a bundle source label (`"user"` vs `"builtin"`) to [`PluginSource`].
 ///
 /// # Purity
-/// Pure deterministic mapping over `&str`.
+/// Pure deterministic mapping over `&str`; delegates to [`PluginSource::from_label`].
 fn plugin_source_from_label(source: &str) -> PluginSource {
-    if source == "user" {
-        PluginSource::User
-    } else {
-        PluginSource::Builtin
-    }
+    PluginSource::from_label(source)
 }
 
 /// Checks whether `plugin_id` currently has a queued or running job in `app_state.jobs`.
@@ -292,6 +294,9 @@ struct StagedPluginArchive {
 }
 
 /// Extracts `archive_path` into a staging directory under `plugins_dir` and parses `manifest.json`.
+///
+/// # Purity
+/// Impure synchronous ZIP and filesystem I/O (intended for `tokio::task::spawn_blocking`).
 fn stage_plugin_archive(
     archive_path: &Path,
     configured_state_path: Option<PathBuf>,
@@ -355,6 +360,9 @@ fn stage_plugin_archive(
 }
 
 /// Validates preconditions/sub-contracts, commits staged files to `plugins/<id>`, and saves state.
+///
+/// # Purity
+/// Impure synchronous filesystem commit and state persistence (intended for `tokio::task::spawn_blocking`).
 fn commit_staged_plugin(
     staged: StagedPluginArchive,
     is_job_active: bool,

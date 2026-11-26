@@ -197,21 +197,24 @@ pub(crate) fn validate_custom_parameters(
                             key
                         ),
                     })?;
-                let options = param_def
+                let options_arr = param_def
                     .get("options")
                     .and_then(|o| o.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|item| item.as_str())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                if !options.contains(&str_val) {
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                if !options_arr
+                    .iter()
+                    .any(|item| item.as_str() == Some(str_val))
+                {
+                    let allowed: Vec<&str> = options_arr
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .collect();
                     return Err(PluginError::SubcontractInvalid {
                         path: "parameters.json".to_string(),
                         message: format!(
                             "Parameter '{}' value '{}' is not one of the allowed options: {:?}",
-                            key, str_val, options
+                            key, str_val, allowed
                         ),
                     });
                 }
@@ -724,7 +727,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_custom_parameters_parallel_valid_and_invalid() {
+    fn test_validate_custom_parameters_valid_and_invalid() {
         let schema = serde_json::json!({
             "parameters": [
                 { "name": "enabled_flag", "type": "boolean" },

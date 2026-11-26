@@ -251,11 +251,7 @@ pub(crate) async fn check_plugin_health_internal(
         if let Some(state_path) = state_path_opt {
             let store = crate::plugin_manager::lifecycle::load_plugin_state(&state_path)
                 .unwrap_or_default();
-            let source = if bundle_source == "user" {
-                PluginSource::User
-            } else {
-                PluginSource::Builtin
-            };
+            let source = PluginSource::from_label(&bundle_source);
             let next_store = with_healthcheck_state(
                 &store,
                 &HealthcheckStateInput {
@@ -378,13 +374,13 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
 
     match wait_res {
         Err(_) => {
-            let _ = child.kill().await;
             if let Some(pid) = child_pid {
                 let _ = tokio::task::spawn_blocking(move || {
                     crate::plugin_manager::executor::kill_process_tree(pid);
                 })
                 .await;
             }
+            let _ = child.kill().await;
             stdout_task.abort();
             stderr_task.abort();
             HealthStatusDto {

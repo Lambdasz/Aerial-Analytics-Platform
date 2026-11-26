@@ -196,6 +196,23 @@ pub enum PluginSource {
     User,
 }
 
+impl PluginSource {
+    /// Maps a bundle source label (`"user"` vs `"builtin"`) to [`PluginSource`].
+    ///
+    /// # Purity
+    /// Pure deterministic mapping over `&str`.
+    ///
+    /// # Complexity
+    /// Time and Space: `O(1)`.
+    pub(crate) fn from_label(label: &str) -> Self {
+        if label == "user" {
+            Self::User
+        } else {
+            Self::Builtin
+        }
+    }
+}
+
 /// Cached result of the most recent pre-flight dependency health check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CachedHealthcheck {
@@ -288,6 +305,9 @@ impl PluginStateStore {
     /// # Purity
     /// Pure immutable state transition; clones `&self` without mutating the caller's store
     /// and performs no I/O or clock access.
+    ///
+    /// # Complexity
+    /// Time and Space: `O(s)` to clone `s` stored plugin records (`O(1)` average hash upsert).
     pub(crate) fn with_updated_record(
         &self,
         plugin_id: &str,

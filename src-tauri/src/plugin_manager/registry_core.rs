@@ -296,6 +296,9 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
 ///
 /// # Purity
 /// Pure deterministic parser and validator; zero I/O, zero mutation.
+///
+/// # Complexity
+/// Time and Space: `O(s)` in JSON byte length `s` across declared parameter definitions.
 pub(crate) fn parse_and_validate_parameters(
     raw_json: &str,
     path_label: &str,
@@ -394,6 +397,9 @@ pub(crate) fn parse_and_validate_parameters(
 ///
 /// # Purity
 /// Pure deterministic parser and validator; zero I/O, zero mutation.
+///
+/// # Complexity
+/// Time and Space: `O(s + m)` in JSON byte length `s` and declared MIME type list length `m`.
 pub(crate) fn parse_and_validate_inputs(
     raw_json: &str,
     path_label: &str,
@@ -460,6 +466,9 @@ pub(crate) fn parse_and_validate_inputs(
 ///
 /// # Purity
 /// Pure deterministic parser and validator; zero I/O, zero mutation.
+///
+/// # Complexity
+/// Time and Space: `O(s)` in JSON byte length `s` across declared metrics/outputs.
 pub(crate) fn parse_and_validate_outputs(
     raw_json: &str,
     path_label: &str,
