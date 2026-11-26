@@ -67,6 +67,9 @@ impl PluginRegistry {
     ///
     /// # Purity
     /// Pure read-only iterator projection over `self.plugins`; no I/O, allocation overhead, or mutation.
+    ///
+    /// # Complexity
+    /// Time and Space: `O(n)` where `n` is the number of registered bundles.
     pub fn get_summaries(&self) -> Vec<PluginSummaryDto> {
         self.plugins
             .values()
@@ -98,6 +101,10 @@ impl PluginRegistry {
     ///
     /// # Purity
     /// Pure read-only iterator filter/map over `self.plugins`; no I/O or mutation.
+    ///
+    /// # Complexity
+    /// Time: `O(n * c)` where `n` is registered bundles and `c` is per-bundle compatibility checks;
+    /// Space: `O(k)` for `k <= n` matching summaries.
     pub fn query_compatible(&self, target: &TargetDescriptorDto) -> Vec<PluginSummaryDto> {
         self.plugins
             .values()
@@ -117,6 +124,9 @@ impl PluginRegistry {
 ///
 /// # Purity
 /// Pure deterministic predicate over immutable references; zero I/O, zero side effects.
+///
+/// # Complexity
+/// Time: `O(m + r)` across `m` supported MIME types and `r` required metadata keys; Space: `O(1)`.
 pub fn is_compatible(spec: &InputsSpec, target: &TargetDescriptorDto) -> bool {
     let mime_match = spec
         .supported_mime_types
@@ -160,6 +170,9 @@ pub(crate) fn is_safe_relative_path(p: &str) -> bool {
 ///
 /// # Purity
 /// Pure deterministic parser and validator; zero mutation, zero I/O, zero side effects.
+///
+/// # Complexity
+/// Time and Space: `O(s)` in manifest byte length `s` and declared path/ID lengths.
 pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManifest, PluginError> {
     let manifest: PluginManifest =
         serde_json::from_str(raw_json).map_err(|e| PluginError::ManifestInvalid {
@@ -612,6 +625,10 @@ fn validate_discovered_candidate(
 ///
 /// # Purity
 /// Pure parallel computation via `rayon`; zero I/O, zero logging side effects, zero mutation of external state.
+///
+/// # Complexity
+/// Time: `O(n * s + n log n)` total work across `n` candidates of average JSON size `s` (parallelized
+/// validation and `par_sort_unstable_by` over valid bundles); Space: `O(n * s)`.
 pub(crate) fn build_discovery_output(
     candidates: Vec<DiscoveredPluginCandidate>,
 ) -> DiscoveryOutput {

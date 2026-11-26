@@ -245,6 +245,9 @@ pub(crate) fn should_emit_progress(
 ///
 /// # Purity
 /// Pure deterministic decision function over integer PIDs; zero I/O or OS signal calls.
+///
+/// # Complexity
+/// Time and Space: `O(1)`.
 pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> KillTarget {
     if pid <= 1 {
         return KillTarget::Refuse("reserved pid");
@@ -263,8 +266,7 @@ pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> 
 // ---------------------------------------------------------------------------
 
 /// Parses a plugin's raw `result.json` payload into a [`StandardJobResultDto`],
-/// resolving relative artifact paths against `output_dir` and parsing artifact
-/// entries in parallel via `rayon`.
+/// resolving relative artifact paths against `output_dir` cleanly via lazy iteration.
 ///
 /// Disk existence and canonical sandbox boundary checks remain in the
 /// imperative shell (`executor.rs`).
@@ -272,6 +274,9 @@ pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> 
 /// # Purity
 /// Pure deterministic JSON parsing and lazy artifact path resolution;
 /// zero filesystem I/O, zero clock reads, zero side effects.
+///
+/// # Complexity
+/// Time and Space: `O(s + m + a)` in raw JSON length `s`, metric entries `m`, and artifact entries `a`.
 pub(crate) fn parse_result_json(
     raw_json: &str,
     result_path: &Path,

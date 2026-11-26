@@ -327,6 +327,13 @@ pub struct PluginBundle {
 }
 
 impl PluginBundle {
+    /// Projects a lightweight [`PluginSummaryDto`] view for registry listings and compatibility queries.
+    ///
+    /// # Purity
+    /// Pure read-only DTO projection; performs no I/O or mutation.
+    ///
+    /// # Complexity
+    /// Time: `O(1)` over fixed manifest scalar fields (cloning short metadata strings); Space: `O(1)`.
     pub fn to_summary(&self) -> PluginSummaryDto {
         PluginSummaryDto {
             id: self.manifest.metadata.id.clone(),

@@ -57,6 +57,13 @@ pub fn migrate_result_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// Maps a `plugin_image_result` SQLite row into an [`ImagePluginResult`], parsing JSON metric and artifact maps.
+///
+/// # Purity
+/// Pure row-to-struct decoding; falls back to empty JSON objects on corrupt stored JSON strings.
+///
+/// # Complexity
+/// Time and Space: `O(m + a)` in the serialized byte length of stored `metrics` and `artifacts` JSON.
 fn row_to_result(row: &Row) -> rusqlite::Result<ImagePluginResult> {
     let metrics: String = row.get(5)?;
     let artifacts: String = row.get(6)?;

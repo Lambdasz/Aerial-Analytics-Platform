@@ -138,6 +138,10 @@ pub(crate) fn assemble_user_plugin_bundle(
 ///
 /// # Purity
 /// Pure sequential validation over immutable JSON references; zero I/O, zero mutation.
+///
+/// # Complexity
+/// Time: `O(k * p)` across `k` custom override entries and `p` declared schema parameters;
+/// Space: `O(o)` where `o` is options length for validated `select` fields.
 pub(crate) fn validate_custom_parameters(
     parameters_raw: &serde_json::Value,
     custom_params: &serde_json::Value,
@@ -374,6 +378,10 @@ pub(crate) fn with_removed_plugin(
 /// # Purity
 /// Pure immutable projection; clones `&PluginRegistry` without mutating the caller's
 /// value and performs no I/O.
+///
+/// # Complexity
+/// Time and Space: `O(n + s)` for cloning `n` registered bundles and applying `s` stored plugin records
+/// (`O(1)` average hash lookup per record).
 pub(crate) fn with_applied_state(
     registry: &PluginRegistry,
     store: &PluginStateStore,
@@ -421,6 +429,10 @@ pub(crate) struct RemovalPlan {
 /// # Purity
 /// Pure planner over immutable references; performs no filesystem deletion, state
 /// mutation, or clock access.
+///
+/// # Complexity
+/// Time and Space: `O(s)` to clone and update `store` (`s` persisted state records) after `O(1)`
+/// registry/store hash lookups.
 pub(crate) fn plan_plugin_removal(
     registry: &PluginRegistry,
     store: &PluginStateStore,
@@ -723,7 +735,7 @@ mod tests {
             ]
         });
 
-        // Valid multi-entry object (exercised across rayon parallel iteration)
+        // Valid multi-entry object across parameter types
         let valid = serde_json::json!({
             "enabled_flag": true,
             "label": "field-a",
