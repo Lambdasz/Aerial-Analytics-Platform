@@ -133,3 +133,117 @@ pub fn assemble_payload(payload: &ExecutionPayload, output_dir: &Path) -> Result
 
     Ok(payload_file_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin_manager::models::ExecutionTarget;
+
+    fn sample_image_meta(format: &str, has_gps: bool, width: u32, height: u32) -> ImageMetadata {
+        ImageMetadata {
+            path: "/tmp/sample.jpg".to_string(),
+            has_gps,
+            width,
+            height,
+            format: format.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_execution_target_from_image_metadata_mime_and_resolution() {
+        let jpeg = sample_image_meta("JPG", true, 4000, 3000);
+        let borrowed_target = ExecutionTarget::from(&jpeg);
+        let owned_target = ExecutionTarget::from(jpeg.clone());
+        assert_eq!(borrowed_target.granularity, "single_image");
+        assert_eq!(borrowed_target.image_path, jpeg.path);
+        assert_eq!(borrowed_target.mime_type, "image/jpeg");
+        assert_eq!(
+            borrowed_target.metadata,
+            Some(serde_json::json!({ "resolution": [4000, 3000] }))
+        );
+        assert_eq!(owned_target.mime_type, "image/jpeg");
+        assert_eq!(owned_target.metadata, borrowed_target.metadata);
+
+        assert_eq!(
+            ExecutionTarget::from(&sample_image_meta("png", false, 0, 100)).mime_type,
+            "image/png"
+        );
+        let tiff_zero_dim = ExecutionTarget::from(&sample_image_meta("DNG", false, 0, 100));
+        assert_eq!(tiff_zero_dim.mime_type, "image/tiff");
+        assert_eq!(tiff_zero_dim.metadata, None);
+
+        assert_eq!(
+            ExecutionTarget::from(&sample_image_meta("bin", false, 100, 0)).mime_type,
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_preflight_check_gps_and_format_constraints() {
+        let no_gps_jpg = sample_image_meta("JPEG", false, 800, 600);
+        let gps_req = InputsRequirement {
+            require_gps: Some(true),
+            allowed_formats: Some(vec!["jpg".to_string(), "jpeg".to_string()]),
+        };
+        let err_gps = preflight_check(&no_gps_jpg, &gps_req).unwrap_err();
+        assert!(err_gps.contains("requires GPS"));
+
+        let with_gps_jpg = sample_image_meta("JPEG", true, 800, 600);
+        assert!(preflight_check(&with_gps_jpg, &gps_req).is_ok());
+
+        let only_tiff_req = InputsRequirement {
+            require_gps: None,
+            allowed_formats: Some(vec!["tif".to_string(), "tiff".to_string()]),
+        };
+        let err_fmt = preflight_check(&with_gps_jpg, &only_tiff_req).unwrap_err();
+        assert!(err_fmt.contains("not supported"));
+
+        let permissive_req = InputsRequirement {
+            require_gps: Some(false),
+            allowed_formats: None,
+        };
+        assert!(preflight_check(&no_gps_jpg, &permissive_req).is_ok());
+    }
+
+    #[test]
+    fn test_assemble_payload_creates_dir_and_writes_json() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let nested_output = temp_dir.path().join("nested").join("run_01");
+        let payload = ExecutionPayload {
+            plugin_id: "veg-detector".to_string(),
+            image: sample_image_meta("png", true, 1920, 1080),
+            aoi: Some(Aoi {
+                geojson: serde_json::json!({ "type": "Polygon", "coordinates": [] }),
+            }),
+            parameters: serde_json::json!({ "threshold": 0.5 }),
+            output_dir: nested_output.to_string_lossy().into_owned(),
+        };
+
+        let written_path = assemble_payload(&payload, &nested_output).unwrap();
+        assert_eq!(written_path, nested_output.join("payload.json"));
+        let disk_val: ExecutionPayload =
+            serde_json::from_str(&fs::read_to_string(&written_path).unwrap()).unwrap();
+        assert_eq!(disk_val.plugin_id, "veg-detector");
+        assert_eq!(disk_val.image, payload.image);
+        assert_eq!(disk_val.parameters, serde_json::json!({ "threshold": 0.5 }));
+        assert!(disk_val.aoi.is_some());
+    }
+
+    #[test]
+    fn test_assemble_payload_errors_when_output_dir_is_existing_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let blocking_file = temp_dir.path().join("not_a_dir");
+        fs::write(&blocking_file, b"file").unwrap();
+
+        let payload = ExecutionPayload {
+            plugin_id: "veg-detector".to_string(),
+            image: sample_image_meta("png", false, 100, 100),
+            aoi: None,
+            parameters: serde_json::Value::Null,
+            output_dir: blocking_file.to_string_lossy().into_owned(),
+        };
+
+        let err = assemble_payload(&payload, &blocking_file).unwrap_err();
+        assert!(err.contains("Failed to write payload.json"));
+    }
+}

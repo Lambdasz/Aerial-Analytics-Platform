@@ -168,3 +168,153 @@ pub fn record_run_history(history_file_path: &Path, entry: RunHistoryEntry) -> R
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin_manager::models::{StandardJobResultDto, VerifiedArtifactDto};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_result_dto_roundtrip_conversions() {
+        let mut metrics = HashMap::new();
+        metrics.insert("ndvi_mean".to_string(), serde_json::json!(0.42));
+        let mut artifacts = HashMap::new();
+        artifacts.insert(
+            "mask".to_string(),
+            VerifiedArtifactDto {
+                file_path: "/tmp/out/mask.png".to_string(),
+                format: "image/png".to_string(),
+                bounds: Some(vec![-6.2, 106.8, -6.1, 106.9]),
+            },
+        );
+
+        let dto = StandardJobResultDto {
+            job_id: "job-1".to_string(),
+            execution_time_ms: 1200,
+            status: "success".to_string(),
+            metrics,
+            artifacts,
+            error: None,
+        };
+
+        let legacy_borrowed = ExecutionResult::from(&dto);
+        let legacy_owned = ExecutionResult::from(dto.clone());
+        assert_eq!(legacy_borrowed, legacy_owned);
+        assert_eq!(legacy_borrowed.status, "success");
+        assert_eq!(
+            legacy_borrowed.metrics["ndvi_mean"],
+            serde_json::json!(0.42)
+        );
+        assert_eq!(
+            legacy_borrowed.output_files,
+            vec!["/tmp/out/mask.png".to_string()]
+        );
+
+        let back_borrowed = StandardJobResultDto::from(&legacy_borrowed);
+        let back_owned = StandardJobResultDto::from(legacy_borrowed);
+        assert_eq!(back_borrowed.status, "success");
+        assert_eq!(
+            back_borrowed.metrics.get("ndvi_mean"),
+            Some(&serde_json::json!(0.42))
+        );
+        assert_eq!(
+            back_borrowed
+                .artifacts
+                .get("artifact_0")
+                .map(|a| a.file_path.as_str()),
+            Some("/tmp/out/mask.png")
+        );
+        assert_eq!(back_owned.job_id, "");
+        assert_eq!(back_owned.execution_time_ms, 0);
+
+        let non_object = ExecutionResult {
+            status: "failed".to_string(),
+            metrics: serde_json::Value::Null,
+            output_files: vec![],
+            error_message: Some("boom".to_string()),
+        };
+        let dto_non_obj = StandardJobResultDto::from(&non_object);
+        assert!(dto_non_obj.metrics.is_empty());
+        assert_eq!(dto_non_obj.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn test_parse_execution_result_handles_valid_missing_corrupt_and_error_states() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let out_dir = temp_dir.path();
+
+        let missing_err = parse_execution_result(out_dir).unwrap_err();
+        assert!(missing_err.contains("not found"));
+
+        fs::write(out_dir.join("result.json"), "{ invalid json").unwrap();
+        let json_err = parse_execution_result(out_dir).unwrap_err();
+        assert!(json_err.contains("invalid JSON"));
+
+        fs::write(
+            out_dir.join("result.json"),
+            r#"{"status":"error","metrics":{},"output_files":[],"error_message":"GPU OOM"}"#,
+        )
+        .unwrap();
+        let plugin_err = parse_execution_result(out_dir).unwrap_err();
+        assert!(plugin_err.contains("GPU OOM"));
+
+        fs::write(
+            out_dir.join("result.json"),
+            r#"{"status":"error","metrics":{},"output_files":[],"error_message":null}"#,
+        )
+        .unwrap();
+        let unknown_err = parse_execution_result(out_dir).unwrap_err();
+        assert!(unknown_err.contains("Unknown plugin error"));
+
+        fs::write(
+            out_dir.join("result.json"),
+            r#"{"status":"success","metrics":{"coverage":0.75},"output_files":["overlay.png"],"error_message":null}"#,
+        )
+        .unwrap();
+        let ok = parse_execution_result(out_dir).unwrap();
+        assert_eq!(ok.status, "success");
+        assert_eq!(ok.metrics["coverage"], serde_json::json!(0.75));
+        assert_eq!(ok.output_files, vec!["overlay.png".to_string()]);
+    }
+
+    #[test]
+    fn test_record_run_history_creates_appends_and_recovers_from_corrupt_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let history_path = temp_dir.path().join("history.json");
+
+        let e1 = RunHistoryEntry {
+            timestamp: "2026-11-26T00:00:00Z".to_string(),
+            plugin_id: "p1".to_string(),
+            status: "success".to_string(),
+            output_dir: "/tmp/1".to_string(),
+            output_files: vec!["a.png".to_string()],
+        };
+        let e2 = RunHistoryEntry {
+            timestamp: "2026-11-26T00:01:00Z".to_string(),
+            plugin_id: "p2".to_string(),
+            status: "failed".to_string(),
+            output_dir: "/tmp/2".to_string(),
+            output_files: vec![],
+        };
+
+        record_run_history(&history_path, e1.clone()).unwrap();
+        record_run_history(&history_path, e2.clone()).unwrap();
+
+        let loaded: Vec<RunHistoryEntry> =
+            serde_json::from_str(&fs::read_to_string(&history_path).unwrap()).unwrap();
+        assert_eq!(loaded, vec![e1.clone(), e2]);
+
+        // Corrupt JSON recovers as empty list before pushing new entry
+        fs::write(&history_path, "not-json").unwrap();
+        record_run_history(&history_path, e1.clone()).unwrap();
+        let recovered: Vec<RunHistoryEntry> =
+            serde_json::from_str(&fs::read_to_string(&history_path).unwrap()).unwrap();
+        assert_eq!(recovered, vec![e1.clone()]);
+
+        // Missing parent directory returns error
+        let missing_parent = temp_dir.path().join("no_such_dir").join("history.json");
+        let write_err = record_run_history(&missing_parent, e1).unwrap_err();
+        assert!(write_err.contains("Failed to write run history file"));
+    }
+}
