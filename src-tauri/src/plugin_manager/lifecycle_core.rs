@@ -16,26 +16,15 @@
 use std::path::{Path, PathBuf};
 
 use super::error::PluginError;
+pub(crate) use super::models::is_valid_plugin_id;
 use super::models::{
     InputsSpec, PluginBundle, PluginManifest, PluginSource, PluginStateRecord, PluginStateStore,
-    PluginStats,
 };
 use super::registry_core::PluginRegistry;
 
 // ---------------------------------------------------------------------------
 // 1. PURE VALIDATION & ASSEMBLY FUNCTIONS
 // ---------------------------------------------------------------------------
-
-/// Pure predicate validating plugin identifier format against `^[a-z0-9-_]+$`.
-///
-/// # Purity
-/// Pure deterministic predicate over `&str`; zero I/O, zero allocations, zero side effects.
-pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-}
 
 /// Resolves the plugin root directory from staging inspection results.
 ///
@@ -288,22 +277,12 @@ pub(crate) fn with_status_update(
     source: PluginSource,
     now_iso: &str,
 ) -> PluginStateStore {
-    let mut next_store = store.clone();
-    next_store.updated_at = now_iso.to_string();
-    let record = next_store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| PluginStateRecord {
-            version: version.to_string(),
-            source,
-            enabled,
-            installed_at: now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: PluginStats::default(),
-        });
-    record.enabled = enabled;
-    next_store
+    store.with_updated_record(
+        plugin_id,
+        now_iso,
+        || PluginStateRecord::new_default(version, source, enabled, now_iso),
+        |record| record.enabled = enabled,
+    )
 }
 
 /// Returns a new [`PluginStateStore`] recording a user plugin installation or reinstall.
@@ -321,24 +300,16 @@ pub(crate) fn with_install_update(
     version: &str,
     now_iso: &str,
 ) -> PluginStateStore {
-    let mut next_store = store.clone();
-    next_store.updated_at = now_iso.to_string();
-    let record = next_store
-        .plugins
-        .entry(plugin_id.to_string())
-        .or_insert_with(|| PluginStateRecord {
-            version: version.to_string(),
-            source: PluginSource::User,
-            enabled: true,
-            installed_at: now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: PluginStats::default(),
-        });
-    record.version = version.to_string();
-    record.source = PluginSource::User;
-    record.enabled = true;
-    next_store
+    store.with_updated_record(
+        plugin_id,
+        now_iso,
+        || PluginStateRecord::new_default(version, PluginSource::User, true, now_iso),
+        |record| {
+            record.version = version.to_string();
+            record.source = PluginSource::User;
+            record.enabled = true;
+        },
+    )
 }
 
 /// Borrowed input fields for [`with_config_update`].
@@ -364,22 +335,19 @@ pub(crate) fn with_config_update(
     input: &ConfigUpdateInput<'_>,
     now_iso: &str,
 ) -> PluginStateStore {
-    let mut next_store = store.clone();
-    next_store.updated_at = now_iso.to_string();
-    let record = next_store
-        .plugins
-        .entry(input.plugin_id.to_string())
-        .or_insert_with(|| PluginStateRecord {
-            version: input.version.to_string(),
-            source: input.source.clone(),
-            enabled: input.enabled,
-            installed_at: now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: PluginStats::default(),
-        });
-    record.custom_parameters = input.custom_params.clone();
-    next_store
+    store.with_updated_record(
+        input.plugin_id,
+        now_iso,
+        || {
+            PluginStateRecord::new_default(
+                input.version,
+                input.source.clone(),
+                input.enabled,
+                now_iso,
+            )
+        },
+        |record| record.custom_parameters = input.custom_params.clone(),
+    )
 }
 
 /// Returns a new [`PluginStateStore`] with `plugin_id` removed and `updated_at` set.
@@ -510,7 +478,7 @@ pub(crate) fn plan_plugin_removal(
 mod tests {
     use super::*;
     use crate::plugin_manager::models::{
-        CachedHealthcheck, PluginMetadata, PluginRuntime, PluginStateRecord,
+        CachedHealthcheck, PluginMetadata, PluginRuntime, PluginStateRecord, PluginStats,
     };
     use std::collections::HashMap;
 

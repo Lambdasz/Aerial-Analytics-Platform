@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use super::error::PluginError;
 use super::models::{
     CachedHealthcheck, InputsSpec, PluginBundle, PluginDetailsDto, PluginManifest, PluginSource,
-    PluginStateRecord, PluginStateStore, PluginStats, PluginSummaryDto, TargetDescriptorDto,
+    PluginStateRecord, PluginStateStore, PluginSummaryDto, TargetDescriptorDto,
 };
 
 // ---------------------------------------------------------------------------
@@ -175,11 +175,7 @@ pub(crate) fn parse_and_validate_manifest(raw_json: &str) -> Result<PluginManife
     }
 
     let id = &manifest.metadata.id;
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-    {
+    if !super::models::is_valid_plugin_id(id) {
         return Err(PluginError::ManifestInvalid {
             path: "manifest.json".to_string(),
             message: format!("Plugin id '{}' must match ^[a-z0-9-_]+$", id),
@@ -665,32 +661,31 @@ pub(crate) fn with_healthcheck_state(
     store: &PluginStateStore,
     input: &HealthcheckStateInput<'_>,
 ) -> PluginStateStore {
-    let mut next_store = store.clone();
-    next_store.updated_at = input.now_iso.to_string();
-    let record = next_store
-        .plugins
-        .entry(input.plugin_id.to_string())
-        .or_insert_with(|| PluginStateRecord {
-            version: input.bundle_version.to_string(),
-            source: input.source.clone(),
-            enabled: input.enabled,
-            installed_at: input.now_iso.to_string(),
-            last_healthcheck: None,
-            custom_parameters: serde_json::json!({}),
-            stats: PluginStats::default(),
-        });
-    record.last_healthcheck = Some(CachedHealthcheck {
-        status: input.status.to_string(),
-        checked_at: input.now_iso.to_string(),
-        message: input.error_msg.map(ToString::to_string),
-    });
-    next_store
+    store.with_updated_record(
+        input.plugin_id,
+        input.now_iso,
+        || {
+            PluginStateRecord::new_default(
+                input.bundle_version,
+                input.source.clone(),
+                input.enabled,
+                input.now_iso,
+            )
+        },
+        |record| {
+            record.last_healthcheck = Some(CachedHealthcheck {
+                status: input.status.to_string(),
+                checked_at: input.now_iso.to_string(),
+                message: input.error_msg.map(ToString::to_string),
+            });
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_manager::models::{InputsSpec, TargetDescriptorDto};
+    use crate::plugin_manager::models::{InputsSpec, PluginStats, TargetDescriptorDto};
     use std::path::PathBuf;
 
     fn default_inputs_spec() -> InputsSpec {

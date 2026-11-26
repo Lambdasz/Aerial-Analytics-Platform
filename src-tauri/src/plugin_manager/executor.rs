@@ -622,52 +622,27 @@ fn process_group_of(_pid: u32) -> Option<u32> {
 }
 
 /// Configures standard plugin CLI flags, working directory, piped stdio, and
-/// Unix process-group isolation on a `tokio::process::Command`.
+/// Builds a cross-platform `tokio::process::Command` for a Python or native binary plugin
+/// entrypoint with piped stdout/stderr, working directory `plugin_dir`, and Unix
+/// process-group isolation (`process_group(0)`).
 ///
 /// # Purity
-/// Impure command builder configuration (sets OS process-group isolation on Unix).
-fn configure_plugin_command(
-    mut cmd: tokio::process::Command,
-    plugin_dir: &Path,
-    payload_path: &Path,
-    result_path: &Path,
-) -> tokio::process::Command {
-    cmd.arg("--input")
-        .arg(payload_path)
-        .arg("--output")
-        .arg(result_path)
-        .current_dir(plugin_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(unix)]
-    {
-        // Make the child its own process group leader so kill_process_tree()
-        // can signal the whole group (covers grandchild workers) instead of
-        // only this direct PID.
-        cmd.process_group(0);
-    }
-    cmd
-}
-
-/// Prepares the cross-platform Tokio process command for the plugin entrypoint.
-///
-/// # Purity
-/// Impure filesystem I/O: resolves absolute paths and checks entrypoint existence on disk.
-pub(crate) async fn resolve_executable(
+/// Impure filesystem/process helper: resolves absolute paths and probes entrypoint existence
+/// synchronously on disk. Intended to be called inside `tokio::task::spawn_blocking` from
+/// async callers.
+pub(crate) fn build_plugin_command(
     plugin_dir: &Path,
     entrypoint: &str,
     runtime_type: &str,
-    payload_path: &Path,
-    result_path: &Path,
+    args: &[&std::ffi::OsStr],
 ) -> Result<tokio::process::Command, PluginError> {
     // Absolute paths only: spawning a relative program together with a
     // relative `current_dir` resolves the program against the child's cwd.
     let absolute_dir = std::path::absolute(plugin_dir).unwrap_or_else(|_| plugin_dir.to_path_buf());
     let plugin_dir = absolute_dir.as_path();
 
-    match runtime_type {
+    let mut cmd = match runtime_type {
         "python" => {
-            // Check for local virtual environment Python
             let venv_python = if cfg!(windows) {
                 plugin_dir.join(".venv").join("Scripts").join("python.exe")
             } else {
@@ -690,14 +665,9 @@ pub(crate) async fn resolve_executable(
                 )));
             }
 
-            let mut cmd = tokio::process::Command::new(interpreter);
-            cmd.arg(&script_path);
-            Ok(configure_plugin_command(
-                cmd,
-                plugin_dir,
-                payload_path,
-                result_path,
-            ))
+            let mut command = tokio::process::Command::new(interpreter);
+            command.arg(&script_path);
+            command
         }
         "binary" => {
             let mut bin_path = plugin_dir.join(entrypoint);
@@ -715,19 +685,52 @@ pub(crate) async fn resolve_executable(
                 )));
             }
 
-            let cmd = tokio::process::Command::new(&bin_path);
-            Ok(configure_plugin_command(
-                cmd,
-                plugin_dir,
-                payload_path,
-                result_path,
-            ))
+            tokio::process::Command::new(&bin_path)
         }
-        other => Err(PluginError::SpawnFailed(format!(
-            "Unsupported runtime type: '{}'",
-            other
-        ))),
+        other => {
+            return Err(PluginError::SpawnFailed(format!(
+                "Unsupported runtime type: '{}'",
+                other
+            )));
+        }
+    };
+
+    cmd.args(args)
+        .current_dir(plugin_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        // Make the child its own process group leader so kill_process_tree()
+        // can signal the whole group (covers grandchild workers) instead of
+        // only this direct PID.
+        cmd.process_group(0);
     }
+    Ok(cmd)
+}
+
+/// Prepares the cross-platform Tokio process command for plugin execution (`--input <payload> --output <result>`).
+///
+/// # Purity
+/// Impure filesystem I/O: resolves absolute paths and checks entrypoint existence on disk.
+pub(crate) async fn resolve_executable(
+    plugin_dir: &Path,
+    entrypoint: &str,
+    runtime_type: &str,
+    payload_path: &Path,
+    result_path: &Path,
+) -> Result<tokio::process::Command, PluginError> {
+    build_plugin_command(
+        plugin_dir,
+        entrypoint,
+        runtime_type,
+        &[
+            std::ffi::OsStr::new("--input"),
+            payload_path.as_os_str(),
+            std::ffi::OsStr::new("--output"),
+            result_path.as_os_str(),
+        ],
+    )
 }
 
 /// Supervises an already-spawned child process to completion while streaming progress events.
@@ -1038,5 +1041,31 @@ mod tests {
         let err = read_and_validate_result(&result_path, out_dir);
         assert!(err.is_err());
         assert_eq!(err.unwrap_err().code(), "SECURITY_VIOLATION");
+    }
+
+    #[test]
+    fn test_build_plugin_command_python_and_unsupported_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("main.py");
+        std::fs::write(&script, "print('ok')\n").unwrap();
+
+        let cmd = build_plugin_command(
+            dir.path(),
+            "main.py",
+            "python",
+            &[std::ffi::OsStr::new("--healthcheck")],
+        );
+        assert!(cmd.is_ok());
+
+        let missing = build_plugin_command(
+            dir.path(),
+            "missing.py",
+            "python",
+            &[std::ffi::OsStr::new("--healthcheck")],
+        );
+        assert!(matches!(missing, Err(PluginError::SpawnFailed(_))));
+
+        let unsupported = build_plugin_command(dir.path(), "main.wasm", "wasm", &[]);
+        assert!(matches!(unsupported, Err(PluginError::SpawnFailed(_))));
     }
 }

@@ -247,6 +247,65 @@ impl Default for PluginStateStore {
     }
 }
 
+/// Pure predicate validating plugin identifier format matching `^[a-z0-9-_]+$`.
+///
+/// # Purity
+/// Pure deterministic predicate over `&str`; zero I/O, zero allocations, zero side effects.
+pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+impl PluginStateRecord {
+    /// Constructs a fresh [`PluginStateRecord`] with empty parameters, stats, and no cached health check.
+    ///
+    /// # Purity
+    /// Pure constructor; reads no clock and performs no I/O (`installed_at` is passed explicitly).
+    pub(crate) fn new_default(
+        version: &str,
+        source: PluginSource,
+        enabled: bool,
+        installed_at: &str,
+    ) -> Self {
+        Self {
+            version: version.to_string(),
+            source,
+            enabled,
+            installed_at: installed_at.to_string(),
+            last_healthcheck: None,
+            custom_parameters: serde_json::json!({}),
+            stats: PluginStats::default(),
+        }
+    }
+}
+
+impl PluginStateStore {
+    /// Returns a cloned [`PluginStateStore`] with `updated_at = now_iso` and the entry for
+    /// `plugin_id` inserted via `default_fn` (when absent) and updated via `update_fn`.
+    ///
+    /// # Purity
+    /// Pure immutable state transition; clones `&self` without mutating the caller's store
+    /// and performs no I/O or clock access.
+    pub(crate) fn with_updated_record(
+        &self,
+        plugin_id: &str,
+        now_iso: &str,
+        default_fn: impl FnOnce() -> PluginStateRecord,
+        update_fn: impl FnOnce(&mut PluginStateRecord),
+    ) -> Self {
+        let mut next_store = self.clone();
+        next_store.updated_at = now_iso.to_string();
+        let record = next_store
+            .plugins
+            .entry(plugin_id.to_string())
+            .or_insert_with(default_fn);
+        update_fn(record);
+        next_store
+    }
+}
+
 // ---------------------------------------------------------------------------
 // In-Memory Plugin Bundle & DTOs for IPC and Cross-Module Usage
 // ---------------------------------------------------------------------------
@@ -474,5 +533,65 @@ mod exif_bridge_tests {
         let result = ExecutionTarget::try_from((path, &exif));
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod state_store_tests {
+    use super::{is_valid_plugin_id, PluginSource, PluginStateRecord, PluginStateStore};
+    use std::collections::HashMap;
+
+    #[test]
+    fn is_valid_plugin_id_valid_and_invalid() {
+        assert!(is_valid_plugin_id("rgb-veg_01"));
+        assert!(!is_valid_plugin_id(""));
+        assert!(!is_valid_plugin_id("InvalidUpper"));
+        assert!(!is_valid_plugin_id("../escape"));
+    }
+
+    #[test]
+    fn with_updated_record_inserts_updates_and_preserves_original() {
+        let initial = PluginStateStore {
+            schema_version: 1,
+            updated_at: "2026-11-01T00:00:00Z".to_string(),
+            plugins: HashMap::new(),
+        };
+
+        let inserted = initial.with_updated_record(
+            "demo-plugin",
+            "2026-11-02T00:00:00Z",
+            || {
+                PluginStateRecord::new_default(
+                    "1.0.0",
+                    PluginSource::User,
+                    true,
+                    "2026-11-02T00:00:00Z",
+                )
+            },
+            |_| {},
+        );
+        assert!(initial.plugins.is_empty());
+        assert_eq!(inserted.updated_at, "2026-11-02T00:00:00Z");
+        assert_eq!(inserted.plugins["demo-plugin"].version, "1.0.0");
+
+        let updated = inserted.with_updated_record(
+            "demo-plugin",
+            "2026-11-03T00:00:00Z",
+            || {
+                PluginStateRecord::new_default(
+                    "2.0.0",
+                    PluginSource::Builtin,
+                    false,
+                    "2026-11-03T00:00:00Z",
+                )
+            },
+            |rec| rec.enabled = false,
+        );
+        assert!(inserted.plugins["demo-plugin"].enabled);
+        assert!(!updated.plugins["demo-plugin"].enabled);
+        assert_eq!(
+            updated.plugins["demo-plugin"].installed_at,
+            "2026-11-02T00:00:00Z"
+        );
     }
 }

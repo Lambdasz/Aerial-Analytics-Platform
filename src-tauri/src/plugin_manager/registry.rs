@@ -281,11 +281,6 @@ pub(crate) async fn check_plugin_health_internal(
 pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDto {
     let plugin_id = bundle.manifest.metadata.id.clone();
     let version = bundle.manifest.metadata.version.clone();
-    // Absolute paths only: a relative program with a relative `current_dir`
-    // is resolved against the child's working directory by glibc, which
-    // silently doubles path segments and fails to spawn.
-    let plugin_dir =
-        std::path::absolute(&bundle.install_path).unwrap_or_else(|_| bundle.install_path.clone());
     let entrypoint = &bundle.manifest.runtime.entrypoint;
     let healthcheck_flag = bundle
         .manifest
@@ -294,93 +289,20 @@ pub(crate) async fn execute_healthcheck(bundle: &PluginBundle) -> HealthStatusDt
         .as_deref()
         .unwrap_or("--healthcheck");
 
-    let mut cmd = match bundle.manifest.runtime.runtime_type.as_str() {
-        "python" => {
-            let venv_python = if cfg!(windows) {
-                plugin_dir.join(".venv").join("Scripts").join("python.exe")
-            } else {
-                plugin_dir.join(".venv").join("bin").join("python")
-            };
-
-            let interpreter = if venv_python.exists() {
-                venv_python
-            } else if cfg!(windows) {
-                std::path::PathBuf::from("python")
-            } else {
-                std::path::PathBuf::from("python3")
-            };
-
-            let script_path = plugin_dir.join(entrypoint);
-            if !script_path.exists() {
-                return HealthStatusDto {
-                    status: "unhealthy".to_string(),
-                    plugin_id,
-                    version,
-                    details: None,
-                    error: Some(format!(
-                        "Plugin Python entrypoint script not found: {:?}",
-                        script_path
-                    )),
-                };
-            }
-
-            let mut command = tokio::process::Command::new(interpreter);
-            command
-                .arg(&script_path)
-                .arg(healthcheck_flag)
-                .current_dir(plugin_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(unix)]
-            {
-                command.process_group(0);
-            }
-            command
-        }
-        "binary" => {
-            let mut bin_path = plugin_dir.join(entrypoint);
-            if cfg!(windows) && !entrypoint.ends_with(".exe") {
-                let exe_candidate = plugin_dir.join(format!("{}.exe", entrypoint));
-                if exe_candidate.exists() {
-                    bin_path = exe_candidate;
-                }
-            }
-
-            if !bin_path.exists() {
-                return HealthStatusDto {
-                    status: "unhealthy".to_string(),
-                    plugin_id,
-                    version,
-                    details: None,
-                    error: Some(format!(
-                        "Plugin binary entrypoint not found: {:?}",
-                        bin_path
-                    )),
-                };
-            }
-
-            let mut command = tokio::process::Command::new(&bin_path);
-            command
-                .arg(healthcheck_flag)
-                .current_dir(plugin_dir)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(unix)]
-            {
-                command.process_group(0);
-            }
-            command
-        }
-        other => {
+    let mut cmd = match super::executor::build_plugin_command(
+        &bundle.install_path,
+        entrypoint,
+        bundle.manifest.runtime.runtime_type.as_str(),
+        &[std::ffi::OsStr::new(healthcheck_flag)],
+    ) {
+        Ok(c) => c,
+        Err(err) => {
             return HealthStatusDto {
                 status: "unhealthy".to_string(),
                 plugin_id,
                 version,
                 details: None,
-                error: Some(format!(
-                    "Unsupported runtime type for healthcheck: '{}'",
-                    other
-                )),
+                error: Some(err.to_string()),
             };
         }
     };
