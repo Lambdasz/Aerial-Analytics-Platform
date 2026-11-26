@@ -66,11 +66,11 @@ impl PluginRegistry {
     /// Returns a list of summaries for all registered plugins.
     ///
     /// # Purity
-    /// Pure read-only parallel projection over `self.plugins` via `rayon`; no I/O or mutation.
+    /// Pure read-only iterator projection over `self.plugins`; no I/O, allocation overhead, or mutation.
     pub fn get_summaries(&self) -> Vec<PluginSummaryDto> {
         self.plugins
-            .par_iter()
-            .map(|(_, bundle)| bundle.to_summary())
+            .values()
+            .map(PluginBundle::to_summary)
             .collect()
     }
 
@@ -97,12 +97,12 @@ impl PluginRegistry {
     /// Queries plugins compatible with the provided geospatial target.
     ///
     /// # Purity
-    /// Pure read-only parallel filter/map over `self.plugins` via `rayon`; no I/O or mutation.
+    /// Pure read-only iterator filter/map over `self.plugins`; no I/O or mutation.
     pub fn query_compatible(&self, target: &TargetDescriptorDto) -> Vec<PluginSummaryDto> {
         self.plugins
-            .par_iter()
-            .filter(|(_, bundle)| bundle.enabled && is_compatible(&bundle.inputs_spec, target))
-            .map(|(_, bundle)| bundle.to_summary())
+            .values()
+            .filter(|bundle| bundle.enabled && is_compatible(&bundle.inputs_spec, target))
+            .map(PluginBundle::to_summary)
             .collect()
     }
 }

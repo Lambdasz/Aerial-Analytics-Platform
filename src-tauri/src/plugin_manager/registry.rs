@@ -55,22 +55,16 @@ pub async fn get_installed_plugins(
         .map_err(Into::into)
 }
 
-/// Internal helper that snapshots the registry under a short read lock and computes
-/// summaries off the Tokio async runtime thread via `spawn_blocking`.
+/// Internal helper that reads registered plugin summaries under a short read lock.
 ///
 /// # Purity
-/// Imperative shell: acquires async read lock on `app_state.plugins` and dispatches
-/// pure [`PluginRegistry::get_summaries`] work onto `tokio::task::spawn_blocking`.
+/// Imperative shell: acquires async read lock on `app_state.plugins` and delegates
+/// pure [`PluginRegistry::get_summaries`] projection without blocking I/O.
 pub(crate) async fn get_installed_plugins_internal(
     app_state: &crate::AppState,
 ) -> Result<Vec<PluginSummaryDto>, PluginError> {
-    let snapshot = {
-        let registry = app_state.plugins.read().await;
-        registry.clone()
-    };
-    tokio::task::spawn_blocking(move || snapshot.get_summaries())
-        .await
-        .map_err(|e| PluginError::StateError(format!("Failed to compute plugin summaries: {}", e)))
+    let registry = app_state.plugins.read().await;
+    Ok(registry.get_summaries())
 }
 
 /// Rescans the plugins directory from disk and updates the in-memory registry.
@@ -183,23 +177,17 @@ pub async fn query_compatible_plugins(
         .map_err(Into::into)
 }
 
-/// Internal helper that snapshots the registry under a short read lock and evaluates
-/// compatible plugins off the Tokio async runtime thread via `spawn_blocking`.
+/// Internal helper that filters registered plugins compatible with `target` under a read lock.
 ///
 /// # Purity
-/// Imperative shell: acquires async read lock on `app_state.plugins` and dispatches
-/// pure [`PluginRegistry::query_compatible`] work onto `tokio::task::spawn_blocking`.
+/// Imperative shell: acquires async read lock on `app_state.plugins` and delegates
+/// pure [`PluginRegistry::query_compatible`] projection without blocking I/O.
 pub(crate) async fn query_compatible_plugins_internal(
     target: TargetDescriptorDto,
     app_state: &crate::AppState,
 ) -> Result<Vec<PluginSummaryDto>, PluginError> {
-    let snapshot = {
-        let registry = app_state.plugins.read().await;
-        registry.clone()
-    };
-    tokio::task::spawn_blocking(move || snapshot.query_compatible(&target))
-        .await
-        .map_err(|e| PluginError::StateError(format!("Failed to query compatible plugins: {}", e)))
+    let registry = app_state.plugins.read().await;
+    Ok(registry.query_compatible(&target))
 }
 
 /// Runs a fast pre-flight liveness and dependency health check on a plugin entrypoint.

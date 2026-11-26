@@ -2,7 +2,7 @@
 //!
 //! **Role**: Pure functional core for plugin execution DTOs, execution gating,
 //! payload construction, progress line parsing/throttling, cancellation
-//! kill-target guards, and parallel JSON result/artifact parsing.
+//! kill-target guards, and JSON result/artifact parsing.
 //!
 //! ## Purity Boundary
 //!
@@ -16,7 +16,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::error::PluginError;
@@ -271,7 +270,7 @@ pub(crate) fn kill_target(pid: u32, group_of_pid: Option<u32>, own_pid: u32) -> 
 /// imperative shell (`executor.rs`).
 ///
 /// # Purity
-/// Pure deterministic JSON parsing and parallel path resolution via `rayon`;
+/// Pure deterministic JSON parsing and lazy artifact path resolution;
 /// zero filesystem I/O, zero clock reads, zero side effects.
 pub(crate) fn parse_result_json(
     raw_json: &str,
@@ -294,11 +293,10 @@ pub(crate) fn parse_result_json(
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         .unwrap_or_default();
 
-    let artifacts: HashMap<String, VerifiedArtifactDto> = match val["artifacts"].as_object() {
-        Some(arts) => {
-            let entries: Vec<(&String, &serde_json::Value)> = arts.iter().collect();
-            entries
-                .par_iter()
+    let artifacts: HashMap<String, VerifiedArtifactDto> = val["artifacts"]
+        .as_object()
+        .map(|arts| {
+            arts.iter()
                 .map(|(key, art)| {
                     let fp_str = art["file_path"].as_str().unwrap_or_default();
                     let fp = if Path::new(fp_str).is_absolute() {
@@ -312,7 +310,7 @@ pub(crate) fn parse_result_json(
                         .map(|arr| arr.iter().filter_map(|b| b.as_f64()).collect::<Vec<f64>>());
 
                     (
-                        (*key).clone(),
+                        key.clone(),
                         VerifiedArtifactDto {
                             file_path: fp.to_string_lossy().into_owned(),
                             format: format_str,
@@ -320,10 +318,9 @@ pub(crate) fn parse_result_json(
                         },
                     )
                 })
-                .collect::<HashMap<_, _>>()
-        }
-        None => HashMap::new(),
-    };
+                .collect()
+        })
+        .unwrap_or_default();
 
     let error = val["error"].as_str().map(|s| s.to_string());
 

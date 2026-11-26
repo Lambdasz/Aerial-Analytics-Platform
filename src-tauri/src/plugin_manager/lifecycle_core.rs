@@ -15,8 +15,6 @@
 
 use std::path::{Path, PathBuf};
 
-use rayon::prelude::*;
-
 use super::error::PluginError;
 use super::models::{
     InputsSpec, PluginBundle, PluginManifest, PluginSource, PluginStateRecord, PluginStateStore,
@@ -146,11 +144,11 @@ pub(crate) fn assemble_user_plugin_bundle(
 
 /// Validates custom parameter overrides against constraints declared in `parameters.json`.
 ///
-/// Evaluates each `(key, value)` override concurrently via `rayon::par_iter()`
-/// without mutating inputs.
+/// Evaluates each `(key, value)` override lazily via iterator combinators
+/// without allocating intermediate collections or mutating inputs.
 ///
 /// # Purity
-/// Pure parallel validation over immutable JSON references; zero I/O, zero mutation.
+/// Pure sequential validation over immutable JSON references; zero I/O, zero mutation.
 pub(crate) fn validate_custom_parameters(
     parameters_raw: &serde_json::Value,
     custom_params: &serde_json::Value,
@@ -168,8 +166,7 @@ pub(crate) fn validate_custom_parameters(
         .map(Vec::as_slice)
         .unwrap_or(&[]);
 
-    let entries: Vec<(&String, &serde_json::Value)> = custom_obj.iter().collect();
-    entries.par_iter().try_for_each(|&(key, val)| {
+    custom_obj.iter().try_for_each(|(key, val)| {
         let param_def = defined_params
             .iter()
             .find(|p| p.get("name").and_then(|n| n.as_str()) == Some(key))
