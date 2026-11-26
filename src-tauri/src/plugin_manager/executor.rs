@@ -103,16 +103,34 @@ impl ActiveJobTracker {
 /// to kick off compute-intensive analysis workflows in an isolated child process without blocking the main Tauri desktop runtime.
 ///
 /// # Purity
-/// Impure Tauri IPC command handler: orchestrates registry read locks, SQLite
-/// metadata autofill, sandbox filesystem I/O, subprocess spawning, and tracker mutation.
+/// Impure Tauri IPC command handler; delegates request gating, metadata autofill,
+/// sandbox creation, executable resolution, and subprocess startup to
+/// [`start_plugin_job_internal`].
 #[tauri::command]
 pub async fn start_plugin_job(
-    mut request: StartJobRequestDto,
+    request: StartJobRequestDto,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<JobHandleDto, CommandError> {
-    let target = resolve_plugin_target(&request.plugin_id, &state).await?;
-    validate_and_autofill_request(&mut request, &state).await?;
+    start_plugin_job_internal(request, Some(app), &state).await
+}
+
+/// Internal implementation for starting an asynchronous plugin execution job.
+///
+/// Accepts an optional `app` handle so headless tests can execute the full gating,
+/// SQLite autofill, sandbox payload, subprocess spawn, and supervision pipeline
+/// without a live Tauri windowing runtime.
+///
+/// # Purity
+/// Imperative shell: orchestrates registry read locks, blocking SQLite metadata
+/// autofill, sandbox filesystem I/O, subprocess spawning, and tracker mutation.
+pub(crate) async fn start_plugin_job_internal(
+    mut request: StartJobRequestDto,
+    app: Option<tauri::AppHandle>,
+    state: &crate::AppState,
+) -> Result<JobHandleDto, CommandError> {
+    let target = resolve_plugin_target(&request.plugin_id, state).await?;
+    validate_and_autofill_request(&mut request, state).await?;
 
     let job_id = generate_job_id();
     let (output_dir, payload_path, result_path) =
@@ -295,7 +313,7 @@ fn spawn_supervisor_task(
     result_path: PathBuf,
     output_dir: PathBuf,
     timeout_secs: u64,
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     tracker_arc: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -330,7 +348,9 @@ fn spawn_supervisor_task(
                     record.result = Some(dto.clone());
                     // The pid is stale from now on: never signal it again.
                     record.child_pid = None;
-                    let _ = app.emit("plugin://completed", &dto);
+                    if let Some(ref app_handle) = app {
+                        let _ = app_handle.emit("plugin://completed", &dto);
+                    }
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
@@ -338,14 +358,16 @@ fn spawn_supervisor_task(
                         error: err_msg.clone(),
                     };
                     record.child_pid = None;
-                    let _ = app.emit(
-                        "plugin://completed",
-                        serde_json::json!({
-                            "job_id": job_id,
-                            "status": "failure",
-                            "error": err_msg,
-                        }),
-                    );
+                    if let Some(ref app_handle) = app {
+                        let _ = app_handle.emit(
+                            "plugin://completed",
+                            serde_json::json!({
+                                "job_id": job_id,
+                                "status": "failure",
+                                "error": err_msg,
+                            }),
+                        );
+                    }
                 }
             }
         }
@@ -795,17 +817,51 @@ pub(crate) fn resolve_executable(
 /// # Purity
 /// Impure async subprocess supervision: drains stdout/stderr pipes, reads the
 /// monotonic clock (`Instant::now()`), mutates `jobs_tracker` under async write
-/// locks, emits IPC progress events, enforces timeouts via `kill_process_tree`,
-/// and offloads [`read_and_validate_result`] onto `tokio::task::spawn_blocking`.
+/// locks, emits IPC progress events when `app` is `Some`, enforces timeouts via
+/// `kill_process_tree`, and offloads [`read_and_validate_result`] onto
+/// `tokio::task::spawn_blocking`.
 pub(crate) async fn supervise_execution(
+    child: tokio::process::Child,
+    job_id: String,
+    result_path: PathBuf,
+    output_dir: PathBuf,
+    timeout_secs: u64,
+    app: Option<tauri::AppHandle>,
+    jobs_tracker: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
+) -> Result<StandardJobResultDto, PluginError> {
+    supervise_execution_with_emitter(
+        child,
+        job_id,
+        result_path,
+        output_dir,
+        timeout_secs,
+        jobs_tracker,
+        move |progress| {
+            if let Some(ref handle) = app {
+                emit_job_progress(handle, progress).ok();
+            }
+        },
+    )
+    .await
+}
+
+/// Supervises an already-spawned child process using a caller-supplied progress
+/// sink so tests can observe emitted progress events without a Tauri `AppHandle`.
+///
+/// # Purity
+/// Impure async subprocess supervision with injectable progress callback.
+pub(crate) async fn supervise_execution_with_emitter<F>(
     mut child: tokio::process::Child,
     job_id: String,
     result_path: PathBuf,
     output_dir: PathBuf,
     timeout_secs: u64,
-    app: tauri::AppHandle,
     jobs_tracker: std::sync::Arc<tokio::sync::RwLock<ActiveJobTracker>>,
-) -> Result<StandardJobResultDto, PluginError> {
+    mut on_progress: F,
+) -> Result<StandardJobResultDto, PluginError>
+where
+    F: FnMut(&JobProgress) + Send,
+{
     use tokio::io::AsyncBufReadExt;
     use tokio::time::{timeout, Duration};
 
@@ -859,8 +915,7 @@ pub(crate) async fn supervise_execution(
                             };
                         }
                     }
-                    // Emit to Tauri IPC event stream
-                    emit_job_progress(&app, &progress).ok();
+                    on_progress(&progress);
                     last_emitted = Some((progress.percent, progress.stage.clone(), now));
                 }
             }
@@ -988,144 +1043,5 @@ pub(crate) fn generate_job_id() -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_job_id_format() {
-        let id = generate_job_id();
-        assert!(id.starts_with("exec_"), "job_id must start with 'exec_'");
-        let parts: Vec<&str> = id.splitn(3, '_').collect();
-        assert_eq!(parts.len(), 3, "job_id must have 3 segments");
-        assert_eq!(parts[1].len(), 8, "date segment must be 8 digits");
-    }
-
-    #[test]
-    fn test_read_and_validate_result_valid() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let out_dir = temp_dir.path();
-        let artifact_file = out_dir.join("mask.png");
-        std::fs::write(&artifact_file, b"fake png data").unwrap();
-
-        let result_json = serde_json::json!({
-            "execution_id": "exec_test",
-            "status": "success",
-            "execution_time_ms": 150,
-            "metrics": {
-                "coverage_pct": 72.5
-            },
-            "artifacts": {
-                "mask": {
-                    "file_path": "mask.png",
-                    "format": "image/png",
-                    "bounds": [116.85, -1.24, 116.86, -1.23]
-                }
-            },
-            "error": null
-        });
-
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
-
-        let parsed = read_and_validate_result(&result_path, out_dir).unwrap();
-        assert_eq!(parsed.job_id, "exec_test");
-        assert_eq!(parsed.status, "success");
-        assert_eq!(parsed.execution_time_ms, 150);
-        assert!(parsed.artifacts.contains_key("mask"));
-    }
-
-    #[test]
-    fn test_read_and_validate_result_missing_artifact() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let out_dir = temp_dir.path();
-
-        let result_json = serde_json::json!({
-            "execution_id": "exec_test",
-            "status": "success",
-            "execution_time_ms": 150,
-            "metrics": {},
-            "artifacts": {
-                "mask": {
-                    "file_path": "non_existent.png",
-                    "format": "image/png"
-                }
-            }
-        });
-
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
-
-        let err = read_and_validate_result(&result_path, out_dir);
-        assert!(err.is_err());
-        assert_eq!(err.unwrap_err().code(), "ARTIFACT_MISSING");
-    }
-
-    #[test]
-    fn test_read_and_validate_result_sandbox_escape() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let out_dir = temp_dir.path();
-
-        // Create an artifact file outside the sandbox
-        let outside_dir = tempfile::tempdir().unwrap();
-        let outside_file = outside_dir.path().join("evil.txt");
-        std::fs::write(&outside_file, b"escaped!").unwrap();
-
-        let result_json = serde_json::json!({
-            "execution_id": "exec_test",
-            "status": "success",
-            "execution_time_ms": 150,
-            "metrics": {},
-            "artifacts": {
-                "evil": {
-                    "file_path": outside_file.to_string_lossy(),
-                    "format": "text/plain"
-                }
-            }
-        });
-
-        let result_path = out_dir.join("result.json");
-        std::fs::write(
-            &result_path,
-            serde_json::to_string_pretty(&result_json).unwrap(),
-        )
-        .unwrap();
-
-        let err = read_and_validate_result(&result_path, out_dir);
-        assert!(err.is_err());
-        assert_eq!(err.unwrap_err().code(), "SECURITY_VIOLATION");
-    }
-
-    #[test]
-    fn test_build_plugin_command_python_and_unsupported_runtime() {
-        let dir = tempfile::tempdir().unwrap();
-        let script = dir.path().join("main.py");
-        std::fs::write(&script, "print('ok')\n").unwrap();
-
-        let cmd = build_plugin_command(
-            dir.path(),
-            "main.py",
-            "python",
-            &[std::ffi::OsStr::new("--healthcheck")],
-        );
-        assert!(cmd.is_ok());
-
-        let missing = build_plugin_command(
-            dir.path(),
-            "missing.py",
-            "python",
-            &[std::ffi::OsStr::new("--healthcheck")],
-        );
-        assert!(matches!(missing, Err(PluginError::SpawnFailed(_))));
-
-        let unsupported = build_plugin_command(dir.path(), "main.wasm", "wasm", &[]);
-        assert!(matches!(unsupported, Err(PluginError::SpawnFailed(_))));
-    }
-}
+#[path = "executor_tests.rs"]
+mod tests;
