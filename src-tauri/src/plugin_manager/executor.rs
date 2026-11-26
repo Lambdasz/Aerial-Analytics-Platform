@@ -105,7 +105,7 @@ impl ActiveJobTracker {
 /// # Purity
 /// Impure Tauri IPC command handler; delegates request gating, metadata autofill,
 /// sandbox creation, executable resolution, and subprocess startup to
-/// [`start_plugin_job_internal`].
+/// `start_plugin_job_internal`.
 #[tauri::command]
 pub async fn start_plugin_job(
     request: StartJobRequestDto,
@@ -382,7 +382,7 @@ fn spawn_supervisor_task(
 ///
 /// # Purity
 /// Impure Tauri IPC command handler; delegates tracker mutation and blocking
-/// cleanup to [`abort_plugin_job_internal`].
+/// cleanup to `abort_plugin_job_internal`.
 #[tauri::command]
 pub async fn abort_plugin_job(
     job_id: String,

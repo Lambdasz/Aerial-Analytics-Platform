@@ -350,7 +350,11 @@
 //! enabling, disabling, and removing analytical plugins without modifying the
 //! core platform.
 //!
-//! - `plugin_manager` — discovery, lifecycle, execution, and error isolation.
+//! - [`plugin_manager`] — module overview, architecture, purity boundary, and error isolation.
+//! - [`plugin_manager::registry`] / [`plugin_manager::registry_core`] — discovery I/O and pure manifest/compatibility index.
+//! - [`plugin_manager::lifecycle`] / [`plugin_manager::lifecycle_core`] — ZIP installation, state persistence, and pure planners.
+//! - [`plugin_manager::executor`] / [`plugin_manager::executor_core`] — async subprocess supervision, progress throttling, and payload/result parsing.
+//! - [`plugin_manager::result_store`] — SQLite persistence for per-image plugin metrics and artifacts (`plugin_image_result`).
 //!
 //! ### Tauri Commands
 //!
