@@ -1,8 +1,8 @@
 .map-legend-container {
   position: absolute;
-  bottom: 40px; /* Moved up to clear Leaflet attribution */
-  right: 80px; /* Moved further left to clear MapViewControlBar padding */
-  z-index: 1000;
+  bottom: 24px;
+  right: 76px;
+  z-index: 500;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -12,24 +12,30 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background-color: var(--color-apple-blue);
-  color: white;
+  background: #0f172a;
+  color: #ffffff;
   border-radius: 999px;
   padding: 10px 18px;
   font-family: var(--font-sf-pro-text);
   font-weight: 600;
-  font-size: 14px;
-  box-shadow:
-    0 4px 12px rgba(0, 102, 204, 0.3),
-    var(--shadow-subtle);
+  font-size: 13px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
 }
 
 .map-legend-button:hover {
-  transform: scale(1.02);
-  background-color: #0062cc; /* Darker Apple Blue */
+  background: #1e293b;
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.25);
+}
+
+.map-legend-button:focus,
+.map-legend-button:focus-visible {
+  outline: none;
 }
 
 .map-legend-button:active {

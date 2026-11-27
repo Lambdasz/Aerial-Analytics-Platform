@@ -462,9 +462,10 @@
 //! fn main() -> ExitCode { /* --healthcheck | --input / --output */ }
 //! ```
 //!
-//! **Status**: Implemented (`vegetation-coverage-analytics`): mask source
-//! `auto` (ExG/ExR/VARI) or `file` (Module 4 mask), zonation GeoJSON, plot
-//! comparison, 16 unit tests. Artefacts carry WGS 84 bounds for the map.
+//! **Status**: Implemented (`vegetation-coverage-analytics`): modular functional
+//! architecture (`types`, `indices`, `coverage`, `geo`, `zonation`, `plots`, `pipeline`),
+//! mask source `auto` (ExG/ExR/VARI, default) or `file` (Module 4 mask), zonation GeoJSON, plot
+//! comparison, 24 unit tests. Artefacts carry WGS 84 bounds for the map.
 //!
 //! ---
 //!
@@ -960,6 +961,7 @@ pub fn run() {
             }
             let db_conn = rusqlite::Connection::open(&db_path)
                 .map_err(|err| format!("failed to open '{}': {err}", db_path.display()))?;
+            eprintln!("info: database opened at '{}'", db_path.display());
             // A schema that cannot be initialised must not stop the desktop
             // app from opening: Modules 2-11 do not need it.
             if let Err(err) = modules::module_01::init_schema(&db_conn) {
@@ -980,6 +982,19 @@ pub fn run() {
                 plugin_manager::result_store::migrate_result_schema(&db_conn)
             {
                 eprintln!("warning: could not initialize the plugin result schema: {err}");
+            }
+            if let Err(err) = modules::module_03::migrate_map_schema(&db_conn) {
+                eprintln!("warning: could not initialize the map schema: {err}");
+            } else {
+                eprintln!("info: module 03 map schema initialized successfully");
+            }
+            let map_storage_root = modules::module_03::storage_utils::get_storage_root();
+            if let Err(err) =
+                modules::module_03::migrate_legacy_json_to_sqlite(&db_conn, &map_storage_root)
+            {
+                eprintln!("warning: could not migrate legacy map json to sqlite: {err}");
+            } else {
+                eprintln!("info: module 03 legacy json migration completed");
             }
             let library_root = match std::env::var_os("AAP_LIBRARY_ROOT") {
                 Some(value) => absolute_path(PathBuf::from(value))?,
@@ -1117,7 +1132,7 @@ pub fn run() {
             map_controller::photos::commands::get_photos,
             map_controller::photos::commands::import_photo,
             // Module 3 — Storage Root
-            map_controller::storage_commands::get_storage_root_path,
+            map_controller::ortho_source::commands::get_storage_root_path,
             // Flight session
             commands::session::create_session,
             commands::session::get_session,

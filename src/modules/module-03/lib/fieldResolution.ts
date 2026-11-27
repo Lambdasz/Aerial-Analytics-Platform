@@ -1,8 +1,20 @@
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+import { getStorageRootPath } from "../services/api";
 import type { FieldDef, FieldKind } from "../types/spatialResult";
 import { isReservedKey } from "./fieldValidation";
 
 let cachedStorageRoot: string | null = null;
+const SAFE_DATA_IMAGE_URL =
+  /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[a-z0-9+/]+={0,2}$/i;
+
+// Inisialisasi proaktif root path jika berjalan di lingkungan Tauri
+if (isTauri()) {
+  void getStorageRootPath()
+    .then((path) => {
+      cachedStorageRoot = path;
+    })
+    .catch(() => {});
+}
 
 /**
  * Menyimpan path root storage dari backend untuk resolusi convertFileSrc di desktop.
@@ -13,6 +25,39 @@ export function setCachedStorageRoot(root: string | null): void {
 
 export function getCachedStorageRoot(): string | null {
   return cachedStorageRoot;
+}
+
+function isSafeImageUrl(url: string): boolean {
+  for (const character of url) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  if (SAFE_DATA_IMAGE_URL.test(url)) return true;
+  if (url.startsWith("/") && !url.startsWith("//")) return true;
+
+  try {
+    const parsed = new URL(url);
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      parsed.hostname &&
+      !parsed.username &&
+      !parsed.password
+    ) {
+      return true;
+    }
+
+    if (parsed.protocol === "asset:" && parsed.hostname === "localhost") {
+      return true;
+    }
+
+    return (
+      parsed.protocol === "blob:" &&
+      typeof window !== "undefined" &&
+      parsed.origin === window.location.origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -199,9 +244,14 @@ export function resolveImageSrc(
   const trimmed = rawUrl.trim().replace(/\\/g, "/");
   if (!trimmed) return null;
 
-  // 1. URL Protokol Eksternal / Data URI / Asset URI dicek LEBIH DULU
-  if (/^(https?:\/\/|data:|asset:)/i.test(trimmed)) {
-    return trimmed;
+  // 1. Allow only safe image schemes; reject active SVG and other data URLs.
+  if (/^(https?:\/\/|data:|asset:|blob:)/i.test(trimmed)) {
+    return isSafeImageUrl(trimmed) ? trimmed : null;
+  }
+
+  // Protocol-relative URLs can escape the app origin.
+  if (trimmed.startsWith("//")) {
+    return null;
   }
 
   // 2. Tolak keras path traversal ("..")
@@ -218,9 +268,11 @@ export function resolveImageSrc(
       const activeRoot = storageRoot || cachedStorageRoot;
       if (activeRoot) {
         const cleanRoot = activeRoot.replace(/\\/g, "/").replace(/\/$/, "");
-        return convertFileSrc(`${cleanRoot}/${relAfterStorage}`);
+        const convertedUrl = convertFileSrc(`${cleanRoot}/${relAfterStorage}`);
+        return isSafeImageUrl(convertedUrl) ? convertedUrl : null;
       }
-      return convertFileSrc(trimmed);
+      const convertedUrl = convertFileSrc(trimmed);
+      return isSafeImageUrl(convertedUrl) ? convertedUrl : null;
     }
     return `/${trimmed.substring(storageIdx)}`;
   }
