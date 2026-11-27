@@ -1,13 +1,5 @@
 import React, { useState } from "react";
-import {
-  Button,
-  ButtonGroup,
-  FormGroup,
-  HTMLSelect,
-  InputGroup,
-  NumericInput,
-  Tag,
-} from "@blueprintjs/core";
+import { Button, ButtonGroup } from "@blueprintjs/core";
 import type { SpatialResult } from "../types/map";
 import type { FieldDef } from "../types/spatialResult";
 import { validatePropertyValueType } from "../lib/fieldValidation";
@@ -82,11 +74,22 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
           >
             Pilih Fitur yang Diedit ({features.length} total)
           </label>
-          <HTMLSelect
+          <select
             id="feature-picker"
             value={selectedIndex}
             onChange={(e) => onSelectIndex(Number(e.target.value))}
-            fill
+            style={{
+              width: "100%",
+              padding: "9px 12px",
+              fontSize: "13px",
+              borderRadius: "10px",
+              border: "none",
+              background: "#f8fafc",
+              color: "#0f172a",
+              outline: "none",
+              cursor: "pointer",
+              marginTop: "4px",
+            }}
           >
             {displayedFeatures.map((f, localIdx) => {
               const realIdx = isPaginated ? page * PAGE_SIZE + localIdx : localIdx;
@@ -101,7 +104,7 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
                 </option>
               );
             })}
-          </HTMLSelect>
+          </select>
         </div>
 
         {/* Paginasi jika fitur > 50 */}
@@ -133,13 +136,10 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
         style={{
           maxHeight: "280px",
           overflowY: "auto",
-          border: "1px solid #e2e8f0",
-          borderRadius: "6px",
-          padding: "10px 14px",
-          background: "#ffffff",
           display: "flex",
           flexDirection: "column",
-          gap: "10px",
+          gap: "12px",
+          paddingRight: "4px",
         }}
       >
         {fields.map((f) => {
@@ -149,39 +149,62 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
           const valError = validatePropertyValueType(originalVal, currentVal, f.kind);
 
           return (
-            <FormGroup
-              key={f.key}
-              label={
+            <div key={f.key}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "4px",
+                }}
+              >
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ fontWeight: 600 }}>{f.label}</span>
+                  <span style={{ fontWeight: 600, fontSize: "12px", color: "#475569" }}>
+                    {f.label}
+                  </span>
                   {f.unit && <span style={{ color: "#64748b", fontSize: "11px" }}>({f.unit})</span>}
                   {isFieldEdited && (
-                    <Tag intent="warning" minimal style={{ fontSize: "9px", padding: "1px 4px" }}>
+                    <span
+                      style={{
+                        fontSize: "9px",
+                        padding: "1px 6px",
+                        borderRadius: "4px",
+                        background: "#f1f5f9",
+                        color: "#475569",
+                        fontWeight: 600,
+                      }}
+                    >
                       diedit manual
-                    </Tag>
+                    </span>
                   )}
                   {!f.visible && (
-                    <Tag minimal style={{ fontSize: "9px", padding: "1px 4px", color: "#94a3b8" }}>
+                    <span
+                      style={{
+                        fontSize: "9px",
+                        padding: "1px 6px",
+                        borderRadius: "4px",
+                        background: "#f1f5f9",
+                        color: "#94a3b8",
+                        fontWeight: 600,
+                      }}
+                    >
                       tersembunyi
-                    </Tag>
+                    </span>
                   )}
                 </div>
-              }
-              labelFor={`prop-input-${f.key}`}
-              helperText={
-                valError ? (
-                  <span style={{ color: "#dc2626" }}>{valError}</span>
-                ) : (
-                  <span style={{ color: "#94a3b8", fontSize: "10px" }}>
-                    key: <code>{f.key}</code>
-                  </span>
-                )
-              }
-              intent={valError ? "danger" : "none"}
-              style={{ marginBottom: "6px" }}
-            >
+                <span
+                  style={{
+                    fontSize: "10px",
+                    color: "#94a3b8",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  key: <code>{f.key}</code>
+                </span>
+              </div>
+
               {f.kind === "boolean" ? (
-                <HTMLSelect
+                <select
                   id={`prop-input-${f.key}`}
                   value={currentVal === true ? "true" : currentVal === false ? "false" : ""}
                   onChange={(e) => {
@@ -192,36 +215,58 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
                       v === "true" ? true : v === "false" ? false : null,
                     );
                   }}
-                  fill
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    fontSize: "13px",
+                    borderRadius: "10px",
+                    border: "none",
+                    background: "#f8fafc",
+                    color: "#0f172a",
+                    outline: "none",
+                    cursor: "pointer",
+                    boxSizing: "border-box",
+                  }}
                 >
                   <option value="">(Belum Diatur)</option>
                   <option value="true">Ya (True)</option>
                   <option value="false">Tidak (False)</option>
-                </HTMLSelect>
+                </select>
               ) : f.kind === "number" ? (
-                <NumericInput
+                <input
                   id={`prop-input-${f.key}`}
+                  type="number"
+                  step="any"
                   value={
-                    typeof currentVal === "number"
+                    typeof currentVal === "number" || typeof currentVal === "string"
                       ? currentVal
-                      : typeof currentVal === "string"
-                        ? currentVal
-                        : ""
+                      : ""
                   }
-                  onValueChange={(numericVal) => {
-                    onUpdateValue(
-                      selectedIndex,
-                      f.key,
-                      Number.isFinite(numericVal) ? numericVal : null,
-                    );
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw.trim() === "") {
+                      onUpdateValue(selectedIndex, f.key, null);
+                    } else {
+                      const num = Number(raw);
+                      onUpdateValue(selectedIndex, f.key, Number.isFinite(num) ? num : raw);
+                    }
                   }}
-                  fill
-                  stepSize={0.1}
-                  majorStepSize={1}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    fontSize: "13px",
+                    background: "#f8fafc",
+                    border: valError ? "1px solid #ef4444" : "none",
+                    borderRadius: "10px",
+                    color: "#0f172a",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
                 />
               ) : (
-                <InputGroup
+                <input
                   id={`prop-input-${f.key}`}
+                  type="text"
                   value={
                     typeof currentVal === "string"
                       ? currentVal
@@ -233,9 +278,26 @@ export const FeatureValuesEditor: React.FC<FeatureValuesEditorProps> = ({
                     onUpdateValue(selectedIndex, f.key, e.target.value);
                   }}
                   placeholder={`Isi ${f.label.toLowerCase()}...`}
+                  style={{
+                    width: "100%",
+                    padding: "9px 12px",
+                    fontSize: "13px",
+                    background: "#f8fafc",
+                    border: valError ? "1px solid #ef4444" : "none",
+                    borderRadius: "10px",
+                    color: "#0f172a",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
                 />
               )}
-            </FormGroup>
+
+              {valError && (
+                <div style={{ fontSize: "11px", color: "#dc2626", marginTop: "3px" }}>
+                  {valError}
+                </div>
+              )}
+            </div>
           );
         })}
       </div>

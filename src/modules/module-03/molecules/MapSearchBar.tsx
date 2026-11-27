@@ -10,17 +10,19 @@ export const MapSearchBar: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCli
     <div
       style={{
         width: "100%",
-        padding: "10px 16px",
+        padding: "8px 14px",
         borderRadius: "999px",
-        background: "var(--color-gallery-white)",
+        background: "rgba(255, 255, 255, 0.85)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
         boxShadow: isFocused
-          ? "0 4px 20px rgba(0, 102, 204, 0.15), var(--shadow-subtle)"
-          : "0 4px 12px rgba(0, 0, 0, 0.08), var(--shadow-subtle)",
+          ? "0 8px 24px -4px rgba(0, 102, 204, 0.16), 0 2px 6px rgba(0, 0, 0, 0.04)"
+          : "0 4px 16px -2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04)",
         display: "flex",
         alignItems: "center",
         fontFamily: "var(--font-sf-pro-text)",
-        border: "1px solid var(--color-hairline-silver)",
-        transition: "box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+        border: "1px solid rgba(255, 255, 255, 0.6)",
+        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
       }}
     >
       <div
@@ -40,6 +42,7 @@ export const MapSearchBar: React.FC<{ onMenuClick?: () => void }> = ({ onMenuCli
           justifyContent: "center",
           color: "var(--color-slate)",
           padding: "4px",
+          outline: "none",
         }}
       >
         <Icon icon="menu" size={18} />

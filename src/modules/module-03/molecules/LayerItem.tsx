@@ -1,6 +1,7 @@
 import React from "react";
-import { Button, Tag, Slider } from "@blueprintjs/core";
 import type { LayerState } from "../types/layer";
+import { TactileToggle } from "../atoms/TactileToggle";
+import { LayerOpacitySlider } from "./LayerOpacitySlider";
 
 export interface LayerItemProps {
   layer: LayerState;
@@ -21,14 +22,20 @@ export const LayerItem: React.FC<LayerItemProps> = ({
     return null;
   }
 
+  // Format layer name: shorten raw hexadecimal IDs (e.g. 5d2bcc3ff416f40006cffca8 -> Raster 5d2bcc...)
+  const isHexId = /^[a-f0-9]{20,}$/i.test(layer.layer_name);
+  const displayName = isHexId ? `Raster (${layer.layer_name.slice(0, 8)}...)` : layer.layer_name;
+
   return (
     <div
       style={{
-        marginBottom: "16px",
+        marginBottom: "12px",
         padding: "16px",
-        background: "var(--color-gallery-white)",
-        borderRadius: "var(--radius-cards)",
-        boxShadow: "var(--shadow-subtle)",
+        background: "#ffffff",
+        borderRadius: "16px",
+        border: "none",
+        boxShadow: "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
+        transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
       }}
     >
       <div
@@ -39,77 +46,51 @@ export const LayerItem: React.FC<LayerItemProps> = ({
           gap: "10px",
         }}
       >
-        <div>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
               fontWeight: 600,
+              fontSize: "14px",
+              color: "#0f172a",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
               marginBottom: "4px",
             }}
+            title={layer.layer_name}
           >
-            {layer.layer_name}
+            {displayName}
           </div>
 
-          <Tag
-            minimal
-            round
-            style={{
-              background: "var(--color-control-gray)",
-              color: "var(--color-ink)",
-              fontSize: "11px",
-              fontWeight: 500,
-            }}
-          >
-            {layer.category}
-          </Tag>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 500,
+                color: "#64748b",
+              }}
+            >
+              {layer.category}
+            </span>
+          </div>
         </div>
 
-        <Button
-          icon={layer.is_visible ? "eye-open" : "eye-off"}
-          text={layer.is_visible ? "ON" : "OFF"}
-          minimal={!layer.is_visible}
-          style={{
-            borderRadius: "var(--radius-buttons)",
-            background: layer.is_visible ? "var(--color-control-gray)" : "transparent",
-            boxShadow: "none",
-            color: layer.is_visible ? "var(--color-apple-blue)" : "var(--color-slate)",
-            fontWeight: 600,
-          }}
-          onClick={() => {
+        <TactileToggle
+          isChecked={layer.is_visible}
+          onToggle={() => {
             onToggleVisibility(layer);
           }}
         />
       </div>
 
       {/* Opacity */}
-      <div
-        style={{
-          marginTop: "10px",
-          padding: "0 8px",
+      <LayerOpacitySlider
+        opacity={layer.opacity}
+        isVisible={layer.is_visible}
+        onChange={(newOpacity) => {
+          onOpacityChange(layer, newOpacity);
         }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "4px",
-            fontSize: "12px",
-          }}
-        >
-          <span>Opacity</span>
-          <span>{Math.round(layer.opacity * 100)}%</span>
-        </div>
-
-        <Slider
-          min={0}
-          max={1}
-          stepSize={0.1}
-          labelStepSize={0.5}
-          value={layer.opacity}
-          onChange={(value) => {
-            onOpacityChange(layer, value);
-          }}
-        />
-      </div>
+      />
     </div>
   );
 };

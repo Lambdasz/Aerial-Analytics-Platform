@@ -14,7 +14,7 @@
       "label": "Vegetation Mask File",
       "type": "string",
       "default": "",
-      "description": "Absolute path to a Module 4 vegetation mask PNG (white = vegetation). Required when mask_source is 'file'."
+      "description": "Absolute path to the Module 4 vegetation mask PNG (white = vegetation). Required when mask_source is 'file'."
     },
     {
       "name": "method",
