@@ -57,9 +57,19 @@ export function formatDuration(ms: number): string {
   return parts.join(" ");
 }
 
+/**
+ * How many standalone DNGs a task skipped. Reads the field defensively so this
+ * file compiles even on a branch whose TaskSnapshot predates `skipped`.
+ * Once main is merged, this can simply become `task.skipped`.
+ */
+function skippedOf(task: TaskSnapshot): number {
+  return (task as TaskSnapshot & { skipped?: number }).skipped ?? 0;
+}
+
 /** ` · N DNG dilewati`, or `""` when nothing was skipped. */
-function skippedSuffix(task: Pick<TaskSnapshot, "skipped">): string {
-  return task.skipped > 0 ? ` · ${task.skipped} DNG dilewati` : "";
+function skippedSuffix(task: TaskSnapshot): string {
+  const skipped = skippedOf(task);
+  return skipped > 0 ? ` · ${skipped} DNG dilewati` : "";
 }
 
 /** The one-line status under a task's title. `now` is the current time in ms. */
@@ -92,9 +102,10 @@ export function metaText(task: TaskSnapshot, now: number): string {
 const SKIPPED_REASON =
   "citra DNG tanpa pasangan JPEG tidak dinilai; ketajamannya tidak dapat diukur dari pratinjau.";
 
-/** The "Pekerjaan saat ini" box shown when a task card is expanded. */
+/** The "Pekerjaan saat ini" strip shown when a task card is expanded. */
 export function currentWork(task: TaskSnapshot): { title: string; sub: string } {
-  const skippedNote = task.skipped > 0 ? `${task.skipped} ${SKIPPED_REASON}` : "";
+  const skipped = skippedOf(task);
+  const skippedNote = skipped > 0 ? `${skipped} ${SKIPPED_REASON}` : "";
   const withSkipped = (sub: string) => (skippedNote ? `${sub} ${skippedNote}` : sub);
   switch (task.state) {
     case "queued":

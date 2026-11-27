@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { BackgroundTasks } from "../features/background-tasks/BackgroundTasks";
+import { CurrentProjectProvider } from "./CurrentProjectContext";
+import { Navbar } from "./Navbar";
 import { Sidebar } from "./Sidebar";
 import { DEFAULT_MODULE_ID, findModule, findModuleBySlug, moduleHash } from "./modules";
 
 export function AppShell() {
-  console.log("TESTSTESTS");
   // Read the URL syncs on first render
   const [activeModuleId, setActiveModuleId] = useState(
     () => findModuleBySlug(window.location.hash)?.id ?? DEFAULT_MODULE_ID,
@@ -63,15 +63,16 @@ export function AppShell() {
   }, [navigateToModule]);
 
   return (
-    <div className="app-shell">
-      <div className="app-shell_body">
-        <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
-        <main className="app-shell_content">
-          <ActivePage />
-        </main>
+    <CurrentProjectProvider>
+      <div className="app-shell">
+        <Navbar />
+        <div className="app-shell_body">
+          <Sidebar activeModuleId={activeModuleId} onSelectModule={navigateToModule} />
+          <main className="app-shell_content">
+            <ActivePage />
+          </main>
+        </div>
       </div>
-
-      <BackgroundTasks />
-    </div>
+    </CurrentProjectProvider>
   );
 }

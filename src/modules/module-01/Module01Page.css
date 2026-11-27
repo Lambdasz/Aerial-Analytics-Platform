@@ -530,7 +530,10 @@
   color: var(--m1-text-body);
   cursor: pointer;
   text-align: left;
-  transition: all 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .m1-sort-item:hover {
@@ -629,7 +632,10 @@
   justify-content: center;
   cursor: pointer;
   color: var(--m1-text-body);
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .m1-card-menu-btn:hover,
@@ -673,7 +679,10 @@
   color: var(--m1-text-body);
   cursor: pointer;
   text-align: left;
-  transition: all 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .m1-card-menu-item:hover {
@@ -1028,7 +1037,10 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .m1-page-num-btn:hover:not(:disabled) {

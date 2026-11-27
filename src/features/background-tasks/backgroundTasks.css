@@ -1,5 +1,5 @@
 /*
- * Background task status bar and panel.
+ * Background tasks, as a section at the bottom of the sidebar.
  * Colours and spacing follow the "Sesi Penerbangan Redesign" design.
  */
 
@@ -12,8 +12,10 @@
   --bt-warn: #b45309;
   --bt-warn-soft: #ffefe0;
   --bt-danger: #b91c1c;
-  --bt-ink: #111827;
-  --bt-ink-2: #3b4352;
+  --bt-danger-soft: #fee2e2;
+  /* Dark slate, not pure black; all pass 4.5:1 on white and on the sidebar grey. */
+  --bt-ink: #2b3240;
+  --bt-ink-2: #4a5361;
   --bt-muted: #5b6472;
   --bt-line: #e3e7ee;
   --bt-line-strong: #d5dbe5;
@@ -38,103 +40,178 @@
   animation: bt-spin 0.8s linear infinite;
 }
 
-.bt-spin--small {
-  width: 12px;
-  height: 12px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .bt-spin {
     animation-duration: 2.4s;
   }
+
+  .bt-track__fill,
+  .bt-detail-wrap,
+  .bt-card {
+    transition: none;
+  }
+
+  .bt-card--open .bt-detail {
+    animation: none;
+  }
 }
 
-.bt-bar button:focus-visible,
-.bt-panel button:focus-visible {
+/* Visually hidden, still read by screen readers. */
+.bt-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Keyboard focus only (:focus-visible, so mouse clicks show nothing). The ring
+ * is drawn inside the element so the card's rounded clipping never cuts it.
+ */
+.bt-section button:focus-visible {
   outline: 2px solid var(--bt-accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
-/* Status bar */
+/* Blueprint draws its own ring on every :focus, mouse clicks included; cancel that. */
+.bt-section button:focus:not(:focus-visible) {
+  outline: none;
+}
 
-.bt-bar {
-  flex: 0 0 32px;
-  box-sizing: border-box;
-  height: 32px;
+/*
+ * Section. Anchored to the bottom of the sidebar (margin-top: auto), as tall as
+ * its content, and the only thing in the sidebar allowed to shrink. The menu
+ * above never gets squeezed; once the section runs out of room its list scrolls.
+ */
+
+.bt-section {
+  position: relative;
+  flex: 0 1 auto;
+  min-height: 160px;
   display: flex;
-  align-items: stretch;
-  justify-content: flex-end;
-  gap: 2px;
-  padding: 0 8px;
-  background: var(--bt-surface);
+  flex-direction: column;
+  margin-top: auto;
   border-top: 1px solid var(--bt-line-strong);
   font-family: "DM Sans", sans-serif;
-  font-size: 12px;
+  color: var(--bt-ink);
+}
+
+.bt-section__head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 2px 8px;
+}
+
+.bt-section__bar {
+  position: relative;
+  /* the info tooltip is positioned against the bar */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bt-section__tools {
+  display: flex;
+  align-items: center;
+  margin: -4px -4px -4px 0;
+}
+
+/* Info badge: an outlined circle with an "i", grey on a transparent background. */
+.bt-info__badge {
+  opacity: 0.8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #7d8696;
+  font-weight: 900;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bt-muted);
+  font-family: "Poppins", sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.bt-info:hover .bt-info__badge,
+.bt-info:focus-within .bt-info__badge {
+  opacity: 1;
+  border-color: var(--bt-ink-2);
   color: var(--bt-ink-2);
 }
 
-.bt-bar__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-weight: 600;
-  color: var(--bt-ink);
-  cursor: pointer;
+/* Hover or keyboard focus on the badge shows the explanation. */
+.bt-info__tip {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  width: min(210px, 100%);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bt-ink);
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: 0 8px 20px rgba(17, 24, 39, 0.2);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s;
 }
 
-.bt-bar__item:hover {
-  background: #f1f4f9;
+.bt-info:hover .bt-info__tip,
+.bt-info:focus-within .bt-info__tip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
-.bt-bar__item--open {
-  background: #eaf0ff;
+@media (prefers-reduced-motion: reduce) {
+  .bt-info__tip {
+    transition: none;
+  }
 }
 
-.bt-bar__item--failed {
-  font-weight: 700;
-  color: var(--bt-danger);
+.bt-section__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.bt-bar__idle {
-  color: #16a34a;
+.bt-section__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
 }
 
-.bt-bar__none {
-  color: var(--bt-muted);
-}
-
-.bt-bar__text {
-  white-space: nowrap;
-}
-
-.bt-bar__track {
-  display: block;
-  width: 96px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--bt-line);
-  overflow: hidden;
-}
-
-.bt-bar__fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--bt-accent);
-  transition: width 0.45s ease;
-}
-
-.bt-bar__chev {
-  color: var(--bt-muted);
-  transition: transform 0.15s;
-}
-
-.bt-bar__chev--open {
-  transform: rotate(180deg);
+.bt-section__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Wheel at the end of the list doesn't scroll the page behind. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 2px 2px 8px;
 }
 
 .bt-pill {
@@ -152,83 +229,9 @@
   background: var(--bt-accent-soft);
 }
 
-/* Panel */
-
-.bt-backdrop {
-  position: fixed;
-  inset: 0 0 32px 0;
-  z-index: 38;
-  border: 0;
-  background: transparent;
-  cursor: default;
-}
-
-.bt-panel {
-  position: fixed;
-  right: 12px;
-  bottom: 40px;
-  z-index: 39;
-  width: 448px;
-  max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 96px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bt-surface);
-  border: 1px solid var(--bt-line-strong);
-  border-radius: 16px;
-  box-shadow: 0 14px 32px rgba(17, 24, 39, 0.16);
-  font-family: "DM Sans", sans-serif;
-  color: var(--bt-ink);
-}
-
-.bt-panel:focus {
-  outline: none;
-}
-
-.bt-panel__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 10px 12px 18px;
-  border-bottom: 1px solid var(--bt-line);
-}
-
-.bt-panel__heading,
-.bt-panel__actions {
-  display: flex;
-  align-items: center;
-}
-
-.bt-panel__heading {
-  gap: 8px;
-}
-
-.bt-panel__actions {
-  gap: 2px;
-}
-
-.bt-panel__title {
-  margin: 0;
-  white-space: nowrap;
-  font-size: 15px;
-  font-weight: 800;
-}
-
-.bt-panel__list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 6px 8px 8px;
-}
-
-.bt-panel__foot {
-  padding: 10px 18px;
-  border-top: 1px solid var(--bt-line);
-  background: #fafbfc;
-  font-size: 12px;
-  color: var(--bt-muted);
+.bt-pill--danger {
+  color: var(--bt-danger);
+  background: var(--bt-danger-soft);
 }
 
 .bt-ghost {
@@ -247,36 +250,48 @@
 }
 
 .bt-ghost--icon {
-  width: 32px;
-  height: 32px;
-}
-
-.bt-ghost--text {
-  min-height: 32px;
-  padding: 0 10px;
-  white-space: nowrap;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--bt-accent);
+  flex: none;
+  width: 28px;
+  height: 28px;
 }
 
 .bt-group {
-  padding: 10px 10px 4px;
-  font-size: 12px;
+  padding: 8px 2px 6px;
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--bt-muted);
 }
 
-/* Task card */
+/* Task card: header and detail live inside one bordered surface */
 
 .bt-card {
-  margin-bottom: 2px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  background: var(--bt-surface);
+  border: 1px solid var(--bt-line-strong);
   border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  /* Long lists: the browser skips layout and paint for cards scrolled out of view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 92px;
 }
 
+/* An open card lifts slightly, so it is clear which one changed. */
 .bt-card--open {
-  background: var(--bt-surface-2);
+  border-color: #b9c4d6;
+  box-shadow: 0 4px 14px rgba(17, 24, 39, 0.1);
+}
+
+.bt-card--failed {
+  border-color: #f0b3b3;
+}
+
+.bt-card--warn {
+  border-color: #f0cfa8;
 }
 
 .bt-card__head {
@@ -284,16 +299,20 @@
   align-items: flex-start;
 }
 
+.bt-card__head:hover {
+  background: var(--bt-surface-2);
+}
+
 .bt-row {
   flex: 1;
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 16px;
-  column-gap: 10px;
+  grid-template-columns: 24px minmax(0, 1fr) 14px;
+  column-gap: 8px;
   align-items: start;
-  padding: 10px 6px 10px 10px;
+  padding: 10px 4px 10px 10px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 10px;
   background: transparent;
   text-align: left;
   font: inherit;
@@ -301,20 +320,17 @@
   cursor: pointer;
 }
 
-.bt-row:hover {
-  background: #eef2f8;
-}
-
 .bt-row__body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
 }
 
 .bt-row__title {
   font-size: 13px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .bt-row__scope {
@@ -326,8 +342,9 @@
 }
 
 .bt-row__meta {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--bt-ink-2);
 }
 
@@ -336,7 +353,7 @@
 }
 
 .bt-chev {
-  margin-top: 6px;
+  margin-top: 5px;
   color: var(--bt-muted);
   transition: transform 0.15s;
 }
@@ -353,8 +370,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   color: var(--bt-accent);
   background: var(--bt-accent-soft);
@@ -378,13 +395,13 @@
 
 .bt-icon--failed {
   color: var(--bt-danger);
-  background: #fee2e2;
+  background: var(--bt-danger-soft);
 }
 
 .bt-track {
   display: block;
   height: 6px;
-  margin-top: 5px;
+  margin: 4px 0 2px;
   border-radius: 999px;
   background: var(--bt-line);
   overflow: hidden;
@@ -395,37 +412,64 @@
   margin-top: 4px;
 }
 
+/* Progress is drawn with transform (scaleX), which animates without re-layout. */
 .bt-track__fill {
   display: block;
+  width: 100%;
   height: 100%;
-  border-radius: 999px;
   background: var(--bt-accent);
-  transition: width 0.45s ease;
+  transform-origin: left center;
+  transition: transform 0.45s ease;
 }
 
-/* Expanded detail */
+/* Expanded detail: a tinted strip at the bottom of the same card */
+
+/* Smooth open/close: the grid row animates 0fr <-> 1fr, so height follows the content. */
+.bt-detail-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.bt-card--open .bt-detail-wrap {
+  grid-template-rows: 1fr;
+}
+
+.bt-detail-clip {
+  min-height: 0;
+  overflow: hidden;
+}
 
 .bt-detail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 0 12px 12px 48px;
+  gap: 4px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--bt-line);
+  background: var(--bt-surface-2);
+}
+
+/* On open the content also fades and slides in a little. */
+.bt-card--open .bt-detail {
+  animation: bt-detail-in 0.28s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes bt-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .bt-detail__label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--bt-muted);
-}
-
-.bt-detail__box {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  background: var(--bt-surface);
-  border: 1px solid var(--bt-line);
-  border-radius: 10px;
 }
 
 .bt-detail__line {
@@ -435,12 +479,11 @@
   gap: 8px;
 }
 
+/* Wraps instead of truncating: the detail strip shows the complete text. */
 .bt-detail__title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -452,7 +495,8 @@
 }
 
 .bt-detail__sub {
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.35;
   color: var(--bt-muted);
 }
 
@@ -462,24 +506,68 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 36px 16px;
+  gap: 6px;
+  padding: 18px 12px;
   text-align: center;
 }
 
-.bt-empty__icon {
+/* Idle "Zzz": three letters that drift up and fade, staggered. */
+.bt-zzz {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  color: #14532d;
-  background: var(--bt-ok-soft);
+  align-items: flex-end;
+  gap: 2px;
+  height: 32px;
+  font-family: "Poppins", sans-serif;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--bt-muted);
+}
+
+.bt-zzz > span {
+  opacity: 0;
+  animation: bt-zzz 2.4s ease-in-out infinite;
+}
+
+.bt-zzz > span:nth-child(1) {
+  font-size: 12px;
+}
+
+.bt-zzz > span:nth-child(2) {
+  font-size: 16px;
+  animation-delay: 0.4s;
+}
+
+.bt-zzz > span:nth-child(3) {
+  font-size: 21px;
+  animation-delay: 0.8s;
+}
+
+@keyframes bt-zzz {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  30%,
+  70% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bt-zzz > span {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 .bt-empty__title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 

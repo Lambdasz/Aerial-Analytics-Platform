@@ -24,6 +24,12 @@
   box-shadow: none;
   border-bottom: 0;
   font-family: "Poppins", sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  position: relative;
+  z-index: 30;
 }
 
 .app-shell_navbar-brand {
@@ -51,35 +57,16 @@
   flex: 0 0 260px;
   width: 260px;
   box-sizing: border-box;
-  padding: 0 16px;
+  /* Column layout so the background tasks can sit at the bottom. */
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px 16px;
+  /* Fallback only: scrolls when the window is shorter than brand + menu + tasks minimum. */
   overflow-y: auto;
   background-color: #f8f8f9;
   color: #1b1f27;
   border-right: 1px solid rgba(17, 20, 24, 0.06);
   font-family: "DM Sans", sans-serif;
-}
-
-.app-shell_brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 96px;
-  box-sizing: border-box;
-  padding: 0 8px;
-  font-family: "Poppins", sans-serif;
-  font-size: 20px;
-  font-weight: 400;
-  line-height: 1;
-}
-
-.app-shell_brand-text {
-  display: flex;
-  align-items: center;
-  gap: 0.25em;
-}
-
-.app-shell_brand-bold {
-  font-weight: 600;
 }
 
 .app-shell_logo {
@@ -96,11 +83,13 @@
 }
 
 .app-shell_menu {
+  /* Never shrinks, so the navigation buttons are never cut off. */
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 0;
-  padding: 8px 0 0;
+  margin: 0 0 12px;
+  padding: 16px 0 0;
   list-style: none;
 }
 
@@ -148,15 +137,9 @@
 }
 
 .app-shell_icon {
-  display: inline-flex;
   flex: 0 0 20px;
   width: 20px;
   height: 20px;
-  box-sizing: border-box;
-  /* placeholder outline icon; follows the text color */
-  border: 1.6px solid currentColor;
-  border-radius: 6px;
-  opacity: 0.8;
 }
 
 /* Content */
@@ -272,6 +255,440 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 220px;
+}
+
+.app-shell_navbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+  font-family: "DM Sans", sans-serif;
+}
+
+.app-shell_project {
+  position: relative;
+}
+
+.app-shell_project-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 20, 24, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1b1f27;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.app-shell_project-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-shell_project-trigger:hover,
+.app-shell_project-trigger[aria-expanded="true"] {
+  background: #f6f7f9;
+  border-color: rgba(17, 20, 24, 0.26);
+}
+
+.app-shell_project-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid rgba(17, 20, 24, 0.12);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(17, 20, 24, 0.14);
+}
+
+.app-shell_project-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #cbd5e1;
+}
+
+.app-shell_project-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.app-shell_project-more:hover {
+  background: #eff6ff;
+}
+
+.app-shell_project-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.app-shell_project-create:hover {
+  background: #1e40af;
+}
+
+.app-shell_pl {
+  --pl-primary: #1d4ed8;
+  --pl-tint: #e6edff;
+  --pl-text: #111827;
+  --pl-muted: #5b6472;
+  --pl-border: #d5dbe5;
+  --pl-hover: #f4f6fa;
+  display: flex;
+  flex-direction: column;
+  color: var(--pl-text);
+}
+
+.app-shell_pl-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.app-shell_pl-search-glyph {
+  position: absolute;
+  left: 12px;
+  color: var(--pl-muted);
+  pointer-events: none;
+}
+
+.app-shell_pl-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 14px 0 34px;
+  border: 1px solid var(--pl-border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--pl-text);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.app-shell_pl-input::placeholder {
+  color: #8a93a3;
+}
+
+.app-shell_pl-input:focus {
+  outline: none;
+}
+
+.app-shell_pl-input:focus-visible {
+  outline: 2px solid var(--pl-primary);
+  outline-offset: 2px;
+}
+
+.app-shell_pl-heading {
+  margin: 10px 8px 4px;
+  color: var(--pl-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.app-shell_pl-heading--divided {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #cbd5e1;
+}
+
+.app-shell_pl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.app-shell_pl-list:focus {
+  outline: none;
+}
+
+.app-shell_pl-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell_pl-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 4px 6px;
+  border-radius: 10px;
+}
+
+.app-shell_pl-item--active {
+  background: var(--pl-hover);
+}
+
+.app-shell_pl-item--selected {
+  background: var(--pl-tint);
+}
+
+.app-shell_pl-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pl-muted);
+  cursor: pointer;
+}
+
+.app-shell_pl-expand:hover {
+  background: rgba(17, 20, 24, 0.08);
+  color: var(--pl-text);
+}
+
+.app-shell_pl-select {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell_pl-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+
+.app-shell_pl-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-shell_pl-name mark {
+  background: rgba(29, 78, 216, 0.16);
+  color: inherit;
+  border-radius: 3px;
+}
+
+.app-shell_pl-meta {
+  color: var(--pl-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.app-shell_pl-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.app-shell_pl-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--pl-primary);
+  color: #ffffff;
+}
+
+.app-shell_pl-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pl-muted);
+  cursor: pointer;
+}
+
+.app-shell_pl-open:hover {
+  background: rgba(29, 78, 216, 0.12);
+  color: var(--pl-primary);
+}
+
+.app-shell_pl-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 4px 18px;
+  padding-left: 10px;
+  border-left: 1.5px solid #cbd5e1;
+}
+
+.app-shell_pl-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pl-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell_pl-tree-row:hover {
+  background: var(--pl-hover);
+}
+
+.app-shell_pl-tree-row--add {
+  color: var(--pl-primary);
+  font-weight: 600;
+}
+
+.app-shell_pl-tree-row--add:hover {
+  background: #eff6ff;
+}
+
+.app-shell_pl-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-shell_pl-tree-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef1f6;
+  color: var(--pl-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.app-shell_pl-tree-note {
+  margin: 4px 8px;
+  color: var(--pl-muted);
+  font-size: 12px;
+}
+
+.app-shell_pl-session-hit {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell_pl-session-hit:hover {
+  background: var(--pl-hover);
+}
+
+.app-shell_pl-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 8px;
+  color: var(--pl-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.app-shell_pl-retry {
+  padding: 4px 10px;
+  border: 1px solid var(--pl-border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--pl-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-shell_pl-retry:focus {
+  outline: none;
+}
+
+.app-shell_pl-retry:focus-visible {
+  outline: 2px solid var(--pl-primary);
+  outline-offset: 2px;
+}
+
+.app-shell_navbar :focus {
+  outline: none;
+}
+
+.app-shell_navbar :focus-visible {
+  outline: 2px solid #2d72d2;
+  outline-offset: 2px;
 }
 
 /* Blueprint Dialog / Overlay Portal global z-index above all map sidebars and floating controls */

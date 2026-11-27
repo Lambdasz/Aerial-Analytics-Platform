@@ -24,11 +24,13 @@ import {
 } from "./sessionCommands";
 
 import { type Project, countImagesByProject } from "./projectCommands";
+import { M1_INTENT_EVENT, type M1Intent, takeM1Intent } from "./navIntent";
+import { useCurrentProject } from "../../shell/currentProject";
 
 import { calculateSessionStats, isValidUuid, parseCameraDate } from "./sessionStats";
 
 import { SummaryBoxes } from "./components/SummaryBoxes";
-import { ProjectPicker } from "./components/ProjectPicker";
+import { CreateProjectDialog } from "./components/CreateProjectDialog";
 import { SessionCard } from "./components/SessionCard";
 import { SessionDetail } from "./components/SessionDetail";
 import {
@@ -41,12 +43,21 @@ import {
 import "./Module01Page.css";
 
 const PAGE_SIZE = 9;
-const STORAGE_KEY = "m1_last_project_id";
 
 type StatusFilter = "all" | "active" | "archived";
 const DEFAULT_STATUS_FILTER: StatusFilter = "active";
 type SortOrder = "newest" | "oldest" | "name";
 type View = { kind: "list" } | { kind: "detail"; sessionId: string };
+
+interface CachedCount {
+  key: string;
+  count: number;
+}
+
+const COUNT_BATCH = 3;
+
+const countKey = (session: Session) =>
+  `${session.updatedAt}|${session.dateStart}|${session.dateEnd}`;
 
 /**
  * Counts the stored images of every session, in parallel.
@@ -58,48 +69,51 @@ type View = { kind: "list" } | { kind: "detail"; sessionId: string };
  */
 async function countImagesPerSession(
   sessions: Session[],
-): Promise<Record<string, number | undefined>> {
-  const counts = await Promise.all(
-    sessions.map(async (session) => {
-      try {
-        return (await getImagesBySession(session.id)).length;
-      } catch {
-        return undefined;
-      }
-    }),
-  );
-  return Object.fromEntries(sessions.map((session, index) => [session.id, counts[index]]));
+  cache: Map<string, CachedCount>,
+  onProgress: (counts: Record<string, number | undefined>) => void,
+  isCancelled: () => boolean,
+): Promise<void> {
+  const counts: Record<string, number | undefined> = {};
+  const todo: Session[] = [];
+  for (const session of sessions) {
+    const hit = cache.get(session.id);
+    if (hit && hit.key === countKey(session)) counts[session.id] = hit.count;
+    else todo.push(session);
+  }
+  onProgress({ ...counts });
+
+  for (let i = 0; i < todo.length; i += COUNT_BATCH) {
+    if (isCancelled()) return;
+    const batch = todo.slice(i, i + COUNT_BATCH);
+    const results = await Promise.all(
+      batch.map(async (session) => {
+        try {
+          return (await getImagesBySession(session.id)).length;
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    if (isCancelled()) return;
+    batch.forEach((session, index) => {
+      const count = results[index];
+      counts[session.id] = count;
+      if (count !== undefined) cache.set(session.id, { key: countKey(session), count });
+    });
+    onProgress({ ...counts });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 function Module01PageInner() {
-  const [selectedProject, setSelectedProject] = useState<Project | null>(() => {
-    try {
-      const savedJson = localStorage.getItem(STORAGE_KEY);
-      if (savedJson) {
-        const parsed = JSON.parse(savedJson) as Project;
-        if (parsed && parsed.id && isValidUuid(parsed.id)) return parsed;
-      }
-    } catch {
-      // Ignore
-    }
-    return null;
-  });
+  const { currentProject: selectedProject, setCurrentProject } = useCurrentProject();
 
   const projectId = selectedProject?.id ?? "";
 
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState<boolean>(() => {
-    try {
-      const savedJson = localStorage.getItem(STORAGE_KEY);
-      if (savedJson) {
-        const parsed = JSON.parse(savedJson) as Project;
-        return Boolean(parsed && parsed.id && isValidUuid(parsed.id));
-      }
-    } catch {
-      // Ignore
-    }
-    return false;
-  });
+  const [loading, setLoading] = useState<boolean>(() =>
+    Boolean(projectId && isValidUuid(projectId)),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalImages, setTotalImages] = useState<number | undefined>(undefined);
@@ -156,8 +170,27 @@ function Module01PageInner() {
   // In-page navigation (no router): list screen or a session's detail screen
   const [view, setView] = useState<View>({ kind: "list" });
 
+  // Reset list/filter/view state whenever the globally active project changes
+  // (whether selected via the navbar or via Module 1's ProjectPicker).
+  const [prevProjectId, setPrevProjectId] = useState(projectId);
+  if (prevProjectId !== projectId) {
+    setPrevProjectId(projectId);
+    setLoading(Boolean(projectId && isValidUuid(projectId)));
+    setError(null);
+    setSearchQuery("");
+    setStatusFilter(DEFAULT_STATUS_FILTER);
+    setCurrentPage(1);
+    setView({ kind: "list" });
+    if (!projectId) {
+      setSessions([]);
+      setTotalImages(undefined);
+      setImageCounts({});
+    }
+  }
+
   // Dialog states
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Session | null>(null);
   const [assignTarget, setAssignTarget] = useState<Session | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Session | null>(null);
@@ -208,6 +241,21 @@ function Module01PageInner() {
     projectIdRef.current = projectId;
   }, [projectId]);
 
+  const countCacheRef = useRef(new Map<string, CachedCount>());
+  const countRunRef = useRef(0);
+  const refreshCounts = useCallback((list: Session[], pid: string) => {
+    const run = ++countRunRef.current;
+    const stale = () => run !== countRunRef.current || projectIdRef.current !== pid;
+    void countImagesPerSession(
+      list,
+      countCacheRef.current,
+      (counts) => {
+        if (!stale()) setImageCounts(counts);
+      },
+      stale,
+    );
+  }, []);
+
   // Load sessions from backend
   const fetchSessions = useCallback(
     async (pid: string, isInitial = false) => {
@@ -224,13 +272,9 @@ function Module01PageInner() {
         const result = await getSessionsByProject(pid.trim());
         if (projectIdRef.current !== pid) return;
         setSessions(result);
-        // Per-session counts for the cards, plus the project total.
-        const [counts, total] = await Promise.all([
-          countImagesPerSession(result),
-          countImagesByProject(pid.trim()).catch(() => undefined),
-        ]);
+        refreshCounts(result, pid);
+        const total = await countImagesByProject(pid.trim()).catch(() => undefined);
         if (projectIdRef.current !== pid) return;
-        setImageCounts(counts);
         setTotalImages(total);
       } catch (err) {
         if (projectIdRef.current === pid) setError(formatError(err));
@@ -239,7 +283,7 @@ function Module01PageInner() {
         setBusy(false);
       }
     },
-    [formatError],
+    [formatError, refreshCounts],
   );
 
   // Load sessions when project changes
@@ -251,11 +295,8 @@ function Module01PageInner() {
           if (isMounted) {
             setSessions(result);
             setLoading(false);
+            refreshCounts(result, projectId);
           }
-          return countImagesPerSession(result);
-        })
-        .then((counts) => {
-          if (isMounted) setImageCounts(counts);
         })
         .catch((err: unknown) => {
           if (isMounted) {
@@ -282,49 +323,67 @@ function Module01PageInner() {
     }
     return () => {
       isMounted = false;
+      countRunRef.current += 1;
     };
-  }, [projectId, formatError]);
+  }, [projectId, formatError, refreshCounts]);
 
   // Handle Project selection
   const handleSelectProject = useCallback(
     (project: Project) => {
-      setSelectedProject(project);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-      } catch {
-        // Ignore localStorage errors
-      }
-      // Re-picking the open project does not re-run the load effect, so don't wait on it.
-      setLoading(project.id !== projectId);
+      setCurrentProject(project);
       setSearchQuery("");
       setStatusFilter(DEFAULT_STATUS_FILTER);
       setCurrentPage(1);
       setView({ kind: "list" });
     },
-    [projectId],
+    [setCurrentProject],
   );
 
-  // Project deleted from the picker: clear the selection if it was the active project
-  const handleProjectDeleted = useCallback(
-    (deletedId: string) => {
-      if (selectedProject?.id !== deletedId) return;
-      setSelectedProject(null);
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch {
-        // Ignore localStorage errors
+  const applyIntent = useCallback(
+    (intent: M1Intent) => {
+      switch (intent.kind) {
+        case "select-project":
+          handleSelectProject(intent.project);
+          break;
+        case "open-session":
+          setCurrentProject(intent.project);
+          setPrevProjectId(intent.project.id);
+          setLoading(intent.project.id !== projectId);
+          setError(null);
+          setSearchQuery("");
+          setStatusFilter(DEFAULT_STATUS_FILTER);
+          setCurrentPage(1);
+          setView({ kind: "detail", sessionId: intent.sessionId });
+          break;
+        case "create-session":
+          setCurrentProject(intent.project);
+          setPrevProjectId(intent.project.id);
+          setLoading(intent.project.id !== projectId);
+          setError(null);
+          setSearchQuery("");
+          setStatusFilter(DEFAULT_STATUS_FILTER);
+          setCurrentPage(1);
+          setView({ kind: "list" });
+          setIsCreateOpen(true);
+          break;
+        case "create-project":
+          setView({ kind: "list" });
+          setIsCreateProjectOpen(true);
+          break;
       }
-      setSessions([]);
-      setTotalImages(undefined);
-      setImageCounts({});
-      setLoading(false);
-      setSearchQuery("");
-      setStatusFilter(DEFAULT_STATUS_FILTER);
-      setCurrentPage(1);
-      setView({ kind: "list" });
     },
-    [selectedProject],
+    [handleSelectProject, setCurrentProject, projectId],
   );
+
+  useEffect(() => {
+    const consume = () => {
+      const intent = takeM1Intent();
+      if (intent) applyIntent(intent);
+    };
+    queueMicrotask(consume);
+    window.addEventListener(M1_INTENT_EVENT, consume);
+    return () => window.removeEventListener(M1_INTENT_EVENT, consume);
+  }, [applyIntent]);
 
   // Manual load sessions button
   const handleLoadSessions = () => {
@@ -385,6 +444,7 @@ function Module01PageInner() {
     showToast(message);
     setAssignTarget(null);
     setImageRevision((revision) => revision + 1);
+    countCacheRef.current.clear();
     if (projectId) await fetchSessions(projectId, false);
   };
 
@@ -570,13 +630,6 @@ function Module01PageInner() {
             </div>
 
             <div className="m1-header__actions">
-              <ProjectPicker
-                selectedProject={selectedProject}
-                onSelect={handleSelectProject}
-                onProjectDeleted={handleProjectDeleted}
-                onError={setError}
-                onToast={showToast}
-              />
               <button
                 type="button"
                 className="m1-primary-pill-btn"
@@ -1046,6 +1099,16 @@ function Module01PageInner() {
       )}
 
       {/* ── Dialogs ────────────────────────────────────────────────── */}
+      <CreateProjectDialog
+        isOpen={isCreateProjectOpen}
+        onClose={() => setIsCreateProjectOpen(false)}
+        onCreated={(project) => {
+          handleSelectProject(project);
+          showToast(`Proyek "${project.name}" dibuat.`);
+        }}
+        onError={setError}
+      />
+
       <CreateSessionDialog
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
