@@ -495,15 +495,21 @@ export function ProjectSwitcher() {
 
   useEffect(() => {
     if (!open) return;
+    const wrapper = wrapperRef.current;
+    const onWrapperMouseDown = (e: MouseEvent) => {
+      if (!(e.target instanceof HTMLInputElement)) e.preventDefault();
+    };
     const onPointerDown = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) close(false);
+      if (wrapper && !wrapper.contains(e.target as Node)) close(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") close(true);
     };
+    wrapper?.addEventListener("mousedown", onWrapperMouseDown);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      wrapper?.removeEventListener("mousedown", onWrapperMouseDown);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKey);
     };
@@ -555,70 +561,74 @@ export function ProjectSwitcher() {
   };
 
   return (
-    <div
-      className="app-shell_project"
-      ref={wrapperRef}
-      onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) close(false);
-      }}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        className="app-shell_project-trigger"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={open ? panelId : undefined}
-        aria-label={currentProject?.name ? `Proyek aktif: ${currentProject.name}` : "Pilih proyek"}
-        title={currentProject?.name || "Pilih proyek"}
-        onClick={toggle}
+    <>
+      <div
+        className="app-shell_project"
+        ref={wrapperRef}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget)) close(false);
+        }}
       >
-        <LuFolder size={16} aria-hidden="true" />
-        <span className="app-shell_project-name">{currentProject?.name || "Pilih proyek"}</span>
-        <LuChevronDown size={12} aria-hidden="true" />
-      </button>
-
-      {open && (
-        <div
-          id={panelId}
-          className="app-shell_project-menu"
-          role="dialog"
-          aria-label="Pilih proyek"
+        <button
+          ref={triggerRef}
+          type="button"
+          className="app-shell_project-trigger"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={open ? panelId : undefined}
+          aria-label={
+            currentProject?.name ? `Proyek aktif: ${currentProject.name}` : "Pilih proyek"
+          }
+          title={currentProject?.name || "Pilih proyek"}
+          onClick={toggle}
         >
-          <ProjectTreeList
-            items={items}
-            allSessions={allSessions}
-            status={status}
-            selectedId={currentProject?.id ?? null}
-            expanded={expanded}
-            sessions={sessions}
-            onToggleExpand={toggleExpand}
-            onSelectProject={selectProject}
-            onOpenProjectPage={openProjectPage}
-            onOpenSession={openSession}
-            onAddSession={addSession}
-            onRetry={load}
-            limit={IDLE_LIMIT}
-            focusOnMount
-          />
-          <div className="app-shell_project-footer">
-            <button
-              type="button"
-              className="app-shell_project-more"
-              onClick={() => {
-                close(false);
-                setBrowserOpen(true);
-              }}
-            >
-              Lihat semua proyek
-            </button>
-            <button type="button" className="app-shell_project-create" onClick={addProject}>
-              <LuFolderPlus size={15} aria-hidden="true" />
-              Proyek baru
-            </button>
+          <LuFolder size={16} aria-hidden="true" />
+          <span className="app-shell_project-name">{currentProject?.name || "Pilih proyek"}</span>
+          <LuChevronDown size={12} aria-hidden="true" />
+        </button>
+
+        {open && (
+          <div
+            id={panelId}
+            className="app-shell_project-menu"
+            role="dialog"
+            aria-label="Pilih proyek"
+          >
+            <ProjectTreeList
+              items={items}
+              allSessions={allSessions}
+              status={status}
+              selectedId={currentProject?.id ?? null}
+              expanded={expanded}
+              sessions={sessions}
+              onToggleExpand={toggleExpand}
+              onSelectProject={selectProject}
+              onOpenProjectPage={openProjectPage}
+              onOpenSession={openSession}
+              onAddSession={addSession}
+              onRetry={load}
+              limit={IDLE_LIMIT}
+              focusOnMount
+            />
+            <div className="app-shell_project-footer">
+              <button
+                type="button"
+                className="app-shell_project-more"
+                onClick={() => {
+                  close(false);
+                  setBrowserOpen(true);
+                }}
+              >
+                Lihat semua proyek
+              </button>
+              <button type="button" className="app-shell_project-create" onClick={addProject}>
+                <LuFolderPlus size={15} aria-hidden="true" />
+                Proyek baru
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <ProjectBrowserModal
         isOpen={browserOpen}
@@ -635,6 +645,6 @@ export function ProjectSwitcher() {
           if (open) load();
         }}
       />
-    </div>
+    </>
   );
 }
