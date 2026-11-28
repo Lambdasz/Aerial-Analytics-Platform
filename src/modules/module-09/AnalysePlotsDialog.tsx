@@ -28,6 +28,7 @@ import {
 } from "../module-01/sessionCommands";
 import { listOrthoImages } from "../module-03/services/api";
 import type { StoredImageMetadata } from "../module-03/types/storage";
+import { errorMessage } from "./plotAnalytics";
 import {
   analysePlotsFromOrtho,
   savePlotIndicators,
@@ -40,32 +41,45 @@ interface JobStatusPayload {
   data?: { error?: string };
 }
 
-function message(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) {
-    return String(error.message);
-  }
-  return "Unexpected error.";
-}
+type SourceType = "session" | "ortho";
+type JobVerdict = "completed" | "failed";
 
-function mimeFor(image: StoredImage): string {
-  const format = (image.format ?? "").toLowerCase();
-  const extension = image.filePath.split(".").pop()?.toLowerCase() ?? "";
-
-  if (format === "png" || extension === "png") return "image/png";
-  if (format === "tiff" || extension === "tif" || extension === "tiff") {
-    return "image/tiff";
-  }
-  return "image/jpeg";
-}
+/**
+ * FR-9.3.4 / ISU-9.4: a session photo is not clipped to the plot yet, so
+ * every plot would get nearly the same value. Re-enable only after a
+ * plot/footprint intersection check exists (or plugins clip to the AOI).
+ */
+const SESSION_SOURCE_ENABLED = false;
 
 const POLL_INTERVAL_MS = 700;
 
+const MIME_RULES: ReadonlyArray<[string, (format: string, extension: string) => boolean]> = [
+  ["image/png", (format, extension) => format === "png" || extension === "png"],
+  [
+    "image/tiff",
+    (format, extension) => format === "tiff" || extension === "tif" || extension === "tiff",
+  ],
+];
+
+const mimeFor = (image: StoredImage): string => {
+  const format = (image.format ?? "").toLowerCase();
+  const extension = image.filePath.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_RULES.find(([, matches]) => matches(format, extension))?.[0] ?? "image/jpeg";
+};
+
+const JOB_VERDICTS: Record<string, JobVerdict> = {
+  completed: "completed",
+  failed: "failed",
+  aborted: "failed",
+};
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /**
  * Runs one plugin over every selected plot, stores the resulting indicators,
- * and reports progress. The source can be a flight-session image or an
- * orthomosaic stored in the application.
+ * and reports progress. The source is an orthomosaic stored in the
+ * application, clipped per plot by the backend; the flight-session source is
+ * disabled for now (see `SESSION_SOURCE_ENABLED`).
  */
 export function AnalysePlotsDialog({
   isOpen,
@@ -83,7 +97,7 @@ export function AnalysePlotsDialog({
   const [sessions, setSessions] = useState<Session[]>([]);
   const [images, setImages] = useState<StoredImage[]>([]);
 
-  const [sourceType, setSourceType] = useState<"session" | "ortho">("session");
+  const [sourceType, setSourceType] = useState<SourceType>("ortho");
   const [orthos, setOrthos] = useState<StoredImageMetadata[]>([]);
   const [orthoId, setOrthoId] = useState("");
 
@@ -101,95 +115,67 @@ export function AnalysePlotsDialog({
   const [errors, setErrors] = useState<string[]>([]);
   const [finished, setFinished] = useState(false);
 
+  // React refs are the one place we assign: they are React's API for values
+  // that outlive renders without re-rendering (NFR-9.1.7 exception).
   const abortRef = useRef(false);
   const activeJobRef = useRef<string | null>(null);
 
   // Load plugins, projects, and orthomosaics when the dialog opens.
   useEffect(() => {
-    if (!isOpen) return;
-
-    let cancelled = false;
-
-    Promise.all([getInstalledPlugins(), listProjects(), listOrthoImages()])
-      .then(([installed, projectList, orthoList]) => {
-        if (cancelled) return;
-
-        const enabled = installed.filter((plugin) => plugin.enabled);
-        setPlugins(enabled);
-        setPluginId((previous) => previous || enabled[0]?.id || "");
-
-        setProjects(projectList);
-        setProjectId((previous) => previous || projectList[0]?.id || "");
-
-        const validOrthos = (orthoList ?? []).filter(
-          (ortho) => ortho.bounds && !ortho.is_corrupted && ortho.id,
-        );
-        setOrthos(validOrthos);
-        setOrthoId((previous) => previous || validOrthos[0]?.id || "");
-        setIsLoading(false);
-      })
-      .catch(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
+    const controller = new AbortController();
+    const live = () => !controller.signal.aborted;
+    const request = isOpen
+      ? Promise.all([getInstalledPlugins(), listProjects(), listOrthoImages()])
+      : null;
+    const apply = ([installed, projectList, orthoList]: [
+      PluginSummary[],
+      Project[],
+      StoredImageMetadata[] | null | undefined,
+    ]) => {
+      const enabled = installed.filter((plugin) => plugin.enabled);
+      const validOrthos = (orthoList ?? []).filter(
+        (ortho) => ortho.bounds && !ortho.is_corrupted && ortho.id,
+      );
+      setPlugins(enabled);
+      setPluginId((previous) => previous || enabled[0]?.id || "");
+      setProjects(projectList);
+      setProjectId((previous) => previous || projectList[0]?.id || "");
+      setOrthos(validOrthos);
+      setOrthoId((previous) => previous || validOrthos[0]?.id || "");
+      setIsLoading(false);
     };
+    request?.then((loaded) => live() && apply(loaded)).catch(() => live() && setIsLoading(false));
+    return () => controller.abort();
   }, [isOpen]);
 
   // Load sessions whenever the selected project changes.
   useEffect(() => {
-    if (!projectId) return;
-
-    let cancelled = false;
-
-    getSessionsByProject(projectId)
-      .then((loaded) => {
-        if (cancelled) return;
-
-        setSessions(loaded);
-        setSessionId(loaded[0]?.id ?? "");
-        setImages([]);
-        setImageId("");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSessions([]);
-          setSessionId("");
-          setImages([]);
-          setImageId("");
-        }
-      });
-
-    return () => {
-      cancelled = true;
+    const controller = new AbortController();
+    const live = () => !controller.signal.aborted;
+    const apply = (loaded: Session[]) => {
+      setSessions(loaded);
+      setSessionId(loaded[0]?.id ?? "");
+      setImages([]);
+      setImageId("");
     };
+    const request = projectId ? getSessionsByProject(projectId) : null;
+    request?.then((loaded) => live() && apply(loaded)).catch(() => live() && apply([]));
+    return () => controller.abort();
   }, [projectId]);
 
   // Load analysis-ready images whenever the selected session changes.
   useEffect(() => {
-    if (!sessionId) return;
-
-    let cancelled = false;
-
-    getImagesBySession(sessionId)
-      .then((loaded) => {
-        if (cancelled) return;
-
-        const usable = loaded.filter((image) => image.analysisReady !== false);
-        setImages(usable);
-        setImageId(usable[0]?.id ?? "");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setImages([]);
-          setImageId("");
-        }
-      });
-
-    return () => {
-      cancelled = true;
+    const controller = new AbortController();
+    const live = () => !controller.signal.aborted;
+    const apply = (usable: StoredImage[]) => {
+      setImages(usable);
+      setImageId(usable[0]?.id ?? "");
     };
+    const request = sessionId ? getImagesBySession(sessionId) : null;
+    request
+      ?.then((loaded) => live() && apply(loaded.filter((image) => image.analysisReady !== false)))
+      .catch(() => live() && apply([]));
+    return () => controller.abort();
   }, [sessionId]);
 
   const selectedImage = images.find((image) => image.id === imageId) ?? null;
@@ -199,154 +185,147 @@ export function AnalysePlotsDialog({
     pluginId &&
     plots.length > 0 &&
     !isRunning &&
-    (sourceType === "session" ? selectedImage : selectedOrtho?.id),
+    (sourceType === "session" ? SESSION_SOURCE_ENABLED && selectedImage : selectedOrtho?.id),
   );
 
-  const waitForJob = async (jobId: string): Promise<"completed" | "failed"> => {
-    for (;;) {
-      if (abortRef.current) return "failed";
+  /** Polls a job until it finishes; recursion replaces the polling loop. */
+  const waitForJob = (jobId: string): Promise<JobVerdict> =>
+    abortRef.current
+      ? Promise.resolve("failed")
+      : getJobStatus(jobId)
+          .then(
+            (status) =>
+              JOB_VERDICTS[((status as JobStatusPayload)?.state ?? "").toLowerCase()] ?? null,
+          )
+          .catch((): JobVerdict => "failed")
+          .then((verdict) => verdict ?? sleep(POLL_INTERVAL_MS).then(() => waitForJob(jobId)));
 
-      try {
-        const status = (await getJobStatus(jobId)) as JobStatusPayload;
-        const state = (status?.state ?? "").toLowerCase();
-
-        if (state === "completed") return "completed";
-        if (state === "failed" || state === "aborted") return "failed";
-      } catch {
-        return "failed";
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
+  // Orthomosaic processing is handled by the native raster pipeline.
+  const runOrtho = (ortho: StoredImageMetadata & { id: string }): Promise<void> => {
+    setProgressMessage("Memulai pemotongan georeferenced raster...");
+    setProgressPercent(0);
+    return listen<PlotAnalysisProgressEvent>("plot-analysis-progress", (event) => {
+      setProgressMessage(event.payload.message);
+      setProgressPercent(event.payload.percent);
+      setDone(event.payload.plotIndex);
+      setCurrentPlot(event.payload.plotName);
+    })
+      .then((unlisten) =>
+        analysePlotsFromOrtho({
+          orthoId: ortho.id,
+          plotIds: plots.map((plot) => plot.id),
+          pluginId,
+        })
+          .then((outcome) => {
+            setErrors(outcome.failedPlots);
+            setDone(outcome.successfulPlots);
+            setFinished(true);
+            onFinished();
+          })
+          .finally(unlisten),
+      )
+      .catch((error) => setErrors([errorMessage(error)]))
+      .finally(() => {
+        setIsRunning(false);
+        setProgressMessage(null);
+        setProgressPercent(null);
+        setCurrentPlot(null);
+      });
   };
 
-  const run = async () => {
-    if (!canRun) return;
+  /** Reads a finished job and stores its metrics; resolves to a failure message or null. */
+  const storeJobResult = (plot: PlotRecord, jobId: string): Promise<string | null> =>
+    getJobResult(jobId).then((result) =>
+      String(result.status).toLowerCase() === "failure"
+        ? `${plot.name}: ${result.error ?? "plugin reported failure"}`
+        : savePlotIndicators(plot.id, pluginId, jobId, result.metrics).then(() => null),
+    );
 
+  /** One plugin job for one plot; resolves to a failure message or null. */
+  const runPlotJob = (image: StoredImage, plot: PlotRecord): Promise<string | null> => {
+    setCurrentPlot(plot.name);
+    return startPluginJob({
+      plugin_id: pluginId,
+      session_id: image.sessionId,
+      target_image_path: image.filePath,
+      mime_type: mimeFor(image),
+      aoi: {
+        type: "geojson_polygon",
+        geometry: plot.geometry,
+      },
+      parameters: {},
+    })
+      .then((handle) => {
+        activeJobRef.current = handle.job_id;
+        return waitForJob(handle.job_id).then((state) => {
+          activeJobRef.current = null;
+          return state === "completed"
+            ? storeJobResult(plot, handle.job_id)
+            : `${plot.name}: plugin run failed`;
+        });
+      })
+      .catch((error) => {
+        activeJobRef.current = null;
+        return `${plot.name}: ${errorMessage(error)}`;
+      });
+  };
+
+  // Flight-session processing runs one plugin job per selected plot, in order.
+  const runSession = (image: StoredImage): Promise<void> =>
+    plots
+      .reduce<Promise<string[]>>(
+        (previous, plot, index) =>
+          previous.then((failures) =>
+            abortRef.current
+              ? failures
+              : runPlotJob(image, plot)
+                  .then((failure) => (failure === null ? failures : [...failures, failure]))
+                  .finally(() => setDone(index + 1)),
+          ),
+        Promise.resolve([]),
+      )
+      .then((failures) => {
+        setCurrentPlot(null);
+        setIsRunning(false);
+        setFinished(true);
+        setErrors(failures);
+        onFinished();
+      });
+
+  const runners: Record<SourceType, () => Promise<void>> = {
+    ortho: () =>
+      selectedOrtho?.id
+        ? runOrtho({ ...selectedOrtho, id: selectedOrtho.id })
+        : Promise.resolve(setIsRunning(false)),
+    session: () =>
+      selectedImage ? runSession(selectedImage) : Promise.resolve(setIsRunning(false)),
+  };
+
+  const run = (): Promise<void> => {
     abortRef.current = false;
     setIsRunning(true);
     setFinished(false);
     setDone(0);
     setErrors([]);
     setCurrentPlot(null);
-
-    // Orthomosaic processing is handled by the native raster pipeline.
-    if (sourceType === "ortho") {
-      if (!selectedOrtho?.id) {
-        setIsRunning(false);
-        return;
-      }
-
-      setProgressMessage("Memulai pemotongan georeferenced raster...");
-      setProgressPercent(0);
-
-      let unlisten: (() => void) | undefined;
-
-      try {
-        unlisten = await listen<PlotAnalysisProgressEvent>("plot-analysis-progress", (event) => {
-          setProgressMessage(event.payload.message);
-          setProgressPercent(event.payload.percent);
-          setDone(event.payload.plotIndex);
-          setCurrentPlot(event.payload.plotName);
-        });
-
-        const outcome = await analysePlotsFromOrtho({
-          orthoId: selectedOrtho.id,
-          plotIds: plots.map((plot) => plot.id),
-          pluginId,
-        });
-
-        if (outcome.failedPlots.length > 0) {
-          setErrors(outcome.failedPlots);
-        }
-
-        setDone(outcome.successfulPlots);
-        setFinished(true);
-        onFinished();
-      } catch (error) {
-        setErrors([message(error)]);
-      } finally {
-        unlisten?.();
-        setIsRunning(false);
-        setProgressMessage(null);
-        setProgressPercent(null);
-        setCurrentPlot(null);
-      }
-
-      return;
-    }
-
-    // Flight-session processing runs one plugin job per selected plot.
-    if (!selectedImage) {
-      setIsRunning(false);
-      return;
-    }
-
-    const failures: string[] = [];
-
-    for (const [index, plot] of plots.entries()) {
-      if (abortRef.current) break;
-
-      setCurrentPlot(plot.name);
-
-      try {
-        const handle = await startPluginJob({
-          plugin_id: pluginId,
-          session_id: selectedImage.sessionId,
-          target_image_path: selectedImage.filePath,
-          mime_type: mimeFor(selectedImage),
-          aoi: {
-            type: "geojson_polygon",
-            geometry: plot.geometry,
-          },
-          parameters: {},
-        });
-
-        activeJobRef.current = handle.job_id;
-
-        const state = await waitForJob(handle.job_id);
-
-        activeJobRef.current = null;
-
-        if (state !== "completed") {
-          failures.push(`${plot.name}: plugin run failed`);
-          continue;
-        }
-
-        const result = await getJobResult(handle.job_id);
-
-        if (String(result.status).toLowerCase() === "failure") {
-          failures.push(`${plot.name}: ${result.error ?? "plugin reported failure"}`);
-          continue;
-        }
-
-        await savePlotIndicators(plot.id, pluginId, handle.job_id, result.metrics);
-      } catch (error) {
-        activeJobRef.current = null;
-        failures.push(`${plot.name}: ${message(error)}`);
-      } finally {
-        setDone(index + 1);
-      }
-    }
-
-    setCurrentPlot(null);
-    setIsRunning(false);
-    setFinished(true);
-    setErrors(failures);
-    onFinished();
+    return runners[sourceType]();
   };
 
-  const cancel = async () => {
+  const cancel = (): Promise<void> => {
     abortRef.current = true;
-
     const jobId = activeJobRef.current;
-    if (!jobId) return;
+    // The polling stops on abortRef even when the abort command fails.
+    return jobId
+      ? abortPluginJob(jobId).then(
+          () => undefined,
+          () => undefined,
+        )
+      : Promise.resolve();
+  };
 
-    try {
-      await abortPluginJob(jobId);
-    } catch {
-      // The polling loop will still stop when abortRef is set.
-    }
+  const closeDialog = () => {
+    void (isRunning ? cancel() : undefined);
+    onClose();
   };
 
   const percent =
@@ -355,10 +334,7 @@ export function AnalysePlotsDialog({
   return (
     <Dialog
       isOpen={isOpen}
-      onClose={() => {
-        if (isRunning) void cancel();
-        onClose();
-      }}
+      onClose={closeDialog}
       title={`Analyse ${plots.length} plot${plots.length === 1 ? "" : "s"}`}
       style={{ width: 560, borderRadius: "16px" }}
       canEscapeKeyClose={!isRunning}
@@ -371,11 +347,12 @@ export function AnalysePlotsDialog({
           overflowY: "auto",
         }}
       >
-        {isLoading ? (
+        {isLoading && (
           <div style={{ textAlign: "center", padding: 24 }}>
             <Spinner size={28} />
           </div>
-        ) : (
+        )}
+        {!isLoading && (
           <>
             <div>
               <div
@@ -410,9 +387,14 @@ export function AnalysePlotsDialog({
             <ButtonGroup fill style={{ marginBottom: 12 }}>
               <Button
                 text="Flight Session"
+                title={
+                  SESSION_SOURCE_ENABLED
+                    ? undefined
+                    : "Temporarily disabled: a session photo is not clipped per plot yet"
+                }
                 intent={sourceType === "session" ? Intent.PRIMARY : Intent.NONE}
                 onClick={() => setSourceType("session")}
-                disabled={isRunning}
+                disabled={isRunning || !SESSION_SOURCE_ENABLED}
               />
               <Button
                 text="Map Orthomosaic"
@@ -422,7 +404,19 @@ export function AnalysePlotsDialog({
               />
             </ButtonGroup>
 
-            {sourceType === "ortho" ? (
+            {!SESSION_SOURCE_ENABLED && (
+              <Callout
+                intent={Intent.WARNING}
+                icon="warning-sign"
+                style={{ marginBottom: 12, borderRadius: 10, fontSize: 12 }}
+              >
+                Analisis per plot sementara hanya dari orthomosaic. Sumber Flight Session
+                dinonaktifkan karena foto belum dipotong mengikuti batas plot, sehingga semua plot
+                bisa mendapat nilai yang hampir sama.
+              </Callout>
+            )}
+
+            {sourceType === "ortho" && (
               <>
                 <div className="bp6-label">Orthomosaic ({orthos.length} available)</div>
                 <HTMLSelect
@@ -456,7 +450,9 @@ export function AnalysePlotsDialog({
                   lonjakan memori RAM (OOM).
                 </div>
               </>
-            ) : (
+            )}
+
+            {sourceType === "session" && (
               <>
                 <div className="bp6-label">Project</div>
                 <HTMLSelect
@@ -556,7 +552,7 @@ export function AnalysePlotsDialog({
                 color: "#64748b",
               }}
             >
-              The plugin runs once per selected plot with the plot boundary as its area of interest.
+              The orthomosaic is clipped to each selected plot and the plugin runs per slice.
               Existing indicator values for the same plugin are replaced.
             </p>
           </>
@@ -565,7 +561,7 @@ export function AnalysePlotsDialog({
 
       <div className="bp6-dialog-footer">
         <div className="bp6-dialog-footer-actions">
-          {isRunning ? (
+          {isRunning && (
             <Button
               intent={Intent.DANGER}
               text="Stop"
@@ -580,7 +576,8 @@ export function AnalysePlotsDialog({
                 boxShadow: "none",
               }}
             />
-          ) : (
+          )}
+          {!isRunning && (
             <>
               <Button
                 text="Close"
@@ -600,7 +597,7 @@ export function AnalysePlotsDialog({
                 icon="play"
                 text={finished ? "Run again" : "Run analysis"}
                 disabled={!canRun}
-                onClick={() => void run()}
+                onClick={() => void (canRun ? run() : undefined)}
                 style={{
                   borderRadius: 999,
                   background: !canRun ? "#f1f5f9" : "#0f172a",

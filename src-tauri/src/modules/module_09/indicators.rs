@@ -8,7 +8,8 @@
 //! # Purity
 //!
 //! `normalise_indicators` is pure; the read/write helpers are impure and take
-//! an open SQLite connection.
+//! an open SQLite connection. Follows the functional style rules NFR-9.1.6–9.1.7
+//! (`src/modules/module-09/REQUIREMENTS.md`).
 
 use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -63,14 +64,10 @@ impl IndicatorRecord {
     /// Display value: the number when present, otherwise the text. Pure.
     pub fn display(&self) -> String {
         match (self.value, &self.text_value) {
-            (Some(value), _) => {
-                let unit = self.unit.as_deref().unwrap_or("");
-                if unit.is_empty() {
-                    format!("{value:.4}")
-                } else {
-                    format!("{value:.4} {unit}")
-                }
-            }
+            (Some(value), _) => match self.unit.as_deref().unwrap_or("") {
+                "" => format!("{value:.4}"),
+                unit => format!("{value:.4} {unit}"),
+            },
             (None, Some(text)) => text.clone(),
             _ => String::new(),
         }
@@ -91,10 +88,10 @@ pub fn migrate_indicator_schema(conn: &Connection) -> Result<(), PlotError> {
 /// and strings and dropping nulls/objects/arrays (they have no ranking value).
 /// Unknown units stay `None`. Pure.
 pub fn normalise_indicators(metrics: &Value) -> Vec<IndicatorInput> {
-    let Some(map) = metrics.as_object() else {
-        return Vec::new();
-    };
-    map.iter()
+    metrics
+        .as_object()
+        .into_iter()
+        .flat_map(|map| map.iter())
         .filter_map(|(key, value)| {
             let unit = default_unit(key).map(str::to_string);
             match value {
@@ -188,13 +185,10 @@ pub fn save_indicators(
     execution_id: Option<&str>,
     indicators: &[IndicatorInput],
 ) -> Result<usize, PlotError> {
-    if indicators.is_empty() {
-        return Ok(0);
-    }
     let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-    for input in indicators {
-        upsert_indicator(conn, plot_id, plugin_id, execution_id, input, &created_at)?;
-    }
+    indicators.iter().try_for_each(|input| {
+        upsert_indicator(conn, plot_id, plugin_id, execution_id, input, &created_at)
+    })?;
     Ok(indicators.len())
 }
 
@@ -239,8 +233,8 @@ pub fn list_indicators(
             Vec::new(),
         ),
     };
-    let mut statement = conn.prepare(&sql)?;
-    let rows = statement
+    let rows = conn
+        .prepare(&sql)?
         .query_map(rusqlite::params_from_iter(args.iter()), row_to_indicator)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
@@ -275,11 +269,12 @@ pub fn delete_plot_indicators(conn: &Connection, plot_id: &str) -> Result<usize,
 /// Empty-safe map helper used by tests.
 #[cfg(test)]
 fn metrics_from(pairs: &[(&str, Value)]) -> Value {
-    let mut map = serde_json::Map::new();
-    for (key, value) in pairs {
-        map.insert((*key).to_string(), value.clone());
-    }
-    Value::Object(map)
+    Value::Object(
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), value.clone()))
+            .collect(),
+    )
 }
 
 #[cfg(test)]

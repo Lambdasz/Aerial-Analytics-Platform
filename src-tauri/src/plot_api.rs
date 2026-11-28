@@ -1,4 +1,17 @@
-//! # Plot Analytics API (Module 9)
+//! # Plot Analytics API (Module 9) — deprecated
+//!
+//! **Deprecated (ISU-9.2 in `src/modules/module-09/REQUIREMENTS.md`).** This
+//! is the original cross-module contract. It is superseded by
+//! `crate::modules::module_09` and the commands in `crate::commands::plots`;
+//! the functions below are kept only until the Project Lead approves removing
+//! the file, and they return an error naming the replacement instead of
+//! panicking.
+//!
+//! | Legacy function | Replacement |
+//! |-----------------|-------------|
+//! | [`define_plot`] | `create_plot` / `modules::module_09::plots::insert_plot` |
+//! | [`analyze_plot`] | `analyse_plots_from_ortho` |
+//! | [`get_plot_statistics`] | `list_plot_indicators` / `modules::module_09::indicators::list_indicators` |
 //!
 //! Cross-module API for defining plots, running plugins per-plot, and
 //! delivering aggregated statistics to the dashboard.
@@ -148,9 +161,10 @@ pub struct PlotStatistics {
 ///   }
 /// }
 /// ```
+#[deprecated(note = "use the `create_plot` command / `modules::module_09::plots::insert_plot`")]
 pub fn define_plot(aoi: Feature) -> Result<PlotLayer, String> {
     let _ = aoi;
-    todo!("M9.1 not yet implemented")
+    Err(superseded("define_plot", "create_plot"))
 }
 
 /// Runs selected plugins within a single plot via Module 2.
@@ -188,13 +202,14 @@ pub fn define_plot(aoi: Feature) -> Result<PlotLayer, String> {
 ///   "image_path": "/data/DJI_0042.JPG"
 /// }
 /// ```
+#[deprecated(note = "use the `analyse_plots_from_ortho` command")]
 pub fn analyze_plot(
     plot_id: String,
     plugin_ids: Vec<String>,
     image_path: String,
 ) -> Result<PlotAnalysisResult, String> {
     let _ = (plot_id, plugin_ids, image_path);
-    todo!("M9.2 not yet implemented")
+    Err(superseded("analyze_plot", "analyse_plots_from_ortho"))
 }
 
 /// Delivers per-plot statistics to the Module 11 dashboard.
@@ -218,7 +233,27 @@ pub fn analyze_plot(
 /// # Returns
 ///
 /// `Ok(Vec<PlotStatistics>)` — one entry per plot.
+#[deprecated(
+    note = "use the `list_plot_indicators` command / `modules::module_09::indicators::list_indicators`"
+)]
 pub fn get_plot_statistics(project_id: String) -> Result<Vec<PlotStatistics>, String> {
     let _ = project_id;
-    todo!("M9.7 not yet implemented")
+    Err(superseded("get_plot_statistics", "list_plot_indicators"))
+}
+
+/// Error message for a legacy entry point. Pure.
+fn superseded(legacy: &str, replacement: &str) -> String {
+    format!("plot_api::{legacy} is deprecated; use the `{replacement}` command (Module 9)")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[allow(deprecated)]
+    fn legacy_functions_fail_without_panicking() {
+        let error = super::get_plot_statistics("p".into()).unwrap_err();
+        assert!(error.contains("list_plot_indicators"), "{error}");
+        let error = super::analyze_plot("p".into(), Vec::new(), String::new()).unwrap_err();
+        assert!(error.contains("analyse_plots_from_ortho"), "{error}");
+    }
 }

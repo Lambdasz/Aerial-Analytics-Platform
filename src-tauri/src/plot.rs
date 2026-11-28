@@ -16,6 +16,11 @@
 //!
 //! This module includes tests for valid polygons, default plot names,
 //! unclosed rings, swapped coordinates, and non-polygon geometries.
+//!
+//! [`parse_plots`] is the core of the active GeoJSON import
+//! (`import_plots_into_project`); keep it when removing legacy plot code.
+//! Follows the functional style rules NFR-9.1.6–9.1.7
+//! (`src/modules/module-09/REQUIREMENTS.md`).
 
 use geojson::{Feature, GeoJson, GeometryValue, Position};
 use serde::Serialize;
@@ -55,27 +60,19 @@ pub fn parse_plots(text: &str) -> Result<ImportResult, String> {
             Err(e) => return Err(format!("Not valid GeoJSON: {e}")),
         };
 
-    let (plots, skipped) = features.iter().enumerate().fold(
-        (Vec::new(), Vec::new()),
-        |(mut plots, mut skipped), (index, feature)| {
-            match feature_to_plot(index + 1, feature) {
-                Ok(plot) => plots.push(plot),
-                Err(reason) => skipped.push(reason),
-            }
-            (plots, skipped)
-        },
-    );
+    let (plots, skipped): (Vec<_>, Vec<_>) = features
+        .iter()
+        .enumerate()
+        .map(|(index, feature)| feature_to_plot(index + 1, feature))
+        .partition(Result::is_ok);
+    let plots: Vec<Plot> = plots.into_iter().filter_map(Result::ok).collect();
+    let skipped: Vec<String> = skipped.into_iter().filter_map(Result::err).collect();
 
-    if plots.is_empty() {
-        let detail = if skipped.is_empty() {
-            "file contains no features.".to_string()
-        } else {
-            skipped.join(" ")
-        };
-        return Err(format!("No valid plots to import: {detail}"));
+    match (plots.is_empty(), skipped.is_empty()) {
+        (true, true) => Err("No valid plots to import: file contains no features.".to_string()),
+        (true, false) => Err(format!("No valid plots to import: {}", skipped.join(" "))),
+        (false, _) => Ok(ImportResult { plots, skipped }),
     }
-
-    Ok(ImportResult { plots, skipped })
 }
 
 fn feature_to_plot(number: usize, feature: &Feature) -> Result<Plot, String> {
@@ -118,63 +115,54 @@ fn plot_name(number: usize, feature: &Feature) -> String {
 }
 
 fn validate_rings(rings: &[Vec<Position>]) -> Result<Vec<Vec<[f64; 2]>>, String> {
-    if rings.is_empty() {
-        return Err("Polygon has no rings.".to_string());
+    match rings {
+        [] => Err("Polygon has no rings.".to_string()),
+        _ => rings
+            .iter()
+            .enumerate()
+            .map(|(index, ring)| {
+                let name = match index {
+                    0 => "outer ring".to_string(),
+                    _ => format!("hole #{index}"),
+                };
+                validate_ring(&name, ring)
+            })
+            .collect(),
     }
-    rings
-        .iter()
-        .enumerate()
-        .map(|(index, ring)| {
-            let name = if index == 0 {
-                "outer ring".to_string()
-            } else {
-                format!("hole #{index}")
-            };
-            validate_ring(&name, ring)
-        })
-        .collect()
 }
 
 fn validate_ring(name: &str, ring: &[Position]) -> Result<Vec<[f64; 2]>, String> {
-    if ring.len() < 4 {
-        return Err(format!(
+    match ring {
+        _ if ring.len() < 4 => Err(format!(
             "{name} has only {} points, minimum 4 required (including closing point).",
             ring.len()
-        ));
-    }
-    if ring.first() != ring.last() {
-        return Err(format!(
+        )),
+        _ if ring.first() != ring.last() => Err(format!(
             "{name} is not closed: first point must equal last point."
-        ));
+        )),
+        _ => ring
+            .iter()
+            .enumerate()
+            .map(|(index, position)| to_point(name, index + 1, position.as_slice()))
+            .collect(),
     }
-    ring.iter()
-        .enumerate()
-        .map(|(index, position)| to_point(name, index + 1, position.as_slice()))
-        .collect()
 }
 
 fn to_point(ring_name: &str, number: usize, position: &[f64]) -> Result<[f64; 2], String> {
-    let [lon, lat] = match position {
-        [lon, lat, ..] => [*lon, *lat],
-        _ => {
-            return Err(format!(
-                "Point #{number} on {ring_name} must have [longitude, latitude] coordinates."
-            ))
-        }
-    };
-    if !(-180.0..=180.0).contains(&lon) {
-        return Err(format!(
+    match position {
+        [lon, _, ..] if !(-180.0..=180.0).contains(lon) => Err(format!(
             "Point #{number} on {ring_name} has longitude {lon} outside range -180..180. \
              GeoJSON coordinate order is [longitude, latitude]; the two values may be swapped."
-        ));
-    }
-    if !(-90.0..=90.0).contains(&lat) {
-        return Err(format!(
+        )),
+        [_, lat, ..] if !(-90.0..=90.0).contains(lat) => Err(format!(
             "Point #{number} on {ring_name} has latitude {lat} outside range -90..90. \
              GeoJSON coordinate order is [longitude, latitude]; the two values may be swapped."
-        ));
+        )),
+        [lon, lat, ..] => Ok([*lon, *lat]),
+        _ => Err(format!(
+            "Point #{number} on {ring_name} must have [longitude, latitude] coordinates."
+        )),
     }
-    Ok([lon, lat])
 }
 
 #[cfg(test)]

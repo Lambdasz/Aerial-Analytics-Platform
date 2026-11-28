@@ -570,32 +570,44 @@
 //! ## Module 9 — Area & Plot Analytics
 //!
 //! Stores named plot boundaries and summarises analysis results within them:
-//! plot definition (draw on the map, import GeoJSON, or promote a Map Explorer
-//! AOI), geodesic area/perimeter, per-plot analysis, plot statistics,
-//! comparison, ranking and summaries.
+//! plot definition (promote a Map Explorer AOI or import GeoJSON), geodesic
+//! area/perimeter, per-plot analysis from an orthomosaic, plot statistics,
+//! comparison, ranking and summaries. Requirements live in
+//! `src/modules/module-09/REQUIREMENTS.md`; the official UI is the **Plots**
+//! tab of the Module 3 sidebar (`src/modules/module-09/PlotAnalyticsPanel.tsx`).
 //!
+//! - [`modules::module_09`] — module index and the functional-style rules
+//!   (NFR-9.1.6–9.1.7).
 //! - `modules::module_09::plots` — plot table, GeoJSON polygon validation and
 //!   geodesic metrics ([`modules::module_09::plots::insert_plot`]).
 //! - `modules::module_09::indicators` — latest indicator value per
 //!   (plot, plugin, indicator) ([`modules::module_09::indicators::save_indicators`]).
-//! - `plot` / `plot_api` — the original GeoJSON importer (`plot::parse_plots`)
-//!   and a legacy cross-module contract whose stubs are superseded by
-//!   `modules::module_09`.
+//! - `modules::module_09::ortho_analysis` — clip an orthomosaic per plot, run
+//!   the plugin per slice, merge slice metrics with the pure
+//!   [`modules::module_09::ortho_analysis::aggregate_slice_metrics`].
+//! - `modules::module_09::layer` — GeoJSON import tally and the plot map layer
+//!   (popup with area, perimeter and latest indicators).
+//! - `plot` — GeoJSON parser (`plot::parse_plots`) behind `import_plots_into_project`.
+//! - `plot_api` — **deprecated** legacy contract; its functions return an error
+//!   that names the replacement command.
 //!
 //! ### Tauri Commands
 //!
 //! | Command | Description |
 //! |---------|-------------|
 //! | `create_plot` / `list_plots` / `get_plot_by_id` / `rename_plot` / `delete_plot` | Plot CRUD with area and perimeter computed on write |
-//! | `import_plots_into_project` | Import a GeoJSON file of plots into a project |
-//! | `import_plots` | Parse a GeoJSON file without storing it (legacy) |
+//! | `import_plots_into_project` | Import a GeoJSON file of plots into a project; invalid features are skipped and reported |
 //! | `save_plot_indicators` / `list_plot_indicators` | Persist and read per-plot plugin metrics |
-//! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer |
+//! | `publish_plots_layer` | Publish all plots of a project as one Map Explorer layer (popup includes latest indicators) |
 //! | `analyse_plots_from_ortho` | Analyse plots directly from an orthomosaic with georeferenced raster clipping and slicing |
 //!
-//! **Status**: Implemented. The Module 09 page and a **Plots** tab inside the
-//! Module 3 sidebar share the same commands; runs execute a plugin once per
-//! plot with the boundary as AOI, and indicator values feed the ranking view.
+//! **Status**: Implemented. The **Plots** tab in the Module 3 sidebar covers
+//! create-from-AOI, GeoJSON import, rename, delete, orthomosaic analysis,
+//! statistics (count/mean/min/max/std-dev), ranking with a sort direction and
+//! per-plugin indicators, plot summaries and the map layer. Analysis from a
+//! single session image is disabled until plugins clip to the AOI (ISU-9.4).
+//! The Plots tab is the only Module 9 UI: the former standalone "Area & Plot
+//! Analytics" page and its drawing map were removed (ISU-9.1).
 //!
 //! ---
 //!
@@ -721,15 +733,6 @@ pub struct AppState {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
-async fn import_plots(path: String) -> Result<plot::ImportResult, String> {
-    let text = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| format!("Failed to read file '{path}': {e}"))?;
-
-    plot::parse_plots(&text)
 }
 
 pub mod models;
@@ -1064,8 +1067,6 @@ pub fn run() {
             plugin_manager::lifecycle::install_plugin,
             plugin_manager::lifecycle::remove_plugin,
             plugin_manager::lifecycle::update_plugin_config,
-            // Plot import
-            import_plots,
             // Module 3 — Geometry & Measurement
             map_controller::geometry::commands::measure_distance,
             map_controller::geometry::commands::measure_area,

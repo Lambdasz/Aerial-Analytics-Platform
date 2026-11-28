@@ -1,16 +1,20 @@
 //! Tauri commands for Module 9 plot definition and listing.
 //!
 //! Thin wrappers: they take `AppState`'s database connection, delegate to
-//! `modules::module_09::plots`, and map errors to `CommandError`.
+//! `modules::module_09`, and map errors to `CommandError`. Follows the
+//! functional style rules NFR-9.1.6–9.1.7 (`src/modules/module-09/REQUIREMENTS.md`).
 
 use crate::modules::module_03::sp_result::types::LayerPayload;
-use crate::modules::module_09::indicators::{save_indicators, IndicatorRecord};
+use crate::modules::module_09::indicators::{
+    list_indicators, normalise_indicators, save_indicators, IndicatorRecord,
+};
+pub use crate::modules::module_09::layer::PlotImportOutcome;
+use crate::modules::module_09::layer::{import_candidates, import_outcome, plot_layer_payload};
 use crate::modules::module_09::plots::{
     delete_plot as delete_plot_row, get_plot, insert_plot, list_plots as list_plot_rows,
     polygon_from_geometry, rename_plot as rename_plot_row, PlotError, PlotRecord,
 };
 use crate::plugin_manager::error::CommandError;
-use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
 
@@ -28,14 +32,6 @@ impl From<PlotError> for CommandError {
             message: error.to_string(),
         }
     }
-}
-
-/// Result of a plot import.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PlotImportOutcome {
-    pub plots: Vec<PlotRecord>,
-    pub skipped: Vec<String>,
 }
 
 /// Creates a plot from a GeoJSON polygon.
@@ -119,41 +115,10 @@ pub fn import_plots_into_project(
     })?;
 
     let conn = state.db.lock().map_err(|_| lock_error())?;
-    let mut stored = Vec::with_capacity(parsed.plots.len());
-    let mut skipped = parsed.skipped;
-    for candidate in parsed.plots {
-        let geometry = serde_json::json!({ "type": "Polygon", "coordinates": candidate.rings });
-        match polygon_from_geometry(&geometry) {
-            Ok(polygon) => {
-                match insert_plot(
-                    &conn,
-                    project_id.clone(),
-                    None,
-                    &candidate.plot_name,
-                    &polygon,
-                    None,
-                ) {
-                    Ok(record) => stored.push(record),
-                    Err(error) => skipped.push(format!("{}: {error}", candidate.plot_name)),
-                }
-            }
-            Err(error) => skipped.push(format!("{}: {error}", candidate.plot_name)),
-        }
-    }
-
-    if stored.is_empty() {
-        return Err(CommandError {
-            code: "NO_PLOTS".to_string(),
-            message: if skipped.is_empty() {
-                "the file contains no plots".to_string()
-            } else {
-                format!("no plot could be imported ({})", skipped.join("; "))
-            },
-        });
-    }
-    Ok(PlotImportOutcome {
-        plots: stored,
-        skipped,
+    let (stored, skipped) = import_candidates(&conn, project_id, parsed);
+    import_outcome(stored, skipped).map_err(|message| CommandError {
+        code: "NO_PLOTS".to_string(),
+        message,
     })
 }
 
@@ -168,13 +133,11 @@ pub fn save_plot_indicators(
 ) -> Result<usize, CommandError> {
     let conn = state.db.lock().map_err(|_| lock_error())?;
     // The plot must exist, otherwise indicators would be orphaned.
-    if get_plot(&conn, &plot_id)?.is_none() {
-        return Err(CommandError {
-            code: "PLOT_NOT_FOUND".to_string(),
-            message: format!("plot '{plot_id}' not found"),
-        });
-    }
-    let indicators = crate::modules::module_09::indicators::normalise_indicators(&metrics);
+    get_plot(&conn, &plot_id)?.ok_or_else(|| CommandError {
+        code: "PLOT_NOT_FOUND".to_string(),
+        message: format!("plot '{plot_id}' not found"),
+    })?;
+    let indicators = normalise_indicators(&metrics);
     Ok(save_indicators(
         &conn,
         &plot_id,
@@ -192,7 +155,7 @@ pub fn list_plot_indicators(
     project_id: Option<String>,
 ) -> Result<Vec<IndicatorRecord>, CommandError> {
     let conn = state.db.lock().map_err(|_| lock_error())?;
-    Ok(crate::modules::module_09::indicators::list_indicators(
+    Ok(list_indicators(
         &conn,
         plot_id.as_deref(),
         project_id.as_deref(),
@@ -212,7 +175,9 @@ fn delete_plot_indicators_for(
 /// Publishes every plot of a project as one map layer.
 ///
 /// Plot boundaries become a vector layer (`display_preference: polygon`) so
-/// Map Explorer can show, toggle and popup them without extra plumbing.
+/// Map Explorer can show, toggle and popup them without extra plumbing. The
+/// popup lists name, area, perimeter and the latest indicator of every plugin
+/// run on the plot (see `modules::module_09::layer`).
 #[tauri::command]
 pub fn publish_plots_layer(
     app: tauri::AppHandle,
@@ -220,92 +185,32 @@ pub fn publish_plots_layer(
     project_id: Option<String>,
     layer_name: Option<String>,
 ) -> Result<LayerPayload, CommandError> {
-    use crate::modules::module_03::sp_result::types::{
-        FieldDef, LayerDisplayMode, LayerPayload, SpatialGeometry, SpatialProperties, SpatialResult,
-    };
     use crate::modules::module_03::state::get_global_state;
-    use serde_json::json;
     use tauri::Emitter;
 
     crate::modules::module_03::ortho_source::instance_lock::require_primary_instance()?;
-    let rows = {
+    let (rows, indicators) = {
         let conn = state.db.lock().map_err(|_| lock_error())?;
-        list_plot_rows(&conn, project_id.as_deref())?
+        (
+            list_plot_rows(&conn, project_id.as_deref())?,
+            // All rows: plots without a project are listed too, so filter by plot id later.
+            list_indicators(&conn, None, None)?,
+        )
     };
-    if rows.is_empty() {
-        return Err(CommandError {
+    let rows = Some(rows)
+        .filter(|rows| !rows.is_empty())
+        .ok_or_else(|| CommandError {
             code: "NO_PLOTS".to_string(),
             message: "No plots to show on the map".to_string(),
-        });
-    }
+        })?;
 
-    let features: Vec<SpatialResult> = rows
-        .iter()
-        .filter_map(|plot| {
-            let geometry: SpatialGeometry = serde_json::from_value(plot.geometry.clone()).ok()?;
-            let mut properties = serde_json::Map::new();
-            properties.insert("plot_id".into(), json!(plot.id));
-            properties.insert("plot_name".into(), json!(plot.name));
-            properties.insert("area_m2".into(), json!(plot.area_m2));
-            properties.insert("area_ha".into(), json!(plot.area_ha));
-            properties.insert("perimeter_m".into(), json!(plot.perimeter_m));
-            Some(SpatialResult {
-                source: plot.id.clone(),
-                geometry,
-                properties: SpatialProperties::Generic(properties),
-                image_url: None,
-                edited_fields: None,
-                extra: serde_json::Map::new(),
-            })
-        })
-        .collect();
-
-    let fields = vec![
-        FieldDef {
-            key: "plot_name".into(),
-            label: "Plot".into(),
-            unit: None,
-            visible: true,
-            custom: false,
-            kind: Some("text".into()),
-        },
-        FieldDef {
-            key: "area_ha".into(),
-            label: "Area".into(),
-            unit: Some("ha".into()),
-            visible: true,
-            custom: false,
-            kind: Some("number".into()),
-        },
-        FieldDef {
-            key: "perimeter_m".into(),
-            label: "Perimeter".into(),
-            unit: Some("m".into()),
-            visible: true,
-            custom: false,
-            kind: Some("number".into()),
-        },
-    ];
-
-    let layer_id = project_id
-        .as_deref()
-        .map(|id| format!("plots_{}", id.replace('-', "")))
-        .unwrap_or_else(|| "plots_all".to_string());
-    let payload = LayerPayload {
-        layer_id: layer_id.clone(),
-        layer_name: layer_name.unwrap_or_else(|| "Plots".to_string()),
-        display_preference: LayerDisplayMode::Polygon {
-            color: "#0066cc".to_string(),
-            opacity: 0.25,
-            image_url: None,
-            fields: Some(fields),
-        },
-        spatial_results: features,
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
-        concurrency_token: None,
-        extra: serde_json::Map::new(),
-    };
-
+    let payload = plot_layer_payload(
+        project_id.as_deref(),
+        layer_name,
+        &rows,
+        &indicators,
+        chrono::Utc::now().to_rfc3339(),
+    );
     let saved = get_global_state().save_spatial_result(payload)?;
     let _ = app.emit("spatial_result:saved", &saved);
     Ok(saved)

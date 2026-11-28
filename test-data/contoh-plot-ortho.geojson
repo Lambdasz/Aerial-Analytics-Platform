@@ -1,0 +1,53 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "UJI_B1" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.948, -1.206],
+            [116.949, -1.206],
+            [116.949, -1.205],
+            [116.948, -1.205],
+            [116.948, -1.206]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "UJI_B2" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.9495, -1.206],
+            [116.9505, -1.206],
+            [116.9505, -1.205],
+            [116.9495, -1.205],
+            [116.9495, -1.206]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "UJI_B3" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [116.951, -1.203],
+            [116.952, -1.203],
+            [116.952, -1.202],
+            [116.951, -1.202],
+            [116.951, -1.203]
+          ]
+        ]
+      }
+    }
+  ]
+}

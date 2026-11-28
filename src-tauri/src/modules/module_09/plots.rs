@@ -9,6 +9,10 @@
 //!
 //! Validation and metric helpers are pure; the `load`/`insert`/`update`/
 //! `delete` functions are impure and take an open SQLite connection.
+//!
+//! Follows the functional style rules NFR-9.1.6–9.1.7 in
+//! `src/modules/module-09/REQUIREMENTS.md`: branching is `match` and
+//! `Option`/`Result` combinators, collections are built with iterators.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -87,9 +91,9 @@ pub fn migrate_plot_schema(conn: &Connection) -> Result<(), PlotError> {
     let has_source = conn
         .prepare("SELECT 1 FROM pragma_table_info('plot') WHERE name = 'source_aoi_id'")?
         .exists([])?;
-    if !has_source {
-        conn.execute("ALTER TABLE plot ADD COLUMN source_aoi_id TEXT", [])?;
-    }
+    (!has_source)
+        .then(|| conn.execute("ALTER TABLE plot ADD COLUMN source_aoi_id TEXT", []))
+        .transpose()?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_plot_project ON plot(project_id)",
         [],
@@ -97,76 +101,94 @@ pub fn migrate_plot_schema(conn: &Connection) -> Result<(), PlotError> {
     Ok(())
 }
 
+/// Reads one `[lon, lat]` position and checks the WGS 84 range. Pure.
+fn position_from_value(position: &Value) -> Result<[f64; 2], PlotError> {
+    let pair = position
+        .as_array()
+        .ok_or_else(|| PlotError("polygon position must be [lon, lat]".into()))?;
+    match (
+        pair.first().and_then(Value::as_f64),
+        pair.get(1).and_then(Value::as_f64),
+    ) {
+        (Some(lon), Some(lat))
+            if (-180.0..=180.0).contains(&lon) && (-90.0..=90.0).contains(&lat) =>
+        {
+            Ok([lon, lat])
+        }
+        (Some(lon), Some(lat)) => Err(PlotError(format!(
+            "position [{lon}, {lat}] is outside WGS 84 bounds"
+        ))),
+        _ => Err(PlotError("polygon position must be two numbers".into())),
+    }
+}
+
+/// Returns the ring closed (first position repeated at the end). Pure.
+fn closed_ring(positions: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    match (positions.first().copied(), positions.last().copied()) {
+        (Some(first), Some(last)) if first != last => positions
+            .into_iter()
+            .chain(std::iter::once(first))
+            .collect(),
+        _ => positions,
+    }
+}
+
+/// Reads and validates one ring (at least 3 positions), closing it. Pure.
+fn ring_from_value(index: usize, ring_value: &Value) -> Result<Vec<[f64; 2]>, PlotError> {
+    let positions = ring_value
+        .as_array()
+        .ok_or_else(|| PlotError("polygon ring must be an array of positions".into()))?
+        .iter()
+        .map(position_from_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    match positions.len() {
+        count if count < 3 => Err(PlotError(format!(
+            "ring {index} needs at least 3 positions"
+        ))),
+        _ => Ok(closed_ring(positions)),
+    }
+}
+
 /// Extracts a WGS 84 polygon from a GeoJSON `geometry` value and validates it.
 ///
 /// Accepts `{"type":"Polygon","coordinates":[[[lon,lat],…]]}` and (for
 /// convenience) a bare coordinate array. Rings are closed automatically. Pure.
 pub fn polygon_from_geometry(geometry: &Value) -> Result<Polygon, PlotError> {
-    let coordinates = if geometry.get("type").and_then(Value::as_str) == Some("Polygon") {
-        geometry
+    let kind = geometry.get("type").and_then(Value::as_str);
+    let coordinates = match (kind, geometry.is_array()) {
+        (Some("Polygon"), _) => geometry
             .get("coordinates")
-            .ok_or_else(|| PlotError("Polygon geometry has no coordinates".into()))?
-    } else if geometry.is_array() {
-        geometry
-    } else {
-        let kind = geometry
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        return Err(PlotError(format!(
-            "plot geometry must be a Polygon, got {kind}"
-        )));
+            .ok_or_else(|| PlotError("Polygon geometry has no coordinates".into()))?,
+        (_, true) => geometry,
+        (kind, false) => {
+            return Err(PlotError(format!(
+                "plot geometry must be a Polygon, got {}",
+                kind.unwrap_or("unknown")
+            )))
+        }
     };
 
     let rings = coordinates
         .as_array()
-        .ok_or_else(|| PlotError("polygon coordinates must be an array of rings".into()))?;
-    if rings.is_empty() {
-        return Err(PlotError("polygon has no rings".into()));
-    }
+        .ok_or_else(|| PlotError("polygon coordinates must be an array of rings".into()))
+        .and_then(|rings| match rings.is_empty() {
+            true => Err(PlotError("polygon has no rings".into())),
+            false => Ok(rings),
+        })?;
 
-    let mut polygon: Polygon = Vec::with_capacity(rings.len());
-    for (index, ring_value) in rings.iter().enumerate() {
-        let ring = ring_value
-            .as_array()
-            .ok_or_else(|| PlotError("polygon ring must be an array of positions".into()))?;
-        let mut positions: Vec<[f64; 2]> = Vec::with_capacity(ring.len() + 1);
-        for position in ring {
-            let pair = position
-                .as_array()
-                .ok_or_else(|| PlotError("polygon position must be [lon, lat]".into()))?;
-            let lon = pair.first().and_then(Value::as_f64);
-            let lat = pair.get(1).and_then(Value::as_f64);
-            let (Some(lon), Some(lat)) = (lon, lat) else {
-                return Err(PlotError("polygon position must be two numbers".into()));
-            };
-            if !(-180.0..=180.0).contains(&lon) || !(-90.0..=90.0).contains(&lat) {
-                return Err(PlotError(format!(
-                    "position [{lon}, {lat}] is outside WGS 84 bounds"
-                )));
-            }
-            positions.push([lon, lat]);
-        }
-        if positions.len() < 3 {
-            return Err(PlotError(format!(
-                "ring {index} needs at least 3 positions"
-            )));
-        }
-        let first = positions[0];
-        let last = positions[positions.len() - 1];
-        if first != last {
-            positions.push(first);
-        }
-        polygon.push(positions);
-    }
+    let polygon: Polygon = rings
+        .iter()
+        .enumerate()
+        .map(|(index, ring)| ring_from_value(index, ring))
+        .collect::<Result<_, _>>()?;
 
     let area = calculate_area(&polygon);
-    if !area.is_finite() || area <= 0.0 {
-        return Err(PlotError(
+    match area.is_finite() && area > 0.0 {
+        true => Ok(polygon),
+        false => Err(PlotError(
             "polygon encloses no area (check ring winding and vertex order)".into(),
-        ));
+        )),
     }
-    Ok(polygon)
 }
 
 /// Area in m² and perimeter in m for a validated polygon. Pure.
@@ -200,14 +222,13 @@ fn row_to_plot(row: &Row) -> rusqlite::Result<PlotRecord> {
 }
 
 fn validate_name(name: &str) -> Result<String, PlotError> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        return Err(PlotError("plot name must not be empty".into()));
+    match name.trim() {
+        "" => Err(PlotError("plot name must not be empty".into())),
+        trimmed if trimmed.chars().count() > 100 => {
+            Err(PlotError("plot name must be at most 100 characters".into()))
+        }
+        trimmed => Ok(trimmed.to_string()),
     }
-    if trimmed.chars().count() > 100 {
-        return Err(PlotError("plot name must be at most 100 characters".into()));
-    }
-    Ok(trimmed.to_string())
 }
 
 fn now() -> String {
@@ -273,12 +294,13 @@ pub fn list_plots(
         ),
         None => format!("SELECT {PLOT_COLUMNS} FROM plot ORDER BY created_at DESC"),
     };
-    let mut statement = conn.prepare(&sql)?;
     let rows = match project_id {
-        Some(id) => statement
+        Some(id) => conn
+            .prepare(&sql)?
             .query_map(params![id], row_to_plot)?
             .collect::<Result<Vec<_>, _>>()?,
-        None => statement
+        None => conn
+            .prepare(&sql)?
             .query_map([], row_to_plot)?
             .collect::<Result<Vec<_>, _>>()?,
     };
@@ -304,19 +326,20 @@ pub fn rename_plot(conn: &Connection, plot_id: &str, name: &str) -> Result<PlotR
         "UPDATE plot SET name = ?1, updated_at = ?2 WHERE id = ?3",
         params![name, updated, plot_id],
     )?;
-    if changed == 0 {
-        return Err(PlotError(format!("plot '{plot_id}' not found")));
+    match changed {
+        0 => Err(PlotError(format!("plot '{plot_id}' not found"))),
+        _ => {
+            get_plot(conn, plot_id)?.ok_or_else(|| PlotError(format!("plot '{plot_id}' not found")))
+        }
     }
-    get_plot(conn, plot_id)?.ok_or_else(|| PlotError(format!("plot '{plot_id}' not found")))
 }
 
 /// Deletes a plot. Impure.
 pub fn delete_plot(conn: &Connection, plot_id: &str) -> Result<(), PlotError> {
-    let changed = conn.execute("DELETE FROM plot WHERE id = ?1", params![plot_id])?;
-    if changed == 0 {
-        return Err(PlotError(format!("plot '{plot_id}' not found")));
+    match conn.execute("DELETE FROM plot WHERE id = ?1", params![plot_id])? {
+        0 => Err(PlotError(format!("plot '{plot_id}' not found"))),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// Formats a stored timestamp for display, falling back to the raw value. Pure.

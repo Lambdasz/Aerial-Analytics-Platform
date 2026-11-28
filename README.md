@@ -248,7 +248,7 @@ The build matrix only runs once both lint jobs pass. The workflow does not publi
 │   │   ├── module-01/            # Image & Project Manager page
 │   │   ├── module-02/            # Plugin System page
 │   │   ├── module-03/            # Map Explorer page
-│   │   ├── module-09/            # Area & Plot Analytics page (+ Plots tab panel)
+│   │   ├── module-09/            # Area & Plot Analytics: Plots tab panel (mounted in Map Explorer)
 │   │   ├── module-10/            # Temporal Change Analysis page
 │   │   ├── module-11/            # Dashboard & Reporting page
 │   │   └── ...

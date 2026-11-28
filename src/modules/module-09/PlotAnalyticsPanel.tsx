@@ -1,16 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Button, Checkbox, Dialog, Icon, NonIdealState, Spinner } from "@blueprintjs/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 import { getSavedAois } from "../module-03/services/api";
 import type { AoiFeature } from "../module-03/types/aoi";
 import { AnalysePlotsDialog } from "./AnalysePlotsDialog";
+import { PlotRankingCard } from "./PlotRankingCard";
+import { PlotSummaryDialog } from "./PlotSummaryDialog";
+import { RenamePlotDialog } from "./RenamePlotDialog";
+import { errorMessage, humanizeIndicator, toggleMember, withMember } from "./plotAnalytics";
 import {
-  createPlot,
+  createPlotsFromAois,
   currentProjectId,
   deletePlot,
   formatArea,
   formatIndicator,
   formatPerimeter,
+  importPlots,
   listPlotIndicators,
   listPlots,
   publishPlotsLayer,
@@ -18,21 +24,69 @@ import {
   type PlotRecord,
 } from "./plotCommands";
 
-function message(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) {
-    return String(error.message);
-  }
-  return "Unexpected error.";
+/** Everything the tab shows, loaded together. */
+interface PanelData {
+  plots: PlotRecord[];
+  indicators: PlotIndicator[];
+  aois: AoiFeature[];
 }
 
+const fetchPanelData = (projectId: string | null): Promise<PanelData> =>
+  Promise.all([
+    listPlots(projectId),
+    listPlotIndicators(null, projectId),
+    getSavedAois().catch(() => [] as AoiFeature[]),
+  ]).then(([plots, indicators, aois]) => ({ plots, indicators, aois }));
+
+/** First two indicators of a plot, plus how many more the summary holds. */
+const latestFor = (indicators: readonly PlotIndicator[], plotId: string): string => {
+  const rows = indicators.filter((row) => row.plotId === plotId);
+  const extra = rows.length > 2 ? [`+${rows.length - 2} more`] : [];
+  return [
+    ...rows
+      .slice(0, 2)
+      .map((row) => `${humanizeIndicator(row.indicator)}: ${formatIndicator(row)}`),
+    ...extra,
+  ].join(" · ");
+};
+
+const ACTIVATION_KEYS: ReadonlySet<string> = new Set(["Enter", " "]);
+
+const GEOJSON_FILTERS = [{ name: "GeoJSON plots", extensions: ["geojson", "json"] }];
+
+const primaryButton = (enabled: boolean, color: string): CSSProperties => ({
+  flex: 1,
+  borderRadius: 10,
+  background: enabled ? color : "#f1f5f9",
+  color: enabled ? "#ffffff" : "#94a3b8",
+  fontWeight: 600,
+  fontSize: 12,
+  padding: "6px 12px",
+  boxShadow: "none",
+  outline: "none",
+});
+
+const secondaryButton = (enabled: boolean): CSSProperties => ({
+  flex: 1,
+  borderRadius: 10,
+  background: "#ffffff",
+  color: enabled ? "#0f172a" : "#94a3b8",
+  fontWeight: 600,
+  fontSize: 12,
+  padding: "6px 12px",
+  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+  outline: "none",
+});
+
 /**
- * Plots tab for the Map Explorer sidebar (Module 9 inside Module 3).
+ * Plots tab for the Map Explorer sidebar — the official Module 9 UI (KD-1).
  *
- * Same workflow as the Module 09 page but compact and next to the map: turn
- * saved AOIs into plots, run a plugin per plot, compare indicator values, and
- * publish the boundaries as a map layer.
+ * Turn saved AOIs into plots or import a GeoJSON file, rename plots, delete
+ * them after confirmation, select all or some and run a plugin per plot from
+ * an orthomosaic, compare/rank indicator values with summary statistics, open
+ * a per-plot summary, publish the boundaries as a map layer, and refresh the
+ * list. It replaces the former standalone Module 9 page (ISU-9.1). Pure
+ * helpers live in `plotAnalytics.ts`.
  */
 export function PlotAnalyticsPanel() {
   const [plots, setPlots] = useState<PlotRecord[]>([]);
@@ -41,150 +95,130 @@ export function PlotAnalyticsPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => {
-      setNotice(null);
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [notice]);
+  const [skipped, setSkipped] = useState<string[]>([]);
 
   const [isAoiOpen, setIsAoiOpen] = useState(false);
   const [savedAois, setSavedAois] = useState<AoiFeature[]>([]);
   const [checkedAois, setCheckedAois] = useState<Set<string>>(new Set());
   const [isAnalyseOpen, setIsAnalyseOpen] = useState(false);
   const [isImportingAois, setIsImportingAois] = useState(false);
+  const [isImportingFile, setIsImportingFile] = useState(false);
 
-  const [comparedIndicator, setComparedIndicator] = useState("");
+  const [renameTarget, setRenameTarget] = useState<PlotRecord | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PlotRecord | null>(null);
+  const [summaryPlot, setSummaryPlot] = useState<PlotRecord | null>(null);
 
-  const load = async () => {
-    try {
-      const projectId = currentProjectId();
-      const [rows, indicatorRows, aois] = await Promise.all([
-        listPlots(projectId),
-        listPlotIndicators(null, projectId),
-        getSavedAois().catch(() => [] as AoiFeature[]),
-      ]);
-      setPlots(rows);
-      setIndicators(indicatorRows);
-      setSavedAois(aois);
-      setError(null);
-    } catch (err) {
-      setError(message(err));
-    } finally {
-      setIsLoading(false);
-    }
+  // Success notices disappear on their own.
+  useEffect(() => {
+    const timer = notice ? setTimeout(() => setNotice(null), 4000) : undefined;
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const applyData = (data: PanelData) => {
+    setPlots(data.plots);
+    setIndicators(data.indicators);
+    setSavedAois(data.aois);
+  };
+
+  const load = (): Promise<void> =>
+    fetchPanelData(currentProjectId())
+      .then((data) => {
+        applyData(data);
+        setError(null);
+      })
+      .catch((err) => setError(errorMessage(err)))
+      .finally(() => setIsLoading(false));
+
+  // Manual reload: plots, indicators and saved AOIs may change in other tabs.
+  const reload = () => {
+    setIsLoading(true);
+    return load();
   };
 
   // Initial load from the app database; state updates happen in callbacks.
   useEffect(() => {
-    let cancelled = false;
-    const projectId = currentProjectId();
-    Promise.all([
-      listPlots(projectId),
-      listPlotIndicators(null, projectId),
-      getSavedAois().catch(() => [] as AoiFeature[]),
-    ])
-      .then(([rows, indicatorRows, aois]) => {
-        if (cancelled) return;
-        setPlots(rows);
-        setIndicators(indicatorRows);
-        setSavedAois(aois);
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(message(err));
-        setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    const controller = new AbortController();
+    fetchPanelData(currentProjectId())
+      .then((data) => !controller.signal.aborted && applyData(data))
+      .catch((err) => !controller.signal.aborted && setError(errorMessage(err)))
+      .finally(() => !controller.signal.aborted && setIsLoading(false));
+    return () => controller.abort();
   }, []);
 
-  const openAoiPicker = async () => {
+  const openAoiPicker = () => {
     setIsAoiOpen(true);
     setCheckedAois(new Set());
-    try {
-      const aois = await getSavedAois();
-      setSavedAois(aois);
-      setCheckedAois(new Set(aois.map((aoi) => aoi.properties.aoi_id)));
-    } catch (err) {
-      setError(message(err));
-    }
+    getSavedAois()
+      .then((aois) => {
+        setSavedAois(aois);
+        setCheckedAois(new Set(aois.map((aoi) => aoi.properties.aoi_id)));
+      })
+      .catch((err) => setError(errorMessage(err)));
   };
 
-  const createFromAois = async (
+  const createFromAois = (
     aois: AoiFeature[] = savedAois.filter((aoi) => checkedAois.has(aoi.properties.aoi_id)),
   ) => {
     setIsImportingAois(true);
-    const chosen = aois;
-    const failures: string[] = [];
-    for (const aoi of chosen) {
-      try {
-        await createPlot(
-          aoi.properties.name,
-          aoi.geometry,
-          currentProjectId(),
-          null,
-          aoi.properties.aoi_id,
-        );
-      } catch (err) {
-        failures.push(`${aoi.properties.name}: ${message(err)}`);
-      }
-    }
-    setIsImportingAois(false);
-    setIsAoiOpen(false);
-    if (failures.length > 0) setError(failures.join("; "));
-    await load();
+    return createPlotsFromAois(aois).then((failures) => {
+      setIsImportingAois(false);
+      setIsAoiOpen(false);
+      setError((previous) => (failures.length > 0 ? failures.join("; ") : previous));
+      return load();
+    });
   };
 
-  const removePlot = async (plot: PlotRecord) => {
-    try {
-      await deletePlot(plot.id);
-      await load();
-    } catch (err) {
-      setError(message(err));
-    }
+  // FR-9.1.2: invalid features are reported, the valid ones are still stored.
+  const importFile = (path: string) => {
+    setIsImportingFile(true);
+    return importPlots(path, currentProjectId())
+      .then((outcome) => {
+        setSkipped(outcome.skipped);
+        setNotice(`${outcome.plots.length} plot${outcome.plots.length === 1 ? "" : "s"} imported`);
+        return load();
+      })
+      .catch((err) => setError(errorMessage(err)))
+      .finally(() => setIsImportingFile(false));
   };
 
-  const showOnMap = async () => {
-    try {
-      const layer = await publishPlotsLayer(currentProjectId(), "Plots");
-      setNotice(`Layer "${layer.layer_name}" published`);
-    } catch (err) {
-      setError(message(err));
-    }
+  const importGeoJson = () => {
+    setError(null);
+    setSkipped([]);
+    open({ multiple: false, directory: false, filters: GEOJSON_FILTERS })
+      .then((chosen) => (typeof chosen === "string" ? importFile(chosen) : undefined))
+      .catch((err) => setError(errorMessage(err)));
+  };
+
+  // Called from the confirmation dialog only: indicators of the plot go with it.
+  const removePlot = (plot: PlotRecord) =>
+    deletePlot(plot.id)
+      .then(() => {
+        setSelected((previous) => withMember(previous, plot.id, false));
+        return load();
+      })
+      .catch((err) => setError(errorMessage(err)))
+      .finally(() => setDeleteTarget(null));
+
+  const showOnMap = () =>
+    publishPlotsLayer(currentProjectId(), "Plots")
+      .then((layer) => setNotice(`Layer "${layer.layer_name}" published`))
+      .catch((err) => setError(errorMessage(err)));
+
+  const toggleAoi = (aoiId: string) => setCheckedAois((previous) => toggleMember(previous, aoiId));
+
+  const activateAoi = (event: KeyboardEvent, aoiId: string) => {
+    event.preventDefault();
+    toggleAoi(aoiId);
   };
 
   const selectedPlots = plots.filter((plot) => selected.has(plot.id));
   const linkedAoiIds = new Set(plots.map((plot) => plot.sourceAoiId).filter(Boolean));
   const pendingAois = savedAois.filter((aoi) => !linkedAoiIds.has(aoi.properties.aoi_id));
+  const hasSelection = selectedPlots.length > 0;
+  const allSelected = plots.length > 0 && selectedPlots.length === plots.length;
 
-  const indicatorKeys = Array.from(
-    new Set(indicators.filter((row) => row.value !== null).map((row) => row.indicator)),
-  ).sort();
-  const activeKey = comparedIndicator || indicatorKeys[0] || "";
-  const ranking = plots
-    .map((plot) => {
-      const row = indicators.find(
-        (candidate) => candidate.plotId === plot.id && candidate.indicator === activeKey,
-      );
-      return { plot, value: row?.value ?? null, unit: row?.unit ?? null };
-    })
-    .filter(
-      (entry): entry is { plot: PlotRecord; value: number; unit: string | null } =>
-        entry.value !== null,
-    )
-    .sort((a, b) => b.value - a.value);
-
-  const latestFor = (plotId: string): string =>
-    indicators
-      .filter((row) => row.plotId === plotId)
-      .slice(0, 2)
-      .map((row) => `${row.indicator.replace(/_/g, " ")}: ${formatIndicator(row)}`)
-      .join(" · ");
+  const selectAll = (checked: boolean) =>
+    setSelected(checked ? new Set(plots.map((plot) => plot.id)) : new Set<string>());
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -200,9 +234,20 @@ export function PlotAnalyticsPanel() {
         }}
       >
         <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>Analisis Plot</span>
-        <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
-          {plots.length} Plot
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
+            {plots.length} Plot
+          </span>
+          <Button
+            minimal
+            small
+            icon="refresh"
+            title="Refresh plots"
+            loading={isLoading}
+            onClick={() => void reload()}
+            style={{ color: "#64748b", borderRadius: 6, outline: "none" }}
+          />
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 6 }}>
@@ -211,36 +256,28 @@ export function PlotAnalyticsPanel() {
           small
           icon="selection"
           text="From AOI"
-          onClick={() => void openAoiPicker()}
-          style={{
-            flex: 1,
-            borderRadius: 10,
-            background: "#0f172a",
-            color: "#ffffff",
-            fontWeight: 600,
-            fontSize: 12,
-            padding: "6px 12px",
-            boxShadow: "none",
-            outline: "none",
-          }}
+          onClick={openAoiPicker}
+          style={primaryButton(true, "#0f172a")}
         />
+        <Button
+          minimal
+          small
+          icon="import"
+          text="Import GeoJSON"
+          loading={isImportingFile}
+          onClick={importGeoJson}
+          style={secondaryButton(true)}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
         <Button
           minimal
           small
           icon="chart"
           text={`Analyse (${selectedPlots.length})`}
-          disabled={selectedPlots.length === 0}
+          disabled={!hasSelection}
           onClick={() => setIsAnalyseOpen(true)}
-          style={{
-            borderRadius: 10,
-            background: selectedPlots.length > 0 ? "#2563eb" : "#f1f5f9",
-            color: selectedPlots.length > 0 ? "#ffffff" : "#94a3b8",
-            fontWeight: 600,
-            fontSize: 12,
-            padding: "6px 12px",
-            boxShadow: "none",
-            outline: "none",
-          }}
+          style={primaryButton(hasSelection, "#2563eb")}
         />
         <Button
           minimal
@@ -249,16 +286,7 @@ export function PlotAnalyticsPanel() {
           text="On map"
           disabled={plots.length === 0}
           onClick={() => void showOnMap()}
-          style={{
-            borderRadius: 10,
-            background: "#ffffff",
-            color: plots.length === 0 ? "#94a3b8" : "#0f172a",
-            fontWeight: 600,
-            fontSize: 12,
-            padding: "6px 12px",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-            outline: "none",
-          }}
+          style={secondaryButton(plots.length > 0)}
         />
       </div>
 
@@ -344,6 +372,38 @@ export function PlotAnalyticsPanel() {
         </div>
       )}
 
+      {skipped.length > 0 && (
+        <div
+          style={{
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            color: "#92400e",
+            borderRadius: 12,
+            padding: "8px 12px",
+            fontSize: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+            <Icon icon="warning-sign" size={14} color="#d97706" />
+            <span style={{ flex: 1 }}>
+              {skipped.length} feature{skipped.length === 1 ? "" : "s"} skipped
+            </span>
+            <Button
+              minimal
+              small
+              icon="cross"
+              onClick={() => setSkipped([])}
+              style={{ color: "#92400e", padding: 2, minWidth: 20, minHeight: 20, outline: "none" }}
+            />
+          </div>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: 11 }}>
+            {skipped.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {notice && (
         <div
           style={{
@@ -374,21 +434,30 @@ export function PlotAnalyticsPanel() {
         </div>
       )}
 
-      {isLoading ? (
+      {isLoading && (
         <div style={{ padding: 24, textAlign: "center" }}>
           <Spinner size={24} />
         </div>
-      ) : plots.length === 0 ? (
+      )}
+
+      {!isLoading && plots.length === 0 && (
         <NonIdealState
           icon="polygon-filter"
           title="No plots"
-          description="Draw and save an AOI on the map, then add it here with From AOI."
-          action={
-            <Button small icon="selection" text="From AOI" onClick={() => void openAoiPicker()} />
-          }
+          description="Draw and save an AOI on the map, then add it here with From AOI — or import a GeoJSON file."
+          action={<Button small icon="selection" text="From AOI" onClick={openAoiPicker} />}
         />
-      ) : (
+      )}
+
+      {!isLoading && plots.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <Checkbox
+            checked={allSelected}
+            indeterminate={hasSelection && !allSelected}
+            label="Select all"
+            onChange={(event) => selectAll(event.currentTarget.checked)}
+            style={{ marginBottom: 0, paddingLeft: 42, fontSize: 12, color: "#64748b" }}
+          />
           {plots.map((plot) => (
             <div
               key={plot.id}
@@ -405,18 +474,23 @@ export function PlotAnalyticsPanel() {
                   checked={selected.has(plot.id)}
                   onChange={(event) => {
                     const checked = event.currentTarget.checked;
-                    setSelected((previous) => {
-                      const next = new Set(previous);
-                      if (checked) next.add(plot.id);
-                      else next.delete(plot.id);
-                      return next;
-                    });
+                    setSelected((previous) => withMember(previous, plot.id, checked));
                   }}
                   style={{ marginBottom: 0 }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
+                  <button
+                    type="button"
+                    title="Show plot summary"
+                    onClick={() => setSummaryPlot(plot)}
                     style={{
+                      display: "block",
+                      maxWidth: "100%",
+                      padding: 0,
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      textAlign: "left",
                       fontSize: 13,
                       fontWeight: 600,
                       color: "var(--color-ink, #182026)",
@@ -426,11 +500,27 @@ export function PlotAnalyticsPanel() {
                     }}
                   >
                     {plot.name}
-                  </div>
+                  </button>
                   <div style={{ fontSize: 11, color: "var(--color-slate, #64748b)", marginTop: 2 }}>
                     {formatArea(plot.areaM2, plot.areaHa)} · {formatPerimeter(plot.perimeterM)}
                   </div>
                 </div>
+                <Button
+                  minimal
+                  small
+                  icon="document"
+                  style={{ color: "var(--color-slate, #64748b)", borderRadius: 6 }}
+                  title="Plot summary"
+                  onClick={() => setSummaryPlot(plot)}
+                />
+                <Button
+                  minimal
+                  small
+                  icon="edit"
+                  style={{ color: "var(--color-slate, #64748b)", borderRadius: 6 }}
+                  title="Rename plot"
+                  onClick={() => setRenameTarget(plot)}
+                />
                 <Button
                   minimal
                   small
@@ -440,7 +530,7 @@ export function PlotAnalyticsPanel() {
                     borderRadius: 6,
                   }}
                   title="Delete plot"
-                  onClick={() => void removePlot(plot)}
+                  onClick={() => setDeleteTarget(plot)}
                 />
               </div>
               <div
@@ -451,88 +541,14 @@ export function PlotAnalyticsPanel() {
                   paddingLeft: 24,
                 }}
               >
-                {latestFor(plot.id) || "no indicators yet"}
+                {latestFor(indicators, plot.id) || "no indicators yet"}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {indicatorKeys.length > 0 && (
-        <div
-          style={{
-            background: "#ffffff",
-            border: "none",
-            borderRadius: 16,
-            padding: "14px 16px",
-            boxShadow: "0 2px 12px -2px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.02)",
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6 }}>
-            RANKING
-          </div>
-          <select
-            value={activeKey}
-            onChange={(event) => setComparedIndicator(event.currentTarget.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              fontSize: 12,
-              borderRadius: 10,
-              border: "none",
-              background: "#f8fafc",
-              color: "#0f172a",
-              outline: "none",
-              cursor: "pointer",
-            }}
-          >
-            {indicatorKeys.map((key) => (
-              <option key={key} value={key}>
-                {key.replace(/_/g, " ")}
-              </option>
-            ))}
-          </select>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
-            {ranking.map((entry, index) => (
-              <div
-                key={entry.plot.id}
-                style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
-              >
-                <span
-                  style={{
-                    minWidth: 22,
-                    height: 20,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: index === 0 ? "#0f172a" : "#f1f5f9",
-                    color: index === 0 ? "#ffffff" : "#64748b",
-                  }}
-                >
-                  {index + 1}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {entry.plot.name}
-                </span>
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                  {entry.value.toFixed(2)}
-                  {entry.unit ? ` ${entry.unit}` : ""}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <PlotRankingCard plots={plots} indicators={indicators} />
 
       <Dialog
         isOpen={isAoiOpen}
@@ -544,7 +560,7 @@ export function PlotAnalyticsPanel() {
           className="bp6-dialog-body"
           style={{ maxHeight: 380, overflowY: "auto", padding: "16px 20px" }}
         >
-          {savedAois.length === 0 ? (
+          {savedAois.length === 0 && (
             <div
               style={{
                 background: "#f8fafc",
@@ -556,72 +572,50 @@ export function PlotAnalyticsPanel() {
             >
               No AOIs saved yet. Draw an area in the AOI tab, save it, then return here.
             </div>
-          ) : (
-            savedAois.map((aoi) => {
-              const isChecked = checkedAois.has(aoi.properties.aoi_id);
-              return (
-                <div
-                  key={aoi.properties.aoi_id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setCheckedAois((previous) => {
-                      const next = new Set(previous);
-                      if (isChecked) next.delete(aoi.properties.aoi_id);
-                      else next.add(aoi.properties.aoi_id);
-                      return next;
-                    });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setCheckedAois((previous) => {
-                        const next = new Set(previous);
-                        if (isChecked) next.delete(aoi.properties.aoi_id);
-                        else next.add(aoi.properties.aoi_id);
-                        return next;
-                      });
-                    }
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: isChecked ? "#f1f5f9" : "#f8fafc",
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                    marginBottom: 6,
-                    cursor: "pointer",
-                    transition: "background 0.15s ease",
-                    outline: "none",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Checkbox
-                      checked={isChecked}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(event) => {
-                        const checked = event.currentTarget.checked;
-                        setCheckedAois((previous) => {
-                          const next = new Set(previous);
-                          if (checked) next.add(aoi.properties.aoi_id);
-                          else next.delete(aoi.properties.aoi_id);
-                          return next;
-                        });
-                      }}
-                      style={{ marginBottom: 0 }}
-                    />
-                    <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>
-                      {aoi.properties.name}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
-                    {aoi.properties.calculated_area_sq_m.toFixed(0)} m²
+          )}
+          {savedAois.map((aoi) => {
+            const aoiId = aoi.properties.aoi_id;
+            const isChecked = checkedAois.has(aoiId);
+            return (
+              <div
+                key={aoiId}
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleAoi(aoiId)}
+                onKeyDown={(event) => ACTIVATION_KEYS.has(event.key) && activateAoi(event, aoiId)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: isChecked ? "#f1f5f9" : "#f8fafc",
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  marginBottom: 6,
+                  cursor: "pointer",
+                  transition: "background 0.15s ease",
+                  outline: "none",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Checkbox
+                    checked={isChecked}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(event) => {
+                      const checked = event.currentTarget.checked;
+                      setCheckedAois((previous) => withMember(previous, aoiId, checked));
+                    }}
+                    style={{ marginBottom: 0 }}
+                  />
+                  <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 13 }}>
+                    {aoi.properties.name}
                   </span>
                 </div>
-              );
-            })
-          )}
+                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+                  {aoi.properties.calculated_area_sq_m.toFixed(0)} m²
+                </span>
+              </div>
+            );
+          })}
         </div>
         <div className="bp6-dialog-footer">
           <div className="bp6-dialog-footer-actions">
@@ -654,6 +648,49 @@ export function PlotAnalyticsPanel() {
           </div>
         </div>
       </Dialog>
+
+      <RenamePlotDialog
+        key={renameTarget?.id ?? "none"}
+        plot={renameTarget}
+        onClose={() => setRenameTarget(null)}
+        onRenamed={() => {
+          setRenameTarget(null);
+          void load();
+        }}
+      />
+
+      <Dialog
+        isOpen={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete plot"
+        style={{ width: 420, borderRadius: 16, background: "#ffffff" }}
+      >
+        <div className="bp6-dialog-body" style={{ padding: "16px 20px", fontSize: 13 }}>
+          Delete <strong>{deleteTarget?.name}</strong>? Indicators computed for it are discarded.
+        </div>
+        <div className="bp6-dialog-footer">
+          <div className="bp6-dialog-footer-actions">
+            <Button
+              minimal
+              text="Cancel"
+              onClick={() => setDeleteTarget(null)}
+              style={{ borderRadius: 10, background: "#f1f5f9", color: "#475569", fontWeight: 600 }}
+            />
+            <Button
+              minimal
+              text="Delete"
+              onClick={() => void (deleteTarget && removePlot(deleteTarget))}
+              style={{ borderRadius: 10, background: "#dc2626", color: "#ffffff", fontWeight: 600 }}
+            />
+          </div>
+        </div>
+      </Dialog>
+
+      <PlotSummaryDialog
+        plot={summaryPlot}
+        indicators={indicators}
+        onClose={() => setSummaryPlot(null)}
+      />
 
       <AnalysePlotsDialog
         isOpen={isAnalyseOpen}

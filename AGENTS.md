@@ -69,7 +69,7 @@ Commit messages are validated by commitlint (Conventional Commits). CI (`.github
 - `src/` — React frontend. Entry: `src/main.tsx`, root: `src/App.tsx` → `src/shell/AppShell.tsx`.
   - `src/shell/` — App shell, sidebar, module routing.
   - `src/map/` — Leaflet map explorer, AOI drawing, layer management.
-  - `src/modules/module-NN/` — module pages (01–03, 09, 10, 11 have real UI; others absent). Module 09 also exposes `PlotAnalyticsPanel`, mounted as the **Plots** tab in the Module 3 sidebar; Module 11 hosts the dashboard, result explorer, exports and HTML report.
+  - `src/modules/module-NN/` — module pages (01–03, 10, 11 have real UI; others absent). Module 09 has no page of its own: its only UI is `PlotAnalyticsPanel`, mounted as the **Plots** tab in the Module 3 sidebar; Module 11 hosts the dashboard, result explorer, exports and HTML report.
   - `src/features/`, `src/component_plugin_manager/` — feature code (mostly scaffolding).
   - `src/components/`, `src/hooks/`, `src/lib/`, `src/types/` — shared code.
 - `src-tauri/src/` — Rust backend. Entry: `lib.rs` → `run()`; crate docs there are the module index (see rustdoc convention below).

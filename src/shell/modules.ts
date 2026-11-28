@@ -3,7 +3,6 @@ import type { ComponentType } from "react";
 import { Module01Page } from "../modules/module-01/Module01Page";
 import { Module02Page } from "../modules/module-02/Module02Page";
 import { Module03Page } from "../modules/module-03";
-import { Module09Page } from "../modules/module-09/Module09Page";
 import { Module10Page } from "../modules/module-10/Module10Page";
 import { Module11Page } from "../modules/module-11/Module11Page";
 import { Example } from "./example";
@@ -37,13 +36,6 @@ export const MODULES: readonly ModuleEntry[] = [
     slug: "map-explorer",
     label: "Map Explorer",
     Page: Module03Page,
-  },
-  {
-    id: "module-09",
-    moduleNumber: 9,
-    slug: "area-plot-analytics",
-    label: "Area & Plot Analytics",
-    Page: Module09Page,
   },
   {
     id: "module-10",
